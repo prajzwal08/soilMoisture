@@ -165,7 +165,7 @@ def process_station(station_data, network, station):
     result_ds.attrs['station'] = station
     result_ds.attrs['latitude'] = float(station_data.attrs.get('lat', np.nan)) #The attrs lat and variables latitude are latitude.
     result_ds.attrs['longitude'] = float(station_data.attrs.get('lon', np.nan)) # same for lon. 
-    
+    result_ds.attrs["max_depth"] = float(np.nanmax(depth_vals))
     return result_ds
 
 '''
@@ -230,6 +230,7 @@ def process_single_station(args):
             'longitude': lon,
             # 'depths': str(depths),  # Convert list to string for CSV
             # 'n_depths': len(depths),
+            'max_depth (cm)': result_ds.attrs.get("max_depth", np.nan) * 100.0,  # Convert to cm
             'start_date': start_date,
             'end_date': end_date,
             'n_days': len(valid_dates),
@@ -253,7 +254,7 @@ for network in ds.collection.networks:
 # CONFIGURE TEST RUN HERE
 # ============================================
 TEST_MODE = True
-N_TEST_STATIONS = 1
+N_TEST_STATIONS = 200
 
 if TEST_MODE:
     # reproducible random sample
@@ -274,8 +275,8 @@ print(f"Using {cpu_count()} CPU cores available")
 # ============================================
 # CONFIGURE PARALLELIZATION HERE
 # ============================================
-USE_PARALLEL = False  # Set to False for sequential (easier debugging)
-N_WORKERS = 1  # Number of parallel workers (adjust as needed)
+USE_PARALLEL = True  # Set to False for sequential (easier debugging)
+N_WORKERS = 100  # Number of parallel workers (adjust as needed)
 
 if USE_PARALLEL:
     print(f"Running in parallel with {N_WORKERS} workers")
