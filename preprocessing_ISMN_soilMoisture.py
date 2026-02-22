@@ -138,11 +138,27 @@ def process_station(station_data, network, station):
     # Mask out days with < 6 valid observations
     daily_filtered = daily.where(count >= 6)
     
-    # Create dataset with both soil moisture and count
-    result_ds = xr.Dataset({
-        'soil_moisture': daily_filtered,
-        'observation_count': count
-    })
+        # ---- depth-bin averaging AFTER daily filtering (no count saved) ----
+    depth_vals = daily_filtered["depth"].values.astype(float)
+    depth_cm = depth_vals * 100.0 if np.nanmax(depth_vals) <= 3 else depth_vals
+
+    depth_bin = pd.cut(
+        depth_cm,
+        bins=[0.0, 5.0, 20.0, 50.0, np.inf],
+        labels=["0-5", "5-20", "20-50", ">50"],
+        right=True,
+        include_lowest=True
+    )
+
+    daily_filtered = daily_filtered.assign_coords(depth_bin=("depth", depth_bin.astype(str)))
+
+    daily_binned = (
+        daily_filtered.groupby("depth_bin")
+        .mean(dim="depth", skipna=True)
+        .rename({"depth_bin": "depth"})
+    )
+
+    result_ds = xr.Dataset({"soil_moisture": daily_binned})
     
     # Add metadata as attributes
     result_ds.attrs['network'] = network
@@ -212,8 +228,8 @@ def process_single_station(args):
             'station': station,
             'latitude': lat,
             'longitude': lon,
-            'depths': str(depths),  # Convert list to string for CSV
-            'n_depths': len(depths),
+            # 'depths': str(depths),  # Convert list to string for CSV
+            # 'n_depths': len(depths),
             'start_date': start_date,
             'end_date': end_date,
             'n_days': len(valid_dates),
@@ -237,7 +253,7 @@ for network in ds.collection.networks:
 # CONFIGURE TEST RUN HERE
 # ============================================
 TEST_MODE = True
-N_TEST_STATIONS = 200
+N_TEST_STATIONS = 1
 
 if TEST_MODE:
     # reproducible random sample
@@ -258,8 +274,8 @@ print(f"Using {cpu_count()} CPU cores available")
 # ============================================
 # CONFIGURE PARALLELIZATION HERE
 # ============================================
-USE_PARALLEL = True  # Set to False for sequential (easier debugging)
-N_WORKERS = 50  # Number of parallel workers (adjust as needed)
+USE_PARALLEL = False  # Set to False for sequential (easier debugging)
+N_WORKERS = 1  # Number of parallel workers (adjust as needed)
 
 if USE_PARALLEL:
     print(f"Running in parallel with {N_WORKERS} workers")
@@ -289,12 +305,12 @@ if len(metadata_list) > 0:
     df_metadata.to_csv(metadata_file, index=False)
     print(f"\nMetadata saved to: {metadata_file}")
     
-    # Print summary statistics
-    print(f"\nSummary:")
-    print(f"  Networks: {df_metadata['network'].nunique()}")
-    print(f"  Stations: {len(df_metadata)}")
-    print(f"  Date range: {df_metadata['start_date'].min()} to {df_metadata['end_date'].max()}")
-    print(f"  Depth range: {df_metadata['n_depths'].min()}-{df_metadata['n_depths'].max()} depths per station")
+    # # Print summary statistics
+    # print(f"\nSummary:")
+    # print(f"  Networks: {df_metadata['network'].nunique()}")
+    # print(f"  Stations: {len(df_metadata)}")
+    # print(f"  Date range: {df_metadata['start_date'].min()} to {df_metadata['end_date'].max()}")
+    # print(f"  Depth range: {df_metadata['n_depths'].min()}-{df_metadata['n_depths'].max()} depths per station")
     
 else:
     print("\nNo valid data found across all stations")
