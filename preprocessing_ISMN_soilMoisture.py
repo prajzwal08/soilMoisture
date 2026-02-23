@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import scienceplots  # registers 'science', 'no-latex', etc.
 
+os.chdir('/home/khanalp/code/PhD/soilMoisture/')
+from utils import longest_available_after_removing_long_gaps,trim_to_surface_valid_period_and_keep_well_covered_depths,gapfill_by_monthday_mean_with_feb29_fallback
 
 plt.style.use(['science', 'no-latex'])
 mpl.rcParams.update({
@@ -144,8 +146,8 @@ def process_station(station_data, network, station):
 
     depth_bin = pd.cut(
         depth_cm,
-        bins=[0.0, 5.0, 20.0, 50.0, np.inf],
-        labels=["0-5", "5-20", "20-50", ">50"],
+        bins=[0.0, 10.0, 30.0, 50.0, np.inf],
+        labels=["0-10", "10-30", "30-50", ">50"],
         right=True,
         include_lowest=True
     )
@@ -180,68 +182,82 @@ What really happens is:
 '''
 
 def process_single_station(args):
-    """
-    Wrapper function for parallel processing
-    """
     network, station, idx, total = args
-    
+
+    def out(status: str, remark: str, **extra):
+        base = {"network": network, "station": station, "status": status, "remark": remark}
+        base.update(extra)
+        return base
+
     try:
         print(f"[{idx+1}/{total}] Processing: {network}/{station}")
-        
-        # Read station data
+
         station_data = ds[network][station].to_xarray()
-        
-        # Process station
         result_ds = process_station(station_data, network, station)
-        
-        # Skip if no valid data
+
         if result_ds is None:
-            print(f"[{idx+1}/{total}] Skipped (no valid data): {network}/{station}")
-            return None
-        
-        # Get metadata
-        lat = result_ds.attrs.get('latitude', np.nan)
-        lon = result_ds.attrs.get('longitude', np.nan)
-        depths = result_ds.depth.values.tolist()
-        
-        # Get date range
-        valid_dates = result_ds['soil_moisture'].dropna(dim='date_time', how='all').date_time
-        if len(valid_dates) == 0:
-            print(f"[{idx+1}/{total}] Skipped (no valid dates): {network}/{station}")
-            return None
-            
-        start_date = pd.to_datetime(valid_dates.min().values).strftime('%Y%m%d')
-        end_date = pd.to_datetime(valid_dates.max().values).strftime('%Y%m%d')
-        
-        # Create filename
+            return out("skipped", "no valid data after process_station",
+                       latitude=np.nan, longitude=np.nan)
+
+        # Always available for saved/skipped from here
+        lat = float(result_ds.attrs.get("latitude", np.nan))
+        lon = float(result_ds.attrs.get("longitude", np.nan))
+
+        surface_depth = "0-10"
+
+        longest_available = longest_available_after_removing_long_gaps(result_ds, max_gap_days=7)
+        L, start, end = longest_available.get(surface_depth, (0, None, None))
+        if (L is None) or (L == 0) or (start is None) or (end is None):
+            return out("skipped", f"no surface run for {surface_depth} after removing long gaps",
+                       latitude=lat, longitude=lon)
+
+        ds_clean = trim_to_surface_valid_period_and_keep_well_covered_depths(
+            result_ds, longest_available, surface_depth=surface_depth, min_frac=0.95
+        )
+        if ds_clean is None:
+            return out("skipped", "no clean data after trimming/coverage filter",
+                       latitude=lat, longitude=lon)
+
+        valid_dates = ds_clean["soil_moisture"].dropna(dim="date_time", how="all").date_time
+
+        # compute dates if any exist (even if < 1 year)
+        if len(valid_dates) > 0:
+            start_date = pd.to_datetime(valid_dates.min().values).strftime("%Y%m%d")
+            end_date = pd.to_datetime(valid_dates.max().values).strftime("%Y%m%d")
+        else:
+            start_date, end_date = None, None
+
+        if len(valid_dates) < 365:
+            return out("skipped", "<1 year of valid daily data",
+                       latitude=lat, longitude=lon,
+                       start_date=start_date, end_date=end_date,
+                       n_days=int(len(valid_dates)))
+
+        ds_gap_filled = gapfill_by_monthday_mean_with_feb29_fallback(ds_clean)
+
+        if ds_gap_filled["soil_moisture"].isnull().any().item():
+            return out("skipped", "NaNs remain after gap-filling",
+                       latitude=lat, longitude=lon,
+                       start_date=start_date, end_date=end_date,
+                       n_days=int(len(valid_dates)))
+
         filename = f"{network}_{station}_{start_date}_{end_date}.nc"
         filepath = output_dir / filename
-        
-        # Save to netCDF
-        result_ds.to_netcdf(filepath)
-        
-        print(f"[{idx+1}/{total}] Success: {network}/{station} -> {filename}")
-        
-        # Return metadata
-        metadata = {
-            'network': network,
-            'station': station,
-            'latitude': lat,
-            'longitude': lon,
-            # 'depths': str(depths),  # Convert list to string for CSV
-            # 'n_depths': len(depths),
-            'max_depth (cm)': result_ds.attrs.get("max_depth", np.nan) * 100.0,  # Convert to cm
-            'start_date': start_date,
-            'end_date': end_date,
-            'n_days': len(valid_dates),
-            'filename': filename
-        }
-        
-        return metadata
-        
+        ds_gap_filled.to_netcdf(filepath)
+
+        return out(
+            "saved", "",
+            latitude=lat, longitude=lon,
+            start_date=start_date, end_date=end_date,
+            n_days=int(len(valid_dates)),
+            max_depth_cm=float(result_ds.attrs.get("max_depth", np.nan)) * 100.0,
+            filename=filename, filepath=str(filepath),
+        )
+
     except Exception as e:
-        print(f"[{idx+1}/{total}] Error processing {network}/{station}: {e}")
-        return None
+        # If you want lat/lon even on errors, you can’t guarantee it exists.
+        # But you can still return NaN placeholders.
+        return out("error", str(e), latitude=np.nan, longitude=np.nan)
 
 # Collect all station tasks
 all_tasks = []
@@ -254,7 +270,7 @@ for network in ds.collection.networks:
 # CONFIGURE TEST RUN HERE
 # ============================================
 TEST_MODE = True
-N_TEST_STATIONS = 200
+N_TEST_STATIONS = 100
 
 if TEST_MODE:
     # reproducible random sample
@@ -276,7 +292,7 @@ print(f"Using {cpu_count()} CPU cores available")
 # CONFIGURE PARALLELIZATION HERE
 # ============================================
 USE_PARALLEL = True  # Set to False for sequential (easier debugging)
-N_WORKERS = 100  # Number of parallel workers (adjust as needed)
+N_WORKERS = 50  # Number of parallel workers (adjust as needed)
 
 if USE_PARALLEL:
     print(f"Running in parallel with {N_WORKERS} workers")
