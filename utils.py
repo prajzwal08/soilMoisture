@@ -262,9 +262,8 @@ def gapfill_by_monthday_mean_with_feb29_fallback(
     da = ds[var]
     orig_nan = da.isnull()
 
-    md = da[time_dim].dt.strftime("%m-%d")                 # e.g., "02-28"
-    clim = da.groupby(md).mean(time_dim, skipna=True)      # dims: (strftime, depth)
-
+    md = da[time_dim].dt.strftime("%m-%d").rename("month_day")              # avoiding strfttime coordinate
+    clim = da.groupby(md).mean(time_dim, skipna=True)     
     # Feb-29 fallback: if "02-29" exists but is all-NaN, replace with nearest (02-28 then 03-01)
     if "02-29" in clim[md.name].values:
         feb29 = clim.sel({md.name: "02-29"})
@@ -291,4 +290,4 @@ def gapfill_by_monthday_mean_with_feb29_fallback(
     else:
         out[flag_name] = flag
 
-    return out
+    return out.drop_vars(["strftime", "month_day"], errors="ignore")
