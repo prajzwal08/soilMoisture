@@ -51,7 +51,7 @@ mpl.rcParams.update({
 insitu_dir = '/home/khanalp/data/ISMNsoilMoisture/'
 
 # Create output directory
-output_dir = '/home/khanalp/code/PhD/soilMoisture/processed_soil_moisture/'
+output_dir = '/home/khanalp/data/soilmoisture/level1/'
 output_dir = Path(output_dir)
 output_dir.mkdir(exist_ok=True)
 
@@ -251,6 +251,7 @@ def process_single_station(args):
             start_date=start_date, end_date=end_date,
             n_days=int(len(valid_dates)),
             max_depth_cm=float(result_ds.attrs.get("max_depth", np.nan)) * 100.0,
+            depths = ds_gap_filled["depth"].values.tolist(), # added depths
             filename=filename, filepath=str(filepath),
         )
 
@@ -269,7 +270,7 @@ for network in ds.collection.networks:
 # ============================================
 # CONFIGURE TEST RUN HERE
 # ============================================
-TEST_MODE = True
+TEST_MODE = False 
 N_TEST_STATIONS = 100
 
 if TEST_MODE:
@@ -292,7 +293,7 @@ print(f"Using {cpu_count()} CPU cores available")
 # CONFIGURE PARALLELIZATION HERE
 # ============================================
 USE_PARALLEL = True  # Set to False for sequential (easier debugging)
-N_WORKERS = 50  # Number of parallel workers (adjust as needed)
+N_WORKERS = 100  # Number of parallel workers (adjust as needed)
 
 if USE_PARALLEL:
     print(f"Running in parallel with {N_WORKERS} workers")
@@ -315,7 +316,7 @@ if len(metadata_list) > 0:
     print(f"Successfully processed: {len(df_metadata)}/{len(tasks)} stations")
     print(f"Files saved to: {output_dir}/")
     print(f"\nMetadata summary:")
-    print(df_metadata.head(20))
+    # print(df_metadata.head(20))
     
     # Save metadata
     metadata_file = output_dir / 'station_metadata.csv'
