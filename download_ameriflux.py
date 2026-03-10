@@ -50,7 +50,7 @@ if not USER_ID or not USER_EMAIL:
 
 DATA_POLICY        = "CC-BY-4.0"    # "CC-BY-4.0" or "Legacy"
 INTENDED_USE       = "remote_sensing"  # synthesis | model | remote_sensing | other_research | education | other
-INTENDED_USE_TEXT  = "PhD research: multimodal soil moisture prediction"
+INTENDED_USE_TEXT  = "PhD research"
 
 # ---------------------------------------------------------------------------
 # Output directory
