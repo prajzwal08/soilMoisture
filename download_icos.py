@@ -35,7 +35,9 @@ OUT_DIR = Path("/home/khanalp/data/icos_raw")
 # ICOS Ecosystem gap-filled FLUXNET-format half-hourly product
 # Variables: NEE_VUT_REF, LE_F_MDS, H_F_MDS, GPP_DT_VUT_REF, TA_F, P_F ...
 # ---------------------------------------------------------------------------
-ECO_FLUXNET_SPEC = "http://meta.icos-cp.eu/resources/cpmeta/etcL2Fluxnet"
+ECO_FLUXNET_SPEC  = "http://meta.icos-cp.eu/resources/cpmeta/etcL2Fluxnet"
+ECO_AUXDATA_SPEC  = "http://meta.icos-cp.eu/resources/cpmeta/etcL2AuxData"
+ECO_BIF_SPEC      = "http://meta.icos-cp.eu/resources/cpmeta/etcAncillaryRawBif"
 
 
 def get_site_info() -> pd.DataFrame:
@@ -281,6 +283,165 @@ def read_icos(csv_path: Path) -> pd.DataFrame:
             break
 
     return df
+
+
+# ---------------------------------------------------------------------------
+# Metadata download
+# ---------------------------------------------------------------------------
+
+def download_icos_metadata(
+    site_ids: list[str] | None = None,
+    out_dir: Path = OUT_DIR,
+) -> dict[str, list[Path]]:
+    """
+    Download ICOS auxiliary / ancillary metadata files for each station.
+
+    Two file types are fetched:
+      - etcL2AuxData        : instrument diagnostic data (per station, zipped CSV)
+      - etcAncillaryRawBif  : BIF ancillary file (sensor info, if available)
+
+    Parameters
+    ----------
+    site_ids : list of ICOS station IDs to download for, or None for all available
+    out_dir  : root output directory (files saved to out_dir/{SITE_ID}/metadata/)
+
+    Returns
+    -------
+    Dict mapping SITE_ID -> list of downloaded file paths.
+    """
+    from icoscp_core.icos import meta as icos_meta
+    from collections import defaultdict
+
+    def _extract_id(uri: str | None) -> str:
+        if not uri:
+            return ""
+        part = uri.split("/")[-1]
+        return part.split("_", 1)[-1]
+
+    # Fetch all available metadata objects
+    all_meta_dobjs = []
+    for spec_label, spec in [("AuxData", ECO_AUXDATA_SPEC), ("BIF", ECO_BIF_SPEC)]:
+        try:
+            dobjs = icos_meta.list_data_objects(datatype=spec, limit=1000)
+            print(f"  {spec_label}: {len(dobjs)} objects found")
+            all_meta_dobjs.extend(dobjs)
+        except Exception as e:
+            print(f"  {spec_label}: ERROR {e}")
+
+    # Group by station
+    by_station: dict[str, list] = defaultdict(list)
+    for d in all_meta_dobjs:
+        sid = _extract_id(d.station_uri)
+        by_station[sid].append(d)
+
+    # Filter to requested site_ids
+    if site_ids is not None:
+        target = set(site_ids)
+    else:
+        target = set(by_station.keys())
+
+    downloaded: dict[str, list[Path]] = {}
+
+    for site_id in sorted(target):
+        dobjs = by_station.get(site_id, [])
+        if not dobjs:
+            print(f"  {site_id}: no metadata files available")
+            continue
+
+        meta_dir = out_dir / site_id / "metadata"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"  Downloading metadata for {site_id} ({len(dobjs)} file(s)) ...")
+        site_files = []
+        for d in dobjs:
+            try:
+                icos_data.save_to_folder(d.uri, str(meta_dir))
+                files = sorted(meta_dir.iterdir(), key=lambda p: p.stat().st_mtime)
+                if files:
+                    site_files.append(files[-1])
+                    print(f"    Saved -> {files[-1].name}")
+            except Exception as e:
+                print(f"    ERROR {d.filename}: {e}")
+
+        if site_files:
+            downloaded[site_id] = site_files
+
+    return downloaded
+
+
+# ---------------------------------------------------------------------------
+# Station labelling report PDFs
+# ---------------------------------------------------------------------------
+
+def download_labelling_reports(
+    site_ids: list[str] | None = None,
+    out_dir: Path = OUT_DIR,
+) -> dict[str, list[Path]]:
+    """
+    Download ICOS Ecosystem Station Labelling Report PDFs.
+
+    These PDFs document the full station setup including sensor types,
+    installation depths (SWC, TS layers), measurement heights, etc.
+    Publicly accessible — no authentication required.
+
+    Parameters
+    ----------
+    site_ids : list of ICOS station IDs, or None for all available
+    out_dir  : root output directory (saved to out_dir/{SITE_ID}/metadata/)
+
+    Returns
+    -------
+    Dict mapping SITE_ID -> list of downloaded file paths.
+    """
+    import urllib.request
+    from icoscp_core.icos import meta as icos_meta
+
+    # Query all documentation objects for ecosystem stations
+    query = """
+prefix cpmeta: <http://meta.icos-cp.eu/ontologies/cpmeta/>
+SELECT ?stationId ?docObj ?docName WHERE {
+    ?station cpmeta:hasStationId ?stationId .
+    ?station cpmeta:hasDocumentationObject ?docObj .
+    ?docObj cpmeta:hasName ?docName .
+    FILTER(CONTAINS(LCASE(STR(?docName)), 'labelling'))
+}
+ORDER BY ?stationId
+"""
+    result = icos_meta.sparql_select(query)
+    print(f"  Found {len(result.bindings)} labelling reports on Carbon Portal")
+
+    target = set(site_ids) if site_ids else None
+    downloaded: dict[str, list[Path]] = {}
+
+    for b in result.bindings:
+        site_id  = b["stationId"].value
+        doc_uri  = b["docObj"].uri
+        doc_name = b["docName"].value
+
+        if target and site_id not in target:
+            continue
+
+        # Download URL: swap meta. -> data.
+        download_url = doc_uri.replace("meta.icos-cp.eu", "data.icos-cp.eu")
+
+        meta_dir = out_dir / site_id / "metadata"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        out_path = meta_dir / doc_name
+
+        if out_path.exists():
+            print(f"  {site_id}: already exists — {doc_name}")
+            downloaded.setdefault(site_id, []).append(out_path)
+            continue
+
+        try:
+            print(f"  {site_id}: downloading {doc_name} ...")
+            urllib.request.urlretrieve(download_url, out_path)
+            downloaded.setdefault(site_id, []).append(out_path)
+            print(f"    Saved -> {out_path}")
+        except Exception as e:
+            print(f"    ERROR {site_id}: {e}")
+
+    return downloaded
 
 
 # ---------------------------------------------------------------------------
