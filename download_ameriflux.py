@@ -285,6 +285,213 @@ def download_fluxnet(
     return downloaded
 
 
+def download_badm(
+    site_ids: list[str],
+    out_dir: Path = OUT_DIR,
+    data_policy: str = "CCBY4.0",
+    intended_use: str = INTENDED_USE,
+    intended_use_text: str = INTENDED_USE_TEXT,
+    user_id: str = USER_ID,
+    user_email: str = USER_EMAIL,
+    batch_size: int = 10,
+) -> list[Path]:
+    """
+    Download AmeriFlux BASE-BADM zip files (contains BIF Excel + BASE CSV).
+
+    Each zip includes:
+      - AMF_{SITE_ID}_BIF_{date}.xlsx  — BADM metadata (sensor depths, canopy height, ...)
+      - AMF_{SITE_ID}_BASE_HH_*.csv    — raw half-hourly flux data
+
+    Parameters
+    ----------
+    site_ids   : List of AmeriFlux site IDs
+    out_dir    : Directory to save downloaded zip files
+    batch_size : Sites per API request
+
+    Returns
+    -------
+    List of paths to downloaded zip files.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    downloaded = []
+    n_batches = (len(site_ids) - 1) // batch_size + 1
+
+    for i in range(0, len(site_ids), batch_size):
+        batch = site_ids[i : i + batch_size]
+        batch_num = i // batch_size + 1
+        payload = {
+            "user_id":      user_id,
+            "user_email":   user_email,
+            "site_ids":     batch,
+            "data_product": "BASE-BADM",
+            "data_policy":  data_policy,
+            "intended_use": intended_use,
+            "description":  intended_use_text,
+        }
+
+        print(f"Batch {batch_num}/{n_batches}: {batch}")
+        try:
+            resp = requests.post(DOWNLOAD_URL, json=payload,
+                                 headers={"Content-Type": "application/json"}, timeout=120)
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            print(f"  API ERROR: {e}")
+            continue
+
+        data_urls = resp.json().get("data_urls", [])
+        found_ids = {e["site_id"] for e in data_urls}
+        missing = [s for s in batch if s not in found_ids]
+        if missing:
+            print(f"  No data available for: {missing}")
+
+        for entry in data_urls:
+            site_id  = entry["site_id"]
+            url      = entry["url"]
+            size_mb  = entry.get("download_size", 0) / 1024 / 1024
+            out_path = out_dir / f"{site_id}_BASE-BADM.zip"
+
+            print(f"  Downloading {site_id} ({size_mb:.1f} MB) -> {out_path.name}")
+            try:
+                dl = requests.get(url, timeout=600, stream=True)
+                dl.raise_for_status()
+                with open(out_path, "wb") as f:
+                    for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                        f.write(chunk)
+                downloaded.append(out_path)
+                print(f"    Saved.")
+            except requests.HTTPError as e:
+                print(f"    DOWNLOAD ERROR: {e}")
+
+    return downloaded
+
+
+def _parse_bif(zip_path: Path) -> dict[str, dict]:
+    """
+    Parse the BIF (BADM Interchange Format) Excel inside a BASE-BADM zip.
+
+    The BIF has a single sheet 'AMF-BIF' with columns:
+      SITE_ID, GROUP_ID, VARIABLE_GROUP, VARIABLE, DATAVALUE
+
+    Returns a dict mapping VARIABLE_GROUP -> list of {VARIABLE: DATAVALUE} dicts
+    (one dict per GROUP_ID, i.e. one per sensor installation / measurement event).
+    """
+    import zipfile, openpyxl
+    from collections import defaultdict
+
+    with zipfile.ZipFile(zip_path) as zf:
+        bif_names = [n for n in zf.namelist() if n.endswith(".xlsx")]
+        if not bif_names:
+            return {}
+        with zf.open(bif_names[0]) as f:
+            wb = openpyxl.load_workbook(f, read_only=True, data_only=True)
+            ws = wb["AMF-BIF"]
+            rows = list(ws.iter_rows(values_only=True))
+
+    if not rows:
+        return {}
+
+    hdr = rows[0]  # (SITE_ID, GROUP_ID, VARIABLE_GROUP, VARIABLE, DATAVALUE)
+    raw = [dict(zip(hdr, r)) for r in rows[1:]]
+
+    # Pivot: group_key = (VARIABLE_GROUP, GROUP_ID) -> {VARIABLE: DATAVALUE}
+    pivoted: dict[tuple, dict] = defaultdict(dict)
+    for r in raw:
+        key = (r["VARIABLE_GROUP"], r["GROUP_ID"])
+        pivoted[key][r["VARIABLE"]] = r["DATAVALUE"]
+
+    # Reorganise by VARIABLE_GROUP -> list of pivoted dicts
+    by_group: dict[str, list[dict]] = defaultdict(list)
+    for (vgrp, _), d in pivoted.items():
+        by_group[vgrp].append(d)
+
+    return dict(by_group)
+
+
+def extract_badm_metadata(zip_paths: list[Path]) -> pd.DataFrame:
+    """
+    Extract key ancillary metadata from BASE-BADM zip files.
+
+    For each site, returns:
+      SITE_ID              — AmeriFlux site ID
+      SWC_DEPTHS_CM        — sorted list of unique sensor depth ranges as
+                             "MIN-MAX" strings (cm), e.g. ["0-15", "15-30"]
+      CANOPY_HEIGHT_M      — most recent mean canopy/vegetation height (m),
+                             or NaN if not reported
+      CANOPY_HEIGHT_DATE   — date of that measurement (YYYYMMDD string)
+      CANOPY_HEIGHT_VEGTYPE— vegetation type label for the canopy measurement
+
+    Notes
+    -----
+    EC measurement height is not stored in BADM for most sites and is therefore
+    not included here. It can often be inferred as 1.5-2× canopy height (forests)
+    or found in site publications.
+
+    Parameters
+    ----------
+    zip_paths : Paths to downloaded BASE-BADM zip files.
+
+    Returns
+    -------
+    DataFrame with one row per site.
+    """
+    records = []
+
+    for zp in zip_paths:
+        site_id = zp.name.split("_")[0]  # e.g. "US-Var" from "US-Var_BASE-BADM.zip"
+        by_group = _parse_bif(zp)
+
+        # ── SM sensor depth ranges ────────────────────────────────────────────
+        depth_ranges: set[str] = set()
+        for g in by_group.get("GRP_SWC", []):
+            d_min = g.get("SWC_PROFILE_MIN")
+            d_max = g.get("SWC_PROFILE_MAX")
+            if d_min is not None and d_max is not None:
+                try:
+                    depth_ranges.add(f"{int(float(d_min))}-{int(float(d_max))}")
+                except (ValueError, TypeError):
+                    pass
+        swc_depths = sorted(depth_ranges, key=lambda s: int(s.split("-")[0]))
+
+        # ── Canopy height — most recent Mean entry ────────────────────────────
+        canopy_h = float("nan")
+        canopy_date = None
+        canopy_vegtype = None
+
+        mean_entries = [
+            g for g in by_group.get("GRP_HEIGHTC", [])
+            if g.get("HEIGHTC_STATISTIC", "").lower() == "mean"
+            and g.get("HEIGHTC") is not None
+        ]
+        if mean_entries:
+            # Sort by date descending; entries without a date go last
+            def _hc_date(g):
+                try:
+                    return int(g.get("HEIGHTC_DATE") or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            most_recent = max(mean_entries, key=_hc_date)
+            try:
+                canopy_h = float(most_recent["HEIGHTC"])
+            except (ValueError, TypeError):
+                pass
+            canopy_date = most_recent.get("HEIGHTC_DATE")
+            canopy_vegtype = most_recent.get("HEIGHTC_VEGTYPE")
+
+        records.append({
+            "SITE_ID":               site_id,
+            "SWC_DEPTHS_CM":         swc_depths,
+            "CANOPY_HEIGHT_M":       canopy_h,
+            "CANOPY_HEIGHT_DATE":    canopy_date,
+            "CANOPY_HEIGHT_VEGTYPE": canopy_vegtype,
+        })
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df = df.sort_values("SITE_ID").reset_index(drop=True)
+    return df
+
+
 def extract_fluxnet(zip_paths: list[Path], out_dir: Path | None = None) -> dict[str, list[Path]]:
     """
     Extract downloaded FLUXNET zip files.
@@ -378,15 +585,25 @@ if __name__ == "__main__":
     print("\n=== 3. Request FLUXNET FULLSET data ===")
     site_ids = filtered["SITE_ID"].tolist()
     download_fluxnet(site_ids, data_variant="FULLSET")
-    
+
     # print("\n=== 4. Extract zip files ===")
     # by_res = extract_fluxnet(zips)
     # hh_csvs = by_res.get("HH", [])
     # print(f"  Half-hourly CSV files: {len(hh_csvs)}")
-    # #
+    #
     # print("\n=== 5. Read one half-hourly file as a check ===")
     # if hh_csvs:
     #     df = read_fluxnet(hh_csvs[0], resolution="HH")
     #     flux_cols = [c for c in ["NEE_VUT_REF", "H_F_MDS", "LE_F_MDS", "SW_IN_F", "TA_F", "P_F"]
     #                  if c in df.columns]
     #     print(df[flux_cols].head())
+
+    print("\n=== 6. Download BASE-BADM (sensor depths + canopy height) ===")
+    badm_zips = download_badm(site_ids)
+
+    print("\n=== 7. Extract ancillary metadata ===")
+    # badm_zips = sorted(OUT_DIR.glob("*_BASE-BADM.zip"))  # if already downloaded
+    meta = extract_badm_metadata(badm_zips)
+    meta.to_csv(OUT_DIR / "site_badm_metadata.csv", index=False)
+    print(meta[["SITE_ID", "SWC_DEPTHS_CM", "CANOPY_HEIGHT_M"]].to_string(index=False))
+    print(f"\nSaved -> {OUT_DIR / 'site_badm_metadata.csv'}")
