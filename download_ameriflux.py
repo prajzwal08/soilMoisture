@@ -16,12 +16,16 @@ FLUXNET vs BASE:
 """
 
 import json
+import os
 import re
 import time
 import zipfile
 import requests
 import pandas as pd
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # AmeriFlux endpoints
@@ -31,10 +35,19 @@ SITE_SEARCH_PAGE = "https://ameriflux.lbl.gov/sites/site-search/"
 DOWNLOAD_URL     = "https://amfcdn.lbl.gov/api/v1/data_download"
 
 # ---------------------------------------------------------------------------
-# Credentials & request metadata — fill these in before running
+# Credentials & request metadata — loaded from .env (never commit credentials)
+# Create a .env file in this directory with:
+#   AMERIFLUX_USER_ID=your_username
+#   AMERIFLUX_USER_EMAIL=your_email@example.com
 # ---------------------------------------------------------------------------
-USER_ID            = "prajzwal" # your_ameriflux_username
-USER_EMAIL         = "p.khanal@utwente.nl" # your_email@example.com
+USER_ID   = os.environ.get("AMERIFLUX_USER_ID", "")
+USER_EMAIL = os.environ.get("AMERIFLUX_USER_EMAIL", "")
+
+if not USER_ID or not USER_EMAIL:
+    raise EnvironmentError(
+        "AMERIFLUX_USER_ID and AMERIFLUX_USER_EMAIL must be set in .env or environment."
+    )
+
 DATA_POLICY        = "CC-BY-4.0"    # "CC-BY-4.0" or "Legacy"
 INTENDED_USE       = "remote_sensing"  # synthesis | model | remote_sensing | other_research | education | other
 INTENDED_USE_TEXT  = "PhD research: multimodal soil moisture prediction"
