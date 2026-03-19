@@ -146,8 +146,8 @@ def process_station(station_data, network, station):
 
     depth_bin = pd.cut(
         depth_cm,
-        bins=[0.0, 10.0, 30.0, 50.0, np.inf],
-        labels=["0-10", "10-30", "30-50", ">50"],
+        bins=[0.0, 10.0, 20.0, 40.0, 100.0],
+        labels=["0-10", "10-20", "20-40", "40-100"],
         right=True,
         include_lowest=True
     )
@@ -240,6 +240,32 @@ def process_single_station(args):
                        latitude=lat, longitude=lon,
                        start_date=start_date, end_date=end_date,
                        n_days=int(len(valid_dates)))
+
+        # --- Temporal provenance ---
+        ds_gap_filled.attrs['start_date']      = start_date
+        ds_gap_filled.attrs['end_date']        = end_date
+        ds_gap_filled.attrs['n_days_total']    = int(len(ds_gap_filled.date_time))
+        ds_gap_filled.attrs['processing_date'] = datetime.now().strftime("%Y-%m-%d")
+
+        # --- Processing provenance ---
+        ds_gap_filled.attrs['depth_bins']         = "0,10,20,40,100"
+        ds_gap_filled.attrs['min_obs_per_day']    = 6
+        ds_gap_filled.attrs['max_gap_days']       = 7
+        ds_gap_filled.attrs['min_coverage_frac']  = 0.95
+        ds_gap_filled.attrs['pipeline_version']   = "1.1"
+
+        # --- Per-depth quality stats ---
+        qc = ds_gap_filled["soil_moisture_qc"]
+        for depth in ds_gap_filled.depth.values:
+            q          = qc.sel(depth=depth)
+            n_obs      = int((q == 0).sum().item())
+            n_filled   = int((q == 1).sum().item())
+            n_total    = int((q != 2).sum().item())
+            frac_obs   = round(n_obs / n_total, 4) if n_total > 0 else 0.0
+            d          = str(depth).replace("-", "_").replace(">", "gt")
+            ds_gap_filled.attrs[f'n_observed_{d}']   = n_obs
+            ds_gap_filled.attrs[f'n_gapfilled_{d}']  = n_filled
+            ds_gap_filled.attrs[f'frac_observed_{d}'] = frac_obs
 
         filename = f"{network}_{station}_{start_date}_{end_date}.nc"
         filepath = output_dir / filename
