@@ -1,0 +1,688 @@
+"""
+Download satellite data for ISMN stations.
+
+Products per station (TerraMind station-first structure):
+  {station}/S1RTC/YYYYMMDD_ASC.tif      float32, dB [-50,+10], bands: VV VH
+  {station}/S1GRD/YYYYMMDD_ASC.tif      float32, dB [-50,+10], bands: VV VH
+  {station}/S2L1C/YYYYMMDD.tif          float32, DN [0,10000], 13 bands
+  {station}/S2L2A/YYYYMMDD.tif          float32, DN [0,10000], 12 bands
+  {station}/DEM/dem.tif                 float32, metres, bilinear 10m
+  {station}/LULC/YYYY.tif              uint8, class 0-9, nearest 10m
+  {station}/metadata.json
+
+Sources:
+  S1RTC  → Microsoft Planetary Computer (sentinel-1-rtc)
+  S1GRD  → AWS Earth Search           (sentinel-1-grd)
+  S2L1C  → AWS Earth Search           (sentinel-2-l1c)
+  S2L2A  → AWS Earth Search           (sentinel-2-l2a)
+  DEM    → AWS Earth Search           (cop-dem-glo-30)
+  LULC   → Microsoft Planetary Computer (io-lulc-annual-v02)
+
+Usage:
+  python download_satellite.py
+  nohup python download_satellite.py > /tmp/download_satellite.log 2>&1 &
+"""
+
+import json
+import logging
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Allow anonymous S3 access for open-data collections (DEM, S2, etc.)
+os.environ.setdefault("AWS_NO_SIGN_REQUEST", "YES")
+
+import numpy as np
+import pandas as pd
+import planetary_computer
+import pystac_client
+import rioxarray  # noqa: F401  registers .rio accessor
+import stackstac
+import xarray as xr
+from pyproj import Transformer
+from rasterio.enums import Resampling
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+STATION_CSV = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv")
+OUTPUT_DIR   = Path("/home/khanalp/data/satellite")
+LOG_FILE     = OUTPUT_DIR / "download_log.csv"
+
+N_STATIONS   = 100
+RANDOM_SEED  = 42
+PIXEL_SIZE   = 264      # pixels per side
+RES_M        = 10       # metres per pixel
+
+# Parallelism
+# N_WORKERS: concurrent stations. 4–6 is a safe default (network + MPC rate limits).
+# Modalities within each station always run in parallel (5 threads per station).
+N_WORKERS    = 4
+
+GLOBAL_START     = "2016-01-01"
+LULC_START_YEAR  = 2017
+LULC_END_YEAR    = 2024
+
+MAX_RETRIES  = 3
+RETRY_WAITS  = [5, 15, 45]   # seconds between attempts
+
+MPC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
+AWS_URL = "https://earth-search.aws.element84.com/v1"
+
+# Explicit band lists ensure consistent ordering in output GeoTIFFs.
+# AWS Earth Search uses common names, not ESA band numbers.
+# Mapping: coastal=B01, blue=B02, green=B03, red=B04,
+#          rededge1=B05, rededge2=B06, rededge3=B07, nir=B08,
+#          nir08=B8A, nir09=B09, cirrus=B10, swir16=B11, swir22=B12
+S1_ASSETS    = ["vv", "vh"]
+S2L1C_BANDS  = [
+    "coastal","blue","green","red",
+    "rededge1","rededge2","rededge3",
+    "nir","nir08","nir09","cirrus","swir16","swir22",
+]  # 13 bands (B01–B12 + B8A), L1C TOA
+S2L2A_BANDS  = [
+    "coastal","blue","green","red",
+    "rededge1","rededge2","rededge3",
+    "nir","nir08","nir09","swir16","swir22",
+]  # 12 bands (no cirrus/B10), L2A BOA
+
+LOG_COLS = [
+    "station_id","network","lat","lon",
+    "s1rtc_status","s1rtc_n",
+    "s1grd_status","s1grd_n",
+    "s2l1c_status","s2l1c_n",
+    "s2l2a_status","s2l2a_n",
+    "dem_status","lulc_status",
+    "error_msg","timestamp",
+]
+
+# ============================================================
+# UTILITIES
+# ============================================================
+
+def parse_date(val) -> str:
+    """
+    Return ISO date string (YYYY-MM-DD) from either:
+      - ISO string already: '2021-04-29' or '2021-04-29T...'
+      - YYYYMMDD integer or float: 20210429 / 20210429.0
+    """
+    s = str(val).split(".")[0].strip()  # drop decimal part
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return s[:10]
+
+
+def setup_logging():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(OUTPUT_DIR / "download.log"),
+        ],
+    )
+
+
+def get_utm_epsg(lat: float, lon: float) -> int:
+    """Return EPSG code for the UTM zone covering (lat, lon)."""
+    zone = int((lon + 180) / 6) + 1
+    return 32600 + zone if lat >= 0 else 32700 + zone
+
+
+def station_grid(lat: float, lon: float):
+    """
+    Return (epsg, bounds, bbox_latlon) for the station patch.
+      bounds      – (xmin, ymin, xmax, ymax) in UTM metres
+      bbox_latlon – [lon_min, lat_min, lon_max, lat_max] for STAC search
+    """
+    epsg = get_utm_epsg(lat, lon)
+    fwd = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+    inv = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
+    cx, cy = fwd.transform(lon, lat)
+    half = (PIXEL_SIZE * RES_M) / 2
+    bounds = (cx - half, cy - half, cx + half, cy + half)
+    corners = [inv.transform(x, y) for x, y in
+               [(bounds[0], bounds[1]), (bounds[2], bounds[3])]]
+    bbox = [corners[0][0], corners[0][1], corners[1][0], corners[1][1]]
+    return epsg, bounds, bbox
+
+
+def linear_to_db(arr: np.ndarray) -> np.ndarray:
+    """Convert linear SAR backscatter (σ₀) → dB, clip to [-50, +10]."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        db = np.where(arr > 0, 10.0 * np.log10(arr), np.nan)
+    return np.clip(db, -50.0, 10.0).astype(np.float32)
+
+
+def remove_s2l2a_offset(arr: np.ndarray, baseline: str) -> np.ndarray:
+    """
+    ESA added +1000 to S2 L2A DN values in processing baseline 04.00
+    (effective ~2022-01-25). Subtract it and clip to [0, 10000].
+    """
+    try:
+        if float(baseline) >= 4.0:
+            arr = arr - 1000.0
+    except (ValueError, TypeError):
+        pass
+    return np.clip(arr, 0, 10000).astype(np.float32)
+
+
+def orbit_suffix(item) -> str:
+    """Return 'ASC' or 'DESC' from STAC item orbit state."""
+    state = str(item.properties.get("sat:orbit_state", "")).lower()
+    return "ASC" if "asc" in state else "DESC"
+
+
+_NO_RETRY_PHRASES = (
+    "does not exist",      # S3 key missing — retrying won't help
+    "Access Denied",       # requester-pays / auth — retrying won't help
+    "403",                 # HTTP Forbidden
+    "NoSuchKey",           # S3 explicit error code
+)
+
+def with_retry(func, *args, **kwargs):
+    """Call func(*args, **kwargs) up to MAX_RETRIES times with backoff.
+    Errors matching _NO_RETRY_PHRASES are raised immediately without retrying."""
+    last_exc = None
+    for attempt, wait in enumerate(RETRY_WAITS + [None], start=1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc)
+            if any(p in msg for p in _NO_RETRY_PHRASES):
+                raise  # non-recoverable — don't waste time retrying
+            if attempt > MAX_RETRIES:
+                break
+            logging.warning(f"  Attempt {attempt} failed ({exc}). Retrying in {wait}s…")
+            time.sleep(wait)
+    raise last_exc
+
+
+def center_crop(da: xr.DataArray, size: int = PIXEL_SIZE) -> xr.DataArray:
+    """
+    Crop the last two (y, x) dims to exactly `size × size`.
+    stackstac may snap bounds outward by ≤1 pixel; this corrects that.
+    """
+    h, w = da.shape[-2], da.shape[-1]
+    if h == size and w == size:
+        return da
+    sh = (h - size) // 2
+    sw = (w - size) // 2
+    return da[..., sh : sh + size, sw : sw + size]
+
+
+def save_geotiff(da: xr.DataArray, path: Path, dtype: str, epsg: int):
+    """
+    Write a (band, y, x) DataArray to a compressed GeoTIFF.
+    Sets the CRS from epsg before writing.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    da = da.rio.write_crs(f"EPSG:{epsg}")
+    da.rio.to_raster(str(path), dtype=dtype, compress="deflate", tiled=True)
+
+
+def load_checkpoint() -> pd.DataFrame:
+    if LOG_FILE.exists():
+        return pd.read_csv(LOG_FILE, dtype=str)
+    return pd.DataFrame(columns=LOG_COLS)
+
+
+def save_checkpoint(df: pd.DataFrame):
+    df.to_csv(LOG_FILE, index=False)
+
+# ============================================================
+# DOWNLOAD: SENTINEL-1 RTC  (MPC)
+# ============================================================
+
+def download_s1rtc(
+    station_dir: Path, catalog_mpc,
+    epsg: int, bounds: tuple, bbox: list,
+    start: str, end: str, meta: dict,
+) -> int:
+    out_dir = station_dir / "S1RTC"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    items = list(catalog_mpc.search(
+        collections=["sentinel-1-rtc"],
+        bbox=bbox,
+        datetime=f"{start}/{end}",
+    ).items())
+    # Keep IW mode only (client-side safeguard)
+    items = [i for i in items if i.properties.get("s1:instrument_mode", "IW") == "IW"]
+
+    n = 0
+    for item in items:
+        date_str = item.datetime.strftime("%Y%m%d")
+        suffix   = orbit_suffix(item)
+        fpath    = out_dir / f"{date_str}_{suffix}.tif"
+        if fpath.exists():
+            n += 1
+            continue
+
+        def _load(it=item):
+            da = stackstac.stack(
+                [it], assets=S1_ASSETS,
+                epsg=epsg, resolution=RES_M, bounds=bounds,
+                rescale=False,
+            ).squeeze("time")
+            return da.compute()
+
+        da = with_retry(_load)
+        da = da.astype("float32")
+        da = center_crop(da)
+        da.values = linear_to_db(da.values)
+        da = da.assign_coords(band=["VV", "VH"])
+        save_geotiff(da, fpath, "float32", epsg)
+
+        meta["S1RTC"][f"{date_str}_{suffix}"] = {
+            "datetime_utc": item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platform": item.properties.get("platform", ""),
+            "orbit":    item.properties.get("sat:orbit_state", ""),
+        }
+        n += 1
+        logging.debug(f"    S1RTC {fpath.name}")
+
+    return n
+
+# ============================================================
+# DOWNLOAD: SENTINEL-1 GRD  (MPC)
+# Note: AWS S1 GRD bucket (sentinel-s1-l1c) is requester-pays;
+#       MPC provides the same collection free of charge.
+# ============================================================
+
+def download_s1grd(
+    station_dir: Path, catalog_mpc,
+    epsg: int, bounds: tuple, bbox: list,
+    start: str, end: str, meta: dict,
+) -> int:
+    out_dir = station_dir / "S1GRD"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    items = list(catalog_mpc.search(
+        collections=["sentinel-1-grd"],
+        bbox=bbox,
+        datetime=f"{start}/{end}",
+    ).items())
+    items = [i for i in items if i.properties.get("s1:instrument_mode", "IW") == "IW"]
+
+    n = 0
+    for item in items:
+        date_str = item.datetime.strftime("%Y%m%d")
+        suffix   = orbit_suffix(item)
+        fpath    = out_dir / f"{date_str}_{suffix}.tif"
+        if fpath.exists():
+            n += 1
+            continue
+
+        def _load(it=item):
+            da = stackstac.stack(
+                [it], assets=S1_ASSETS,
+                epsg=epsg, resolution=RES_M, bounds=bounds,
+                rescale=False,
+            ).squeeze("time")
+            return da.compute()
+
+        try:
+            # No retry here: CRS errors from GRD native SAR geometry are non-recoverable
+            da = _load()
+        except Exception as exc:
+            logging.debug(f"    S1GRD {fpath.name} skipped: {exc}")
+            continue
+
+        da = da.astype("float32")
+        da = center_crop(da)
+        da.values = linear_to_db(da.values)
+        da = da.assign_coords(band=["VV", "VH"])
+        save_geotiff(da, fpath, "float32", epsg)
+
+        meta["S1GRD"][f"{date_str}_{suffix}"] = {
+            "datetime_utc": item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platform": item.properties.get("platform", ""),
+            "orbit":    item.properties.get("sat:orbit_state", ""),
+        }
+        n += 1
+        logging.debug(f"    S1GRD {fpath.name}")
+
+    return n
+
+# ============================================================
+# DOWNLOAD: SENTINEL-2  (AWS)
+# ============================================================
+
+def download_s2(
+    station_dir: Path, catalog_aws,
+    epsg: int, bounds: tuple, bbox: list,
+    start: str, end: str,
+    collection: str, bands: list,
+    meta: dict,
+) -> int:
+    modality = "S2L1C" if "l1c" in collection else "S2L2A"
+    out_dir  = station_dir / modality
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    items = list(catalog_aws.search(
+        collections=[collection],
+        bbox=bbox,
+        datetime=f"{start}/{end}",
+    ).items())
+
+    # Fix AWS Earth Search catalog bug: some sentinel-2-l1c items have
+    # asset hrefs pointing to s3://sentinel-s2-l2a instead of sentinel-s2-l1c.
+    # The files exist in the L1C bucket at the same path — just redirect.
+    if modality == "S2L1C":
+        for item in items:
+            for asset in item.assets.values():
+                if hasattr(asset, "href") and "sentinel-s2-l2a" in asset.href:
+                    asset.href = asset.href.replace("sentinel-s2-l2a", "sentinel-s2-l1c")
+
+    # Group by date → keep acquisition with lowest cloud cover
+    by_date: dict[str, object] = {}
+    for item in items:
+        date_str = item.datetime.strftime("%Y%m%d")
+        cc_new   = item.properties.get("eo:cloud_cover", 100)
+        cc_cur   = by_date[date_str].properties.get("eo:cloud_cover", 100) if date_str in by_date else 101
+        if cc_new < cc_cur:
+            by_date[date_str] = item
+
+    n = 0
+    for date_str, item in sorted(by_date.items()):
+        fpath = out_dir / f"{date_str}.tif"
+        if fpath.exists():
+            n += 1
+            continue
+
+        baseline = item.properties.get("s2:processing_baseline", "00.00")
+
+        def _load(it=item):
+            da = stackstac.stack(
+                [it], assets=bands,
+                epsg=epsg, resolution=RES_M, bounds=bounds,
+                resampling=Resampling.nearest,   # all S2 bands → 10 m nearest (TerraMind convention)
+                rescale=False,
+            ).squeeze("time")
+            return da.compute()
+
+        try:
+            da = with_retry(_load)
+        except Exception as exc:
+            logging.warning(f"    {modality} {fpath.name} skipped: {exc}")
+            continue
+
+        da = da.astype("float32")
+        da = center_crop(da)
+
+        if modality == "S2L2A":
+            da.values = remove_s2l2a_offset(da.values, baseline)
+        else:
+            da.values = np.clip(da.values, 0, 10000).astype(np.float32)
+
+        da = da.assign_coords(band=bands)
+        save_geotiff(da, fpath, "float32", epsg)
+
+        meta[modality][date_str] = {
+            "datetime_utc":        item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platform":            item.properties.get("platform", ""),
+            "processing_baseline": baseline,
+        }
+        n += 1
+        logging.debug(f"    {modality} {fpath.name}")
+
+    return n
+
+# ============================================================
+# DOWNLOAD: COPERNICUS DEM  (AWS)
+# ============================================================
+
+def download_dem(
+    station_dir: Path, catalog_aws,
+    epsg: int, bounds: tuple, bbox: list,
+    meta: dict,
+) -> bool:
+    out_dir = station_dir / "DEM"
+    fpath   = out_dir / "dem.tif"
+    if fpath.exists():
+        return True
+
+    items = list(catalog_aws.search(
+        collections=["cop-dem-glo-30"],
+        bbox=bbox,
+    ).items())
+
+    if not items:
+        return False
+
+    def _load():
+        da = stackstac.stack(
+            items,
+            epsg=epsg, resolution=RES_M, bounds=bounds,
+            resampling=Resampling.bilinear,
+            rescale=False,
+        )
+        return stackstac.mosaic(da).compute()
+
+    da = with_retry(_load)
+    da = da.astype("float32").squeeze(drop=True)
+    if da.ndim == 2:
+        da = da.expand_dims("band")
+    da = center_crop(da)
+    save_geotiff(da, fpath, "float32", epsg)
+
+    meta["DEM"] = {"source": "cop-dem-glo-30", "resampling": "bilinear"}
+    logging.debug("    DEM dem.tif")
+    return True
+
+# ============================================================
+# DOWNLOAD: ESRI LULC  (MPC)
+# ============================================================
+
+def download_lulc(
+    station_dir: Path, catalog_mpc,
+    epsg: int, bounds: tuple, bbox: list,
+    start_year: int, end_year: int,
+    meta: dict,
+) -> bool:
+    out_dir = station_dir / "LULC"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    n = 0
+
+    for year in range(start_year, end_year + 1):
+        fpath = out_dir / f"{year}.tif"
+        if fpath.exists():
+            n += 1
+            continue
+
+        items = list(catalog_mpc.search(
+            collections=["io-lulc-annual-v02"],
+            bbox=bbox,
+            datetime=f"{year}-01-01/{year}-12-31",
+        ).items())
+
+        if not items:
+            logging.debug(f"    LULC {year}: no items found")
+            continue
+
+        def _load(its=items):
+            da = stackstac.stack(
+                its,
+                epsg=epsg, resolution=RES_M, bounds=bounds,
+                resampling=Resampling.nearest,
+                rescale=False,
+            )
+            return stackstac.mosaic(da).compute()
+
+        da = with_retry(_load)
+        da = da.squeeze(drop=True)
+        if da.ndim == 2:
+            da = da.expand_dims("band")
+        da = center_crop(da)
+        da.values = np.clip(da.values, 0, 9).astype(np.uint8)
+        save_geotiff(da, fpath, "uint8", epsg)
+
+        meta["LULC"][str(year)] = {"source": "io-lulc-annual-v02"}
+        n += 1
+        logging.debug(f"    LULC {year}.tif")
+
+    return n > 0
+
+# ============================================================
+# PER-STATION ORCHESTRATION
+# ============================================================
+
+def process_station(row: pd.Series, catalog_mpc, catalog_aws) -> dict:
+    station_id = f"{row.network}_{row.station}"
+    lat, lon   = float(row.latitude), float(row.longitude)
+
+    # Clamp time range to [GLOBAL_START, station end_date]
+    start = max(GLOBAL_START, parse_date(row.start_date)) if pd.notna(row.start_date) else GLOBAL_START
+    end   = parse_date(row.end_date) if pd.notna(row.end_date) else datetime.now().strftime("%Y-%m-%d")
+    start_year = max(LULC_START_YEAR, int(start[:4]))
+    end_year   = min(LULC_END_YEAR,   int(end[:4]))
+
+    epsg, bounds, bbox = station_grid(lat, lon)
+    station_dir = OUTPUT_DIR / station_id
+    station_dir.mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "station":      row.station,
+        "network":      row.network,
+        "latitude":     lat,
+        "longitude":    lon,
+        "epsg":         epsg,
+        "patch_size_px": PIXEL_SIZE,
+        "pixel_size_m":  RES_M,
+        "bounds_utm":    list(bounds),
+        "download_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "S1RTC": {}, "S1GRD": {}, "S2L1C": {}, "S2L2A": {}, "DEM": {}, "LULC": {},
+    }
+
+    log      = dict.fromkeys(LOG_COLS, "")
+    log.update(station_id=station_id, network=row.network, lat=lat, lon=lon)
+    err_lock = threading.Lock()   # guards log["error_msg"] concatenation
+
+    def _run(label, func, *args):
+        key_status = f"{label}_status"
+        key_n      = f"{label}_n"
+        try:
+            result = func(*args)
+            if isinstance(result, int):
+                log[key_n]      = result
+                log[key_status] = "done" if result > 0 else "no_data"
+            else:
+                log[key_status] = "done" if result else "no_data"
+        except Exception as exc:
+            log[key_status] = "error"
+            with err_lock:
+                log["error_msg"] = str(log["error_msg"]) + f"{label.upper()}:{exc}; "
+            logging.error(f"  {station_id} {label.upper()} failed: {exc}")
+
+    # Each modality is independent — run all in parallel
+    modality_tasks = [
+        ("s1rtc", download_s1rtc, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta),
+        ("s1grd", download_s1grd, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta),
+        ("s2l1c", download_s2,    station_dir, catalog_aws, epsg, bounds, bbox, start, end,
+                  "sentinel-2-l1c", S2L1C_BANDS, meta),
+        ("s2l2a", download_s2,    station_dir, catalog_aws, epsg, bounds, bbox, start, end,
+                  "sentinel-2-l2a", S2L2A_BANDS, meta),
+        ("dem",   download_dem,   station_dir, catalog_aws, epsg, bounds, bbox, meta),
+        ("lulc",  download_lulc,  station_dir, catalog_mpc, epsg, bounds, bbox,
+                  start_year, end_year, meta),
+    ]
+    with ThreadPoolExecutor(max_workers=len(modality_tasks)) as pool:
+        futs = {pool.submit(_run, *t): t[0] for t in modality_tasks}
+        for fut in as_completed(futs):
+            fut.result()  # propagate any unexpected exception
+
+    # Write metadata.json
+    with open(station_dir / "metadata.json", "w") as f:
+        json.dump(meta, f, indent=2)
+
+    log["timestamp"] = datetime.now(timezone.utc).isoformat()
+    return log
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    setup_logging()
+    log = logging.getLogger(__name__)
+
+    # --- Select 100 random stations ---
+    df    = pd.read_csv(STATION_CSV)
+    saved = df[df.status == "saved"].reset_index(drop=True)
+    pilot = saved.sample(n=N_STATIONS, random_state=RANDOM_SEED).reset_index(drop=True)
+    log.info(f"Pilot: {N_STATIONS} stations sampled from {len(saved)} saved stations (seed={RANDOM_SEED})")
+
+    # --- Skip already-completed stations ---
+    checkpoint = load_checkpoint()
+    if len(checkpoint):
+        done_mask = checkpoint[
+            ["s1rtc_status","s1grd_status","s2l1c_status","s2l2a_status","dem_status","lulc_status"]
+        ].apply(lambda r: all(s in ("done","no_data") for s in r), axis=1)
+        done_ids = set(checkpoint.loc[done_mask, "station_id"])
+    else:
+        done_ids = set()
+    log.info(f"Already completed: {len(done_ids)} stations")
+
+    ckpt_lock   = threading.Lock()  # guards checkpoint file writes
+    completed   = [0]               # mutable counter for progress display
+    ckpt_state  = [checkpoint]      # mutable wrapper so the closure can update it
+
+    def _process_one(row):
+        """Worker: create per-thread STAC clients then process station."""
+        cat_mpc = pystac_client.Client.open(
+            MPC_URL, modifier=planetary_computer.sign_inplace
+        )
+        cat_aws = pystac_client.Client.open(AWS_URL)
+        return process_station(row, cat_mpc, cat_aws)
+
+    # Build work list (skip already-done stations)
+    todo = [(i, row) for i, row in pilot.iterrows()
+            if f"{row.network}_{row.station}" not in done_ids]
+
+    for i, row in pilot.iterrows():
+        station_id = f"{row.network}_{row.station}"
+        if station_id in done_ids:
+            log.info(f"[{i+1:3d}/{N_STATIONS}] Skip  {station_id}")
+
+    log.info(f"Stations to download: {len(todo)}  (workers={N_WORKERS})")
+
+    with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
+        fut_to_row = {pool.submit(_process_one, row): (i, row) for i, row in todo}
+
+        for fut in as_completed(fut_to_row):
+            i, row = fut_to_row[fut]
+            station_id = f"{row.network}_{row.station}"
+            try:
+                row_dict = fut.result()
+            except Exception as exc:
+                log.error(f"  {station_id} unexpected worker error: {exc}")
+                continue
+
+            completed[0] += 1
+            log.info(
+                f"[{completed[0]:3d}/{len(todo)}] Done  {station_id}  "
+                f"S1RTC={row_dict['s1rtc_n']} S2L1C={row_dict['s2l1c_n']} "
+                f"S2L2A={row_dict['s2l2a_n']} DEM={row_dict['dem_status']} "
+                f"LULC={row_dict['lulc_status']}"
+            )
+
+            with ckpt_lock:
+                updated = pd.concat(
+                    [ckpt_state[0], pd.DataFrame([row_dict])], ignore_index=True
+                ).drop_duplicates(subset="station_id", keep="last")
+                save_checkpoint(updated)
+                ckpt_state[0] = updated
+
+    log.info("Done.")
+
+
+if __name__ == "__main__":
+    main()
