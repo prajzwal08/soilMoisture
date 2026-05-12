@@ -7,7 +7,7 @@
 # climatological means, and saves one NetCDF per station.
 #
 # Output: /home/khanalp/data/soilmoisture/level1/
-# Depth bins: 0-10, 10-20, 20-40, 40-100 cm
+# Depth bins: 0-10, 10-30, 30-100 cm
 # ============================================================
 
 # --- Libraries ---
@@ -90,7 +90,7 @@ for network in ds.collection.networks:
 #   4. Resample hourly → daily mean; count valid obs per day.
 #   5. Mask days with fewer than 6 valid sub-daily observations.
 #   6. Bin sensor depths into standard layers and average within
-#      each bin: 0-10, 10-20, 20-40, 40-100 cm.
+#      each bin: 0-10, 10-30, 30-100 cm.
 #      (Bins chosen to match natural sensor placement clusters.)
 #   7. Return xr.Dataset with soil_moisture + station attrs.
 #      Returns None if no valid depths survive.
@@ -131,12 +131,18 @@ def process_station(station_data, network, station):
 
     depth_bin = pd.cut(
         depth_cm,
-        bins=[0.0, 10.0, 20.0, 40.0, 100.0],
-        labels=["0-10", "10-20", "20-40", "40-100"],
+        bins=[0.0, 10.0, 30.0, 100.0],
+        labels=["0-10", "10-30", "30-100"],
         right=True,
         include_lowest=True
     )
-    daily_filtered = daily_filtered.assign_coords(depth_bin=("depth", depth_bin.astype(str)))
+    # Drop sensors outside the defined bins (depth > 100 cm → NaN label)
+    valid_sensor_mask = ~pd.isna(depth_bin)  # numpy bool array
+    daily_filtered = daily_filtered.isel(depth=valid_sensor_mask)
+    if len(daily_filtered.depth) == 0:
+        return None
+    depth_bin_valid = depth_bin[valid_sensor_mask]
+    daily_filtered = daily_filtered.assign_coords(depth_bin=("depth", depth_bin_valid.astype(str)))
     daily_binned = (
         daily_filtered.groupby("depth_bin")
         .mean(dim="depth", skipna=True)
@@ -239,7 +245,7 @@ def process_single_station(args):
         ds_gap_filled.attrs['processing_date'] = datetime.now().strftime("%Y-%m-%d")
 
         # Processing provenance
-        ds_gap_filled.attrs['depth_bins']        = "0,10,20,40,100"
+        ds_gap_filled.attrs['depth_bins']        = "0,10,30,100"
         ds_gap_filled.attrs['min_obs_per_day']   = 6
         ds_gap_filled.attrs['max_gap_days']      = 7
         ds_gap_filled.attrs['min_coverage_frac'] = 0.95
@@ -258,6 +264,19 @@ def process_single_station(args):
             ds_gap_filled.attrs[f'n_observed_{d}']    = n_obs
             ds_gap_filled.attrs[f'n_gapfilled_{d}']   = n_filled
             ds_gap_filled.attrs[f'frac_observed_{d}'] = frac_obs
+
+        # Variable-level attributes
+        ds_gap_filled["soil_moisture"].attrs.update({
+            "units":         "m3 m-3",
+            "long_name":     "Volumetric soil moisture content",
+            "standard_name": "volume_fraction_of_condensed_water_in_soil",
+            "valid_range":   [0.0, 1.0],
+        })
+        ds_gap_filled["soil_moisture_qc"].attrs.update({
+            "long_name":     "Soil moisture quality control flag",
+            "flag_values":   "0 1 2",
+            "flag_meanings": "observed gap_filled missing",
+        })
 
         filename = f"{network}_{station}_{start_date}_{end_date}.nc"
         filepath = output_dir / filename

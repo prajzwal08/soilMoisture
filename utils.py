@@ -235,7 +235,13 @@ def trim_to_surface_valid_period_and_keep_well_covered_depths(
     # 2) coverage per depth within that window (raw non-NaN)
     frac = ds_ref[var].notnull().mean(time_dim)  # (depth,)
 
-    keep_depths = frac[depth_dim].where(frac >= min_frac, drop=True)
+    keep_depths = frac[depth_dim].where(frac >= min_frac, drop=True).values.tolist()
+    # Surface depth defines the window — always keep it regardless of coverage
+    if surface_depth not in keep_depths:
+        keep_depths.append(surface_depth)
+    # Preserve original depth order
+    all_depths = ds_ref[depth_dim].values.tolist()
+    keep_depths = [d for d in all_depths if d in keep_depths]
     return ds_ref.sel({depth_dim: keep_depths})
 
 # usage:
