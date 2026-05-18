@@ -1,0 +1,188 @@
+TWSA — Terrestrial Water Storage Anomaly Download
+==================================================
+Date: 2026-05-18
+Script: download_era5land_gee.py  (TWSA section, added alongside ERA5-Land)
+Reference: Watkins et al. (2015) — JPL RL06.3 Mascon Solution
+           doi:10.1002/2014JB011547
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. SCIENTIFIC DESCRIPTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Terrestrial water storage (TWS) integrates all water held on and below the
+land surface — groundwater, soil moisture, surface water, snow and ice — and
+thus encodes slow, large-scale hydrological signals that are invisible to
+optical and SAR remote sensing. Monthly anomalies in TWS (TWSA) derived from
+GRACE and GRACE-FO satellite gravimetry provide a complementary, basin-scale
+constraint on soil moisture variability that is particularly informative for
+deep root-zone and drought conditions.
+
+TWSA is extracted from the JPL RL06.3 Mascon solution (Watkins et al., 2015),
+accessed via Google Earth Engine (GEE) collection
+NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI. The Coastal Resolution Improvement (CRI)
+filter is applied to all mascons, which subdivides the nominal 3° mascon cells
+near land–ocean boundaries to reduce signal leakage between ocean and land
+water storage — an important correction for the 148 stations in our dataset
+located within 100 km of a coastline.
+
+TWSA is a sparse temporal modality (~12 tokens/year under ideal conditions)
+injected into the temporal transformer sequence alongside Sentinel-2/1 and
+ERA5-Land. Missing months — including the 11-month GRACE/GRACE-FO data gap
+(August 2017 – May 2018) — simply produce no token, handled natively by the
+model's sparse token injection mechanism. Mid-month day-of-year values
+(Jan=15, Feb=46, …, Dec=349) are assigned to each monthly observation for
+positional encoding in the temporal transformer.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. FLOWCHART
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+START
+  │
+  ▼
+┌──────────────────────────────────────────────────────────────┐
+│  ee.Initialize()  (cached GEE credentials)                   │
+│  Collection: NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI            │
+│  Bands: lwe_thickness, uncertainty                           │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  load_stations()                                             │
+│  Read station_splits.csv → 1,048 stations                   │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  build_twsa_job_list(df)                                     │
+│  For each station × year in [max(2002, start_year)           │
+│                               .. min(2024, end_year)]:       │
+│    output = {station}/TWSA/twsa_{year}.nc                    │
+│    if exists → SKIP (checkpoint)                             │
+│    else → add job {station_id, lat, lon, year, output_path}  │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  ThreadPoolExecutor (N_WORKERS = 10)                         │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼  [per job: one station × one year]
+┌──────────────────────────────────────────────────────────────┐
+│  process_twsa_station_year(job)                              │
+│                                                              │
+│  geometry = ee.Geometry.Point([lon, lat])                    │
+│                                                              │
+│  collection                                                  │
+│    .filterDate(year_start, year_end)                         │
+│    .select(["lwe_thickness", "uncertainty"])                 │
+│    .getRegion(geometry, scale=55000)    ← 55 km ≈ 0.5°      │
+│  → list-of-lists: [[header], [row0], …]                      │
+│                                                              │
+│  Parse → DataFrame (time, lwe, lwe_uncertainty)             │
+│  time = ms since epoch → UTC datetime                        │
+│  Filter to requested year                                    │
+│  Assign mid-month DoY [15,46,74,105,135,166,               │
+│                         196,227,258,288,319,349]            │
+│                                                              │
+│  Convert → xr.Dataset, shape (time=N_months,)               │
+│  N_months ≤ 12  (gap months produce no record)              │
+│  Save → {station}/TWSA/twsa_{year}.nc                       │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Append to twsa_gee_log.csv                                  │
+│  (station_id, year, n_months, status, error_msg, timestamp) │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼  (repeat for all jobs)
+                             END
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. TECHNICAL DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Dataset
+-------
+  Name:          GRACE/GRACE-FO JPL RL06.3 Mascon (CRI filtered)
+  GEE collection: NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI
+  Resolution:    0.5° grid (~55 km spacing; effective mascon ~300 km)
+  Temporal:      Monthly, April 2002 – September 2024
+  Auth:          Existing GEE credentials (same as ERA5-Land)
+
+GRACE/GRACE-FO data gap
+-----------------------
+  GRACE ended:     June 2017
+  GRACE-FO started: June 2018
+  Gap period:      August 2017 – May 2018 (~11 months)
+  Handling:        No TWSA token for these months in the model sequence.
+                   Model's sparse token mechanism handles naturally.
+                   Gap-filled products exist (SSA interpolation, Zenodo)
+                   but not used here — model trained to handle missingness.
+
+Variables extracted
+-------------------
+  lwe              liquid water equivalent thickness anomaly   cm EWT
+  lwe_uncertainty  1-sigma measurement uncertainty            cm EWT
+
+GEE extraction
+--------------
+  Method:   getRegion at point geometry, scale=55000 m
+  Note:     scale=55000 ensures GEE samples at the native 0.5° mascon grid.
+            Using a finer scale would interpolate between mascon cells,
+            giving the illusion of higher resolution that doesn't exist.
+            This is different from ERA5-Land which uses scale=11132 m (0.1°).
+
+Mid-month DoY assignment
+------------------------
+  Each monthly TWSA record is assigned the mid-month day-of-year for use
+  as positional encoding in the temporal transformer:
+    Jan=15, Feb=46, Mar=74, Apr=105, May=135, Jun=166,
+    Jul=196, Aug=227, Sep=258, Oct=288, Nov=319, Dec=349
+  This is consistent with the architecture specification (architecture.md).
+
+Output
+------
+  Path:       {SATELLITE_DIR}/{network}_{station_id}/TWSA/twsa_{year}.nc
+  Variables:  lwe (cm), lwe_uncertainty (cm), doy (mid-month DoY)
+  Shape:      (time=N_months,)  where N_months ≤ 12
+  Encoding:   NetCDF-4, float32
+
+Model usage
+-----------
+  ~12 tokens/year (monthly); sparse injection into temporal transformer.
+  Modality dropout p=0.5 during training.
+  Missing months (gap, no-data, coverage limit) → no token emitted.
+  DoY coordinate used for sinusoidal positional encoding.
+
+Design decisions
+----------------
+  1. CRI-filtered mascons: reduces land-ocean leakage for coastal stations
+     (148/1048 stations within ~100 km of coast).
+
+  2. GEE over direct PO.DAAC download: avoids NASA Earthdata registration,
+     consistent with existing GEE workflow for ERA5-Land, same session.
+     Tradeoff: GEE collection lags PO.DAAC by ~1-2 months.
+
+  3. No gap-filling: model architecture (sparse tokens + modality dropout)
+     is designed to handle missing modalities. Adding SSA-interpolated values
+     for 11 gap months adds complexity with marginal benefit.
+
+  4. GRACE_SCALE=55000: must match native 0.5° mascon resolution to avoid
+     spurious sub-grid interpolation. ERA5 uses 11132 m (0.1°) — these
+     are different GEE collections with different native resolutions.
+
+Reference
+---------
+  Watkins M.M. et al. (2015). Improved methods for observing Earth's time
+  variable mass distribution with GRACE using spherical cap mascons.
+  Journal of Geophysical Research: Solid Earth, 120(4), 2648–2671.
+  https://doi.org/10.1002/2014JB011547
+
+  GEE collection:
+  https://developers.google.com/earth-engine/datasets/catalog/
+  NASA_GRACE_MASS_GRIDS_V04_MASCON_CRI

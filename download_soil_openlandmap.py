@@ -21,7 +21,8 @@ Variables (21 channels = 3 depths × 7 properties, 2020-2022 composite):
   ch 5 / 12 / 19  bd     bulk density       g/cm³
   ch 6 / 13 / 20  ph     pH in H₂O          –
 
-Patch: 74×74 pixels @ ~27.5 m = 2.035 km × 2.035 km centred on station
+Patch: 74×74 pixels @ 30 m = 2.22 km × 2.22 km centred on station
+       Physical extent is consistent across all latitudes via UTM projection.
 
 Output per station:
   {station}/soil/soil_patch.tif   float32, 21 bands, 74×74 px
@@ -41,6 +42,7 @@ import rasterio
 from rasterio.transform import from_bounds
 from rasterio.windows import from_bounds as window_from_bounds
 import rasterio.crs
+from pyproj import Transformer
 
 # ============================================================
 # CONFIGURATION
@@ -49,8 +51,8 @@ import rasterio.crs
 STATION_CSV   = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
 SATELLITE_DIR = Path("/home/khanalp/data/satellite")
 
-PATCH_PX  = 74      # pixels per side
-RES_DEG   = 0.00025 # ~27.5 m per pixel in degrees
+PATCH_PX  = 74   # pixels per side
+RES_M     = 30   # target physical resolution (m) — gives 74×30 = 2220 m patch
 
 N_WORKERS = 8       # concurrent station downloads
 
@@ -115,10 +117,30 @@ def load_stations() -> pd.DataFrame:
 # PATCH EXTRACTION
 # ============================================================
 
-def station_bbox(lat: float, lon: float) -> tuple:
-    """Return (west, south, east, north) bounding box for 74×74 patch."""
-    half = (PATCH_PX / 2) * RES_DEG
-    return (lon - half, lat - half, lon + half, lat + half)
+def _utm_epsg(lat: float, lon: float) -> int:
+    zone = int((lon + 180) / 6) + 1
+    return 32600 + zone if lat >= 0 else 32700 + zone
+
+
+def station_bbox_wgs84(lat: float, lon: float) -> tuple:
+    """
+    Return (west, south, east, north) in WGS84 degrees for a physically
+    consistent PATCH_PX × RES_M patch centred on (lat, lon).
+
+    Projects to UTM → creates ±half_m bbox → unprojects corners back to WGS84.
+    This ensures equal physical size (~2220 m × 2220 m) at all latitudes,
+    avoiding the east-west shrinkage of a degree-based bbox near the poles.
+    """
+    epsg = _utm_epsg(lat, lon)
+    fwd  = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+    inv  = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
+
+    cx, cy   = fwd.transform(lon, lat)
+    half_m   = (PATCH_PX / 2) * RES_M          # = 37 × 30 = 1110 m
+
+    w_lon, s_lat = inv.transform(cx - half_m, cy - half_m)
+    e_lon, n_lat = inv.transform(cx + half_m, cy + half_m)
+    return (w_lon, s_lat, e_lon, n_lat)
 
 
 def read_patch(url: str, lat: float, lon: float) -> tuple[np.ndarray | None, object]:
@@ -126,7 +148,7 @@ def read_patch(url: str, lat: float, lon: float) -> tuple[np.ndarray | None, obj
     Open COG via HTTP range request and read 74×74 px window.
     Returns (float32 array (PATCH_PX, PATCH_PX), crs) or (None, None) on failure.
     """
-    west, south, east, north = station_bbox(lat, lon)
+    west, south, east, north = station_bbox_wgs84(lat, lon)
     try:
         with rasterio.open(url) as src:
             window = window_from_bounds(west, south, east, north, src.transform)
@@ -171,7 +193,7 @@ def process_station(row: pd.Series) -> str:
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    west, south, east, north = station_bbox(lat, lon)
+    west, south, east, north = station_bbox_wgs84(lat, lon)
     transform = from_bounds(west, south, east, north, PATCH_PX, PATCH_PX)
 
     with rasterio.open(

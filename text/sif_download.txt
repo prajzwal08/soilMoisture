@@ -1,0 +1,217 @@
+SIF — Solar-Induced Chlorophyll Fluorescence Download
+=====================================================
+Date: 2026-05-18
+Script: download_sif_tropomi.py
+Reference: Guanter et al. (2021) ESSD — doi:10.5194/essd-13-5423-2021
+           S5P-PAL TROPOSIF product documentation v1.0
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. SCIENTIFIC DESCRIPTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Solar-induced chlorophyll fluorescence (SIF) is a direct by-product of the
+light reactions of photosynthesis, emitted by vegetation at 650–800 nm when
+absorbed photosynthetically active radiation is re-radiated rather than used
+for carbon fixation or dissipated as heat. Unlike vegetation indices such as
+NDVI, SIF responds dynamically to water stress, temperature extremes, and
+light use efficiency at sub-weekly timescales, making it a sensitive indicator
+of plant functional state and canopy photosynthesis. Integrating SIF into the
+soil moisture prediction model provides a photosynthesis-linked constraint on
+evapotranspiration and surface energy partitioning, which are physically
+coupled to near-surface soil moisture dynamics.
+
+SIF observations are derived from the TROPOSIF product (Guanter et al., 2021),
+a pre-operational daily dataset produced by the Università Politècnica de
+València (UPV) from Sentinel-5P TROPOMI top-of-atmosphere radiance spectra
+via the in-filling method in the 743–758 nm spectral window (SIF_743). The
+Level-2B product aggregates all valid cloud-free overpasses within a calendar
+day into a single daily file, providing ~3.5 km footprint point retrievals
+globally from April 2018 to near-present (~1–4 week latency). SIF is a
+sparse modality: cloud cover, solar zenith angle, and data quality screening
+reduce typical yield to ~40–50 valid observations per station per year in
+mid-latitude climates and fewer in cloudy or high-latitude regions.
+
+The download adopts a day-centric architecture: each global L2B daily file
+(~390 MB) is downloaded once and all 1,048 station observations are extracted
+simultaneously, yielding O(N_days) file transfers rather than O(N_stations ×
+N_days). Observations within 5 km of the station measurement location are
+averaged to produce a single daily SIF and uncertainty value.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. FLOWCHART
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+START
+  │
+  ▼
+┌──────────────────────────────────────────────────────────────┐
+│  load_stations()                                             │
+│  Read station_splits.csv → 1,048 stations                   │
+│  Filter to stations with end_year ≥ 2018 (SIF start)        │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Build date range: 2018-04-30 → today − 30 days             │
+│  (30-day buffer for ~1-month TROPOSIF latency)               │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  In-memory accumulator: station_obs[station_id][year] = []   │
+│  ThreadPoolExecutor (N_WORKERS = 4)                          │
+│  One worker per calendar day                                 │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼  [per day]
+┌──────────────────────────────────────────────────────────────┐
+│  _process_one_day(day)                                       │
+│                                                              │
+│  1. Skip if all stations already have sif_{year}.nc          │
+│                                                              │
+│  2. get_l2b_url(catalog, day)                                │
+│     STAC search: collection=L2B_SIF___                       │
+│     datetime = day/day+1                                     │
+│     → item.assets["product"].href                            │
+│     If no item → return (no file for this day)               │
+│                                                              │
+│  3. Download L2B daily file to tempfile (~390 MB)            │
+│     requests.get(url, stream=True)                           │
+│                                                              │
+│  4. extract_stations_from_file(tmp_path, stations, day)      │
+│     a. Open NetCDF4 → group "/PRODUCT"                       │
+│        (variables are in PRODUCT group, not root)            │
+│     b. Read SIF_743, SIF_ERROR_743, latitude, longitude      │
+│        → flatten all arrays                                  │
+│     c. Filter valid pixels (finite SIF, finite lat/lon)      │
+│     d. For each station:                                     │
+│        dist = haversine(station_lat, station_lon,            │
+│                         pixel_lats, pixel_lons)              │
+│        nearby = dist ≤ 5 km                                  │
+│        if nearby.any():                                      │
+│          sif = mean(SIF_743[nearby])                         │
+│          unc = mean(SIF_ERROR_743[nearby])                   │
+│          → result[station_id] = {sif, unc, date}            │
+│                                                              │
+│  5. Delete tempfile                                          │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Accumulate observations in memory per station per year      │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ (after all days processed)
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  save_station_year(station_id, year, obs_list)               │
+│  For each station × year with ≥1 observation:               │
+│    Sort obs by date                                          │
+│    Save {station}/SIF/sif_{year}.nc                         │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+                             END
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. TECHNICAL DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Dataset
+-------
+  Name:        TROPOSIF L2B (daily aggregated)
+  Producer:    UPV / ESA S5P Innovation
+  STAC URL:    https://data-portal.s5p-pal.com/api/s5p-l2
+  Collection:  L2B_SIF___
+  Coverage:    April 2018 – present (~1-4 week latency)
+  Resolution:  ~3.5 km pixel footprint (ungridded, point retrievals)
+  Auth:        None — publicly accessible (HTTP 200 without credentials)
+
+L2B vs L2 product choice
+-------------------------
+  L2  (orbital): ~14 files/day, all retrievals including marginal quality,
+                 requires QA flag application by user.
+  L2B (daily):   1 file/day, valid cloud-free retrievals only, quality-filtered.
+  → L2B chosen for simplicity and to avoid QA flag handling.
+
+Variables extracted
+-------------------
+  sif              SIF_743        mW m⁻² sr⁻¹ nm⁻¹   743–758 nm window
+  sif_uncertainty  SIF_ERROR_743  mW m⁻² sr⁻¹ nm⁻¹   1-sigma retrieval error
+
+File structure (important)
+--------------------------
+  L2B files are NetCDF-4 with HDF5 backend.
+  Variables are stored under the "/PRODUCT" group, not the root group.
+  Opening with xr.open_dataset(path) returns empty DataArrays;
+  must specify group="PRODUCT":
+    ds = xr.open_dataset(path, engine="netcdf4", group="PRODUCT")
+
+  Variables in /PRODUCT:
+    SIF_743, SIF_Corr_743, SIF_ERROR_743
+    SIF_735, SIF_Corr_735, SIF_ERROR_735
+    latitude, longitude, time, delta_time
+
+Spatial extraction
+------------------
+  Method:     Haversine distance filter; keep pixels within 5 km of station
+  Formula:    d = 2R × arcsin(√(sin²(Δlat/2) + cos(lat₁)cos(lat₂)sin²(Δlon/2)))
+              R = 6371 km
+  Aggregation: mean of all valid pixels within 5 km radius
+  Typical yield: 1–5 pixels per station per day (TROPOMI ~3.5 km footprint)
+
+Day-centric architecture
+------------------------
+  Each global L2B file (~390 MB) is downloaded once and processed for all
+  1,048 stations simultaneously. Advantages:
+    - O(N_days) downloads (≈ 2,920 files for 2018–2026)
+    - vs. O(N_stations × N_days) = ~3 million queries if station-centric
+  Total download: 2,920 files × 390 MB ≈ 1.1 TB (bandwidth)
+  Data retained: only matching pixels → ~5 GB final storage
+
+Output
+------
+  Path:       {SATELLITE_DIR}/{network}_{station_id}/SIF/sif_{year}.nc
+  Variables:  sif (mW/m²/sr/nm), sif_uncertainty (mW/m²/sr/nm)
+  Coordinate: time (datetime64, days with valid observations only)
+  Shape:      (time=N_valid_days,)  typically N_valid_days ≈ 40–50/year
+
+Model usage
+-----------
+  ~40-50 tokens/year (sparse daily); injected into temporal transformer.
+  Modality dropout p=0.5 during training.
+  Days with no valid retrieval → no token emitted.
+  SIF_743 at 743–758 nm is the recommended baseline product (higher SNR
+  than SIF_735 at 735–758 nm per Guanter et al., 2021).
+
+Design decisions
+----------------
+  1. Day-centric download: each global file serves all stations simultaneously.
+     Bandwidth cost (~390 MB/day × ~2920 days) is offset by avoiding
+     millions of individual per-station STAC queries.
+
+  2. 5 km extraction radius: TROPOMI pixel footprint is ~3.5×5.5 km
+     (across-track × along-track). A 5 km radius captures typically 1–5
+     valid pixels per overpass while excluding adjacent land-cover types.
+
+  3. SIF_743 over SIF_735: the 743–758 nm window has better signal-to-noise
+     ratio than the extended 735–758 nm window and is the TROPOSIF baseline
+     product recommended for most applications.
+
+  4. L2B over L2: pre-filtered to valid cloud-free retrievals — avoids
+     the need to implement and validate QA flag thresholds.
+
+  5. S5P-PAL over CDSE/direct S5P: S5P-PAL provides the TROPOSIF-specific
+     processor output, not the standard S5P product suite. CDSE only carries
+     standard S5P products (NO2, CO, O3, etc.) — SIF is not operational.
+
+Reference
+---------
+  Guanter L. et al. (2021). The TROPOSIF global sun-induced fluorescence
+  dataset from the Sentinel-5P TROPOMI mission. Earth System Science Data,
+  13, 5423–5440. https://doi.org/10.5194/essd-13-5423-2021
+
+  S5P-PAL TROPOSIF portal:
+  https://data-portal.s5p-pal.com/products/troposif.html

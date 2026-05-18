@@ -1,0 +1,228 @@
+OpenLandMap-soildb Soil Properties Download
+============================================
+Date: 2026-05-18
+Script: download_soil_openlandmap.py
+Reference: Hengl et al. (2026) ESSD — doi:10.5281/zenodo.15470431
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. SCIENTIFIC DESCRIPTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Soil physical and chemical properties exert first-order control on soil
+moisture dynamics through their regulation of hydraulic conductivity, water
+retention, and rooting-depth storage capacity. To provide the multimodal
+soil moisture model with spatially explicit, time-invariant soil context, we
+extract per-station soil property patches from the OpenLandMap-soildb dataset
+(Hengl et al., 2026), a global 30 m product derived from spatiotemporal machine
+learning trained on over 363,000 harmonised legacy soil profile observations.
+
+Seven soil properties are extracted at three standard depth intervals
+(0–30 cm, 30–60 cm, 60–100 cm), yielding 21 channels per station patch.
+The depth intervals correspond directly to the three soil moisture prediction
+targets of our model (0–10/10–30 cm surface and root zone; 30–100 cm deep
+root zone), allowing the soil encoder CNN to learn depth-specific relationships
+between soil texture, organic carbon, bulk density, pH, and hydraulic
+behaviour at each prediction depth. The 2020–2022 temporal composite is used
+for all variables; while SOC and pH exhibit decadal trends, the 2020–2022
+composite is the most accurate (largest training sample) and temporally
+appropriate for the majority of station records (2014–2025).
+
+Patches are centred on each station's measurement location and span a
+physically consistent 2.22 km × 2.22 km footprint (74 × 74 pixels at 30 m)
+across all latitudes. Geographic consistency is achieved by computing the
+bounding box in UTM projected coordinates (±1,110 m from the station centre)
+before transforming to WGS84 for the COG range request. This avoids the
+east-west pixel shrinkage that would occur with a fixed degree-based bounding
+box at high latitudes (e.g., at 69°N the east-west extent would be reduced by
+~65% relative to the equator without UTM correction).
+
+Data access uses HTTP range requests on Cloud-Optimised GeoTIFFs (COGs) served
+from the OpenGeoHub S3 object store (s3.opengeohub.org). Because COGs index
+their internal tile structure via HTTP range headers, only the bytes covering
+the 74 × 74 px station window are transferred — typically 10–50 kB per band
+per station — rather than the full 13–17 GB global files.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. FLOWCHART
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+START
+  │
+  ▼
+┌──────────────────────────────────────────────────────────────┐
+│  load_stations()                                             │
+│  Read station_splits.csv → 1,048 stations                   │
+│  Construct station_id = network + "_" + station_id          │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Skip check                                                  │
+│  If {station}/soil/soil_patch.tif already exists → SKIP     │
+│  N stations to download (checkpoint on file existence)       │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│  ThreadPoolExecutor (N_WORKERS = 8)                          │
+│  One worker per station                                      │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼  [per station]
+┌──────────────────────────────────────────────────────────────┐
+│  process_station(row)                                        │
+│                                                              │
+│  1. station_bbox_wgs84(lat, lon)                             │
+│     a. Compute UTM zone from lon → EPSG code                │
+│     b. Project (lat, lon) → UTM (cx, cy)                    │
+│     c. half_m = 74/2 × 30 m = 1,110 m                       │
+│     d. UTM bbox: (cx±1110, cy±1110)                          │
+│     e. Unproject 4 corners → WGS84                          │
+│     → (west, south, east, north) in degrees                  │
+│        ~0.0185° × ~0.0185° (varies slightly by latitude)     │
+│                                                              │
+│  2. For each of 21 COG layers (3 depths × 7 variables):      │
+│     read_patch(url, lat, lon)                                │
+│     a. rasterio.open(https://s3.opengeohub.org/…tif)        │
+│        HTTP range request — no full download                 │
+│     b. window = from_bounds(W, S, E, N, src.transform)       │
+│        → window spans variable source pixels depending on    │
+│          latitude (e.g. ~74 px N-S, ~26 px E-W at 69°N)     │
+│     c. src.read(1, window=window, out_shape=(74, 74),        │
+│                 resampling=bilinear)                         │
+│        → always 74×74 float32 output                        │
+│     d. Mask nodata → NaN                                     │
+│                                                              │
+│  3. Stack 21 bands → np.ndarray (21, 74, 74) float32        │
+│                                                              │
+│  4. Save {station}/soil/soil_patch.tif                       │
+│     CRS:       WGS84 (EPSG:4326, from source COG)           │
+│     Transform: from_bounds(W, S, E, N, 74, 74)              │
+│     Bands:     21, dtype float32, compress=deflate          │
+│     Band tags: name, units, depth per band                   │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+                             END
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. TECHNICAL DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Dataset
+-------
+  Name:        OpenLandMap-soildb
+  Version:     v20250523 (texture), v20250204 (SOC, SOCD, BD, pH)
+  Composite:   2020–2022 mean
+  Resolution:  0.00025° (≈ 27.5 m at equator; dataset nominal: 30 m)
+  CRS:         EPSG:4326 (WGS84 geographic)
+  Format:      Cloud Optimised GeoTIFF (COG), UInt8/UInt16
+  Server:      https://s3.opengeohub.org/global-soil/
+  Auth:        None — publicly accessible
+
+Variables extracted (21 channels)
+----------------------------------
+  ch  0   clay_0_30      clay content       wt%      0–30 cm
+  ch  1   sand_0_30      sand content       wt%      0–30 cm
+  ch  2   silt_0_30      silt content       wt%      0–30 cm
+  ch  3   soc_0_30       SOC content        g/kg     0–30 cm
+  ch  4   socd_0_30      SOC density        mg/cm³   0–30 cm
+  ch  5   bd_0_30        bulk density       g/cm³    0–30 cm
+  ch  6   ph_0_30        pH in H₂O          –        0–30 cm
+  ch  7   clay_30_60     clay content       wt%      30–60 cm
+  ch  8   sand_30_60     sand content       wt%      30–60 cm
+  ch  9   silt_30_60     silt content       wt%      30–60 cm
+  ch 10   soc_30_60      SOC content        g/kg     30–60 cm
+  ch 11   socd_30_60     SOC density        mg/cm³   30–60 cm
+  ch 12   bd_30_60       bulk density       g/cm³    30–60 cm
+  ch 13   ph_30_60       pH in H₂O          –        30–60 cm
+  ch 14   clay_60_100    clay content       wt%      60–100 cm
+  ch 15   sand_60_100    sand content       wt%      60–100 cm
+  ch 16   silt_60_100    silt content       wt%      60–100 cm
+  ch 17   soc_60_100     SOC content        g/kg     60–100 cm
+  ch 18   socd_60_100    SOC density        mg/cm³   60–100 cm
+  ch 19   bd_60_100      bulk density       g/cm³    60–100 cm
+  ch 20   ph_60_100      pH in H₂O          –        60–100 cm
+
+COG source URLs (2020-2022 composite, 0-30cm shown; pattern same for other depths)
+-----------------------------------------------------------------------------------
+  clay:   https://s3.opengeohub.org/global-soil/global_soil_props_v20250523/
+          clay.tot_iso.11277.2020.wpct_m_30m_b{depth}_20200101_20221231_g_epsg.4326_v20250523.tif
+  sand:   … sand.tot_iso.11277.2020.wpct_m_30m_b{depth} …
+  silt:   … silt.tot_iso.11277.2020.wpct_m_30m_b{depth} …
+  soc:    https://s3.opengeohub.org/global-soil/global_soil_props_v20250204_mosaics/
+          oc_iso.10694.1995.wpml_m_30m_b{depth}_20200101_20221231_g_epsg.4326_v20250204.tif
+  socd:   … oc_iso.10694.1995.mg.cm3_m_30m_b{depth} …
+  bd:     … bd.core_iso.11272.2017.g.cm3_m_30m_b{depth} …
+  ph:     … ph.h2o_iso.10390.2021.index_m_30m_b{depth} …
+
+  depth variants: b0cm..30cm, b30cm..60cm, b60cm..100cm
+
+Spatial footprint
+-----------------
+  Target:     2.22 km × 2.22 km (= 74 × 30 m)
+  Pixels:     74 × 74 (always, via bilinear resampling)
+  BBox method:  UTM projection to ensure physical consistency:
+                1. Determine UTM zone from station longitude
+                   EPSG = 32600 + zone  (N hemisphere)
+                   EPSG = 32700 + zone  (S hemisphere)
+                2. Transform station lat/lon → UTM (cx, cy)
+                3. half_m = 74/2 × 30 m = 1,110 m
+                4. UTM bbox = (cx−1110, cy−1110, cx+1110, cy+1110)
+                5. Transform 4 corners back to WGS84
+                6. Use WGS84 bbox for COG window extraction
+  Physical size at different latitudes (verified):
+    Equator   (0°N):  2.218 km × 2.233 km
+    UK        (51°N): 2.246 km × 2.192 km
+    Finland   (68°N): 2.214 km × 2.217 km
+    Tibet     (32°N): 2.176 km × 2.269 km
+  Note: small deviations (<2%) from target due to UTM distortion at bbox corners.
+
+Data transfer
+-------------
+  No full download: COG HTTP range requests transfer only the indexed tile(s)
+  covering the station window — typically 10–50 kB per band per station.
+  Total data transferred for 1,048 stations × 21 bands ≈ 200–500 MB.
+  Compare with full file size: ~14 GB per variable × 21 = ~290 GB if downloaded.
+
+Output
+------
+  Path:    {SATELLITE_DIR}/{network}_{station_id}/soil/soil_patch.tif
+  Format:  Cloud-Optimised GeoTIFF, float32, deflate compressed
+  Shape:   (21, 74, 74)
+  CRS:     WGS84 (EPSG:4326), copied from source COG
+  Tags:    per-band name, units, depth
+
+Parallelism
+-----------
+  N_WORKERS = 8 concurrent threads (each opens rasterio handles independently)
+  Runtime estimate: 1,048 stations × 21 COG reads × ~0.5 s/read / 8 workers
+                    ≈ ~30–45 minutes on Snellius
+
+Design decisions
+----------------
+  1. All 3 depth intervals: provides per-depth soil context matching the
+     model's 3 SM depth bins (0-10, 10-30, 30-100 cm). The CNN learns
+     depth-specific soil-hydraulic relationships without manual aggregation.
+
+  2. 2020-2022 composite for all variables: clay/sand/silt only have one
+     composite available; using the same period for all variables ensures
+     temporal consistency across channels. Soil texture is quasi-static.
+
+  3. UTM bbox vs degree bbox: a fixed-degree bbox would shrink east-west
+     extent by cos(lat), giving a 0.73 km × 2.06 km patch at 69°N (59 of
+     our 1,048 stations are above 60°N). UTM projection corrects this.
+
+  4. COG range reads vs full download: the global files are 13–17 GB each.
+     COG internal tiling (typically 256×256 px tiles) means only 1–4 HTTP
+     range requests per station window per file, avoiding bulk transfer.
+
+Reference
+---------
+  Hengl T. et al. (2026). OpenLandMap-soildb: global soil information at
+  30 m spatial resolution for 2000–2022+ based on spatiotemporal Machine
+  Learning and harmonized legacy soil samples and observations.
+  Earth System Science Data. https://doi.org/10.5281/zenodo.15470431
