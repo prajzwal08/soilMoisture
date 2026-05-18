@@ -65,7 +65,7 @@ PARALLEL_JOBS = 10      # max simultaneous jobs on CDSE
 # One job per station per modality.
 # S1 RTC is NOT included here — CDSE does not support gamma0-terrain correction.
 # S1 RTC is handled by download_satellite.py via Microsoft Planetary Computer (MPC).
-MODALITIES = ["S2L1C", "S2L2A", "DEM"]
+MODALITIES = ["S2L2A", "DEM"]
 
 # CDSE uses ESA band names (B01, B02, …), not AWS common names
 S2L1C_BANDS = ["B01","B02","B03","B04","B05","B06","B07",
