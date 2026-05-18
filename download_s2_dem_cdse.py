@@ -49,13 +49,11 @@ from pyproj import Transformer
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV  = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv")
+STATION_CSV  = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
 OUTPUT_DIR   = Path("/home/khanalp/data/satellite_openeo")
 JOB_DB_FILE  = OUTPUT_DIR / "openeo_jobs_v2.csv"
 LOG_FILE     = OUTPUT_DIR / "download_openeo.log"
 
-N_STATIONS   = 50
-RANDOM_SEED  = 456   # seed=42 and seed=123 already used — picks 50 new stations
 PIXEL_SIZE   = 224      # pixels per side stored on disk (TerraMind native size, UNetMobV2 compatible)
 RES_M        = 10       # metres per pixel
 GLOBAL_START = "2016-01-01"
@@ -395,7 +393,7 @@ class SatelliteJobManager(MultiBackendJobManager):
             lon = float(row["longitude"])
             epsg, bounds, _ = station_grid(lat, lon)
             meta = {
-                "station":       row["station"],
+                "station":       row["station_id"],
                 "network":       row["network"],
                 "latitude":      lat,
                 "longitude":     lon,
@@ -424,7 +422,7 @@ def build_jobs_df(stations: pd.DataFrame) -> pd.DataFrame:
     """
     rows = []
     for _, st in stations.iterrows():
-        station_id = f"{st.network}_{st.station}"
+        station_id = f"{st.network}_{st.station_id}"
         start = max(GLOBAL_START, parse_date(st.start_date)) \
                 if pd.notna(st.start_date) else GLOBAL_START
         end   = parse_date(st.end_date) \
@@ -435,7 +433,7 @@ def build_jobs_df(stations: pd.DataFrame) -> pd.DataFrame:
             rows.append({
                 "station_id":    station_id,
                 "network":       st.network,
-                "station":       st.station,
+                "station":       st.station_id,
                 "latitude":      float(st.latitude),
                 "longitude":     float(st.longitude),
                 "start_date":    start,
@@ -488,15 +486,13 @@ def main():
     log = logging.getLogger(__name__)
 
     # ── Load stations ────────────────────────────────────────
-    df    = pd.read_csv(STATION_CSV)
-    saved = df[df.status == "saved"].reset_index(drop=True)
-    pilot = saved.sample(n=N_STATIONS, random_state=RANDOM_SEED).reset_index(drop=True)
-    log.info(f"Pilot: {N_STATIONS} stations (seed={RANDOM_SEED})")
+    pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
+    log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
     # ── Build jobs DataFrame ─────────────────────────────────
     jobs_df = build_jobs_df(pilot)
     log.info(f"Total jobs: {len(jobs_df)} "
-             f"({N_STATIONS} stations × {len(MODALITIES)} modalities)")
+             f"({len(pilot)} stations × {len(MODALITIES)} modalities)")
 
     # ── Authenticate with CDSE ───────────────────────────────
     load_dotenv(Path(__file__).parent / ".env")

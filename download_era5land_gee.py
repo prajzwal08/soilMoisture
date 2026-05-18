@@ -54,7 +54,7 @@ def _gee_credentials() -> Credentials:
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV   = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv")
+STATION_CSV   = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
 SATELLITE_DIR = Path("/home/khanalp/data/satellite")
 LOG_FILE      = SATELLITE_DIR / "era5land_gee_log.csv"
 
@@ -105,18 +105,11 @@ def setup_logging():
 # ============================================================
 
 def load_stations() -> pd.DataFrame:
-    """
-    Return rows from station_metadata.csv whose {network}_{station} folder
-    already exists in SATELLITE_DIR.
-    """
+    """Return all stations from station_splits.csv."""
     df = pd.read_csv(STATION_CSV)
-    df = df[df["status"] == "saved"].copy()
-    df["station_id"] = df["network"] + "_" + df["station"]
-
-    existing = {p.name for p in SATELLITE_DIR.iterdir() if p.is_dir()}
-    df = df[df["station_id"].isin(existing)].reset_index(drop=True)
-
-    logging.getLogger(__name__).info(f"Stations with satellite data: {len(df)}")
+    df["station_id"] = df["network"] + "_" + df["station_id"]
+    df = df.reset_index(drop=True)
+    logging.getLogger(__name__).info(f"Stations: {len(df)}")
     return df
 
 

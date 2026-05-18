@@ -49,7 +49,7 @@ from rasterio.enums import Resampling
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv")
+STATION_CSV = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
 OUTPUT_DIR   = Path("/home/khanalp/data/satellite")
 LOG_FILE     = OUTPUT_DIR / "download_log.csv"
 
@@ -549,7 +549,7 @@ def download_lulc(
 # ============================================================
 
 def process_station(row: pd.Series, catalog_mpc, catalog_aws) -> dict:
-    station_id = f"{row.network}_{row.station}"
+    station_id = f"{row.network}_{row.station_id}"
     lat, lon   = float(row.latitude), float(row.longitude)
 
     # Clamp time range to [GLOBAL_START, station end_date]
@@ -563,7 +563,7 @@ def process_station(row: pd.Series, catalog_mpc, catalog_aws) -> dict:
     station_dir.mkdir(parents=True, exist_ok=True)
 
     meta = {
-        "station":      row.station,
+        "station":      row.station_id,
         "network":      row.network,
         "latitude":     lat,
         "longitude":    lon,
@@ -621,15 +621,9 @@ def main():
     setup_logging()
     log = logging.getLogger(__name__)
 
-    # --- Build station list: union of seed=42, seed=123, seed=456 (243 unique stations) ---
-    df    = pd.read_csv(STATION_CSV)
-    saved = df[df.status == "saved"].reset_index(drop=True)
-    pilot = pd.concat([
-        saved.sample(n=100, random_state=42),
-        saved.sample(n=100, random_state=123),
-        saved.sample(n=50,  random_state=456),
-    ]).drop_duplicates(subset=["network", "station"]).reset_index(drop=True)
-    log.info(f"Stations: {len(pilot)} unique (union of seed=42/123/456)")
+    # --- Build station list: all 1,048 stations from station_splits.csv ---
+    pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
+    log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
     # --- Skip already-completed stations (S1RTC + LULC only) ---
     checkpoint = load_checkpoint()
@@ -656,11 +650,11 @@ def main():
 
     # Build work list (skip already-done stations)
     todo = [(i, row) for i, row in pilot.iterrows()
-            if f"{row.network}_{row.station}" not in done_ids]
+            if f"{row.network}_{row.station_id}" not in done_ids]
 
     n_total = len(pilot)
     for i, row in pilot.iterrows():
-        station_id = f"{row.network}_{row.station}"
+        station_id = f"{row.network}_{row.station_id}"
         if station_id in done_ids:
             log.info(f"[{i+1:3d}/{n_total}] Skip  {station_id}")
 
@@ -671,7 +665,7 @@ def main():
 
         for fut in as_completed(fut_to_row):
             i, row = fut_to_row[fut]
-            station_id = f"{row.network}_{row.station}"
+            station_id = f"{row.network}_{row.station_id}"
             try:
                 row_dict = fut.result()
             except Exception as exc:
