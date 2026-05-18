@@ -54,9 +54,10 @@ OUTPUT_DIR   = Path("/home/khanalp/data/satellite_openeo")
 JOB_DB_FILE  = OUTPUT_DIR / "openeo_jobs_v2.csv"
 LOG_FILE     = OUTPUT_DIR / "download_openeo.log"
 
-PIXEL_SIZE   = 224      # pixels per side stored on disk (TerraMind native size, UNetMobV2 compatible)
-RES_M        = 10       # metres per pixel
-GLOBAL_START = "2016-01-01"
+PIXEL_SIZE        = 224   # pixels per side stored on disk (TerraMind native size, UNetMobV2 compatible)
+RES_M             = 10    # metres per pixel
+MAX_CLOUD_COVER   = 75    # % scene-level cloud cover threshold (eo:cloud_cover, full 100×100 km tile)
+GLOBAL_START      = "2016-01-01"
 
 CDSE_URL     = "openeo.dataspace.copernicus.eu"
 PARALLEL_JOBS = 10      # max simultaneous jobs on CDSE
@@ -207,6 +208,7 @@ def build_cube(connection: openeo.Connection, row: pd.Series):
             spatial_extent=latlon_bbox,
             temporal_extent=[start, end],
             bands=S2L1C_BANDS,
+            max_cloud_cover=MAX_CLOUD_COVER,
         )
         cube = cube.resample_spatial(
             resolution=RES_M,
@@ -220,6 +222,7 @@ def build_cube(connection: openeo.Connection, row: pd.Series):
             spatial_extent=latlon_bbox,
             temporal_extent=[start, end],
             bands=S2L2A_BANDS,
+            max_cloud_cover=MAX_CLOUD_COVER,
         )
         cube = cube.resample_spatial(
             resolution=RES_M,
