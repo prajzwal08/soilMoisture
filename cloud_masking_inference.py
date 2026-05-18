@@ -23,11 +23,11 @@ DEVICE    = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def run_inference(model, station_dir: Path) -> tuple[int, int]:
-    s2l1c_dir = station_dir / "S2L1C"
+    s2l2a_dir = station_dir / "S2L2A"
     out_dir   = station_dir / "CloudMask"
     out_dir.mkdir(exist_ok=True)
 
-    todo = [f for f in sorted(s2l1c_dir.glob("*.tif"))
+    todo = [f for f in sorted(s2l2a_dir.glob("*.tif"))
             if not (out_dir / f.name).exists()]
 
     if not todo:
@@ -38,7 +38,7 @@ def run_inference(model, station_dir: Path) -> tuple[int, int]:
         out_path = out_dir / tif_path.name
         try:
             with rasterio.open(tif_path) as src:
-                arr     = src.read().astype(np.float32) / 10_000   # (13, H, W)
+                arr     = src.read().astype(np.float32) / 10_000   # (12, H, W)
                 profile = src.profile
                 nodata_mask = (arr == 0).all(axis=0)
 
