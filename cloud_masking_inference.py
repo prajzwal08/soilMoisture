@@ -1,5 +1,5 @@
 """
-Batch cloud mask inference using CloudSEN12 UNetMobV2_V2.
+Batch cloud mask inference using CloudSEN12 cloudsen12l2a (S2L2A, 12 bands).
 
 Processes all stations under DATA_ROOT. Skips images that already have a mask.
 
@@ -64,7 +64,7 @@ def main():
     print(f"Stations : {len(station_dirs)}")
     print(f"Device   : {DEVICE}\n")
 
-    model = load_model_by_name("UNetMobV2_V2", device=torch.device(DEVICE))
+    model = load_model_by_name("cloudsen12l2a", device=torch.device(DEVICE))
     print("Model loaded.\n")
 
     total_done = total_skipped = 0
