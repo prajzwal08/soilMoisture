@@ -51,12 +51,12 @@ from pyproj import Transformer
 
 STATION_CSV  = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv")
 OUTPUT_DIR   = Path("/home/khanalp/data/satellite_openeo")
-JOB_DB_FILE  = OUTPUT_DIR / "openeo_jobs.csv"
+JOB_DB_FILE  = OUTPUT_DIR / "openeo_jobs_v2.csv"
 LOG_FILE     = OUTPUT_DIR / "download_openeo.log"
 
-N_STATIONS   = 100
-RANDOM_SEED  = 123   # seed=42 is used by download_satellite.py — different seed picks different stations
-PIXEL_SIZE   = 264      # pixels per side stored on disk
+N_STATIONS   = 50
+RANDOM_SEED  = 456   # seed=42 and seed=123 already used — picks 50 new stations
+PIXEL_SIZE   = 224      # pixels per side stored on disk (TerraMind native size, UNetMobV2 compatible)
 RES_M        = 10       # metres per pixel
 GLOBAL_START = "2016-01-01"
 
@@ -283,7 +283,39 @@ class SatelliteJobManager(MultiBackendJobManager):
     - Download results into the station/modality folder
     - Rename CDSE output files to YYYYMMDD.tif / YYYYMMDD_ASC.tif convention
     - Write/update metadata.json per station
+    - Auto-reconnect when CDSE token expires (403 TokenInvalid)
     """
+
+    def __init__(self, *args, username: str = None, password: str = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cdse_username = username
+        self._cdse_password = password
+
+    def _connection_factory(self) -> openeo.Connection:
+        """Create a fresh authenticated CDSE connection."""
+        log = logging.getLogger(__name__)
+        log.info("Authenticating with CDSE…")
+        conn = openeo.connect(CDSE_URL).authenticate_oidc_resource_owner_password_credentials(
+            client_id="cdse-public",
+            username=self._cdse_username,
+            password=self._cdse_password,
+            client_secret="",
+        )
+        log.info("  ✓ Authenticated with CDSE")
+        return conn
+
+    def _track_statuses(self, job_db, stats=None):
+        import collections
+        if stats is None:
+            stats = collections.defaultdict(int)
+        errors_before = stats.get("job tracking error", 0)
+        result = super()._track_statuses(job_db, stats)
+        if stats.get("job tracking error", 0) > errors_before:
+            # Token likely expired — clear cached connection so factory is called next cycle
+            log = logging.getLogger(__name__)
+            log.info("Tracking errors detected — clearing cached CDSE connection for re-auth next cycle")
+            self._connections.pop("cdse", None)
+        return result
 
     def on_job_done(self, job, row):
         station_id = row["station_id"]
@@ -475,23 +507,17 @@ def main():
             "Set CDSE_USERNAME and CDSE_PASSWORD in "
             f"{Path(__file__).parent / '.env'}"
         )
-    log.info(f"Connecting to CDSE as {username}…")
-    connection = openeo.connect(CDSE_URL).authenticate_oidc_resource_owner_password_credentials(
-        client_id="cdse-public",
-        username=username,
-        password=password,
-        client_secret="",
-    )
-    log.info("  ✓ Connected to CDSE")
-
-    # ── Set up job manager ───────────────────────────────────
+    # ── Set up job manager (credentials stored for auto-reconnect) ──
     manager = SatelliteJobManager(
         poll_sleep=60,
         root_dir=str(OUTPUT_DIR / "_job_meta"),
+        username=username,
+        password=password,
     )
+    log.info(f"Connecting to CDSE as {username}…")
     manager.add_backend(
         "cdse",
-        connection=connection,
+        connection=manager._connection_factory,
         parallel_jobs=PARALLEL_JOBS,
     )
 

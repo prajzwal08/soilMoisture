@@ -53,9 +53,7 @@ STATION_CSV = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv"
 OUTPUT_DIR   = Path("/home/khanalp/data/satellite")
 LOG_FILE     = OUTPUT_DIR / "download_log.csv"
 
-N_STATIONS   = 100
-RANDOM_SEED  = 42
-PIXEL_SIZE   = 264      # pixels per side
+PIXEL_SIZE   = 224      # pixels per side (TerraMind native size, UNetMobV2 compatible)
 RES_M        = 10       # metres per pixel
 
 # Parallelism
@@ -184,6 +182,7 @@ _NO_RETRY_PHRASES = (
     "Access Denied",       # requester-pays / auth — retrying won't help
     "403",                 # HTTP Forbidden
     "NoSuchKey",           # S3 explicit error code
+    "out of bounds",       # empty stackstac array — no data at this location
 )
 
 def with_retry(func, *args, **kwargs):
@@ -256,6 +255,11 @@ def download_s1rtc(
     ).items())
     # Keep IW mode only (client-side safeguard)
     items = [i for i in items if i.properties.get("s1:instrument_mode", "IW") == "IW"]
+    # Keep only dual-pol scenes (both VV and VH present)
+    items = [i for i in items if all(a in i.assets for a in S1_ASSETS)]
+
+    if not items:
+        return 0
 
     n = 0
     for item in items:
@@ -267,6 +271,8 @@ def download_s1rtc(
             continue
 
         def _load(it=item):
+            # Re-sign immediately before download so SAS token is fresh
+            planetary_computer.sign_inplace(it)
             da = stackstac.stack(
                 [it], assets=S1_ASSETS,
                 epsg=epsg, resolution=RES_M, bounds=bounds,
@@ -274,7 +280,14 @@ def download_s1rtc(
             ).squeeze("time")
             return da.compute()
 
-        da = with_retry(_load)
+        try:
+            da = with_retry(_load)
+        except IndexError:
+            # stackstac returned an empty array — item footprint does not
+            # intersect station bounds after reprojection; treat as no data
+            logging.debug(f"    S1RTC {fpath.name}: no spatial overlap — skipping")
+            continue
+
         da = da.astype("float32")
         da = center_crop(da)
         da.values = linear_to_db(da.values)
@@ -582,15 +595,9 @@ def process_station(row: pd.Series, catalog_mpc, catalog_aws) -> dict:
                 log["error_msg"] = str(log["error_msg"]) + f"{label.upper()}:{exc}; "
             logging.error(f"  {station_id} {label.upper()} failed: {exc}")
 
-    # Each modality is independent — run all in parallel
+    # S1 RTC + LULC only — S2 and DEM are handled by download_satellite_openeo.py
     modality_tasks = [
         ("s1rtc", download_s1rtc, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta),
-        ("s1grd", download_s1grd, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta),
-        ("s2l1c", download_s2,    station_dir, catalog_aws, epsg, bounds, bbox, start, end,
-                  "sentinel-2-l1c", S2L1C_BANDS, meta),
-        ("s2l2a", download_s2,    station_dir, catalog_aws, epsg, bounds, bbox, start, end,
-                  "sentinel-2-l2a", S2L2A_BANDS, meta),
-        ("dem",   download_dem,   station_dir, catalog_aws, epsg, bounds, bbox, meta),
         ("lulc",  download_lulc,  station_dir, catalog_mpc, epsg, bounds, bbox,
                   start_year, end_year, meta),
     ]
@@ -614,18 +621,22 @@ def main():
     setup_logging()
     log = logging.getLogger(__name__)
 
-    # --- Select 100 random stations ---
+    # --- Build station list: union of seed=42, seed=123, seed=456 (243 unique stations) ---
     df    = pd.read_csv(STATION_CSV)
     saved = df[df.status == "saved"].reset_index(drop=True)
-    pilot = saved.sample(n=N_STATIONS, random_state=RANDOM_SEED).reset_index(drop=True)
-    log.info(f"Pilot: {N_STATIONS} stations sampled from {len(saved)} saved stations (seed={RANDOM_SEED})")
+    pilot = pd.concat([
+        saved.sample(n=100, random_state=42),
+        saved.sample(n=100, random_state=123),
+        saved.sample(n=50,  random_state=456),
+    ]).drop_duplicates(subset=["network", "station"]).reset_index(drop=True)
+    log.info(f"Stations: {len(pilot)} unique (union of seed=42/123/456)")
 
-    # --- Skip already-completed stations ---
+    # --- Skip already-completed stations (S1RTC + LULC only) ---
     checkpoint = load_checkpoint()
     if len(checkpoint):
         done_mask = checkpoint[
-            ["s1rtc_status","s1grd_status","s2l1c_status","s2l2a_status","dem_status","lulc_status"]
-        ].apply(lambda r: all(s in ("done","no_data") for s in r), axis=1)
+            ["s1rtc_status", "lulc_status"]
+        ].apply(lambda r: all(s in ("done", "no_data") for s in r), axis=1)
         done_ids = set(checkpoint.loc[done_mask, "station_id"])
     else:
         done_ids = set()
@@ -647,10 +658,11 @@ def main():
     todo = [(i, row) for i, row in pilot.iterrows()
             if f"{row.network}_{row.station}" not in done_ids]
 
+    n_total = len(pilot)
     for i, row in pilot.iterrows():
         station_id = f"{row.network}_{row.station}"
         if station_id in done_ids:
-            log.info(f"[{i+1:3d}/{N_STATIONS}] Skip  {station_id}")
+            log.info(f"[{i+1:3d}/{n_total}] Skip  {station_id}")
 
     log.info(f"Stations to download: {len(todo)}  (workers={N_WORKERS})")
 
@@ -669,9 +681,7 @@ def main():
             completed[0] += 1
             log.info(
                 f"[{completed[0]:3d}/{len(todo)}] Done  {station_id}  "
-                f"S1RTC={row_dict['s1rtc_n']} S2L1C={row_dict['s2l1c_n']} "
-                f"S2L2A={row_dict['s2l2a_n']} DEM={row_dict['dem_status']} "
-                f"LULC={row_dict['lulc_status']}"
+                f"S1RTC={row_dict['s1rtc_n']} LULC={row_dict['lulc_status']}"
             )
 
             with ckpt_lock:

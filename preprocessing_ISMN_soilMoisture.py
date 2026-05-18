@@ -168,7 +168,9 @@ def process_station(station_data, network, station):
 #      (gaps <=7 days are bridged).
 #   2. Trim: anchor time window to surface (0-10 cm) valid
 #      period; drop non-surface depths with <95% coverage.
-#   3. Duration filter: skip if <365 valid days remain.
+#   3. Duration filter: skip if <1095 valid days remain (3 years,
+#      consistent with ICOS/AmeriFlux MIN_VALID_DAYS; ensures ≥2 years
+#      of valid training targets after the 365-day context window).
 #   4. Gap-fill: climatological month-day means; Feb-29
 #      fallback to Feb-28 then Mar-01.
 #   5. Write NetCDF with metadata attrs and save station record.
@@ -221,9 +223,9 @@ def process_single_station(args):
         else:
             start_date, end_date = None, None
 
-        # Step 3: duration filter — require at least 1 year of valid data
-        if len(valid_dates) < 365:
-            return out("skipped", "<1 year of valid daily data",
+        # Step 3: duration filter — require at least 3 years of valid data
+        if len(valid_dates) < 1095:
+            return out("skipped", "<3 years of valid daily data",
                        latitude=lat, longitude=lon,
                        start_date=start_date, end_date=end_date,
                        n_days=int(len(valid_dates)))
