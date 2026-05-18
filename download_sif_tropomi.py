@@ -10,8 +10,8 @@ serves all 1,048 stations.
 Source: S5P-PAL portal  https://data-portal.s5p-pal.com
 Collection: L2B_SIF___  (daily, cloud-free valid retrievals only)
 Variables extracted:
-  sif              → SIF_743  (mW/m²/sr/nm, 743–758 nm window)
-  sif_uncertainty  → SIF_743_uncertainty
+  sif              → SIF_743       (mW/m²/sr/nm, 743–758 nm window)
+  sif_uncertainty  → SIF_ERROR_743 (uncertainty)
 
 Output per station per year:
   {station}/SIF/sif_{YYYY}.nc
@@ -140,25 +140,21 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
     """
     Open one L2B daily file and extract SIF observations within EXTRACT_RADIUS_M
     of each station. Returns dict: station_id → {sif, sif_uncertainty} or None.
+
+    L2B files use group structure: variables are under /PRODUCT group.
     """
     results = {}
     try:
-        ds = xr.open_dataset(nc_path, engine="netcdf4")
+        # L2B files store variables in the PRODUCT group
+        ds = xr.open_dataset(nc_path, engine="netcdf4", group="PRODUCT")
 
-        # Variable names in L2B files
-        sif_var = None
-        unc_var = None
-        for candidate in ["SIF_743", "sif_743", "SIF", "sif"]:
-            if candidate in ds:
-                sif_var = candidate
-                break
-        for candidate in ["SIF_743_uncertainty", "sif_743_uncertainty", "SIF_uncertainty"]:
-            if candidate in ds:
-                unc_var = candidate
-                break
+        sif_var = "SIF_743"
+        unc_var = "SIF_ERROR_743"
 
-        if sif_var is None:
-            logging.getLogger(__name__).warning(f"  No SIF variable found in {nc_path.name}. Variables: {list(ds.data_vars)}")
+        if sif_var not in ds:
+            logging.getLogger(__name__).warning(
+                f"  No SIF_743 in {nc_path.name}/PRODUCT. Variables: {list(ds.data_vars)}"
+            )
             ds.close()
             return results
 

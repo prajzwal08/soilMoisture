@@ -9,19 +9,22 @@ Source: OpenLandMap-soildb (Hengl et al., 2026 ESSD)
         https://doi.org/10.5281/zenodo.15470431
         COG server: https://s3.opengeohub.org/global-soil/
 
-Variables (7 channels, 0–30 cm, 2020-2022 composite):
-  0  clay      clay content       (wt%, uint8 → divide by 2 for %)
-  1  sand      sand content       (wt%, uint8 → divide by 2 for %)
-  2  silt      silt content       (wt%, uint8 → divide by 2 for %)
-  3  soc       SOC content        (g/kg, uint16 → multiply by scaler)
-  4  socd      SOC density        (mg/cm³, uint16 → multiply by scaler)
-  5  bd        bulk density       (g/cm³, uint8 → divide by 100)
-  6  ph        pH in H₂O          (pH*10, uint8 → divide by 10)
+Variables (21 channels = 3 depths × 7 properties, 2020-2022 composite):
+  Depth layers: 0–30 cm (ch 0–6), 30–60 cm (ch 7–13), 60–100 cm (ch 14–20)
+  Per depth: clay, sand, silt, soc, socd, bd, ph
+
+  ch 0 / 7 / 14   clay   clay content       wt%
+  ch 1 / 8 / 15   sand   sand content       wt%
+  ch 2 / 9 / 16   silt   silt content       wt%
+  ch 3 / 10 / 17  soc    SOC content        g/kg
+  ch 4 / 11 / 18  socd   SOC density        mg/cm³
+  ch 5 / 12 / 19  bd     bulk density       g/cm³
+  ch 6 / 13 / 20  ph     pH in H₂O          –
 
 Patch: 74×74 pixels @ ~27.5 m = 2.035 km × 2.035 km centred on station
 
 Output per station:
-  {station}/soil/soil_patch.tif   float32, 7 bands, 74×74 px
+  {station}/soil/soil_patch.tif   float32, 21 bands, 74×74 px
 
 Usage:
   python download_soil_openlandmap.py
@@ -51,58 +54,36 @@ RES_DEG   = 0.00025 # ~27.5 m per pixel in degrees
 
 N_WORKERS = 8       # concurrent station downloads
 
-# COG URLs for 7 soil variables (0–30 cm mean, 2020–2022 composite)
+# COG URLs: 3 depths × 7 variables = 21 channels, 2020-2022 composite
 # Source: https://raw.githubusercontent.com/openlandmap/soildb/main/tables/OpenLandMap_soildb_COGS.csv
+_BASE_V523 = "https://s3.opengeohub.org/global-soil/global_soil_props_v20250523/"
+_BASE_V204 = "https://s3.opengeohub.org/global-soil/global_soil_props_v20250204_mosaics/"
+
 SOIL_LAYERS = [
-    {
-        "name":   "clay",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250523/"
-                  "clay.tot_iso.11277.2020.wpct_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250523.tif",
-        "units":  "wt%",
-        "scaler": 1.0,   # uint8, values already in %
-    },
-    {
-        "name":   "sand",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250523/"
-                  "sand.tot_iso.11277.2020.wpct_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250523.tif",
-        "units":  "wt%",
-        "scaler": 1.0,
-    },
-    {
-        "name":   "silt",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250523/"
-                  "silt.tot_iso.11277.2020.wpct_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250523.tif",
-        "units":  "wt%",
-        "scaler": 1.0,
-    },
-    {
-        "name":   "soc",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250204_mosaics/"
-                  "oc_iso.10694.1995.wpml_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",
-        "units":  "g/kg",
-        "scaler": 1.0,
-    },
-    {
-        "name":   "socd",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250204_mosaics/"
-                  "oc_iso.10694.1995.mg.cm3_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",
-        "units":  "mg/cm3",
-        "scaler": 1.0,
-    },
-    {
-        "name":   "bd",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250204_mosaics/"
-                  "bd.core_iso.11272.2017.g.cm3_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",
-        "units":  "g/cm3",
-        "scaler": 1.0,
-    },
-    {
-        "name":   "ph",
-        "url":    "https://s3.opengeohub.org/global-soil/global_soil_props_v20250204_mosaics/"
-                  "ph.h2o_iso.10390.2021.index_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",
-        "units":  "pH",
-        "scaler": 1.0,
-    },
+    # ── 0–30 cm (channels 0–6) ───────────────────────────────────────────────
+    {"name": "clay_0_30",  "depth": "0-30cm",  "url": _BASE_V523 + "clay.tot_iso.11277.2020.wpct_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250523.tif",  "units": "wt%"},
+    {"name": "sand_0_30",  "depth": "0-30cm",  "url": _BASE_V523 + "sand.tot_iso.11277.2020.wpct_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250523.tif",  "units": "wt%"},
+    {"name": "silt_0_30",  "depth": "0-30cm",  "url": _BASE_V523 + "silt.tot_iso.11277.2020.wpct_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250523.tif",  "units": "wt%"},
+    {"name": "soc_0_30",   "depth": "0-30cm",  "url": _BASE_V204 + "oc_iso.10694.1995.wpml_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",        "units": "g/kg"},
+    {"name": "socd_0_30",  "depth": "0-30cm",  "url": _BASE_V204 + "oc_iso.10694.1995.mg.cm3_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",      "units": "mg/cm3"},
+    {"name": "bd_0_30",    "depth": "0-30cm",  "url": _BASE_V204 + "bd.core_iso.11272.2017.g.cm3_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",  "units": "g/cm3"},
+    {"name": "ph_0_30",    "depth": "0-30cm",  "url": _BASE_V204 + "ph.h2o_iso.10390.2021.index_m_30m_b0cm..30cm_20200101_20221231_g_epsg.4326_v20250204.tif",   "units": "pH"},
+    # ── 30–60 cm (channels 7–13) ─────────────────────────────────────────────
+    {"name": "clay_30_60", "depth": "30-60cm", "url": _BASE_V523 + "clay.tot_iso.11277.2020.wpct_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250523.tif", "units": "wt%"},
+    {"name": "sand_30_60", "depth": "30-60cm", "url": _BASE_V523 + "sand.tot_iso.11277.2020.wpct_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250523.tif", "units": "wt%"},
+    {"name": "silt_30_60", "depth": "30-60cm", "url": _BASE_V523 + "silt.tot_iso.11277.2020.wpct_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250523.tif", "units": "wt%"},
+    {"name": "soc_30_60",  "depth": "30-60cm", "url": _BASE_V204 + "oc_iso.10694.1995.wpml_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250204.tif",       "units": "g/kg"},
+    {"name": "socd_30_60", "depth": "30-60cm", "url": _BASE_V204 + "oc_iso.10694.1995.mg.cm3_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250204.tif",     "units": "mg/cm3"},
+    {"name": "bd_30_60",   "depth": "30-60cm", "url": _BASE_V204 + "bd.core_iso.11272.2017.g.cm3_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250204.tif", "units": "g/cm3"},
+    {"name": "ph_30_60",   "depth": "30-60cm", "url": _BASE_V204 + "ph.h2o_iso.10390.2021.index_m_30m_b30cm..60cm_20200101_20221231_g_epsg.4326_v20250204.tif",  "units": "pH"},
+    # ── 60–100 cm (channels 14–20) ───────────────────────────────────────────
+    {"name": "clay_60_100","depth": "60-100cm","url": _BASE_V523 + "clay.tot_iso.11277.2020.wpct_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250523.tif","units": "wt%"},
+    {"name": "sand_60_100","depth": "60-100cm","url": _BASE_V523 + "sand.tot_iso.11277.2020.wpct_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250523.tif","units": "wt%"},
+    {"name": "silt_60_100","depth": "60-100cm","url": _BASE_V523 + "silt.tot_iso.11277.2020.wpct_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250523.tif","units": "wt%"},
+    {"name": "soc_60_100", "depth": "60-100cm","url": _BASE_V204 + "oc_iso.10694.1995.wpml_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250204.tif",      "units": "g/kg"},
+    {"name": "socd_60_100","depth": "60-100cm","url": _BASE_V204 + "oc_iso.10694.1995.mg.cm3_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250204.tif",    "units": "mg/cm3"},
+    {"name": "bd_60_100",  "depth": "60-100cm","url": _BASE_V204 + "bd.core_iso.11272.2017.g.cm3_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250204.tif","units": "g/cm3"},
+    {"name": "ph_60_100",  "depth": "60-100cm","url": _BASE_V204 + "ph.h2o_iso.10390.2021.index_m_30m_b60cm..100cm_20200101_20221231_g_epsg.4326_v20250204.tif", "units": "pH"},
 ]
 
 # ============================================================
@@ -140,10 +121,10 @@ def station_bbox(lat: float, lon: float) -> tuple:
     return (lon - half, lat - half, lon + half, lat + half)
 
 
-def read_patch(url: str, lat: float, lon: float) -> np.ndarray | None:
+def read_patch(url: str, lat: float, lon: float) -> tuple[np.ndarray | None, object]:
     """
     Open COG via HTTP range request and read 74×74 px window.
-    Returns float32 array (PATCH_PX, PATCH_PX) or None on failure.
+    Returns (float32 array (PATCH_PX, PATCH_PX), crs) or (None, None) on failure.
     """
     west, south, east, north = station_bbox(lat, lon)
     try:
@@ -152,13 +133,14 @@ def read_patch(url: str, lat: float, lon: float) -> np.ndarray | None:
             data   = src.read(1, window=window, out_shape=(PATCH_PX, PATCH_PX),
                               resampling=rasterio.enums.Resampling.bilinear)
             nodata = src.nodata
+            crs    = src.crs
         arr = data.astype(np.float32)
         if nodata is not None:
             arr[arr == nodata] = np.nan
-        return arr
+        return arr, crs
     except Exception as exc:
         logging.getLogger(__name__).warning(f"  Read failed ({url.split('/')[-1]}): {exc}")
-        return None
+        return None, None
 
 
 def process_station(row: pd.Series) -> str:
@@ -175,16 +157,17 @@ def process_station(row: pd.Series) -> str:
         return "skip"
 
     bands = []
+    src_crs = None
     for layer in SOIL_LAYERS:
-        arr = read_patch(layer["url"], lat, lon)
+        arr, crs = read_patch(layer["url"], lat, lon)
         if arr is None:
             log.warning(f"  {station_id}: failed to read {layer['name']}, filling NaN")
             arr = np.full((PATCH_PX, PATCH_PX), np.nan, dtype=np.float32)
-        if layer["scaler"] != 1.0:
-            arr = arr * layer["scaler"]
+        if crs is not None and src_crs is None:
+            src_crs = crs
         bands.append(arr)
 
-    stack = np.stack(bands, axis=0)   # (7, 74, 74)
+    stack = np.stack(bands, axis=0)   # (21, 74, 74)
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,13 +180,13 @@ def process_station(row: pd.Series) -> str:
         height=PATCH_PX, width=PATCH_PX,
         count=len(SOIL_LAYERS),
         dtype="float32",
-        crs=rasterio.crs.CRS.from_epsg(4326),
+        crs=src_crs,
         transform=transform,
         compress="deflate",
     ) as dst:
         dst.write(stack)
         for i, layer in enumerate(SOIL_LAYERS, start=1):
-            dst.update_tags(i, name=layer["name"], units=layer["units"])
+            dst.update_tags(i, name=layer["name"], units=layer["units"], depth=layer["depth"])
 
     log.debug(f"  {station_id}: soil_patch.tif saved")
     return "done"
