@@ -27,7 +27,7 @@ Usage:
 
 import logging
 import tempfile
-import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta, datetime, timezone
 from pathlib import Path
@@ -58,7 +58,8 @@ SIF_START_DATE = date(2018, 4, 30)   # first available L2B file
 SEARCH_RADIUS_DEG = 0.05   # ~5.5 km buffer around station for STAC bbox
 EXTRACT_RADIUS_M  = 5000   # 5 km radius for pixel matching
 
-N_WORKERS = 6   # concurrent day downloads (bandwidth limited ~390 MB/file — keep moderate)
+N_WORKERS    = 6    # concurrent day downloads (bandwidth limited ~390 MB/file — keep moderate)
+LATENCY_DAYS = 30   # estimated days of latency before files are available
 
 LOG_COLS = ["date", "n_stations_found", "status", "error_msg", "timestamp"]
 
@@ -82,8 +83,14 @@ def setup_logging():
 # STATION LOADING
 # ============================================================
 
+REQUIRED_COLS = {"source_network", "network", "station_id", "latitude", "longitude",
+                 "end_date", "has_soil_moisture", "has_flux"}
+
 def load_stations() -> pd.DataFrame:
     df = pd.read_csv(STATION_CSV)
+    missing = REQUIRED_COLS - set(df.columns)
+    if missing:
+        raise ValueError(f"station_splits.csv missing required columns: {sorted(missing)}")
     def _folder(r):
         if r["source_network"] != r["network"]:
             return f"{r['source_network']}_{r['network']}_{r['station_id']}"
@@ -111,12 +118,6 @@ def date_range(start: date, end: date):
         yield d
         d += timedelta(days=1)
 
-
-def parse_date(val) -> str:
-    s = str(val).split(".")[0].strip()
-    if len(s) == 8 and s.isdigit():
-        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
-    return s[:10]
 
 # ============================================================
 # STAC SEARCH
@@ -215,6 +216,28 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
     return results
 
 # ============================================================
+# DOWNLOAD WITH RETRY
+# ============================================================
+
+def _download(url: str, dest: Path, max_retries: int = 3, backoff_s: float = 15.0):
+    """Stream-download url → dest with exponential backoff on transient errors."""
+    log = logging.getLogger(__name__)
+    for attempt in range(max_retries):
+        try:
+            with requests.get(url, stream=True, timeout=120) as r:
+                r.raise_for_status()
+                with open(dest, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+            return
+        except requests.RequestException as exc:
+            if attempt == max_retries - 1:
+                raise
+            wait = backoff_s * (2 ** attempt)
+            log.warning(f"  Download attempt {attempt + 1} failed ({exc}); retrying in {wait:.0f}s")
+            time.sleep(wait)
+
+# ============================================================
 # PER-DAY PROCESSING
 # ============================================================
 
@@ -237,12 +260,7 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
         with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
             tmp_path = Path(tmp.name)
 
-        # Stream download to temp file
-        with requests.get(url, stream=True, timeout=120) as r:
-            r.raise_for_status()
-            with open(tmp_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1 << 20):
-                    f.write(chunk)
+        _download(url, tmp_path)
 
         # Extract all stations
         obs = extract_stations_from_file(tmp_path, stations_df, day)
@@ -272,12 +290,14 @@ def save_station_year(station_dir: Path, station_id: str, year: int, obs_list: l
     obs_list: list of dicts with keys date, sif, sif_uncertainty
     Save to {station_dir}/SIF/sif_{year}.nc
     """
+    log = logging.getLogger(__name__)
     if not obs_list:
         return
     out_dir = station_dir / "SIF"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"sif_{year}.nc"
     if out_path.exists():
+        log.debug(f"  Skipping {out_path} (already exists)")
         return
 
     times = pd.DatetimeIndex([o["date"] for o in obs_list])
@@ -310,7 +330,7 @@ def main():
         log.info(f"TEST_MODE: running on {len(df)} station(s), {TEST_DAYS} days only")
 
     # Build the overall date range (SIF start → max station end date)
-    max_end = date.today() - timedelta(days=30)  # ~1-month latency
+    max_end = date.today() - timedelta(days=LATENCY_DAYS)
     start_d = SIF_START_DATE
     end_d   = max_end
 
@@ -323,10 +343,6 @@ def main():
         row["station_id"]: Path(row["station_dir"]) for _, row in df.iterrows()
     }
 
-    # Filter to stations still needing data
-    def needs_year(sid, year):
-        return not (station_dirs[sid] / "SIF" / f"sif_{year}.nc").exists()
-
     # STAC catalog (one client — not thread-safe, so each worker opens its own)
     log.info(f"Processing SIF from {start_d} to {end_d}")
 
@@ -335,14 +351,24 @@ def main():
         all_days = all_days[:TEST_DAYS]
     log.info(f"Total days: {len(all_days)}")
 
+    # Pre-compute which (station, year) pairs still need data (avoids per-day filesystem hits)
+    all_years = {d.year for d in all_days}
+    needed: set[tuple[str, int]] = {
+        (sid, yr)
+        for sid in df["station_id"]
+        for yr in all_years
+        if not (station_dirs[sid] / "SIF" / f"sif_{yr}.nc").exists()
+    }
+    log.info(f"Station-year pairs still needing data: {len(needed)}")
+
     done = [0]
 
     def _process_one_day(day):
         catalog = pystac_client.Client.open(STAC_URL)
-        # Only process if at least one station needs this year
         year = day.year
-        active = df[df["station_id"].apply(lambda s: needs_year(s, year))]
+        active = df[df["station_id"].apply(lambda s: (s, year) in needed)]
         if active.empty:
+            log.debug(f"  Day {day}: all stations already have sif_{year}.nc, skipping")
             return {"date": day.isoformat(), "status": "skip",
                     "n_stations_found": 0, "error_msg": "", "timestamp": ""}
         return process_day(day, catalog, active)
