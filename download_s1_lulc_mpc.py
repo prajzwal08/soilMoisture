@@ -489,6 +489,9 @@ def apply_lulc_2025_proxy(pilot: pd.DataFrame):
             n_missing_src += 1
             continue
         shutil.copy2(str(src), str(dst))
+        with rasterio.open(str(dst), "r+") as ds:
+            ds.update_tags(TIFFTAG_DATETIME="2025:01:01 00:00:00", datetime_utc="2025-01-01T00:00:00Z",
+                           lulc_proxy="2024")
         n_copied += 1
     log.info(
         f"LULC 2025 proxy: copied={n_copied}  already_present={n_already}  "
