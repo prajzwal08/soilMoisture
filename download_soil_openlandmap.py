@@ -33,6 +33,8 @@ Usage:
 """
 
 import logging
+import os
+os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -48,13 +50,17 @@ from pyproj import Transformer
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV   = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
-SATELLITE_DIR = Path("/home/khanalp/data/satellite")
+DATA_ROOT     = Path("/gpfs/work3/0/prjs1968/data")
+STATION_CSV   = DATA_ROOT / "station_splits.csv"
+LOG_DIR       = DATA_ROOT / "logs"
+
+TEST_MODE     = False
+TEST_STATION  = "ISMN_TWENTE_Hupsel"
 
 PATCH_PX  = 74   # pixels per side
 RES_M     = 30   # target physical resolution (m) — gives 74×30 = 2220 m patch
 
-N_WORKERS = 8       # concurrent station downloads
+N_WORKERS = 16      # concurrent station downloads (public S3 COGs — no rate limit)
 
 # COG URLs: 3 depths × 7 variables = 21 channels, 2020-2022 composite
 # Source: https://raw.githubusercontent.com/openlandmap/soildb/main/tables/OpenLandMap_soildb_COGS.csv
@@ -93,14 +99,14 @@ SOIL_LAYERS = [
 # ============================================================
 
 def setup_logging():
-    SATELLITE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(SATELLITE_DIR / "soil_download.log"),
+            logging.FileHandler(LOG_DIR / "soil_download.log"),
         ],
     )
 
@@ -110,7 +116,17 @@ def setup_logging():
 
 def load_stations() -> pd.DataFrame:
     df = pd.read_csv(STATION_CSV)
-    df["station_id"] = df["network"] + "_" + df["station_id"]
+    def _folder(r):
+        if r["source_network"] != r["network"]:
+            return f"{r['source_network']}_{r['network']}_{r['station_id']}"
+        return f"{r['network']}_{r['station_id']}"
+    df["station_id"] = df.apply(_folder, axis=1)
+    def _dir(r):
+        has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+        has_fl = str(r.get("has_flux", "False")).lower() == "true"
+        cat = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+        return DATA_ROOT / cat / r["station_id"]
+    df["station_dir"] = df.apply(_dir, axis=1)
     return df.reset_index(drop=True)
 
 # ============================================================
@@ -172,7 +188,7 @@ def process_station(row: pd.Series) -> str:
     lon = float(row["longitude"])
     log = logging.getLogger(__name__)
 
-    out_dir  = SATELLITE_DIR / station_id / "soil"
+    out_dir  = Path(row["station_dir"]) / "soil"
     out_path = out_dir / "soil_patch.tif"
 
     if out_path.exists():
@@ -222,10 +238,13 @@ def main():
     log = logging.getLogger(__name__)
 
     df = load_stations()
+    if TEST_MODE:
+        df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
+        log.info(f"TEST_MODE: running on {len(df)} station(s): {list(df['station_id'])}")
 
     # Skip stations that already have the patch
-    todo = df[df["station_id"].apply(
-        lambda s: not (SATELLITE_DIR / s / "soil" / "soil_patch.tif").exists()
+    todo = df[~df["station_dir"].apply(
+        lambda d: (Path(d) / "soil" / "soil_patch.tif").exists()
     )].reset_index(drop=True)
 
     log.info(f"Stations: {len(df)} total, {len(todo)} to download, "

@@ -1,0 +1,62 @@
+Model Architecture Description — SoilMoistureModel
+====================================================
+
+The model, SoilMoistureModel, is a multimodal temporal architecture that fuses satellite
+imagery, weather reanalysis, and static terrain data to produce a spatially-resolved soil
+moisture map at 10 m resolution. The backbone is a frozen TerraMind ViT-Base encoder (12
+transformer blocks, 768-dimensional tokens, 196 tokens per image at a 14×14 spatial grid),
+which processes 224×224 patches for four input modalities — Sentinel-2 (S2L2A), Sentinel-1
+(S1RTC), DEM, and LULC — and exposes intermediate features at blocks 2, 5, 8, and 11,
+referred to as L3, L6, L9, and L12. For each satellite acquisition, the 196 L12 tokens are
+compressed into four multi-scale summary tokens via spatial pyramid pooling over four
+concentric crops of the 14×14 grid: a 2×2 centre patch covering approximately 160 m, a 6×6
+inner patch (~480 m), a 10×10 patch (~1.12 km), and the full 14×14 grid (~2.24 km). For
+Sentinel-2, pooling is attention-weighted using a learned linear scorer with cloud masking
+(cloudy tokens are suppressed to -inf before softmax); for Sentinel-1, DEM, and LULC, masked
+mean pooling is used instead.
+
+The input sequence fed to the temporal transformer is assembled in four parts. First, a static
+prefix of 8 tokens is formed from the four-scale DEM pyramid and four-scale LULC pyramid, each
+augmented with a learned scale embedding that distinguishes the four spatial resolutions; these
+carry no temporal positional encoding. Second, target-day spatial tokens are formed from the
+most recent cloud-free acquisition at or before the target day T — whichever of S2 or S1 is
+more recent — by passing it through TerraMind and retaining all 196 uncompressed L12 tokens,
+then adding a 2D additive spatial positional encoding (separate learned row and column
+embeddings for each of the 14 positions) and a learned modality embedding (index 0 for S2,
+index 1 for S1). Third, historical satellite tokens are formed from all S2 and S1 acquisitions
+within the rolling 365-day window: each acquisition yields four compressed pyramid tokens
+(B, MAX_ACQ, 4, 768), to which a sinusoidal day-of-year positional encoding (encoding the
+absolute calendar DoY), a learned relative position embedding (encoding the acquisition's
+0-indexed order within the window, i.e. position 0 is the oldest and 364 is the most recent),
+and the learned scale embedding are added additively. Fourth, ERA5 tokens are produced by
+projecting the 19-variable daily ERA5-Land reanalysis through a two-layer MLP (19 -> 256 with
+GELU -> 768) for all 365 days in the rolling window, then adding the same sinusoidal DoY
+encoding and learned relative position embedding. Days strictly after T are masked via a
+boolean key_padding_mask passed to the transformer, enforcing causal conditioning on weather.
+
+The assembled sequence of approximately 655-695 tokens (8 static + 196 target spatial +
+N_S2×4 + N_S1×4 + 365 ERA5) is passed through a 6-layer bidirectional Transformer encoder
+(768-dim, 12 heads, feedforward hidden size 3072, dropout 0.1, pre-norm with LayerNorm before
+each sublayer). The transformer processes all tokens simultaneously, with future ERA5 days
+silenced via the key mask rather than causal attention masking, so that attention within the
+visible context is fully bidirectional. After the transformer, the 196 contextualised tokens
+corresponding to the target-day spatial positions are extracted and reshaped into a
+(B, 768, 14, 14) bottleneck feature map.
+
+This bottleneck is decoded into a full 224×224 soil moisture map by a U-Net decoder with four
+bilinear upsampling stages. Skip connections from TerraMind's intermediate layer outputs (L9,
+L6, L3) — averaged across all valid S2 acquisitions to form a single (B, 768, 14, 14) feature
+map per layer — are projected to match the decoder channel widths and concatenated at each
+stage: at 28×28 the bottleneck (projected to 512 channels) is concatenated with the projected
+L9 skip; at 56×56 the result (projected to 256 channels) is concatenated with L6; at 112×112
+it is concatenated with L3 (128 channels); the final 112->224 upsampling uses no skip (64
+channels). Each stage applies a double Conv2d-BatchNorm-ReLU block. A 1×1 convolutional head
+maps the 64-channel 224×224 feature map to n_depths output channels (default 4, corresponding
+to depth bins 0-10, 10-30, 30-50, and >50 cm), producing the final soil moisture prediction
+at 10 m per pixel.
+
+Training is supervised at a single station pixel located at the centre of the 224×224 chip
+(row = col = 112, i.e. grid cell (7, 7) in the 14×14 token space). The loss is the Huber loss
+with threshold delta = 0.05 m3/m3, computed only at that pixel and only for depth bins where
+observed labels exist (NaN depths are masked out), returning a differentiable zero when no
+valid labels are present in a batch.

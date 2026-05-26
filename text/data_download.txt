@@ -1,0 +1,231 @@
+Data Download Plan
+==================
+Date: 2026-05-18
+Stations: 1,048  (ISMN 894 · ICOS 63 · AmeriFlux 91)
+Architecture reference: architecture.md
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A.  TEMPORAL INPUTS  (per station × per acquisition date)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌────┬──────────────────────────┬───────────────────────────────┬────────────────┬──────────────────┬────────────┐
+│ #  │ Dataset                  │ Patch / format                │ Frequency      │ Source           │ Est. size  │
+├────┼──────────────────────────┼───────────────────────────────┼────────────────┼──────────────────┼────────────┤
+│ 1  │ Sentinel-2 L2A           │ 224×224 px @ 10 m, 12 bands   │ ~5 days        │ CDSE / OpenEO    │ ~8 TB      │
+│ 2  │ Sentinel-1 RTC           │ 224×224 px @ 10 m, VV + VH    │ ~6 days        │ CDSE             │ ~3 TB      │
+│ 3  │ ERA5-Land daily          │ Point, 19 variables           │ Daily          │ CDS / GEE        │ ~15 GB     │
+│ 4  │ SIF (TROPOMI)            │ Point, value + uncertainty    │ ~8 days sparse │ Copernicus S5P   │ ~5 GB      │
+│ 5  │ TWSA (GRACE/GRACE-FO)    │ Point, anomaly + error        │ Monthly        │ NASA GES DISC    │ ~200 MB    │
+└────┴──────────────────────────┴───────────────────────────────┴────────────────┴──────────────────┴────────────┘
+
+Details:
+
+  1. Sentinel-2 L2A
+     Script:   download_satellite_openeo.py  (exists, adapt for all stations)
+     Bands:    B1 B2 B3 B4 B5 B6 B7 B8 B8A B9 B11 B12  (12 bands, B10 excluded)
+     Patch:    224×224 pixels at 10 m = 2.24 km × 2.24 km centred on station
+     Format:   one GeoTIFF per acquisition date per station
+               {station_id}/S2L2A/{YYYYMMDD}.tif
+     Notes:    cloud masks derived from these patches (CloudSEN12, precomputed on Snellius)
+               TerraMind tokens precomputed from these patches (Snellius GPU)
+               CDSE requires OAuth2 credentials (already configured)
+
+  2. Sentinel-1 RTC
+     Script:   download_satellite.py  (exists, adapt for all stations via CDSE)
+     Channels: VH, VV  (2 channels, dB backscatter)
+     Patch:    224×224 pixels at 10 m — same footprint as S2
+     Format:   {station_id}/S1RTC/{YYYYMMDD}_{ASC|DESC}.tif
+     Notes:    cloud-penetrating — no cloud masking needed
+               ~12-day revisit (6-day with ascending + descending orbits combined)
+
+  3. ERA5-Land daily
+     Script:   download_era5land_gee.py  (exists)
+     Variables (19):
+       temperature 2m      — mean, min, max        (3 vars)
+       dewpoint 2m         — mean, min, max        (3 vars)
+       skin temperature    — mean, min, max        (3 vars)
+       10 m U wind         — mean, min, max        (3 vars)
+       10 m V wind         — mean, min, max        (3 vars)
+       surface pressure    — mean                  (1 var)
+       total precipitation — sum                   (1 var)
+     Format:   {station_id}/era5_daily.nc  (time × 19 vars)
+     Notes:    Yeo-Johnson Power Transform normalisation applied at training time
+               (fit on training split only); params stored in normalization_stats.json
+               GEE collection: ECMWF/ERA5_LAND/DAILY_AGGR
+
+  4. SIF (TROPOMI)
+     Script:   NEW — download_sif_tropomi.py  (needs writing)
+     Variables: SIF radiance (mW/m²/sr/nm), SIF uncertainty
+     Resolution: ~3.5 km — use value at station pixel; no spatial patch needed
+     Format:   {station_id}/SIF/{YYYYMMDD}.nc
+     Source:   ESA Copernicus Sentinel-5P TROPOMI product (SIF 740nm)
+               OR pre-processed TROPOSIF dataset (Köhler et al.)
+     Notes:    sparse — only cloud-free overpasses produce valid values
+               ~46 tokens/year on average; gaps handled by sparse token injection
+               missing days simply have no token in the temporal transformer sequence
+               modality dropout p=0.5 during training
+
+  5. TWSA (GRACE/GRACE-FO)
+     Script:   NEW — download_twsa_grace.py  (needs writing)
+     Variables: terrestrial water storage anomaly (cm), uncertainty
+     Resolution: ~300 km — single value per station per month
+     Format:   {station_id}/TWSA/{YYYY}.nc  (12 monthly values per year)
+     Source:   NASA GES DISC — GRACE/GRACE-FO Level-3 mascon solutions
+               JPL RL06.1 or GSFC mascons recommended
+               URL: https://podaac.jpl.nasa.gov/dataset/TELLUS_GRAC-GRFO_MASCON_CRI_GRID_RL06.1_V3
+     Notes:    ~12 tokens/year; mid-month DoY assignment for positional encoding
+               (Jan=15, Feb=46, Mar=74, ...) as specified in architecture.md
+               modality dropout p=0.5 during training
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+B.  STATIC INPUTS  (per station, downloaded once)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌────┬──────────────────────────┬───────────────────────────────┬──────────────────────────────┬────────────┐
+│ #  │ Dataset                  │ Patch / format                │ Source                       │ Est. size  │
+├────┼──────────────────────────┼───────────────────────────────┼──────────────────────────────┼────────────┤
+│ 6  │ DEM (Copernicus GLO-30)  │ 224×224 px @ 10 m             │ GEE COPERNICUS/DEM/GLO30     │ ~500 MB    │
+│ 7  │ LULC (ESA WorldCover)   │ 224×224 px @ 10 m, annual     │ GEE ESA/WorldCover/v200      │ ~1 GB      │
+│ 8  │ OpenLandMap-soildb       │ 74×74 px @ 30 m, 7 channels   │ Zenodo 10.5281/zenodo.15470431│ ~1.6 GB   │
+└────┴──────────────────────────┴───────────────────────────────┴──────────────────────────────┴────────────┘
+
+Details:
+
+  6. DEM (Copernicus GLO-30)
+     Script:   add to GEE batch download script
+     Patch:    224×224 px at 10 m — same footprint as S2/S1
+     Format:   {station_id}/DEM/dem.tif  (float32, elevation in metres)
+     Notes:    static — download once per station
+               GEE collection: COPERNICUS/DEM/GLO30
+
+  7. LULC (ESA WorldCover)
+     Script:   add to GEE batch download script
+     Patch:    224×224 px at 10 m
+     Format:   {station_id}/LULC/{YYYY}.tif  (uint8, class 0–9)
+     Notes:    annual product; download one per year of station record
+               GEE collection: ESA/WorldCover/v200  (2020, 2021 available)
+               Use 2021 for all stations unless record predates 2020
+
+  8. OpenLandMap-soildb
+     Script:   NEW — download_soil_openlandmap.py  (needs writing)
+     Patch:    74×74 pixels at 30 m = 2.22 km × 2.22 km centred on station
+     Channels (7, stacked as multi-band GeoTIFF):
+       0  clay              (wt%)
+       1  sand              (wt%)
+       2  silt              (wt%)
+       3  SOC content       (g kg⁻¹)
+       4  SOC density       (kg m⁻³)
+       5  bulk density      (t m⁻³)
+       6  pH (H₂O)
+     Depth:    surface layer (0–30 cm)
+     Format:   {station_id}/soil/soil_patch.tif  (float32, 7-band)
+     Download: global GeoTIFFs from Zenodo (~2 GB compressed)
+               clip 74×74 per station on Snellius — no per-station download needed
+     Notes:    5-year temporal composites (2000, 2005, 2010, 2015, 2020, 2022)
+               use composite closest to station mid-record year
+               source paper: Hengl et al. (2026) ESSD
+               DOI: https://doi.org/10.5281/zenodo.15470431
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+C.  LABELS  (already preprocessed — no download needed)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌──────────────────────────┬──────────────────────────────────────────────────────────────┐
+│ Dataset                  │ Location                                                     │
+├──────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ ISMN soil moisture       │ /home/khanalp/data/soilmoisture/level1/*.nc                  │
+│ ICOS SM + LE flux        │ /home/khanalp/data/soilmoisture/icos_level1/                 │
+│ AmeriFlux SM + LE flux   │ /home/khanalp/data/soilmoisture/ameriflux_level1/            │
+└──────────────────────────┴──────────────────────────────────────────────────────────────┘
+
+  Variables per label file:
+    soil_moisture      (depth, time)  float32   m³ m⁻³
+    soil_moisture_qc   (depth, time)  uint8     0=observed, 1=gap-filled, 2=missing
+    le                 (time,)        float32   W m⁻²     flux sites only
+    le_qc              (time,)        uint8     0=measured, 1=good fill, 2=poor fill
+  Depths: 0-10, 10-30, 30-100 cm (3 bins)
+  All stations have ≥3 years of valid daily data (1,095 days minimum)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+D.  PRECOMPUTED ON SNELLIUS  (not downloaded — derived from A+B above)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌──────────────────────┬──────────────────────────────────┬────────────────┬──────────────┐
+│ What                 │ From                             │ Output format  │ Est. size    │
+├──────────────────────┼──────────────────────────────────┼────────────────┼──────────────┤
+│ Cloud masks          │ CloudSEN12 on S2 patches         │ .tif per date  │ ~2 GB        │
+│ TerraMind tokens     │ Frozen ViT on S2+S1+DEM+LULC     │ .pt  per date  │ ~50 GB       │
+└──────────────────────┴──────────────────────────────────┴────────────────┴──────────────┘
+
+  Cloud masks:
+    Model:    CloudSEN12 UNetMobV2_V2  (script: cloud_masking_inference.py, exists)
+    Input:    S2 patch (224×224×12)
+    Output:   {station_id}/CloudMask/{YYYYMMDD}.tif  (uint8, per-pixel cloud class)
+    Used as:  per-token (16×16 px) key_padding_mask in TerraMind Latent Cross-Attention
+
+  TerraMind tokens:
+    Model:    TerraMind Base (frozen, 12 layers, 768-dim, 12 heads)
+    Script:   precompute_terramind.py  (exists)
+    Input:    S2 or S1 patch → 196 L12 tokens; cloud mask for S2
+              DEM, LULC → 196 L12 tokens (no cloud mask)
+    Output:   {station_id}/tokens/{YYYYMMDD}.pt  (shape: (196, 768), float16)
+    Notes:    ~50 GB total replaces ~11 TB raw satellite for model training
+              L3/L6/L9 intermediate features also saved for U-Net skip connections
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+E.  SIZE SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌──────────────────────────────┬────────────────┬──────────────────────────────────┐
+│ Dataset                      │ Size           │ Notes                            │
+├──────────────────────────────┼────────────────┼──────────────────────────────────┤
+│ Sentinel-2 L2A               │ ~8 TB          │ largest; download on Snellius    │
+│ Sentinel-1 RTC               │ ~3 TB          │                                  │
+│ ERA5-Land daily              │ ~15 GB         │ existing script                  │
+│ SIF (TROPOMI)                │ ~5 GB          │ new script needed                │
+│ TWSA (GRACE)                 │ ~200 MB        │ new script needed                │
+│ DEM (GLO-30)                 │ ~500 MB        │ add to GEE script                │
+│ LULC (ESA WorldCover)        │ ~1 GB          │ add to GEE script                │
+│ OpenLandMap-soildb           │ ~1.6 GB        │ Zenodo download + clip           │
+├──────────────────────────────┼────────────────┼──────────────────────────────────┤
+│ TOTAL DOWNLOAD               │ ~11.5 TB       │                                  │
+├──────────────────────────────┼────────────────┼──────────────────────────────────┤
+│ TerraMind tokens (computed)  │ ~50 GB         │ replaces ~11 TB for training     │
+│ Cloud masks (computed)       │ ~2 GB          │                                  │
+└──────────────────────────────┴────────────────┴──────────────────────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+F.  DOWNLOAD PRIORITY ORDER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌──────┬──────────────────────────────┬────────────────────┬───────────────────────────┐
+│ Step │ Dataset                      │ Effort             │ Dependency                │
+├──────┼──────────────────────────────┼────────────────────┼───────────────────────────┤
+│  1   │ ERA5-Land                    │ script exists      │ none                      │
+│  2   │ DEM + LULC                   │ add to GEE script  │ none                      │
+│  3   │ OpenLandMap-soildb           │ new script         │ none                      │
+│  4   │ SIF + TWSA                   │ new scripts        │ none                      │
+│  5   │ Sentinel-2 L2A               │ script exists      │ needs Snellius storage    │
+│  6   │ Sentinel-1 RTC               │ adapt S2 script    │ needs Snellius storage    │
+│  7   │ Cloud masks                  │ script exists      │ needs S2 patches (step 5) │
+│  8   │ TerraMind tokens             │ script exists      │ needs S2+S1+DEM+LULC      │
+└──────┴──────────────────────────────┴────────────────────┴───────────────────────────┘
+
+Scripts to write (new):
+  download_sif_tropomi.py      SIF from ESA S5P or TROPOSIF dataset
+  download_twsa_grace.py       TWSA from NASA GES DISC mascon grids
+  download_soil_openlandmap.py global Zenodo download + per-station clip to 74×74
+  download_dem_lulc_gee.py     DEM (GLO-30) + LULC (WorldCover) via GEE batch
+
+Scripts already exist (adapt for all 1,048 stations + Snellius SLURM):
+  download_satellite_openeo.py → S2 L2A
+  download_satellite.py        → S1 RTC
+  download_era5land_gee.py     → ERA5-Land
+  cloud_masking_inference.py   → cloud masks
+  precompute_terramind.py      → TerraMind tokens

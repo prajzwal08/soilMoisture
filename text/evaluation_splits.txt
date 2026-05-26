@@ -1,0 +1,420 @@
+Evaluation Split Framework: OOS / OOT / OOST
+==============================================
+Date: 2026-05-18
+
+
+SCIENTIFIC SUMMARY
+------------------
+Rigorous evaluation of a spatiotemporal model requires testing distinct types of
+generalisation separately. A model that performs well only on stations near those
+it was trained on, or only on time periods it has seen before, will fail in
+real-world deployment. We designed a Stratified Environmental Split (SES) framework
+with three independent evaluation axes:
+
+  OOS  (Out-of-Sample):  Can the model predict soil moisture at locations it has
+       never observed during training? Tests spatial generalisation — the ability
+       to extrapolate to new fields, new landscapes, new soil types.
+
+  OOT  (Out-of-Time):    Can the model predict during 2023–2025, a period withheld
+       from training across all stations? Tests temporal generalisation and directly
+       mirrors the primary deployment scenario: near-real-time daily SM mapping.
+
+  OOST (Out-of-Sample + Out-of-Time):  The hardest test — held-out stations
+       evaluated on the 2023–2025 period simultaneously. Success here demonstrates
+       that the model has learned physically meaningful representations rather than
+       memorising location-specific or era-specific patterns.
+
+  JOINT_EVAL:  Fifteen flux+SM sites within OOS evaluate simultaneous prediction
+       of soil moisture and latent heat flux (LE), testing the jointly trained
+       encoder at unseen locations where both labels are available.
+
+  FLUX_ONLY_EVAL:  Seventeen flux-only OOS sites (LE but no SM) evaluate LE
+       prediction at locations where the model received no SM co-supervision
+       during training. Comparing these results to JOINT_EVAL directly quantifies
+       the benefit of joint SM+LE training for LE generalisation.
+
+
+TRAINING STRATEGY
+-----------------
+The dataset contains a large soil-moisture pool (894 ISMN + flux-only sites) and a
+small flux+SM pool (34 sites in training after 15 are reserved for joint-eval).
+Training jointly from scratch risks the sparse flux signal (~34 sites) being
+overwhelmed by the dense SM signal (~860 stations). A two-phase curriculum is used:
+
+  Phase 1 — SM pre-training
+    Input:    all 1,048 stations (717 train + 97 val)
+    Loss:     soil moisture only (Huber loss on SM head)
+    Updates:  ERA5-Land MLP, SoilGrids MLP, temporal transformer, SM head
+              TerraMind encoder remains frozen throughout
+    Result:   encoder develops rich spatiotemporal SM representations from a
+              large, geographically and climatically diverse dataset before the
+              sparse flux signal is introduced
+
+  Phase 2 — Joint fine-tuning
+    Input:    all 1,048 stations for SM loss
+              + 34 flux+SM training sites for LE loss (SM + LE labels)
+              + 88 flux-only training sites for LE loss (LE label only, SM masked)
+              → 122 sites total contributing to the LE head
+    Loss:     SM (Huber) + LE (Huber), weighted equally; missing labels masked
+    Learning rate: lower than Phase 1 (e.g. 10× reduction)
+    Result:   flux head learns LE from encoder features already optimised for SM;
+              88 flux-only sites significantly augment the sparse flux+SM signal;
+              SM performance maintained via continued SM loss on all stations
+
+  Rationale: analogous to large-scale pre-training followed by task-specific
+  fine-tuning. Phase 1 prevents the encoder from being under-constrained by the
+  sparse flux signal. A "flux-only" intermediate phase is not used — it would
+  cause catastrophic forgetting of SM representations learned in Phase 1.
+  Flux-only sites (LE label, no SM) contribute only in Phase 2, expanding the
+  effective LE training set from 34 to 122 sites.
+
+
+SCIENTIFIC PARAGRAPH (for publication)
+---------------------------------------
+We assembled in-situ records from three independent observation networks: the
+International Soil Moisture Network (ISMN), the Integrated Carbon Observation
+System (ICOS), and AmeriFlux, retaining only stations with a minimum of three years
+of valid daily data — the threshold required for the model to have at least two
+full years of training targets after the 365-day rolling context window is
+accounted for, and consistent with the quality standard enforced during ICOS and
+AmeriFlux preprocessing. This criterion removed 430 short-record ISMN stations,
+yielding a final dataset of 1,048 stations: 894 from ISMN (soil moisture only), 63
+from ICOS (37 with collocated flux and soil moisture, 26 flux only), and 91 from
+AmeriFlux (12 with collocated flux and soil moisture, 79 flux only).
+
+These stations were partitioned into training, validation, out-of-sample (OOS), and
+temporal evaluation sets using a Stratified Environmental Split (SES) framework
+designed to ensure environmental representativeness while preventing spatial data
+leakage. As Sentinel-2 imagery is extracted as a 264 × 264 pixel patch at 10 m
+resolution (covering 2.64 × 2.64 km) centred on each station, any two stations
+within 3 km share the same satellite pixels and therefore cannot belong to different
+evaluation sets without introducing leakage. All 1,048 stations were therefore first
+grouped using pairwise haversine distances and a Union-Find algorithm, yielding 958
+location groups; 50 groups contained two or more co-located stations, of which 10
+were cross-network (ISMN ↔ ICOS or ISMN ↔ AmeriFlux). All downstream partitioning
+operates at the group level, guaranteeing that co-located stations always fall in
+the same partition.
+
+Each location group was assigned to one of 20 environmental cells defined by the
+cross-product of five Köppen-Geiger macro-zones (A = Tropical, B = Arid,
+C = Temperate, D = Continental, E = Polar) and four IGBP ecosystem macro-groups
+(Forest: ENF/EBF/DNF/DBF/MF; Shrub-Savanna: SAV/OSH/CSH/WSA; Grass-Crop: GRA/CRO;
+Other). Within each cell containing at least three location groups, 20% of groups
+were drawn at random (seed 42) to form the OOS holdout, ensuring that all
+climate-ecosystem combinations present in the full dataset are represented in the
+evaluation set. Cells with fewer than three groups were assigned entirely to
+training. Fifteen flux-and-soil-moisture sites — approximately 30% of the 49
+available, stratified by ecosystem macro-group — were separately forced into OOS to
+form a dedicated joint-evaluation set for simultaneous soil moisture and latent heat
+flux assessment. A further 10% of remaining training groups, drawn by the same
+stratified procedure, formed a held-out validation set used for early stopping and
+hyperparameter selection. A post-hoc check confirmed that the OOS elevation
+distribution (Low < 500 m, Mid 500–1500 m, High > 1500 m) deviated from the
+training distribution by no more than 5 percentage points in each band.
+
+Three temporal evaluation labels were assigned. A training station is designated
+OOT-eligible if (i) its record extends past 2023-01-01, providing observations in
+the fixed test window; (ii) it begins no later than 2021-12-31, ensuring at least
+one complete year of pre-2023 data to populate the model's 365-day rolling context
+window; and (iii) its total record spans at least three years, consistent with the
+global minimum data quality threshold. An OOS station meeting criterion (i) is
+designated OOST-eligible — the most demanding partition, requiring simultaneous
+generalisation across unseen locations and an unseen time period. The final
+partitions comprise 717 training stations, 97 validation stations, 234 OOS stations
+(134 OOST-eligible; 15 joint-evaluation flux+SM sites; 17 flux-only evaluation
+sites), and 422 OOT-eligible training stations whose 2023–2025 observations form
+the temporal test set.
+
+The dataset contains two categories of flux sites that differ in label
+availability: 49 sites with both soil moisture and latent heat flux (flux+SM), and
+105 sites with latent heat flux only (flux-only). Jointly optimising for both
+targets from a random initialisation risks the sparse flux signal (49 sites) being
+overwhelmed by the dense soil moisture signal (894 ISMN stations), causing the
+encoder to optimise primarily for soil moisture and leaving the flux head
+under-constrained. We therefore adopt a two-phase training curriculum. In Phase 1,
+the model is trained on soil moisture alone across all 1,048 stations, developing
+robust spatiotemporal representations of land surface conditions from a
+geographically and climatically diverse dataset. In Phase 2, joint fine-tuning
+introduces latent heat flux supervision: all 717 training stations continue to
+contribute the soil moisture loss, while 34 flux+SM and 88 flux-only training
+sites additionally contribute the LE loss, with missing labels masked per station.
+This two-phase approach expands the effective LE training set from 34 to 122 sites
+compared to using only flux+SM stations, while the soil moisture loss on 717
+stations prevents catastrophic forgetting of the representations learned in Phase 1.
+The separation of OOS flux sites into joint-evaluation (15 flux+SM) and
+flux-only-evaluation (17 flux-only) subsets further enables a direct empirical
+comparison of LE generalisation with and without soil moisture co-supervision,
+providing an interpretable measure of the value of joint training.
+
+
+FINAL SPLIT COMPOSITION
+-----------------------
+  Total stations         1,048
+    ISMN                   894  (soil moisture only; ≥3 yr record)
+    ICOS                    63  (37 flux+SM, 26 flux only)
+    AmeriFlux               91  (12 flux+SM, 79 flux only)
+
+  train                    717  (68.4 %)
+  val                       97  ( 9.3 %)  early stopping / hyperparameter monitoring
+  oos                      234  (22.3 %)  spatially held out entirely
+  oot_eligible             422            training stations tested on 2023→end
+  oost_eligible            134            OOS stations tested on 2023→end
+  joint_eval                15            OOS flux+SM sites (SM + LE evaluation)
+  flux_only_eval            17            OOS flux-only sites (LE-only evaluation)
+
+  Flux+SM breakdown:
+    Training + val:  34 sites  (Phase 2: LE + SM loss)
+    OOS joint-eval:  15 sites  (SM + LE evaluation at unseen locations)
+    Total:           49 sites
+
+  Flux-only breakdown:
+    Training + val:  88 sites  (Phase 2: LE loss only)
+    OOS flux-only:   17 sites  (LE-only evaluation at unseen locations)
+    Total:          105 sites
+
+  Combined LE training signal (Phase 2):
+    34 flux+SM + 88 flux-only = 122 sites contributing to the LE head
+
+OOS environmental coverage:
+  Koppen zones:  A=3   B=51  C=81   D=98  E=1
+  IGBP groups:   Forest=100  Grass-Crop=98  Shrub-Savanna=20  Other=16
+  Elevation:     Low  (40.0% train / 41.0% OOS)
+                 Mid  (16.0% / 18.4%)
+                 High (43.9% / 40.6%)   — all within ±5 pp
+
+Joint-eval sites (15, OOS, flux + soil moisture):
+  CH-Dav (ENF, ET)    IT-TrF (DNF, Dfc)   SE-Svb (ENF, Dfc)   FR-Pue (EBF, Csb)
+  CA-TP3 (ENF, Dfb)   FI-Hyy (ENF, Dfc)   BE-Vie (MF,  Cfb)   IT-BFt (DBF, Cfa)
+  DE-Geb (CRO, Cfb)   FR-Tou (GRA, Cfa)   US-SRG (GRA, BSk)   FR-Gri (CRO, Cfb)
+  BE-Maa (CSH, Cfb)   US-Whs (OSH, BSk)   SE-Deg (WET, Dfc)
+
+
+PROCESS FLOWCHART
+-----------------
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  RAW IN-SITU DATA                                                    │
+  │  ISMN 1,324 stations  │  ICOS 63 sites  │  AmeriFlux 91 sites       │
+  └──────────────────────────────┬───────────────────────────────────────┘
+                                 │
+                                 ▼  Apply 3-year minimum (n_days ≥ 1095)
+                                     ISMN: 430 short-record stations removed
+                                 │
+  ┌──────────────────────────────▼───────────────────────────────────────┐
+  │  CLEANED DATASET  1,048 stations                                     │
+  │  ISMN 894 (SM only)  │  ICOS 63 (37 flux+SM, 26 flux-only)          │
+  │  AmeriFlux 91 (12 flux+SM, 79 flux-only)                             │
+  └──────────────────────────────┬───────────────────────────────────────┘
+                                 │
+                                 ▼  Build location groups
+                                     haversine distances, 3 km threshold
+                                     Union-Find → 958 groups
+                                     50 groups with ≥2 co-located stations
+                                     10 cross-network groups (ISMN↔ICOS/AMF)
+                                 │
+                    ┌────────────┴──────────────────────┐
+                    │                                   │
+                    ▼                                   ▼
+          Reserve 15 flux+SM sites            Remaining 943 groups
+          (stratified by IGBP macro,          (eligible for stratified split)
+           seed 42) → forced OOS                       │
+                    │                                   ▼
+                    │                    20-cell grid: KG (5) × IGBP (4)
+                    │                    per cell with ≥3 groups:
+                    │                         │
+                    │              ┌──────────┼────────────┐
+                    │              │          │            │
+                    │           ~20%        ~10%         ~70%
+                    │           OOS         Val          Train
+                    │           groups      groups       groups
+                    │              │          │            │
+                    └──────────────▼──────────▼────────────▼
+                                  OOS         Val         Train
+                                  234          97          717
+                                   │                        │
+       ┌───────────────────────────┤                        ├──────────────────────┐
+       │                           │                        │                      │
+       ▼                           ▼                        ▼                      ▼
+  oost_eligible?          flux label?               oot_eligible?          ablation_train
+  end_date ≥ 2023         has_flux & has_sm         end_date ≥ 2023        ~20% stratified
+       │                  → joint_eval (15)         start_date ≤ 2021      sample of 717
+  YES → 134               has_flux & ~has_sm        n_years ≥ 3            → 151 stations
+  NO  → 100               → flux_only_eval (17)          │
+  (OOS, no                                          YES → 422 (OOT)
+   temporal test)                                   NO  → 295 (train only)
+
+  OOS (234)
+   └─► ablation_oos: ~20% stratified sample → 54 stations
+
+  Val (97) ── used unchanged for ALL ablations (inference only, no gradients)
+
+  ═══════════════════════════════════════════════════════════════════════
+  FINAL LABELS SUMMARY
+  ───────────────────────────────────────────────────────────────────────
+  split = train            717   model trains on all pre-2023 observations
+  split = val               97   early stopping, hyperparameter monitoring
+  split = oos              234   spatially held out — never seen in training
+  oot_eligible             422   train stations → OOT test on 2023→end
+  oost_eligible            134   OOS stations  → OOST test on 2023→end
+  joint_eval                15   OOS flux+SM   → SM + LE evaluation
+  flux_only_eval            17   OOS flux-only → LE-only evaluation
+  ablation_train           151   miniature train subset for ablations (~21%)
+  ablation_oos              54   miniature OOS proxy for ablations (~23%)
+  ═══════════════════════════════════════════════════════════════════════
+
+
+ABLATION SUBSET
+---------------
+Every ablation study trains on the same fixed 151-station subset (ablation_train=True),
+evaluated on the full 97-station val set and the 54-station OOS proxy (ablation_oos=True).
+This makes all ablation comparisons controlled — the only variable is the architectural
+change being tested.
+
+  Ablation dataset size:
+    ablation_train:  151 stations × ~4yr avg × 365 days ≈ 220,000 samples  (~2-4h/GPU)
+    Full training:   717 stations × ~5.6yr avg × 365 days ≈ 1,470,000 samples  (days/GPU)
+
+  Ablation subset composition:
+    151 train stations  (21% of 717) — proportional KG×IGBP coverage maintained
+    5 flux+SM sites in ablation_train  (Phase 2 LE signal)
+    17 flux-only sites in ablation_train  (Phase 2 LE signal)
+    54 OOS proxy stations  (23% of 234)
+
+  Planned ablations (all use the same 151-station miniature):
+    Encoder ablations:
+      - No TerraMind          replace with random patch statistics
+      - No ERA5               remove climate MLP
+      - No SoilGrids          remove soil properties MLP
+      + TWSA (GRACE)          add 300 km water storage anomaly token
+      + SIF (TROPOMI)         add 3.5 km fluorescence token
+    Temporal ablations:
+      - Sequence length 365→180 days   shorter context window
+      - Sequence length 365→730 days   longer context window
+      - 2 transformer layers (vs 6)    shallower architecture
+    Training strategy ablations:
+      - Joint from scratch    no Phase 1 SM pre-training
+      - SM only               no Phase 2 joint fine-tuning
+      - No flux-only in Phase 2   only 34 flux+SM (vs 122) for LE
+
+  Plots: plots/splits/09_ablation_subset.svg — full vs ablation IGBP×KG heatmap
+
+
+TECHNICAL DESCRIPTION
+---------------------
+
+DATASET CLEANUP (applied before splits)
+  ISMN minimum changed from 365 → 1095 days in preprocessing_ISMN_soilMoisture.py.
+  Reason: the model uses a 365-day rolling context window, so a station with only
+  1 year of data produces zero valid training targets. 3 years ensures ≥2 years of
+  valid targets per station and is consistent with ICOS/AmeriFlux MIN_VALID_DAYS.
+  430 NetCDF files deleted from /home/khanalp/data/soilmoisture/level1/
+  station_metadata.csv updated: 894 saved stations remain (was 1,324).
+
+OUTPUT FILES
+  /home/khanalp/code/PhD/soilMoisture/csvs/station_inventory.csv  — 1,048 stations
+  /home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv     — 1,048 rows
+
+  Columns added by create_evaluation_splits.py:
+    split             train / val / oos
+    oot_eligible      True: split==train AND end≥20230101 AND start≤20211231 AND n_years≥3
+    oost_eligible     True: split==oos AND end≥20230101
+    joint_eval        True: split==oos AND has_flux AND has_soil_moisture (15 sites)
+    flux_only_eval    True: split==oos AND has_flux AND NOT has_soil_moisture (17 sites)
+    ablation_train    True: ~20% of train stations, stratified by KG×IGBP (151 sites)
+    ablation_oos      True: ~20% of OOS stations, stratified by KG×IGBP (54 sites)
+    kg_macro          A / B / C / D / E
+    igbp_macro        Forest / Shrub-Savanna / Grass-Crop / Other
+    elevation_band    Low (<500 m) / Mid (500–1500 m) / High (>1500 m)
+    location_group_id integer — stations within 3 km share the same id
+
+SCRIPTS
+  preprocessing_ISMN_soilMoisture.py  — threshold updated to 1095 days
+  compile_station_inventory.py        — run with soilmoisture env
+  enrich_station_inventory.py         — run with geo env (GEE + Kottek)
+  create_evaluation_splits.py         — run with soilmoisture env
+  plot_splits.py                      — run with soilmoisture env → plots/splits/
+
+PLOTS  (plots/splits/)
+  01_global_map.svg          World map coloured by split
+  02_igbp_kg_heatmap.svg     IGBP × KG cell counts (train vs OOS)
+  03_igbp_distribution.svg   IGBP class fractions per split
+  04_kg_distribution.svg     KG macro-zone fractions per split
+  05_record_length.svg       Record length histogram per split
+  06_temporal_coverage.svg   Station timelines with OOT window
+  07_network_composition.svg Stacked bar: split counts per network
+  08_elevation_distribution.svg  Elevation histogram per split
+  09_ablation_subset.svg     Full train vs ablation subset IGBP×KG heatmap
+
+ALGORITHM
+
+  Step 1 — Co-location groups
+    Pairwise haversine distances for all 1,048 stations.
+    Union-Find groups stations within 3 km (S2 patch footprint = 2.64 km).
+    Result: 958 groups; 50 with ≥2 stations; 10 cross-network.
+    All split decisions made at group level — never individual station.
+
+  Step 2 — Flux+SM joint-eval reservation
+    From 49 flux+SM sites, sample 15 (~30%) stratified by IGBP macro-group (seed 42):
+      Forest: 7  (ENF×5, EBF×1, DBF×1, DNF×1, MF×1)
+      Grass-Crop: 4  (CRO×2, GRA×2)
+      Shrub-Savanna: 2  (CSH×1, OSH×1)
+      Other: 1  (WET×1)
+    Entire location group forced into OOS. These sites get joint_eval = True.
+    Remaining 34 flux+SM sites available for Phase 2 joint fine-tuning.
+
+  Step 3 — Temporal eligibility
+    OOT cut: 2023-01-01.
+    OOT-eligible if: end_date ≥ 20230101 AND start_date ≤ 20211231 AND n_years ≥ 3.
+
+  Steps 4–5 — Stratified OOS selection
+    20-cell grid: kg_macro (5) × igbp_macro (4).
+    Per cell with ≥3 groups: sample ~20% for OOS (seed 42).
+    Cells with <3 groups: all to training.
+
+  Step 5b — Validation set selection
+    From remaining training groups: sample ~10% per cell (seed 42).
+    Result: 97 validation stations.
+
+  Step 6 — Elevation balance check
+    If any elevation band deviates >10 pp between OOS and training:
+    swap one qualifying location group (always whole group).
+
+  Step 7 — Label assignment
+    split         = oos / val / train
+    oot_eligible  = (train) and temporal criteria
+    oost_eligible = (oos) and end_date ≥ 2023
+    joint_eval    = reserved 15 flux+SM OOS sites
+
+  Integrity check: every location_group_id maps to exactly one split.
+
+  Step 5c — Ablation subset selection (runs after split column exists)
+    Training groups: sample ~20% per KG×IGBP cell → ablation_train (151 stations)
+    OOS groups:      sample ~20% per KG×IGBP cell → ablation_oos (54 stations)
+    Val (97): used unchanged for all ablations — no ablation subset needed.
+    Cells with <3 groups: include all in ablation for that cell (preserve rare envs).
+    Same seed 42, same co-location constraint.
+
+KEY PARAMETERS
+  Global minimum record length:  3 years (1095 days)
+  Random seed:                   42
+  Co-location threshold:         3 km
+  OOS fraction:                  20% per environmental cell
+  Val fraction:                  10% per environmental cell
+  Min cell size:                 3 location groups
+  OOT cut date:                  2023-01-01
+  OOT min pre-2023 data:         1 year (start_date ≤ 2021-12-31)
+  Elevation tolerance:           10 pp
+  Flux+SM OOS target:            15 sites (~30% of 49)
+  Ablation train fraction:       20% of training groups, stratified
+  Ablation OOS fraction:         20% of OOS groups, stratified
+
+CROSS-NETWORK CO-LOCATED GROUPS (10 total, all assigned to same split)
+  ISMN/Selhausen              ↔  ICOS/DE-RuS
+  ISMN/BouldinIslandAlfalfa   ↔  AmeriFlux/US-Bi1
+  ISMN/BrooklynLake           ↔  AmeriFlux/US-GLE
+  ISMN/ImnaviatCreek          ↔  AmeriFlux/US-ICs + US-ICt
+  ISMN/Sevilleta              ↔  AmeriFlux/US-Seg
+  ISMN/Mandan#1               ↔  AmeriFlux/US-xNG
+  ISMN/Ku-Nesa                ↔  AmeriFlux/US-KFS + US-xUK
+  ISMN/Lamont-CF1 + CF2       ↔  AmeriFlux/US-ARM
+  (+ 2 additional cross-network groups)

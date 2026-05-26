@@ -42,9 +42,14 @@ import pystac_client
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV   = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
-SATELLITE_DIR = Path("/home/khanalp/data/satellite")
-LOG_FILE      = SATELLITE_DIR / "sif_download_log.csv"
+DATA_ROOT     = Path("/gpfs/work3/0/prjs1968/data")
+STATION_CSV   = DATA_ROOT / "station_splits.csv"
+LOG_DIR       = DATA_ROOT / "logs"
+LOG_FILE      = LOG_DIR / "sif_download_log.csv"
+
+TEST_MODE     = False
+TEST_STATION  = "ISMN_TWENTE_Hupsel"
+TEST_DAYS     = 10   # limit days processed in test mode (SIF files are ~390 MB each)
 
 STAC_URL       = "https://data-portal.s5p-pal.com/api/s5p-l2"
 COLLECTION     = "L2B_SIF___"
@@ -53,7 +58,7 @@ SIF_START_DATE = date(2018, 4, 30)   # first available L2B file
 SEARCH_RADIUS_DEG = 0.05   # ~5.5 km buffer around station for STAC bbox
 EXTRACT_RADIUS_M  = 5000   # 5 km radius for pixel matching
 
-N_WORKERS = 4   # concurrent day downloads
+N_WORKERS = 6   # concurrent day downloads (bandwidth limited ~390 MB/file — keep moderate)
 
 LOG_COLS = ["date", "n_stations_found", "status", "error_msg", "timestamp"]
 
@@ -62,14 +67,14 @@ LOG_COLS = ["date", "n_stations_found", "status", "error_msg", "timestamp"]
 # ============================================================
 
 def setup_logging():
-    SATELLITE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(SATELLITE_DIR / "sif_download.log"),
+            logging.FileHandler(LOG_DIR / "sif_download.log"),
         ],
     )
 
@@ -79,7 +84,17 @@ def setup_logging():
 
 def load_stations() -> pd.DataFrame:
     df = pd.read_csv(STATION_CSV)
-    df["station_id"] = df["network"] + "_" + df["station_id"]
+    def _folder(r):
+        if r["source_network"] != r["network"]:
+            return f"{r['source_network']}_{r['network']}_{r['station_id']}"
+        return f"{r['network']}_{r['station_id']}"
+    df["station_id"] = df.apply(_folder, axis=1)
+    def _dir(r):
+        has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+        has_fl = str(r.get("has_flux", "False")).lower() == "true"
+        cat = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+        return DATA_ROOT / cat / r["station_id"]
+    df["station_dir"] = df.apply(_dir, axis=1)
     # Only keep stations with records overlapping SIF coverage (post-2018)
     df["end_year"] = df["end_date"].astype(str).str[:4].astype(int, errors="ignore")
     df = df[df["end_year"] >= 2018].reset_index(drop=True)
@@ -252,14 +267,14 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
 # SAVE PER-STATION ANNUAL FILE
 # ============================================================
 
-def save_station_year(station_id: str, year: int, obs_list: list):
+def save_station_year(station_dir: Path, station_id: str, year: int, obs_list: list):
     """
     obs_list: list of dicts with keys date, sif, sif_uncertainty
-    Save to {station}/SIF/sif_{year}.nc
+    Save to {station_dir}/SIF/sif_{year}.nc
     """
     if not obs_list:
         return
-    out_dir = SATELLITE_DIR / station_id / "SIF"
+    out_dir = station_dir / "SIF"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"sif_{year}.nc"
     if out_path.exists():
@@ -290,6 +305,9 @@ def main():
     log = logging.getLogger(__name__)
 
     df = load_stations()
+    if TEST_MODE:
+        df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
+        log.info(f"TEST_MODE: running on {len(df)} station(s), {TEST_DAYS} days only")
 
     # Build the overall date range (SIF start → max station end date)
     max_end = date.today() - timedelta(days=30)  # ~1-month latency
@@ -301,15 +319,20 @@ def main():
     station_obs: dict[str, dict[int, list]] = {
         sid: {} for sid in df["station_id"]
     }
+    station_dirs: dict[str, Path] = {
+        row["station_id"]: Path(row["station_dir"]) for _, row in df.iterrows()
+    }
 
     # Filter to stations still needing data
     def needs_year(sid, year):
-        return not (SATELLITE_DIR / sid / "SIF" / f"sif_{year}.nc").exists()
+        return not (station_dirs[sid] / "SIF" / f"sif_{year}.nc").exists()
 
     # STAC catalog (one client — not thread-safe, so each worker opens its own)
     log.info(f"Processing SIF from {start_d} to {end_d}")
 
     all_days = list(date_range(start_d, end_d))
+    if TEST_MODE:
+        all_days = all_days[:TEST_DAYS]
     log.info(f"Total days: {len(all_days)}")
 
     done = [0]
@@ -351,7 +374,7 @@ def main():
     for sid, years in station_obs.items():
         for year, obs_list in years.items():
             if obs_list:
-                save_station_year(sid, year, sorted(obs_list, key=lambda x: x["date"]))
+                save_station_year(station_dirs[sid], sid, year, sorted(obs_list, key=lambda x: x["date"]))
 
     log.info("Done.")
 

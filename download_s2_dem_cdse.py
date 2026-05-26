@@ -29,6 +29,7 @@ Usage:
 import json
 import logging
 import os
+os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,10 +50,18 @@ from pyproj import Transformer
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV  = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
-OUTPUT_DIR   = Path("/home/khanalp/data/satellite_openeo")
-JOB_DB_FILE  = OUTPUT_DIR / "openeo_jobs_v2.csv"
-LOG_FILE     = OUTPUT_DIR / "download_openeo.log"
+DATA_ROOT    = Path("/gpfs/work3/0/prjs1968/data")
+STATION_CSV  = DATA_ROOT / "station_splits.csv"
+LOG_DIR      = DATA_ROOT / "logs"
+JOB_DB_FILE  = LOG_DIR / "openeo_jobs_v2.csv"
+LOG_FILE     = LOG_DIR / "download_openeo.log"
+
+# Raw S2L2A and DEM tiles go to scratch (large: ~8 TB total).
+# Logs and permanent outputs stay in DATA_ROOT.
+SCRATCH_DIR  = Path("/gpfs/scratch1/shared/pkhanal/satellite")
+
+TEST_MODE    = False
+TEST_STATION = "ISMN_TWENTE_Hupsel"
 
 PIXEL_SIZE        = 224   # pixels per side stored on disk (TerraMind native size, UNetMobV2 compatible)
 RES_M             = 10    # metres per pixel
@@ -329,7 +338,8 @@ class SatelliteJobManager(MultiBackendJobManager):
                  "_DESC" if modality == "S1RTC_DESC" else "")
         is_dem = (modality == "DEM")
 
-        out_dir = OUTPUT_DIR / station_id / subdir
+        sdir = row.get("scratch_dir") if hasattr(row, "get") else row["scratch_dir"] if "scratch_dir" in row.index else str(SCRATCH_DIR / station_id)
+        out_dir = Path(sdir) / subdir
         out_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -388,7 +398,8 @@ class SatelliteJobManager(MultiBackendJobManager):
     def _update_metadata(self, station_id: str, modality: str,
                          job, n_files: int, row: pd.Series):
         """Write/update metadata.json for the station — same structure as download_satellite.py."""
-        meta_path = OUTPUT_DIR / station_id / "metadata.json"
+        sdir = row.get("scratch_dir") if hasattr(row, "get") else row["scratch_dir"] if "scratch_dir" in row.index else str(SCRATCH_DIR / station_id)
+        meta_path = Path(sdir) / "metadata.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text())
         else:
@@ -419,13 +430,27 @@ class SatelliteJobManager(MultiBackendJobManager):
 # BUILD JOBS DATAFRAME
 # ============================================================
 
+def _station_folder(st) -> str:
+    if st.source_network != st.network:
+        return f"{st.source_network}_{st.network}_{st.station_id}"
+    return f"{st.network}_{st.station_id}"
+
+
+def _station_dir(st) -> Path:
+    has_sm = str(getattr(st, "has_soil_moisture", "False")).lower() == "true"
+    has_fl = str(getattr(st, "has_flux", "False")).lower() == "true"
+    cat = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+    return DATA_ROOT / cat / _station_folder(st)
+
+
 def build_jobs_df(stations: pd.DataFrame) -> pd.DataFrame:
     """
     One row per (station × modality) = N_stations × 5 modalities.
     """
     rows = []
     for _, st in stations.iterrows():
-        station_id = f"{st.network}_{st.station_id}"
+        station_id  = _station_folder(st)
+        station_dir = str(_station_dir(st))
         start = max(GLOBAL_START, parse_date(st.start_date)) \
                 if pd.notna(st.start_date) else GLOBAL_START
         end   = parse_date(st.end_date) \
@@ -434,15 +459,17 @@ def build_jobs_df(stations: pd.DataFrame) -> pd.DataFrame:
 
         for modality in MODALITIES:
             rows.append({
-                "station_id":    station_id,
-                "network":       st.network,
-                "station":       st.station_id,
-                "latitude":      float(st.latitude),
-                "longitude":     float(st.longitude),
-                "start_date":    start,
-                "end_date":      end,
-                "modality":      modality,
-                "backend_name":  "cdse",
+                "station_id":      station_id,
+                "station_dir":     station_dir,
+                "scratch_dir":     str(SCRATCH_DIR / station_id),
+                "network":         st.network,
+                "station":         st.station_id,
+                "latitude":        float(st.latitude),
+                "longitude":       float(st.longitude),
+                "start_date":      start,
+                "end_date":        end,
+                "modality":        modality,
+                "backend_name":    "cdse",
             })
 
     return pd.DataFrame(rows)
@@ -476,7 +503,8 @@ def start_job(row: pd.Series, connection: openeo.Connection, **kwargs):
 # ============================================================
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(message)s",
@@ -490,6 +518,9 @@ def main():
 
     # ── Load stations ────────────────────────────────────────
     pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
+    if TEST_MODE:
+        pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
+        log.info(f"TEST_MODE: running on {len(pilot)} station(s): {list(pilot.apply(_station_folder, axis=1))}")
     log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
     # ── Build jobs DataFrame ─────────────────────────────────
@@ -509,7 +540,7 @@ def main():
     # ── Set up job manager (credentials stored for auto-reconnect) ──
     manager = SatelliteJobManager(
         poll_sleep=60,
-        root_dir=str(OUTPUT_DIR / "_job_meta"),
+        root_dir=str(LOG_DIR / "_job_meta"),
         username=username,
         password=password,
     )

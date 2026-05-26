@@ -1,0 +1,32 @@
+name: soilmoisture
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - h5py
+  - rasterio
+  - rioxarray
+  - pyproj
+  - scipy
+  - matplotlib
+  - requests
+  - python-dotenv
+  - tqdm
+  - joblib
+  - pip
+  - pip:
+    - cdsapi
+    - earthengine-api
+    - openeo
+    - pystac-client
+    - planetary-computer
+    - stackstac
+    - icoscp
+    - icoscp-core
+    - ismn
+    - scienceplots

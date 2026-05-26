@@ -21,6 +21,7 @@ Usage:
 import json
 import logging
 import os
+os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,9 +42,16 @@ from rasterio.enums import Resampling
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
-OUTPUT_DIR   = Path("/home/khanalp/data/satellite")
-LOG_FILE     = OUTPUT_DIR / "download_log.csv"
+DATA_ROOT    = Path("/gpfs/work3/0/prjs1968/data")
+STATION_CSV  = DATA_ROOT / "station_splits.csv"
+LOG_DIR      = DATA_ROOT / "logs"
+LOG_FILE     = LOG_DIR / "download_s1_lulc_log.csv"
+
+# Raw S1 RTC and LULC tiles go to scratch (~3 TB total).
+SCRATCH_DIR  = Path("/gpfs/scratch1/shared/pkhanal/satellite")
+
+TEST_MODE    = False
+TEST_STATION = "ISMN_TWENTE_Hupsel"
 
 PIXEL_SIZE   = 224      # pixels per side (TerraMind native size, UNetMobV2 compatible)
 RES_M        = 10       # metres per pixel
@@ -51,7 +59,7 @@ RES_M        = 10       # metres per pixel
 # Parallelism
 # N_WORKERS: concurrent stations. 4–6 is a safe default (network + MPC rate limits).
 # Modalities within each station always run in parallel (5 threads per station).
-N_WORKERS    = 4
+N_WORKERS    = 8   # concurrent stations (each uses 2 threads internally for S1+LULC)
 
 GLOBAL_START     = "2016-01-01"
 LULC_START_YEAR  = 2017
@@ -86,15 +94,37 @@ def parse_date(val) -> str:
     return s[:10]
 
 
+def _write_datetime_tag(path: Path, iso_dt: str) -> None:
+    """Write acquisition UTC datetime into GeoTIFF TIFFTAG_DATETIME tag."""
+    import rasterio
+    dt_tag = iso_dt[:19].replace("T", " ").replace("-", ":")
+    with rasterio.open(path, "r+") as dst:
+        dst.update_tags(TIFFTAG_DATETIME=dt_tag, datetime_utc=iso_dt)
+
+
+def _station_folder(row) -> str:
+    if row.source_network != row.network:
+        return f"{row.source_network}_{row.network}_{row.station_id}"
+    return f"{row.network}_{row.station_id}"
+
+
+def _station_dir(row) -> Path:
+    has_sm = str(getattr(row, "has_soil_moisture", "False")).lower() == "true"
+    has_fl = str(getattr(row, "has_flux", "False")).lower() == "true"
+    cat = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+    return DATA_ROOT / cat / _station_folder(row)
+
+
 def setup_logging():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(OUTPUT_DIR / "download.log"),
+            logging.FileHandler(LOG_DIR / "download_s1_lulc.log"),
         ],
     )
 
@@ -252,9 +282,11 @@ def download_s1rtc(
         da.values = linear_to_db(da.values)
         da = da.assign_coords(band=["VV", "VH"])
         save_geotiff(da, fpath, "float32", epsg)
+        iso_dt = item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
+        _write_datetime_tag(fpath, iso_dt)
 
         meta["S1RTC"][f"{date_str}_{suffix}"] = {
-            "datetime_utc": item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "datetime_utc": iso_dt,
             "platform": item.properties.get("platform", ""),
             "orbit":    item.properties.get("sat:orbit_state", ""),
         }
@@ -321,8 +353,8 @@ def download_lulc(
 # ============================================================
 
 def process_station(row: pd.Series, catalog_mpc) -> dict:
-    station_id = f"{row.network}_{row.station_id}"
-    lat, lon   = float(row.latitude), float(row.longitude)
+    station_id  = _station_folder(row)
+    lat, lon    = float(row.latitude), float(row.longitude)
 
     # Clamp time range to [GLOBAL_START, station end_date]
     start = max(GLOBAL_START, parse_date(row.start_date)) if pd.notna(row.start_date) else GLOBAL_START
@@ -331,7 +363,7 @@ def process_station(row: pd.Series, catalog_mpc) -> dict:
     end_year   = min(LULC_END_YEAR,   int(end[:4]))
 
     epsg, bounds, bbox = station_grid(lat, lon)
-    station_dir = OUTPUT_DIR / station_id
+    station_dir = SCRATCH_DIR / station_id
     station_dir.mkdir(parents=True, exist_ok=True)
 
     meta = {
@@ -395,6 +427,9 @@ def main():
 
     # --- Build station list: all 1,048 stations from station_splits.csv ---
     pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
+    if TEST_MODE:
+        pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
+        log.info(f"TEST_MODE: running on {len(pilot)} station(s): {list(pilot.apply(_station_folder, axis=1))}")
     log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
     # --- Skip already-completed stations (S1RTC + LULC only) ---
@@ -421,11 +456,11 @@ def main():
 
     # Build work list (skip already-done stations)
     todo = [(i, row) for i, row in pilot.iterrows()
-            if f"{row.network}_{row.station_id}" not in done_ids]
+            if _station_folder(row) not in done_ids]
 
     n_total = len(pilot)
     for i, row in pilot.iterrows():
-        station_id = f"{row.network}_{row.station_id}"
+        station_id = _station_folder(row)
         if station_id in done_ids:
             log.info(f"[{i+1:3d}/{n_total}] Skip  {station_id}")
 
@@ -436,7 +471,7 @@ def main():
 
         for fut in as_completed(fut_to_row):
             i, row = fut_to_row[fut]
-            station_id = f"{row.network}_{row.station_id}"
+            station_id = _station_folder(row)
             try:
                 row_dict = fut.result()
             except Exception as exc:

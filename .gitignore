@@ -9,3 +9,9 @@ __pycache__/
 *.csv
 *.zip
 data/
+.claude/
+test_*.py
+old_*.py
+plots/
+latex/
+*.md

@@ -56,12 +56,16 @@ def _gee_credentials() -> Credentials:
 # CONFIGURATION
 # ============================================================
 
-STATION_CSV   = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
-SATELLITE_DIR = Path("/home/khanalp/data/satellite")
-LOG_FILE      = SATELLITE_DIR / "era5land_gee_log.csv"
-TWSA_LOG_FILE = SATELLITE_DIR / "twsa_gee_log.csv"
+DATA_ROOT     = Path("/gpfs/work3/0/prjs1968/data")
+STATION_CSV   = DATA_ROOT / "station_splits.csv"
+LOG_DIR       = DATA_ROOT / "logs"
+LOG_FILE      = LOG_DIR / "era5land_gee_log.csv"
+TWSA_LOG_FILE = LOG_DIR / "twsa_gee_log.csv"
 
-N_WORKERS = 10   # concurrent GEE getRegion calls
+TEST_MODE     = False
+TEST_STATION  = "ISMN_TWENTE_Hupsel"
+
+N_WORKERS = 6    # concurrent GEE getRegion calls (reduced from 16 to avoid 429 rate limits)
 
 # ── ERA5-Land ─────────────────────────────────────────────────────────────────
 GEE_COLLECTION = "ECMWF/ERA5_LAND/HOURLY"
@@ -100,14 +104,14 @@ TWSA_LOG_COLS = ["station_id", "year", "n_months", "status", "error_msg", "times
 # ============================================================
 
 def setup_logging():
-    SATELLITE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(SATELLITE_DIR / "era5land_gee_download.log"),
+            logging.FileHandler(LOG_DIR / "era5land_gee_download.log"),
         ],
     )
 
@@ -119,7 +123,17 @@ def setup_logging():
 def load_stations() -> pd.DataFrame:
     """Return all stations from station_splits.csv."""
     df = pd.read_csv(STATION_CSV)
-    df["station_id"] = df["network"] + "_" + df["station_id"]
+    def _folder(r):
+        if r["source_network"] != r["network"]:
+            return f"{r['source_network']}_{r['network']}_{r['station_id']}"
+        return f"{r['network']}_{r['station_id']}"
+    df["station_id"] = df.apply(_folder, axis=1)
+    def _dir(r):
+        has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+        has_fl = str(r.get("has_flux", "False")).lower() == "true"
+        cat = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+        return DATA_ROOT / cat / r["station_id"]
+    df["station_dir"] = df.apply(_dir, axis=1)
     df = df.reset_index(drop=True)
     logging.getLogger(__name__).info(f"Stations: {len(df)}")
     return df
@@ -145,7 +159,7 @@ def build_job_list(df: pd.DataFrame) -> list[dict]:
             log.warning(f"  {station_id}: invalid date range, skipping")
             continue
 
-        era5_dir = SATELLITE_DIR / station_id / "ERA5Land"
+        era5_dir = Path(row["station_dir"]) / "ERA5Land"
         for year in range(start_year, end_year + 1):
             out = era5_dir / f"meteo_{year}.nc"
             if not out.exists():
@@ -319,7 +333,7 @@ def build_twsa_job_list(df: pd.DataFrame) -> list[dict]:
         except (ValueError, TypeError):
             log.warning(f"  {station_id}: invalid date range, skipping TWSA")
             continue
-        twsa_dir = SATELLITE_DIR / station_id / "TWSA"
+        twsa_dir = Path(row["station_dir"]) / "TWSA"
         for year in range(start_year, end_year + 1):
             out = twsa_dir / f"twsa_{year}.nc"
             if not out.exists():
@@ -477,6 +491,9 @@ def main():
     ee.Initialize(credentials=_gee_credentials(), project=GEE_PROJECT)
 
     df   = load_stations()
+    if TEST_MODE:
+        df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
+        log.info(f"TEST_MODE: running on {len(df)} station(s): {list(df['station_id'])}")
     lock = threading.Lock()
 
     # ── ERA5-Land ─────────────────────────────────────────────────────────────

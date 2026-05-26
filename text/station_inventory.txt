@@ -1,0 +1,161 @@
+Station Inventory Compilation
+==============================
+Date: 2026-05-18
+
+
+SCIENTIFIC SUMMARY
+------------------
+Training a multimodal soil moisture model requires knowing not only where each
+measurement site is located, but also what kind of environment it represents.
+We compiled a unified site inventory spanning 1,048 stations from three
+independent in-situ networks: the International Soil Moisture Network (ISMN),
+the Integrated Carbon Observation System (ICOS), and AmeriFlux. Together these
+cover global soil moisture records from purely soil-moisture stations (ISMN) as
+well as eddy-covariance flux towers that may additionally provide latent heat
+flux (LE) for joint training.
+
+Only stations with a minimum of three years of valid daily data are retained.
+This threshold ensures every station contributes at least two full years of valid
+training targets after the model's 365-day rolling context window is accounted
+for, and is consistent with the quality standard already enforced during ICOS
+and AmeriFlux preprocessing. Applying this criterion to ISMN (which previously
+used a 1-year minimum) removed 430 short-record stations.
+
+For each station we recorded geographic coordinates, elevation, the record
+length in years, and two widely used environmental classification schemes:
+
+  - IGBP land cover type (e.g. ENF, GRA, CRO) — the same 17-class scheme used
+    throughout the FLUXNET community, allowing direct comparison with published
+    benchmarks and stratified evaluation across ecosystem types.
+
+  - Koppen-Geiger climate zone (e.g. Dfb, Cfa, BSk) — the standard global
+    climate classification, enabling analysis of model performance across
+    aridity gradients, temperature regimes, and seasonality patterns.
+
+The inventory also flags whether each site has soil moisture, flux (LE), or
+both, which determines how each station contributes to the training losses.
+The final CSV contains no missing values: all 1,048 stations have complete
+coordinates, elevation, IGBP class, and climate zone.
+
+Station composition (final inventory):
+  ISMN         894 stations  -- soil moisture only (≥3 yr record)
+  ICOS          63 sites     -- 37 with soil moisture + flux, 26 flux only
+  AmeriFlux     91 sites     -- 12 with soil moisture + flux, 79 flux only
+  Total      1,048
+
+Top IGBP classes: ENF (378), GRA (277), CRO (165), SAV (72), DBF (33)
+Top Koppen zones: Dfb (199), BSk (176), Cfa (166), Dfc (99), Cfb (92)
+
+
+TECHNICAL DESCRIPTION
+---------------------
+
+OUTPUT FILE
+  /home/khanalp/code/PhD/soilMoisture/csvs/station_inventory.csv
+  1,048 rows, one per station/site.
+
+  Columns:
+    source_network    -- ISMN / ICOS / AmeriFlux
+    network           -- ISMN sub-network name; same as source_network for flux sites
+    station_id        -- ISMN station name or flux site code (e.g. BE-Bra)
+    station_name      -- Full site name where available
+    latitude          -- Degrees N
+    longitude         -- Degrees E
+    elevation_m       -- Elevation in metres (SRTM 30 m via GEE where missing)
+    start_date        -- First valid day (YYYYMMDD)
+    end_date          -- Last valid day (YYYYMMDD)
+    n_years           -- Record length (n_days / 365.25, 1 decimal place)
+    IGBP              -- IGBP land cover class; ISMN: mapped from ESA CCI lc_2010
+    lc_cci            -- Raw ESA CCI land cover integer code (ISMN only; blank for flux)
+    koppen_geiger     -- Koppen-Geiger climate code
+    has_soil_moisture -- True / False
+    has_flux          -- True / False
+
+SCRIPTS
+  compile_station_inventory.py   -- builds the CSV from processed NetCDF + metadata files
+  enrich_station_inventory.py    -- fills missing elevation, IGBP, Koppen via GEE + web
+
+  Run order:
+    /home/khanalp/miniforge3/envs/soilmoisture/bin/python compile_station_inventory.py
+    /home/khanalp/miniforge3/envs/geo/bin/python enrich_station_inventory.py
+
+DATA SOURCES PER FIELD
+  elevation_m:
+    - Primary:  elevation column in ISMN python_metadata CSV; elevation_m NetCDF
+                attribute for ICOS and AmeriFlux (set during preprocessing)
+    - Fallback: SRTM (USGS/SRTMGL1_003, 30 m) sampled via GEE for 18 ISMN
+                stations that had no elevation in the ISMN metadata
+
+  IGBP:
+    - ISMN:      ESA CCI lc_2010 integer code (from python_metadata CSV) mapped
+                 to IGBP string via a standard CCI-to-IGBP lookup table;
+                 raw code also stored in lc_cci column
+    - ICOS:      IGBP global attribute written during preprocessing (from
+                 ICOS_site_info.csv); sites missing in source CSV filled with
+                 MODIS MCD12C1 2020 (Majority_Land_Cover_Type_1) via GEE
+    - AmeriFlux: IGBP global attribute written during preprocessing (from
+                 FLX15_site_info.csv); complete, no GEE lookup needed
+
+  koppen_geiger:
+    - ISMN:      climate_KG column from ISMN python_metadata CSV
+                 (values "masked" or blank treated as missing)
+    - AmeriFlux: climate_koeppen global attribute written during preprocessing
+                 (from filtered_sites.csv); complete
+    - ICOS + gaps: Kottek et al. 2006 global ASCII table (0.5° grid,
+                 downloaded once from koeppen-geiger.vu-wien.ac.at and cached
+                 at /home/khanalp/data/aux/kottek_kg_2006.csv); nearest-grid-
+                 cell lookup used for all 63 ICOS sites and remaining ISMN
+                 stations with missing climate_KG
+    - Higher-res override: if Beck et al. 2018 GeoTIFF is placed at
+                 /home/khanalp/data/aux/beck_kg_present_1km.tif, the enrich
+                 script will use it instead of the Kottek table
+
+DATA SOURCES PER NETWORK
+  ISMN (894 stations, ≥3 yr record):
+    Station list:   /home/khanalp/data/soilmoisture/level1/station_metadata.csv
+                    (rows with status == "saved" only; 430 short-record stations
+                     removed after raising minimum from 1 yr → 3 yr)
+    Per-station metadata (IGBP, Koppen, elevation): ISMN python_metadata CSV
+      /home/khanalp/data/ISMNsoilMoisture/.../python_metadata/*.csv
+      Multi-index header; deduplicated to one row per (network, station)
+    has_flux = False for all ISMN stations
+
+  ICOS (63 sites):
+    Source files:   /home/khanalp/data/soilmoisture/icos_level1/swc_and_flux/*.nc
+                    /home/khanalp/data/soilmoisture/icos_level1/flux_only/*.nc
+    Metadata from: NetCDF global attributes (site_id, site_name, lat, lon,
+                   elevation_m, IGBP, has_soil_moisture)
+    Dates:         parsed from filename {site_id}_{YYYYMMDD}_{YYYYMMDD}.nc
+    Three-level lat/lon/IGBP fallback chain:
+      1. ICOS_site_info.csv         /home/khanalp/data/flux/ICOS_site_info.csv
+      2. ICOS_available_station.csv /home/khanalp/data/flux/icos_raw/
+      3. FLX15_site_info.csv        /home/khanalp/data/flux/FLX15_site_info.csv
+    has_flux = True for all ICOS sites
+
+  AmeriFlux (91 sites):
+    Source files:   /home/khanalp/data/soilmoisture/ameriflux_level1/swc_and_flux/*.nc
+                    /home/khanalp/data/soilmoisture/ameriflux_level1/flux_only/*.nc
+    All metadata read directly from NetCDF global attributes (set during
+    preprocessing from FLX15_site_info.csv and filtered_sites.csv)
+    has_flux = True for all AmeriFlux sites
+
+BUG FOUND AND FIXED: MISSING METADATA IN 6 ICOS NetCDF FILES
+  Six ICOS2020/FLUXNET2015 sites had NaN latitude, longitude, and empty IGBP
+  in their processed NetCDF files: CH-Cha, CH-Fru, CH-Lae, CH-Oe2, DE-Obe,
+  RU-Fyo.
+
+  Root cause:
+    These sites originate from the ICOS2020 (FLUXNET2015 format) dataset but
+    were absent from both ICOS_available_station.csv and ICOS_site_info.csv.
+    The _site_metadata() function in preprocessing_icos.py received None for
+    both station_row and site_info_row, leaving all coordinate and IGBP fields
+    as NaN or empty string.
+
+  Fix applied (two parts):
+    1. The 6 NetCDF files were patched in-place: lat, lon, IGBP, and site_name
+       were written from FLX15_site_info.csv (the FLUXNET 2015 global site
+       list, which covers these sites). Elevation was not available in FLX15
+       and was later filled by the SRTM GEE lookup.
+    2. preprocessing_icos.py was updated to append FLX15_site_info.csv rows
+       (for sites absent from ICOS CSVs) into site_info at the start of
+       main(), so a future re-run produces correct metadata automatically.
