@@ -30,7 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -69,7 +69,8 @@ S2_BANDS = ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B
 TEST_MODE    = False
 TEST_STATION = "ISMN_TWENTE_Hupsel"
 
-LOG_COLS = ["station_id","lat","lon","n_scenes","dem_status","status","error_msg","timestamp"]
+LOG_COLS      = ["station_id","lat","lon","n_scenes","dem_status","status","error_msg","timestamp"]
+REQUIRED_COLS = {"latitude","longitude","network","station_id","source_network","start_date","end_date"}
 
 # ============================================================
 # HELPERS
@@ -82,12 +83,11 @@ def _station_folder(row) -> str:
     return f"{net}_{row.station_id}"
 
 
-def parse_date(val) -> str:
+def parse_date(val) -> date:
     try:
-        return pd.Timestamp(str(val)).strftime("%Y-%m-%d")
+        return pd.Timestamp(str(val)).date()
     except Exception:
-        logging.warning(f"Could not parse date {val!r}; using raw substring")
-        return str(val)[:10]
+        raise ValueError(f"Cannot parse date: {val!r}")
 
 
 def get_utm_epsg(lat: float, lon: float) -> int:
@@ -111,6 +111,8 @@ def station_grid(lat: float, lon: float):
 
 def center_crop(da: xr.DataArray, size: int = PIXEL_SIZE) -> xr.DataArray:
     h, w = da.shape[-2], da.shape[-1]
+    if h < size or w < size:
+        raise ValueError(f"Raster shape {h}×{w} is smaller than crop size {size}")
     sh = (h - size) // 2
     sw = (w - size) // 2
     return da[..., sh : sh + size, sw : sw + size]
@@ -160,6 +162,8 @@ def append_checkpoint_row(row_dict: dict):
         if write_header:
             writer.writeheader()
         writer.writerow(row_dict)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 # ============================================================
@@ -185,7 +189,7 @@ def setup_logging():
 # ============================================================
 
 def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
-                bbox: list, start: str, end: str, meta: dict) -> int:
+                bbox: list, start: str, end: str, meta: dict) -> tuple[int, int]:
     out_dir = station_dir / "S2L2A"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,14 +201,15 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
     ).items())
 
     if not items:
-        return 0
+        return 0, 0
 
-    n = 0
+    n_new = 0
+    n_present = 0
     for item in items:
         date_str = item.datetime.strftime("%Y%m%d")
         fpath    = out_dir / f"{date_str}.tif"
         if fpath.exists():
-            n += 1
+            n_present += 1
             continue
 
         iso_dt = item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -233,10 +238,10 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
             "cloud_cover":   item.properties.get("eo:cloud_cover", ""),
             "platform":      item.properties.get("platform", ""),
         }
-        n += 1
+        n_new += 1
         logging.debug(f"    S2L2A {fpath.name}")
 
-    return n
+    return n_new, n_present
 
 
 # ============================================================
@@ -299,8 +304,11 @@ def process_station(row: pd.Series, catalog) -> dict:
     station_id = _station_folder(row)
     lat, lon   = float(row.latitude), float(row.longitude)
 
-    start = max(GLOBAL_START, parse_date(row.start_date)) if pd.notna(row.start_date) else GLOBAL_START
-    end   = parse_date(row.end_date) if pd.notna(row.end_date) else datetime.now().strftime("%Y-%m-%d")
+    _global_start = date.fromisoformat(GLOBAL_START)
+    start_dt = max(_global_start, parse_date(row.start_date)) if pd.notna(row.start_date) else _global_start
+    end_dt   = parse_date(row.end_date) if pd.notna(row.end_date) else datetime.now(timezone.utc).date()
+    start    = start_dt.isoformat()
+    end      = end_dt.isoformat()
 
     epsg, bounds, bbox = station_grid(lat, lon)
     station_dir = SCRATCH_DIR / station_id
@@ -324,9 +332,11 @@ def process_station(row: pd.Series, catalog) -> dict:
     log.update(station_id=station_id, lat=lat, lon=lon)
 
     try:
-        n = download_s2(station_dir, catalog, epsg, bounds, bbox, start, end, meta)
-        log["n_scenes"] = n
-        log["status"]   = "done" if n > 0 else "no_data"
+        n_new, n_present = download_s2(station_dir, catalog, epsg, bounds, bbox, start, end, meta)
+        log["n_scenes"] = n_new + n_present
+        log["status"]   = "done" if (n_new + n_present) > 0 else "no_data"
+        if n_present:
+            logging.debug(f"  {station_id}: {n_present} pre-existing, {n_new} newly downloaded")
     except Exception as exc:
         log["status"]    = "error"
         log["error_msg"] = str(exc)
@@ -360,6 +370,9 @@ def main():
     log = logging.getLogger(__name__)
 
     pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
+    missing_cols = REQUIRED_COLS - set(pilot.columns)
+    if missing_cols:
+        raise ValueError(f"Station CSV missing required columns: {missing_cols}")
     if TEST_MODE:
         pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
         log.info(f"TEST_MODE: {list(pilot.apply(_station_folder, axis=1))}")
