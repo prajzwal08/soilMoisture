@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=s2_dem_cdse
+#SBATCH --job-name=dem_cdse
 #SBATCH --partition=thin
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -14,4 +14,4 @@ source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
 conda activate soilmoisture
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
-python download_s2_dem_cdse.py
+python download_dem_cdse.py

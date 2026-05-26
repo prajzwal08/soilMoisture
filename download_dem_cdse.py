@@ -1,20 +1,14 @@
 """
-Download satellite data for ISMN stations via OpenEO / CDSE.
+Download Copernicus DEM for all ISMN stations via OpenEO / CDSE.
 
-Products per station (same TerraMind station-first structure as download_satellite.py):
-  {station}/S1RTC/YYYYMMDD_ASC.tif     float32, dB, VV+VH, ascending orbit
-  {station}/S1RTC/YYYYMMDD_DESC.tif    float32, dB, VV+VH, descending orbit
-  {station}/S2L1C/YYYYMMDD.tif         float32, DN [0,10000], 13 bands (B01-B12+B8A)
-  {station}/S2L2A/YYYYMMDD.tif         float32, DN [0,10000], 12 bands (no B10)
+Products per station:
   {station}/DEM/dem.tif                float32, metres, bilinear 10m
 
 Source: Copernicus Data Space Ecosystem (CDSE) via OpenEO Python client.
-  S1 RTC  → SENTINEL1_GRD  + sar_backscatter(gamma0-terrain)
-  S2 L1C  → SENTINEL2_L1C  + resample_spatial(10m, nearest)
-  S2 L2A  → SENTINEL2_L2A  + resample_spatial(10m, nearest)
-  DEM     → COPERNICUS_DEM  + resample_spatial(10m, bilinear)
+  DEM     → COPERNICUS_30  + resample_spatial(10m, bilinear)
 
-LULC is NOT downloaded here — still handled by download_satellite.py (MPC).
+Note: S2L2A is handled by download_s2_mpc.py (MPC).
+      S1RTC and LULC are handled by download_s1_lulc_mpc.py (MPC).
 
 Authentication:
   First run triggers OIDC device-code flow in the browser.
@@ -22,8 +16,8 @@ Authentication:
   Subsequent runs authenticate silently from the cache.
 
 Usage:
-  python download_satellite_openeo.py
-  nohup python download_satellite_openeo.py > /tmp/download_openeo.log 2>&1 &
+  python download_dem_cdse.py
+  nohup python download_dem_cdse.py > /tmp/download_dem_cdse.log 2>&1 &
 """
 
 import json
@@ -56,8 +50,7 @@ LOG_DIR      = DATA_ROOT / "logs"
 JOB_DB_FILE  = LOG_DIR / "openeo_jobs_v2.csv"
 LOG_FILE     = LOG_DIR / "download_openeo.log"
 
-# Raw S2L2A and DEM tiles go to scratch (large: ~8 TB total).
-# Logs and permanent outputs stay in DATA_ROOT.
+# DEM tiles go to scratch. Logs and permanent outputs stay in DATA_ROOT.
 SCRATCH_DIR  = Path("/gpfs/scratch1/shared/pkhanal/satellite")
 
 TEST_MODE    = False
@@ -71,16 +64,7 @@ GLOBAL_START      = "2016-01-01"
 CDSE_URL     = "openeo.dataspace.copernicus.eu"
 PARALLEL_JOBS = 10      # max simultaneous jobs on CDSE
 
-# One job per station per modality.
-# S1 RTC is NOT included here — CDSE does not support gamma0-terrain correction.
-# S1 RTC is handled by download_satellite.py via Microsoft Planetary Computer (MPC).
-MODALITIES = ["S2L2A", "DEM"]
-
-# CDSE uses ESA band names (B01, B02, …), not AWS common names
-S2L1C_BANDS = ["B01","B02","B03","B04","B05","B06","B07",
-               "B08","B8A","B09","B10","B11","B12"]   # 13 bands, TOA
-S2L2A_BANDS = ["B01","B02","B03","B04","B05","B06","B07",
-               "B08","B8A","B09","B11","B12"]          # 12 bands, BOA (no B10)
+MODALITIES = ["DEM"]
 
 # ============================================================
 # SPATIAL UTILITIES  (same logic as download_satellite.py)
@@ -187,62 +171,7 @@ def build_cube(connection: openeo.Connection, row: pd.Series):
     epsg, utm_bounds, latlon_bbox = station_grid(lat, lon)
     xmin, ymin, xmax, ymax = utm_bounds
 
-    if modality in ("S1RTC_ASC", "S1RTC_DESC"):
-        orbit = "ascending" if modality == "S1RTC_ASC" else "descending"
-        cube = connection.load_collection(
-            "SENTINEL1_GRD",
-            spatial_extent=latlon_bbox,
-            temporal_extent=[start, end],
-            bands=["VV", "VH"],
-            properties={"sat:orbit_state": lambda o: o == orbit},
-        )
-        cube = cube.sar_backscatter(
-            coefficient="gamma0-terrain",
-            elevation_model="COPERNICUS_30",
-            local_incidence_angle=False,
-        )
-        # Convert linear → dB, clip to [-50, +10]
-        cube = cube.apply(
-            lambda x: x.log(base=10) * 10
-        ).linear_scale_range(-50, 10, -50, 10)
-        cube = cube.resample_spatial(
-            resolution=RES_M,
-            projection=f"EPSG:{epsg}",
-            method="near",
-        )
-
-    elif modality == "S2L1C":
-        cube = connection.load_collection(
-            "SENTINEL2_L1C",
-            spatial_extent=latlon_bbox,
-            temporal_extent=[start, end],
-            bands=S2L1C_BANDS,
-            max_cloud_cover=MAX_CLOUD_COVER,
-        )
-        cube = cube.resample_spatial(
-            resolution=RES_M,
-            projection=f"EPSG:{epsg}",
-            method="near",
-        )
-
-    elif modality == "S2L2A":
-        cube = connection.load_collection(
-            "SENTINEL2_L2A",
-            spatial_extent=latlon_bbox,
-            temporal_extent=[start, end],
-            bands=S2L2A_BANDS,
-            max_cloud_cover=MAX_CLOUD_COVER,
-        )
-        cube = cube.resample_spatial(
-            resolution=RES_M,
-            projection=f"EPSG:{epsg}",
-            method="near",
-        )
-        # No offset correction needed: CDSE OpenEO normalizes S2 L2A automatically,
-        # subtracting the +1000 ESA baseline offset (post-2022) internally.
-        # Output is consistently DN [0, 10000] for all dates.
-
-    elif modality == "DEM":
+    if modality == "DEM":
         cube = connection.load_collection(
             "COPERNICUS_30",
             spatial_extent=latlon_bbox,

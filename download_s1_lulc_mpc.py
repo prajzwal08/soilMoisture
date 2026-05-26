@@ -11,7 +11,8 @@ Sources:
   S1RTC  → Microsoft Planetary Computer (sentinel-1-rtc)
   LULC   → Microsoft Planetary Computer (io-lulc-annual-v02)
 
-Note: S2L2A and DEM are handled by download_s2_dem_cdse.py (CDSE/OpenEO).
+Note: DEM is handled by download_dem_cdse.py (CDSE/OpenEO).
+      S2L2A is handled by download_s2_mpc.py (MPC).
 
 Usage:
   python download_s1_lulc_mpc.py
