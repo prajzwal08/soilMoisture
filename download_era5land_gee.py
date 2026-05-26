@@ -321,18 +321,25 @@ def process_station_year(job: dict) -> dict:
         daily.index = daily.index.tz_localize(None)
         ds = xr.Dataset.from_dataframe(daily)
 
-        # Units metadata
-        units = {
-            "t2m": "K", "d2m": "K", "skt": "K",
-            "u10": "m s**-1", "v10": "m s**-1", "sp": "Pa",
+        # Variable metadata (units + long_name per CF conventions)
+        var_meta = {
+            "t2m": ("K",        "2 metre temperature"),
+            "d2m": ("K",        "2 metre dewpoint temperature"),
+            "skt": ("K",        "skin temperature"),
+            "u10": ("m s**-1",  "10 metre U wind component"),
+            "v10": ("m s**-1",  "10 metre V wind component"),
+            "sp":  ("Pa",       "surface pressure"),
         }
-        for short, unit in units.items():
-            for suf in ("mean", "min", "max"):
+        stat_labels = {"mean": "daily mean", "min": "daily minimum", "max": "daily maximum"}
+        for short, (unit, desc) in var_meta.items():
+            for suf, stat in stat_labels.items():
                 v = f"{short}_{suf}"
                 if v in ds:
-                    ds[v].attrs["units"] = unit
+                    ds[v].attrs["units"]     = unit
+                    ds[v].attrs["long_name"] = f"{desc} {stat}"
         if "tp_sum" in ds:
-            ds["tp_sum"].attrs["units"] = "m"
+            ds["tp_sum"].attrs["units"]     = "m"
+            ds["tp_sum"].attrs["long_name"] = "total precipitation daily sum"
 
         ds.attrs["station_id"] = station_id
         ds.attrs["latitude"]   = lat
