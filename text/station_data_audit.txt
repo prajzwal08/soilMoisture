@@ -1,0 +1,81 @@
+Station Data Audit
+==================
+Date: 2026-05-26
+Stations: 1,048  (sm_only 894 · sm_and_flux 49 · flux_only 105)
+Audited: all permanent storage modalities + scratch satellite data
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1.  PERMANENT STORAGE  (/gpfs/work3/0/prjs1968/data/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌────────────────────────────┬──────────────┬─────────────────────────────────────────────────┐
+│ Modality                   │ Coverage     │ Notes                                           │
+├────────────────────────────┼──────────────┼─────────────────────────────────────────────────┤
+│ labels.nc                  │ 1048 / 1048  │ All complete                                    │
+│ soil/soil_patch.tif        │ 1048 / 1048  │ All complete                                    │
+│ ERA5Land/meteo_{Y}.nc      │ 1048 / 1048  │ All station-years complete (re-run 2026-05-26)  │
+│ TWSA/twsa_{Y}.nc           │ 1048 / 1048  │ Through 2024 only — see note below              │
+│ SIF/sif_{Y}.nc             │ 1048 / 1048  │ All post-2018 years complete — see note below   │
+└────────────────────────────┴──────────────┴─────────────────────────────────────────────────┘
+
+Notes on expected gaps (not errors):
+
+  TWSA 2025:
+    402 stations have end_date=2025 but no twsa_2025.nc.
+    GRACE/GRACE-FO data in GEE ends September 2024 (GRACE_END_YEAR=2024
+    hardcoded in download_era5land_gee.py line 105).  No 2025 data exists.
+
+  SIF pre-2018:
+    TROPOMI launched October 2017; data available from mid-2018 onward.
+    23 stations whose full date range falls before 2018 have 0 SIF files
+    (correct — no source data).
+    282 stations that start before 2018 are missing years 2014-2017 only
+    (also correct).
+    All post-2018 station-years are fully populated.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2.  SCRATCH SATELLITE DATA  (/gpfs/scratch1/shared/pkhanal/satellite/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌────────────────────────────┬──────────────┬─────────────────────────────────────────────────┐
+│ Modality                   │ Coverage     │ Notes                                           │
+├────────────────────────────┼──────────────┼─────────────────────────────────────────────────┤
+│ S2L2A/                     │ 1048 / 1048  │ Completed 2026-05-21                            │
+│ DEM/                       │ 1048 / 1048  │ Completed 2026-05-21                            │
+│ S1RTC/                     │ 1047 / 1048  │ 1 no-data station: ICOS_GL-Dsk (see below)      │
+│ LULC/                      │ 1048 / 1048  │ Completed 2026-05-26                            │
+└────────────────────────────┴──────────────┴─────────────────────────────────────────────────┘
+
+Anomaly — ICOS_GL-Dsk (0 S1 scenes):
+    Location: 69.25°N, -53.51°W  (western Greenland)
+    Sentinel-1 IW (Interferometric Wide) mode, used for the RTC product,
+    does not cover Greenland.  Only EW (Extra-Wide) mode is acquired there.
+    This is a permanent data availability gap, not a download failure.
+    Station type: flux_only / train split — no soil moisture label.
+    Action needed: treat as missing-modality case in the model.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3.  JOB HISTORY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  All SLURM jobs are finished.  No jobs running as of 2026-05-26.
+
+  ERA5Land + TWSA     re-run 2026-05-26  1214 / 1214 station-years  done
+  S2L2A + DEM         2026-05-21         1048 / 1048 stations        done
+  S1RTC + LULC        2026-05-26         1047 done / 1 no_data       done
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4.  NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Scratch files age out in ~14-30 days from 2026-05-21 — tokenize promptly.
+
+  1. Run TerraMind tokenization on S2L2A scratch data
+  2. Tokenize S1RTC and LULC scratch data
+  3. Copy tokens to permanent project storage
+  4. Delete raw data from scratch (free up 8 TB quota)
+  5. Begin model training
