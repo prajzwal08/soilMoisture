@@ -103,7 +103,7 @@ def load_stations() -> pd.DataFrame:
         return DATA_ROOT / cat / r["station_id"]
     df["station_dir"] = df.apply(_dir, axis=1)
     # Only keep stations with records overlapping SIF coverage (post-2018)
-    df["end_year"] = pd.to_datetime(df["end_date"], errors="coerce").dt.year
+    df["end_year"] = pd.to_datetime(df["end_date"].astype(str), format="%Y%m%d", errors="coerce").dt.year
     df = df[df["end_year"] >= 2018].reset_index(drop=True)
     logging.getLogger(__name__).info(f"Stations with SIF coverage: {len(df)}")
     return df
