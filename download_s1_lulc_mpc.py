@@ -214,10 +214,12 @@ def save_geotiff(da: xr.DataArray, path: Path, dtype: str, epsg: int):
     """
     Write a (band, y, x) DataArray to a compressed GeoTIFF.
     Sets the CRS from epsg before writing.
+    driver="GTiff" is explicit so rasterio doesn't infer from extension
+    (needed for atomic writes via a .tmp staging file).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     da = da.rio.write_crs(f"EPSG:{epsg}")
-    da.rio.to_raster(str(path), dtype=dtype, compress="deflate", tiled=True)
+    da.rio.to_raster(str(path), driver="GTiff", dtype=dtype, compress="deflate", tiled=True)
 
 
 def load_s1rtc_done() -> set:
