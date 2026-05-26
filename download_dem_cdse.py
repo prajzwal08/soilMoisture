@@ -216,7 +216,7 @@ def _write_datetime_tag(path: Path, iso_dt: str) -> None:
         with rasterio.open(path, "r+") as dst:
             dst.update_tags(TIFFTAG_DATETIME=dt_tag, datetime_utc=iso_dt)
     except Exception as e:
-        logging.getLogger(__name__).debug(f"  Could not write datetime tag to {path}: {e}")
+        logging.getLogger(__name__).warning(f"Could not write datetime tag to {path}: {e}")
 
 
 def _get_scratch_dir(row: pd.Series, station_id: str) -> Path:
@@ -291,13 +291,22 @@ class SatelliteJobManager(MultiBackendJobManager):
 
                 dest = out_dir / "dem.tif"
 
-                if not dest.exists():
-                    asset.download(str(dest))
-                    center_crop_tif(dest)
-                    # Write full UTC datetime as GeoTIFF tag
-                    full_dt = datetime_map.get(asset.name, "")
-                    if full_dt:
-                        _write_datetime_tag(dest, full_dt)
+                # Skip if already a valid, correctly-sized file
+                if dest.exists():
+                    try:
+                        with rasterio.open(dest) as src:
+                            if src.height == PIXEL_SIZE and src.width == PIXEL_SIZE:
+                                n_saved += 1
+                                continue
+                    except Exception:
+                        pass
+                    dest.unlink(missing_ok=True)  # corrupt or wrong size — redownload
+
+                asset.download(str(dest))
+                center_crop_tif(dest)
+                full_dt = datetime_map.get(asset.name, "")
+                if full_dt:
+                    _write_datetime_tag(dest, full_dt)
                 n_saved += 1
 
             log.info(f"  ✓ {station_id}/{modality}  {n_saved} files → {out_dir}")
@@ -315,8 +324,8 @@ class SatelliteJobManager(MultiBackendJobManager):
             for entry in job.logs():
                 if entry.get("level") in ("error", "warning"):
                     log.error(f"    [{entry['level']}] {entry.get('message','')}")
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f"Could not retrieve logs for job {job.job_id}: {e}")
 
     def _update_metadata(self, station_id: str, modality: str,
                          job, n_files: int, row: pd.Series):
