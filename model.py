@@ -136,7 +136,7 @@ class TerraMindEncoder(nn.Module):
         "S2L2A": "untok_sen2l2a@224",
         "S1RTC": "untok_sen1rtc@224",
         "DEM"  : "untok_dem@224",
-        "LULC" : "LULC",
+        "LULC" : "untok_lulc@224",
     }
 
     def __init__(self, frozen: bool = True):

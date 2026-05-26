@@ -1,0 +1,108 @@
+TerraMind / Training Environment Setup
+=======================================
+Date: 2026-05-26
+
+Overview
+--------
+A separate conda environment "terramind" is required for running TerraMind
+inference (precompute_terramind.py) and model training (train.py).
+The existing "soilmoisture" env is Python 3.10 and download-only — it does
+not have PyTorch or terratorch.
+
+Requirements
+------------
+- Python 3.11+ (TerraMind requirement)
+- PyTorch with CUDA 12.4
+- terratorch >= 1.2.4  (provides BACKBONE_REGISTRY + TerraMind weights via HuggingFace)
+- GDAL / rasterio / affine (geospatial I/O)
+
+One-time installation steps
+----------------------------
+1. Create the conda environment:
+       conda create -n terramind python=3.11 -y
+
+2. Activate it:
+       conda activate terramind
+
+3. Install GDAL and geospatial deps via conda (avoids complex GDAL build):
+       conda install -c conda-forge gdal rasterio affine numpy -y
+
+4. Load the CUDA toolchain (requires "2023" toolchain on Snellius):
+       module load 2023
+       module load CUDA/12.4.0
+
+5. Install PyTorch (CUDA 12.4):
+       pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+6. Install terratorch (pulls TerraMind Base weights from HuggingFace on first run):
+       pip install "terratorch>=1.2.4"
+
+7. Install remaining project deps:
+       pip install xarray netcdf4 tqdm
+
+Model weights
+-------------
+Downloaded automatically by terratorch on first use via HuggingFace.
+Cached at: ~/.cache/huggingface/hub/
+Model: ibm-esa-geospatial/terramind_v1_base (~300-400 MB)
+
+Activating in every new shell / SLURM job
+------------------------------------------
+Only these two lines are needed after the one-time setup:
+
+    module load 2023
+    conda activate terramind
+
+SLURM job script header:
+    module load 2023
+    source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
+    conda activate terramind
+
+Environment summary
+-------------------
+Name       : terramind
+Python     : 3.11
+CUDA       : 12.4.0
+Key pkgs   : torch, torchvision, terratorch>=1.2.4, rasterio, gdal, affine, xarray
+Used by    : precompute_terramind.py, train.py, dataset.py, model.py
+
+Output layout (precompute_terramind.py)
+----------------------------------------
+TerraMind features are saved alongside other per-station modalities in the
+permanent project data directory, NOT in a separate satellite/ folder.
+
+Input  (scratch — purged ~14-30 days):
+    /gpfs/scratch1/shared/pkhanal/satellite/{station}/S2L2A/*.tif
+    /gpfs/scratch1/shared/pkhanal/satellite/{station}/S1RTC/*.tif
+    /gpfs/scratch1/shared/pkhanal/satellite/{station}/DEM/dem.tif
+    /gpfs/scratch1/shared/pkhanal/satellite/{station}/LULC/{year}.tif
+
+Output (project — permanent):
+    /gpfs/work3/0/prjs1968/data/{sm_only|sm_and_flux|flux_only}/{station}/
+        S2L2A/{stem}_L12.pt   (196, 768) fp16
+        S2L2A/{stem}_L9.pt    (196, 768) fp16
+        S2L2A/{stem}_L6.pt    (196, 768) fp16
+        S2L2A/{stem}_L3.pt    (196, 768) fp16
+        S2L2A/{stem}_geo.json
+        S1RTC/{stem}_L12.pt   ...  (same structure)
+        DEM/dem_L12.pt        (196, 768) fp16  (L12 only — no skip connections needed)
+        DEM/dem_geo.json
+        LULC/lulc_L12.pt      (196, 768) fp16
+        LULC/lulc_geo.json
+
+Station routing is handled automatically by _station_data_dir() in
+precompute_terramind.py, which searches sm_only/, sm_and_flux/, flux_only/
+for a matching station directory.
+
+Running inference
+-----------------
+Single station test (CPU ok, no GPU needed):
+    conda activate terramind
+    python precompute_terramind.py --station ISMN_NGARI_SQ06
+
+Full run via SLURM array (1048 stations, 53 tasks of 20 stations each):
+    mkdir -p /gpfs/work3/0/prjs1968/data/logs
+    sbatch jobs/terramind_inference.sh
+
+The script is resume-safe: any acquisition whose _L12.pt already exists
+in the output directory is skipped.
