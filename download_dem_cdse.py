@@ -109,13 +109,16 @@ def center_crop_tif(path: Path, size: int = PIXEL_SIZE) -> None:
         h, w = src.height, src.width
         if h == size and w == size:
             return
+        if h < size or w < size:
+            raise ValueError(f"Image too small to crop ({h}×{w} < {size}×{size}): {path}")
         row_off = (h - size) // 2
         col_off = (w - size) // 2
         window = rasterio.windows.Window(col_off, row_off, size, size)
         data = src.read(window=window)
         transform = src.window_transform(window)
         profile = src.profile.copy()
-    profile.update(height=size, width=size, transform=transform)
+    # tiled=False prevents a crash when source block size (e.g. 256) > target size (224)
+    profile.update(height=size, width=size, transform=transform, tiled=False)
     tmp = path.with_suffix(".tmp.tif")
     try:
         with rasterio.open(tmp, "w", **profile) as dst:
@@ -304,9 +307,7 @@ class SatelliteJobManager(MultiBackendJobManager):
 
                 asset.download(str(dest))
                 center_crop_tif(dest)
-                full_dt = datetime_map.get(asset.name, "")
-                if full_dt:
-                    _write_datetime_tag(dest, full_dt)
+                # DEM is a static composite (max_time strips STAC datetime); no tag to write
                 n_saved += 1
 
             log.info(f"  ✓ {station_id}/{modality}  {n_saved} files → {out_dir}")
