@@ -24,6 +24,7 @@ import logging
 import os
 os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
 import rasterio
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -219,16 +220,23 @@ def save_geotiff(da: xr.DataArray, path: Path, dtype: str, epsg: int):
     da.rio.to_raster(str(path), dtype=dtype, compress="deflate", tiled=True)
 
 
-def load_checkpoint() -> set:
-    """Return set of station_ids already marked done (s1rtc + lulc both done/no_data)."""
+def load_s1rtc_done() -> set:
+    """Return station_ids where S1RTC is already complete (done or no_data)."""
     if not LOG_FILE.exists():
         return set()
-    df = pd.read_csv(LOG_FILE, dtype=str)
-    df = df.reindex(columns=LOG_COLS, fill_value="")
-    done_mask = df[["s1rtc_status", "lulc_status"]].apply(
-        lambda r: all(s in ("done", "no_data") for s in r), axis=1
+    df = pd.read_csv(LOG_FILE, dtype=str).reindex(columns=LOG_COLS, fill_value="")
+    df = df.drop_duplicates(subset="station_id", keep="last")
+    return set(df.loc[df["s1rtc_status"].isin(["done", "no_data"]), "station_id"])
+
+
+def check_lulc_complete(station_dir: Path, start_year: int, end_year: int) -> bool:
+    """Return True if every expected LULC year file exists on disk."""
+    if start_year > end_year:
+        return True
+    return all(
+        (station_dir / "LULC" / f"{y}.tif").exists()
+        for y in range(start_year, end_year + 1)
     )
-    return set(df.loc[done_mask, "station_id"])
 
 
 def append_checkpoint_row(row: dict, lock: threading.Lock):
@@ -390,7 +398,7 @@ def download_lulc(
 # PER-STATION ORCHESTRATION
 # ============================================================
 
-def process_station(row: pd.Series, catalog_mpc) -> dict:
+def process_station(row: pd.Series, catalog_mpc, skip_s1rtc: bool = False) -> dict:
     station_id  = _station_folder(row)
     lat, lon    = float(row.latitude), float(row.longitude)
 
@@ -438,8 +446,12 @@ def process_station(row: pd.Series, catalog_mpc) -> dict:
             logging.error(f"  {station_id} {label.upper()} failed: {exc}")
 
     # S1 RTC + LULC — run sequentially to avoid nested thread pool anti-pattern
-    _run("s1rtc", download_s1rtc, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta)
-    _run("lulc",  download_lulc,  station_dir, catalog_mpc, epsg, bounds, bbox,
+    if skip_s1rtc:
+        log["s1rtc_status"] = "done"   # completed in a prior run
+        log["s1rtc_n"]      = ""
+    else:
+        _run("s1rtc", download_s1rtc, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta)
+    _run("lulc", download_lulc, station_dir, catalog_mpc, epsg, bounds, bbox,
          start_year, end_year, meta)
 
     # Write metadata.json
@@ -453,6 +465,38 @@ def process_station(row: pd.Series, catalog_mpc) -> dict:
     return log
 
 # ============================================================
+# 2025 LULC PROXY
+# ============================================================
+
+def apply_lulc_2025_proxy(pilot: pd.DataFrame):
+    """Copy LULC/2024.tif → LULC/2025.tif for stations whose data extends into 2025.
+    MPC does not yet carry 2025 ESRI Annual LULC; 2024 is used as a proxy."""
+    log = logging.getLogger(__name__)
+    n_copied = n_already = n_missing_src = 0
+    for _, row in pilot.iterrows():
+        end = parse_date(row.end_date) if pd.notna(row.end_date) else datetime.now().strftime("%Y-%m-%d")
+        if int(end[:4]) < 2025:
+            continue
+        sid      = _station_folder(row)
+        lulc_dir = SCRATCH_DIR / sid / "LULC"
+        src      = lulc_dir / "2024.tif"
+        dst      = lulc_dir / "2025.tif"
+        if dst.exists():
+            n_already += 1
+            continue
+        if not src.exists():
+            log.warning(f"  {sid}: LULC/2024.tif missing — cannot create 2025 proxy")
+            n_missing_src += 1
+            continue
+        shutil.copy2(str(src), str(dst))
+        n_copied += 1
+    log.info(
+        f"LULC 2025 proxy: copied={n_copied}  already_present={n_already}  "
+        f"missing_2024_src={n_missing_src}"
+    )
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -460,29 +504,37 @@ def main():
     setup_logging()
     log = logging.getLogger(__name__)
 
-    # --- Build station list: all 1,048 stations from station_splits.csv ---
     pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
     if TEST_MODE:
         pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
         log.info(f"TEST_MODE: running on {len(pilot)} station(s): {list(pilot.apply(_station_folder, axis=1))}")
     log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
-    # --- Skip already-completed stations ---
-    done_ids  = load_checkpoint()
-    log.info(f"Already completed: {len(done_ids)} stations")
+    # S1RTC completion is checkpointed in the log CSV.
+    # LULC completion is verified on disk (per-year files) — the log is not
+    # trustworthy for LULC because a partial run sets lulc_status="done".
+    s1rtc_done = load_s1rtc_done()
+    log.info(f"S1RTC already done: {len(s1rtc_done)} stations")
+
+    todo = []
+    for i, row in pilot.iterrows():
+        sid   = _station_folder(row)
+        start = max(GLOBAL_START, parse_date(row.start_date)) if pd.notna(row.start_date) else GLOBAL_START
+        end   = parse_date(row.end_date) if pd.notna(row.end_date) else datetime.now().strftime("%Y-%m-%d")
+        sy    = max(LULC_START_YEAR, int(start[:4]))
+        ey    = min(LULC_END_YEAR,   int(end[:4]))
+        if sid in s1rtc_done and check_lulc_complete(SCRATCH_DIR / sid, sy, ey):
+            continue
+        todo.append((i, row))
+    log.info(f"Stations to process: {len(todo)}  (workers={N_WORKERS})")
 
     ckpt_lock = threading.Lock()
     completed = [0]
 
     def _process_one(row):
-        cat_mpc = pystac_client.Client.open(
-            MPC_URL, modifier=planetary_computer.sign_inplace
-        )
-        return process_station(row, cat_mpc)
-
-    todo = [(i, row) for i, row in pilot.iterrows()
-            if _station_folder(row) not in done_ids]
-    log.info(f"Stations to download: {len(todo)}  (workers={N_WORKERS})")
+        sid     = _station_folder(row)
+        cat_mpc = pystac_client.Client.open(MPC_URL, modifier=planetary_computer.sign_inplace)
+        return process_station(row, cat_mpc, skip_s1rtc=(sid in s1rtc_done))
 
     with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
         fut_to_row = {pool.submit(_process_one, row): (i, row) for i, row in todo}
@@ -502,6 +554,9 @@ def main():
                 f"S1RTC={row_dict.get('s1rtc_n', '?')} LULC={row_dict['lulc_status']}"
             )
             append_checkpoint_row(row_dict, ckpt_lock)
+
+    # Copy 2024 LULC → 2025 for stations with 2025 records (MPC has no 2025 yet)
+    apply_lulc_2025_proxy(pilot)
 
     log.info("Done.")
 
