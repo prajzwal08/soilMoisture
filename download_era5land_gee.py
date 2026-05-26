@@ -25,7 +25,9 @@ Prerequisites:
   earthengine authenticate        # one-time browser login
 """
 
+import csv
 import logging
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -65,7 +67,8 @@ TWSA_LOG_FILE = LOG_DIR / "twsa_gee_log.csv"
 TEST_MODE     = False
 TEST_STATION  = "ISMN_TWENTE_Hupsel"
 
-N_WORKERS = 6    # concurrent GEE getRegion calls (reduced from 16 to avoid 429 rate limits)
+N_WORKERS       = 6    # concurrent GEE getRegion calls (reduced from 16 to avoid 429 rate limits)
+GEE_RETRY_WAITS = [2, 4, 8]   # seconds between GEE retry attempts (exponential backoff)
 
 # ── ERA5-Land ─────────────────────────────────────────────────────────────────
 GEE_COLLECTION = "ECMWF/ERA5_LAND/HOURLY"
@@ -201,7 +204,19 @@ def _fetch_month_gee(lat: float, lon: float, year: int, month: int) -> pd.DataFr
 
     # getRegion returns: [[id, lon, lat, time_ms, band0, band1, ...], ...]
     # First row is the header.
-    raw = collection.getRegion(geometry, GEE_SCALE).getInfo()
+    last_exc = None
+    for attempt, wait in enumerate(GEE_RETRY_WAITS + [None]):
+        try:
+            raw = collection.getRegion(geometry, GEE_SCALE).getInfo()
+            break
+        except Exception as exc:
+            last_exc = exc
+            if wait is None:
+                raise last_exc
+            logging.getLogger(__name__).warning(
+                f"  GEE getInfo failed attempt {attempt + 1} ({exc}), retrying in {wait}s…"
+            )
+            time.sleep(wait)
 
     if len(raw) <= 1:
         # No data returned (e.g. collection gap); return empty DataFrame
@@ -302,6 +317,7 @@ def process_station_year(job: dict) -> dict:
         ds.attrs["source"]     = GEE_COLLECTION
 
         ds.to_netcdf(str(out))
+        ds.close()
         log.debug(f"    Saved {out.name}")
         result["status"] = "done"
 
@@ -384,7 +400,19 @@ def process_twsa_station_year(job: dict) -> dict:
         )
 
         # getRegion returns [[header], [row0], [row1], ...]
-        raw = collection.getRegion(geometry, GRACE_SCALE).getInfo()
+        last_exc = None
+        for attempt, wait in enumerate(GEE_RETRY_WAITS + [None]):
+            try:
+                raw = collection.getRegion(geometry, GRACE_SCALE).getInfo()
+                break
+            except Exception as exc:
+                last_exc = exc
+                if wait is None:
+                    raise last_exc
+                logging.getLogger(__name__).warning(
+                    f"  GEE TWSA getInfo failed attempt {attempt + 1} ({exc}), retrying in {wait}s…"
+                )
+                time.sleep(wait)
 
         if len(raw) <= 1:
             # No GRACE data for this year (gap period or outside coverage)
@@ -415,6 +443,7 @@ def process_twsa_station_year(job: dict) -> dict:
         ).astype("int32")
 
         df.index = df["time"].dt.tz_localize(None)
+        df.index.name = "time"
         df = df.drop(columns=["time"])
 
         ds = xr.Dataset.from_dataframe(df)
@@ -428,6 +457,7 @@ def process_twsa_station_year(job: dict) -> dict:
         ds.attrs["created"]     = datetime.now(timezone.utc).isoformat()
 
         ds.to_netcdf(str(out))
+        ds.close()
         result["status"]   = "done"
         result["n_months"] = len(df)
         log.debug(f"    TWSA {station_id} {year}: {len(df)} months")
@@ -446,25 +476,22 @@ def process_twsa_station_year(job: dict) -> dict:
 # CHECKPOINT LOG
 # ============================================================
 
-def load_log() -> pd.DataFrame:
-    if LOG_FILE.exists():
-        return pd.read_csv(LOG_FILE, dtype=str)
-    return pd.DataFrame(columns=LOG_COLS)
-
-
-def append_log(log_df: pd.DataFrame, row: dict, lock: threading.Lock):
+def _append_csv_row(filepath: Path, row: dict, cols: list, lock: threading.Lock):
+    """Append one row to a CSV log file in a thread-safe way. Never overwrites existing rows."""
     with lock:
-        updated = pd.concat(
-            [log_df, pd.DataFrame([row])], ignore_index=True
-        )
-        updated.to_csv(LOG_FILE, index=False)
+        write_header = not filepath.exists()
+        with open(filepath, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
-def _run_jobs(jobs, process_fn, log_df, lock, label):
+def _run_jobs(jobs, process_fn, log_file, cols, lock, label):
     log  = logging.getLogger(__name__)
     done = [0]
     with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
@@ -477,11 +504,12 @@ def _run_jobs(jobs, process_fn, log_df, lock, label):
                 log.error(f"  Worker error {j['station_id']} {j['year']}: {exc}")
                 continue
             done[0] += 1
+            extra = f"  months={row['n_months']}" if "n_months" in row else ""
             log.info(
                 f"[{label}] [{done[0]:4d}/{len(jobs)}] {row['station_id']} "
-                f"{row['year']}  status={row['status']}"
+                f"{row['year']}  status={row['status']}{extra}"
             )
-            append_log(log_df, row, lock)
+            _append_csv_row(log_file, row, cols, lock)
 
 
 def main():
@@ -499,39 +527,13 @@ def main():
     # ── ERA5-Land ─────────────────────────────────────────────────────────────
     era5_jobs = build_job_list(df)
     log.info(f"ERA5-Land jobs: {len(era5_jobs)} station-years  (workers={N_WORKERS})")
-    era5_log = load_log()
-    _run_jobs(era5_jobs, process_station_year, era5_log, lock, "ERA5")
+    _run_jobs(era5_jobs, process_station_year, LOG_FILE, LOG_COLS, lock, "ERA5")
 
     # ── TWSA ──────────────────────────────────────────────────────────────────
     twsa_jobs = build_twsa_job_list(df)
     log.info(f"TWSA jobs: {len(twsa_jobs)} station-years  (workers={N_WORKERS})")
-    twsa_log_df = pd.read_csv(TWSA_LOG_FILE, dtype=str) \
-        if TWSA_LOG_FILE.exists() else pd.DataFrame(columns=TWSA_LOG_COLS)
-
-    def _append_twsa(log_df, row, lock):
-        with lock:
-            updated = pd.concat(
-                [log_df, pd.DataFrame([row])], ignore_index=True
-            )
-            updated.to_csv(TWSA_LOG_FILE, index=False)
-
     twsa_lock = threading.Lock()
-    done = [0]
-    with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
-        fut_to_job = {pool.submit(process_twsa_station_year, j): j for j in twsa_jobs}
-        for fut in as_completed(fut_to_job):
-            j = fut_to_job[fut]
-            try:
-                row = fut.result()
-            except Exception as exc:
-                log.error(f"  TWSA worker error {j['station_id']} {j['year']}: {exc}")
-                continue
-            done[0] += 1
-            log.info(
-                f"[TWSA] [{done[0]:4d}/{len(twsa_jobs)}] {row['station_id']} "
-                f"{row['year']}  status={row['status']}  months={row.get('n_months',0)}"
-            )
-            _append_twsa(twsa_log_df, row, twsa_lock)
+    _run_jobs(twsa_jobs, process_twsa_station_year, TWSA_LOG_FILE, TWSA_LOG_COLS, twsa_lock, "TWSA")
 
     log.info("Done.")
 
