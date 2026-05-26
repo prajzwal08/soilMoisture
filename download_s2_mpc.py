@@ -20,6 +20,7 @@ Usage:
   nohup python download_s2_mpc.py > /tmp/download_s2_mpc.log 2>&1 &
 """
 
+import csv
 import json
 import logging
 import os
@@ -27,6 +28,8 @@ os.environ.pop("PROJ_DATA", None)
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,15 +76,17 @@ LOG_COLS = ["station_id","lat","lon","n_scenes","dem_status","status","error_msg
 # ============================================================
 
 def _station_folder(row) -> str:
-    if row.source_network != row.network:
-        return f"{row.source_network}_{row.network}_{row.station_id}"
-    return f"{row.network}_{row.station_id}"
+    src, net = row.source_network, row.network
+    if pd.notna(src) and src != net:
+        return f"{src}_{net}_{row.station_id}"
+    return f"{net}_{row.station_id}"
 
 
 def parse_date(val) -> str:
     try:
         return pd.Timestamp(str(val)).strftime("%Y-%m-%d")
     except Exception:
+        logging.warning(f"Could not parse date {val!r}; using raw substring")
         return str(val)[:10]
 
 
@@ -111,10 +116,18 @@ def center_crop(da: xr.DataArray, size: int = PIXEL_SIZE) -> xr.DataArray:
     return da[..., sh : sh + size, sw : sw + size]
 
 
+_NO_RETRY_HTTP = frozenset({401, 403, 404})
+
 def with_retry(fn, max_retries=MAX_RETRIES, waits=RETRY_WAITS):
     for attempt in range(max_retries):
         try:
             return fn()
+        except requests.exceptions.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code in _NO_RETRY_HTTP:
+                raise
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(waits[attempt])
         except Exception as exc:
             if attempt == max_retries - 1:
                 raise
@@ -140,8 +153,13 @@ def load_checkpoint() -> pd.DataFrame:
     return pd.DataFrame(columns=LOG_COLS)
 
 
-def save_checkpoint(df: pd.DataFrame):
-    df.to_csv(LOG_FILE, index=False)
+def append_checkpoint_row(row_dict: dict):
+    write_header = not LOG_FILE.exists()
+    with open(LOG_FILE, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=LOG_COLS, extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row_dict)
 
 
 # ============================================================
@@ -204,7 +222,7 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
         try:
             da = with_retry(_load)
         except Exception as exc:
-            logging.debug(f"    S2 {date_str}: {exc}")
+            logging.warning(f"    S2 {date_str}: {exc}")
             continue
 
         da = center_crop(da).astype("int16")
@@ -226,7 +244,7 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
 # ============================================================
 
 def download_dem(station_dir: Path, catalog, epsg: int, bounds: tuple,
-                 bbox: list) -> bool:
+                 bbox: list, meta: dict) -> bool:
     out_path = station_dir / "DEM" / "dem.tif"
     if out_path.exists():
         return True
@@ -260,6 +278,12 @@ def download_dem(station_dir: Path, catalog, epsg: int, bounds: tuple,
     da = da.expand_dims("band")
     save_geotiff(da, out_path, epsg, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                  dtype="float32")
+    meta["DEM"] = {
+        "source":        "cop-dem-glo-30",
+        "resolution_m":  RES_M,
+        "epsg":          epsg,
+        "download_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
     logging.debug(f"    DEM saved → {out_path}")
     return True
 
@@ -269,6 +293,9 @@ def download_dem(station_dir: Path, catalog, epsg: int, bounds: tuple,
 # ============================================================
 
 def process_station(row: pd.Series, catalog) -> dict:
+    for col in ("latitude", "longitude", "network", "station_id"):
+        if pd.isna(row[col]):
+            raise ValueError(f"Missing required field: {col}")
     station_id = _station_folder(row)
     lat, lon   = float(row.latitude), float(row.longitude)
 
@@ -306,17 +333,20 @@ def process_station(row: pd.Series, catalog) -> dict:
         logging.error(f"  {station_id} S2 FAILED: {exc}")
 
     try:
-        ok = download_dem(station_dir, catalog, epsg, bounds, bbox)
+        ok = download_dem(station_dir, catalog, epsg, bounds, bbox, meta)
         log["dem_status"] = "done" if ok else "no_data"
     except Exception as exc:
         log["dem_status"] = "error"
-        log["error_msg"]  = str(log["error_msg"]) + f" DEM:{exc}"
+        prefix = f"{log['error_msg']}; " if log["error_msg"] else ""
+        log["error_msg"] = f"{prefix}DEM:{exc}"
         logging.error(f"  {station_id} DEM FAILED: {exc}")
 
     log["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-    with open(station_dir / "metadata.json", "w") as f:
+    _tmp = station_dir / "metadata.json.tmp"
+    with open(_tmp, "w") as f:
         json.dump(meta, f, indent=2)
+    _tmp.rename(station_dir / "metadata.json")
 
     return log
 
@@ -345,9 +375,8 @@ def main():
             if _station_folder(row) not in done_ids]
     log.info(f"Stations to download: {len(todo)}  (workers={N_WORKERS})")
 
-    ckpt_lock  = threading.Lock()
-    ckpt_state = [checkpoint]
-    completed  = [0]
+    ckpt_lock = threading.Lock()
+    completed = [0]
 
     def _process_one(row):
         cat = pystac_client.Client.open(MPC_URL, modifier=planetary_computer.sign_inplace)
@@ -374,11 +403,7 @@ def main():
             )
 
             with ckpt_lock:
-                updated = pd.concat(
-                    [ckpt_state[0], pd.DataFrame([row_dict])], ignore_index=True
-                ).drop_duplicates(subset="station_id", keep="last")
-                save_checkpoint(updated)
-                ckpt_state[0] = updated
+                append_checkpoint_row(row_dict)
 
     log.info("Done.")
 
