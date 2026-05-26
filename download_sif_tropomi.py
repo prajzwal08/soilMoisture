@@ -28,6 +28,7 @@ Usage:
 import logging
 import tempfile
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta, datetime, timezone
 from pathlib import Path
@@ -322,7 +323,10 @@ def save_station_year(station_dir: Path, station_id: str, year: int, obs_list: l
     ds.attrs["station_id"] = station_id
     ds.attrs["source"]     = f"{STAC_URL} / {COLLECTION}"
     ds.attrs["created"]    = datetime.now(timezone.utc).isoformat()
-    ds.to_netcdf(str(out_path))
+    tmp_out = out_dir / f"sif_{year}.tmp.nc"
+    ds.to_netcdf(str(tmp_out))
+    ds.close()
+    tmp_out.rename(out_path)
 
 # ============================================================
 # MAIN
@@ -375,6 +379,11 @@ def main():
         for yr in all_years
     }
 
+    # Track pending days per year so we can flush as soon as a full year is processed
+    year_pending: dict[int, set] = defaultdict(set)
+    for d in all_days:
+        year_pending[d.year].add(d)
+
     done = [0]
 
     def _process_one_day(day):
@@ -395,6 +404,7 @@ def main():
                 result = fut.result()
             except Exception as exc:
                 log.error(f"  Worker error {day}: {exc}")
+                year_pending[day.year].discard(day)
                 continue
 
             done[0] += 1
@@ -408,12 +418,19 @@ def main():
                     station_obs[sid][yr] = []
                 station_obs[sid][yr].append(o)
 
-    # Write per-station per-year files
-    log.info("Writing per-station annual SIF files...")
-    for sid, years in station_obs.items():
-        for year, obs_list in years.items():
-            if obs_list:
-                save_station_year(station_dirs[sid], sid, year, sorted(obs_list, key=lambda x: x["date"]))
+            # Flush completed years to disk immediately to avoid all-or-nothing loss
+            year_pending[day.year].discard(day)
+            if not year_pending[day.year]:
+                yr = day.year
+                log.info(f"  Year {yr} complete — flushing to disk...")
+                for sid in df["station_id"]:
+                    obs_list = station_obs[sid].pop(yr, [])
+                    if obs_list:
+                        save_station_year(
+                            station_dirs[sid], sid, yr,
+                            sorted(obs_list, key=lambda x: x["date"]),
+                        )
+                log.info(f"  Year {yr} flushed.")
 
     log.info("Done.")
 
