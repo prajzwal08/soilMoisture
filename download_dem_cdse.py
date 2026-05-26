@@ -28,11 +28,9 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import openeo
 import pandas as pd
 import rasterio
-from rasterio.transform import from_bounds
 from dotenv import load_dotenv
 from openeo.extra.job_management import (
     CsvJobDatabase,
@@ -48,7 +46,7 @@ DATA_ROOT    = Path("/gpfs/work3/0/prjs1968/data")
 STATION_CSV  = DATA_ROOT / "station_splits.csv"
 LOG_DIR      = DATA_ROOT / "logs"
 JOB_DB_FILE  = LOG_DIR / "openeo_jobs_v2.csv"
-LOG_FILE     = LOG_DIR / "download_openeo.log"
+LOG_FILE     = LOG_DIR / "download_dem_cdse.log"
 
 # DEM tiles go to scratch. Logs and permanent outputs stay in DATA_ROOT.
 SCRATCH_DIR  = Path("/gpfs/scratch1/shared/pkhanal/satellite")
@@ -58,7 +56,6 @@ TEST_STATION = "ISMN_TWENTE_Hupsel"
 
 PIXEL_SIZE        = 224   # pixels per side stored on disk (TerraMind native size, UNetMobV2 compatible)
 RES_M             = 10    # metres per pixel
-MAX_CLOUD_COVER   = 75    # % scene-level cloud cover threshold (eo:cloud_cover, full 100×100 km tile)
 GLOBAL_START      = "2016-01-01"
 
 CDSE_URL     = "openeo.dataspace.copernicus.eu"
@@ -107,7 +104,7 @@ def station_grid(lat: float, lon: float):
 
 
 def center_crop_tif(path: Path, size: int = PIXEL_SIZE) -> None:
-    """Crop a GeoTIFF in-place to size×size pixels, centred on the image."""
+    """Crop a GeoTIFF to size×size pixels centred on the image (atomic write)."""
     with rasterio.open(path) as src:
         h, w = src.height, src.width
         if h == size and w == size:
@@ -119,8 +116,14 @@ def center_crop_tif(path: Path, size: int = PIXEL_SIZE) -> None:
         transform = src.window_transform(window)
         profile = src.profile.copy()
     profile.update(height=size, width=size, transform=transform)
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
+    tmp = path.with_suffix(".tmp.tif")
+    try:
+        with rasterio.open(tmp, "w", **profile) as dst:
+            dst.write(data)
+        tmp.replace(path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def parse_date(val) -> str:
@@ -212,8 +215,14 @@ def _write_datetime_tag(path: Path, iso_dt: str) -> None:
         dt_tag = dt[:10].replace("-", ":") + dt[10:]                  # → '2021:07:04 10:23:11'
         with rasterio.open(path, "r+") as dst:
             dst.update_tags(TIFFTAG_DATETIME=dt_tag, datetime_utc=iso_dt)
-    except Exception:
-        pass  # non-fatal — date is already in the filename
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"  Could not write datetime tag to {path}: {e}")
+
+
+def _get_scratch_dir(row: pd.Series, station_id: str) -> Path:
+    if "scratch_dir" in row.index and pd.notna(row["scratch_dir"]):
+        return Path(row["scratch_dir"])
+    return SCRATCH_DIR / station_id
 
 
 class SatelliteJobManager(MultiBackendJobManager):
@@ -261,14 +270,7 @@ class SatelliteJobManager(MultiBackendJobManager):
         modality   = row["modality"]
         log        = logging.getLogger(__name__)
 
-        # Map modality → output subdirectory and filename suffix
-        subdir = "S1RTC" if modality.startswith("S1RTC") else modality
-        suffix = "_ASC" if modality == "S1RTC_ASC" else (
-                 "_DESC" if modality == "S1RTC_DESC" else "")
-        is_dem = (modality == "DEM")
-
-        sdir = row.get("scratch_dir") if hasattr(row, "get") else row["scratch_dir"] if "scratch_dir" in row.index else str(SCRATCH_DIR / station_id)
-        out_dir = Path(sdir) / subdir
+        out_dir = _get_scratch_dir(row, station_id) / modality
         out_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -287,15 +289,7 @@ class SatelliteJobManager(MultiBackendJobManager):
                 if not asset.name.lower().endswith(".tif"):
                     continue
 
-                if is_dem:
-                    dest = out_dir / "dem.tif"
-                else:
-                    date_str = cdse_filename_to_date(asset.name)
-                    if not date_str or len(date_str) < 8:
-                        log.warning(f"  {station_id}/{modality}: "
-                                    f"could not parse date from '{asset.name}' — skipping")
-                        continue
-                    dest = out_dir / f"{date_str}{suffix}.tif"
+                dest = out_dir / "dem.tif"
 
                 if not dest.exists():
                     asset.download(str(dest))
@@ -326,9 +320,8 @@ class SatelliteJobManager(MultiBackendJobManager):
 
     def _update_metadata(self, station_id: str, modality: str,
                          job, n_files: int, row: pd.Series):
-        """Write/update metadata.json for the station — same structure as download_satellite.py."""
-        sdir = row.get("scratch_dir") if hasattr(row, "get") else row["scratch_dir"] if "scratch_dir" in row.index else str(SCRATCH_DIR / station_id)
-        meta_path = Path(sdir) / "metadata.json"
+        """Write/update metadata.json for the station."""
+        meta_path = _get_scratch_dir(row, station_id) / "metadata.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text())
         else:
@@ -345,13 +338,12 @@ class SatelliteJobManager(MultiBackendJobManager):
                 "pixel_size_m":  RES_M,
                 "bounds_utm":    list(bounds),
                 "download_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "S1RTC": {}, "S1GRD": {}, "S2L1C": {}, "S2L2A": {}, "DEM": {}, "LULC": {},
+                "DEM": {},
             }
-        subdir = "S1RTC" if modality.startswith("S1RTC") else modality
-        meta[subdir] = meta.get(subdir, {})
-        meta[subdir]["job_id"]  = job.job_id
-        meta[subdir]["n_files"] = n_files
-        meta[subdir]["source"]  = "CDSE/OpenEO"
+        meta[modality] = meta.get(modality, {})
+        meta[modality]["job_id"]  = job.job_id
+        meta[modality]["n_files"] = n_files
+        meta[modality]["source"]  = "CDSE/OpenEO"
         meta_path.write_text(json.dumps(meta, indent=2))
 
 
@@ -373,9 +365,7 @@ def _station_dir(st) -> Path:
 
 
 def build_jobs_df(stations: pd.DataFrame) -> pd.DataFrame:
-    """
-    One row per (station × modality) = N_stations × 5 modalities.
-    """
+    """One row per station (single DEM modality)."""
     rows = []
     for _, st in stations.iterrows():
         station_id  = _station_folder(st)
@@ -449,6 +439,9 @@ def main():
     pilot = pd.read_csv(STATION_CSV).reset_index(drop=True)
     if TEST_MODE:
         pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
+        if len(pilot) == 0:
+            log.error(f"TEST_MODE: no station matching '{TEST_STATION}' — check TEST_STATION")
+            return
         log.info(f"TEST_MODE: running on {len(pilot)} station(s): {list(pilot.apply(_station_folder, axis=1))}")
     log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
