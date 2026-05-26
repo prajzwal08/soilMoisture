@@ -29,6 +29,7 @@ import pandas as pd
 import rasterio
 import torch
 import xarray as xr
+from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -99,6 +100,39 @@ def _files_in_window(patch_dir: Path, year: int, target_doy: int) -> list[Path]:
         and date_to_doy(f.stem, year) <= target_doy
     )
     return prev + curr
+
+
+# ── Soil patch helpers ───────────────────────────────────────────────────────
+
+def fill_soil_nans(patch: np.ndarray) -> np.ndarray:
+    """
+    Fill NaN pixels in a soil patch via nearest-neighbour propagation.
+    patch : (21, 74, 74) float32
+    Operates channel-by-channel; channels with no NaN are untouched.
+    """
+    out = patch.copy()
+    for c in range(out.shape[0]):
+        mask = np.isnan(out[c])
+        if mask.any():
+            _, idx = distance_transform_edt(mask, return_indices=True)
+            out[c] = out[c][tuple(idx)]
+    return out
+
+
+def load_soil_patch(path: Path) -> torch.Tensor | None:
+    """
+    Load soil_patch.tif → (21, 74, 74) float32 tensor, NaN-filled.
+    Returns None if the file does not exist.
+    """
+    if not path.exists():
+        return None
+    with rasterio.open(path) as src:
+        patch  = src.read().astype(np.float32)
+        nodata = src.nodata
+    if nodata is not None:
+        patch[patch == nodata] = np.nan
+    patch = fill_soil_nans(patch)
+    return torch.from_numpy(patch)
 
 
 # ── ERA5 loader ──────────────────────────────────────────────────────────────
@@ -289,16 +323,34 @@ class SoilMoistureDataset(Dataset):
 
     def __init__(
         self,
-        metadata_csv:  str,
-        satellite_dir: str,
-        ismn_dir:      str,
+        metadata_csv:   str,
+        satellite_dir:  str,
+        ismn_dir:       str,
         years=None,
-        min_obs:       int  = 30,
+        min_obs:        int         = 30,
         station_filter: list | None = None,
+        soil_data_root: str | None  = None,
     ):
         self.satellite_dir = Path(satellite_dir)
         self.ismn_dir      = Path(ismn_dir)
         self.years         = years or list(range(2016, 2024))
+
+        # Build soil patch lookup: (network, station_id) → (Path, ok)
+        soil_lookup: dict[tuple, tuple[Path, bool]] = {}
+        if soil_data_root is not None:
+            _soil_root = Path(soil_data_root)
+            _splits    = pd.read_csv(_soil_root / "station_splits.csv")
+            for _, r in _splits.iterrows():
+                has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+                has_fl = str(r.get("has_flux",          "False")).lower() == "true"
+                cat    = ("sm_and_flux" if (has_sm and has_fl)
+                          else ("sm_only" if has_sm else "flux_only"))
+                folder = (f"{r['source_network']}_{r['network']}_{r['station_id']}"
+                          if r["source_network"] != r["network"]
+                          else f"{r['network']}_{r['station_id']}")
+                path   = _soil_root / cat / folder / "soil" / "soil_patch.tif"
+                ok     = bool(r.get("soil_patch_ok", True))
+                soil_lookup[(str(r["network"]), str(r["station_id"]))] = (path, ok)
 
         meta = pd.read_csv(metadata_csv)
         self.samples     = []
@@ -308,6 +360,14 @@ class SoilMoistureDataset(Dataset):
             station_key = f"{row['network']}_{row['station']}"
             if station_filter is not None and station_key not in station_filter:
                 continue
+
+            # Soil patch check — skip the 19 stations with no valid soil data
+            soil_path, soil_ok = soil_lookup.get(
+                (str(row["network"]), str(row["station"])), (None, True)
+            )
+            if not soil_ok:
+                continue
+
             sat_dir = self.satellite_dir / station_key
 
             if not sat_dir.exists():
@@ -350,6 +410,7 @@ class SoilMoistureDataset(Dataset):
                         "year"        : year,
                         "doy"         : doy,
                         "time_idx"    : year_indices[day_idx],
+                        "soil_path"   : soil_path,       # Path | None
                     })
 
         print(f"Dataset: {len(self.samples)} samples from "
@@ -392,6 +453,11 @@ class SoilMoistureDataset(Dataset):
             sat_dir, year, doy
         )
 
+        # ── Soil patch (static, NaN-filled) ──────────────────────────
+        soil_patch = load_soil_patch(s["soil_path"]) if s["soil_path"] else None
+        if soil_patch is None:
+            soil_patch = torch.zeros(21, 74, 74, dtype=torch.float32)
+
         # ── ERA5 — rolling 365-day window ─────────────────────────────
         era5, era5_doys = load_era5_rolling(sat_dir, year, doy)
 
@@ -431,6 +497,9 @@ class SoilMoistureDataset(Dataset):
             "recent_s2"     : recent_s2,         # (12, 224, 224) fp32
             "recent_s1"     : recent_s1,         # (2,  224, 224) fp32
             "recent_is_s1"  : torch.tensor(recent_is_s1, dtype=torch.bool),
+
+            # Soil (static)
+            "soil_patch"    : soil_patch,        # (21, 74, 74) fp32 — NaN-free
 
             # ERA5
             "era5"          : era5,              # (365, 19) fp32

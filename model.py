@@ -261,6 +261,55 @@ class UNetDecoder(nn.Module):
         return self.head(x)                                             # (B, n_depths, 224, 224)
 
 
+# ── Soil encoder ─────────────────────────────────────────────────────────────
+
+class SoilEncoder(nn.Module):
+    """
+    Lightweight depthwise-separable CNN + 4-scale spatial pyramid.
+
+    Input : (B, 21, 74, 74) float32 — NaN-free (pre-filled by dataset)
+    Output: (B,  4, 768)    float32 — 4 static soil tokens
+    ~211 K parameters
+
+    Architecture (from architecture.md §4d):
+      Block 1: DWConv(21, 3×3) → PWConv(21→32) → BN → GELU  # (B,32,74,74)
+      Block 2: DWConv(32, 3×3, s=2) → PWConv(32→64) → BN → GELU  # (B,64,37,37)
+      Pyramid: centre 1×1 / 3×3 / 7×7 / full 37×37 → mean → Linear(64→768)
+    """
+    IN_CH  = 21
+    MID_CH = 32
+    OUT_CH = 64
+
+    def __init__(self, d_model: int = 768):
+        super().__init__()
+        c = self.OUT_CH
+        self.block1 = nn.Sequential(
+            nn.Conv2d(self.IN_CH,  self.IN_CH,  3, padding=1, groups=self.IN_CH,  bias=False),
+            nn.Conv2d(self.IN_CH,  self.MID_CH, 1, bias=False),
+            nn.BatchNorm2d(self.MID_CH),
+            nn.GELU(),
+        )
+        self.block2 = nn.Sequential(
+            nn.Conv2d(self.MID_CH, self.MID_CH, 3, stride=2, padding=1, groups=self.MID_CH, bias=False),
+            nn.Conv2d(self.MID_CH, c,           1, bias=False),
+            nn.BatchNorm2d(c),
+            nn.GELU(),
+        )
+        self.proj = nn.ModuleList([nn.Linear(c, d_model) for _ in range(4)])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x  = self.block1(x)                                         # (B, 32, 74, 74)
+        x  = self.block2(x)                                         # (B, 64, 37, 37)
+        cy = cx = 18                                                 # centre of 37×37
+        t0 = x[:, :, cy:cy+1,   cx:cx+1  ].mean(dim=(-2, -1))     # 1×1  ~30 m
+        t1 = x[:, :, cy-1:cy+2, cx-1:cx+2].mean(dim=(-2, -1))     # 3×3  ~90 m
+        t2 = x[:, :, cy-3:cy+4, cx-3:cx+4].mean(dim=(-2, -1))     # 7×7  ~210 m
+        t3 = x.mean(dim=(-2, -1))                                   # 37×37 ~1.1 km
+        return torch.stack(
+            [self.proj[i](t) for i, t in enumerate([t0, t1, t2, t3])], dim=1
+        )                                                            # (B, 4, 768)
+
+
 # ── Full model ───────────────────────────────────────────────────────────────
 
 class SoilMoistureModel(nn.Module):
@@ -289,13 +338,17 @@ class SoilMoistureModel(nn.Module):
         self.n_depths = n_depths
 
         # ── Encoders ──────────────────────────────────────────────────
-        self.terramind = TerraMindEncoder(frozen=freeze_terramind)
+        self.terramind    = TerraMindEncoder(frozen=freeze_terramind)
+        self.soil_encoder = SoilEncoder(d_model=d_model)
 
         self.era5_mlp = nn.Sequential(
             nn.Linear(19, 256),
             nn.GELU(),
             nn.Linear(256, d_model),
         )
+
+        # Learned modality embedding for soil tokens (index 9 per architecture.md)
+        self.soil_modality_emb = nn.Embedding(1, d_model)
 
         # Learned scale embedding: 4 pyramid levels
         self.scale_emb = nn.Embedding(4, d_model)
@@ -460,7 +513,7 @@ class SoilMoistureModel(nn.Module):
             skip_L9.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2),
         )
 
-    def _build_sequence(self, batch: dict, dem_pyr,
+    def _build_sequence(self, batch: dict, dem_pyr, soil_tok,
                         s2_pyr, s2_doys, s2_valid,
                         s1_pyr, s1_doys, s1_valid,
                         spatial_tokens):
@@ -482,6 +535,14 @@ class SoilMoistureModel(nn.Module):
         scale_e = self.scale_emb(torch.arange(4, device=device))      # (4, 768)
         dem_tok = dem_pyr + scale_e.unsqueeze(0)
         tokens.append(dem_tok)                                         # (B, 4, 768)
+        is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
+
+        # ── Static prefix: Soil ────────────────────────────────────────
+        soil_mod_e = self.soil_modality_emb(
+            torch.zeros(1, dtype=torch.long, device=device)
+        )                                                              # (1, 768)
+        soil_tokens = soil_tok + scale_e.unsqueeze(0) + soil_mod_e.unsqueeze(0)
+        tokens.append(soil_tokens)                                     # (B, 4, 768)
         is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
 
         # ── Target-day spatial tokens ──────────────────────────────────
@@ -563,6 +624,9 @@ class SoilMoistureModel(nn.Module):
         # ── 2. DEM pyramid from batch (pre-computed) ───────────────────
         dem_pyr = batch["dem_pyramid"].to(device)                      # (B, 4, 768)
 
+        # ── 2b. Soil tokens ────────────────────────────────────────────
+        soil_tok = self.soil_encoder(batch["soil_patch"].to(device))   # (B, 4, 768)
+
         # ── 3. Target spatial tokens from stored L12 ──────────────────
         spatial_tokens, _ = self._get_target_spatial_tokens(batch, B, device)
 
@@ -573,6 +637,7 @@ class SoilMoistureModel(nn.Module):
         seq, key_mask, spatial_start = self._build_sequence(
             batch,
             dem_pyr,
+            soil_tok,
             s2_pyr, batch["s2_doys"].to(device), batch["s2_valid"].to(device),
             s1_pyr, batch["s1_doys"].to(device), batch["s1_valid"].to(device),
             spatial_tokens,
