@@ -18,10 +18,12 @@ Usage:
   nohup python download_s1_lulc_mpc.py > /tmp/download_s1_lulc.log 2>&1 &
 """
 
+import csv
 import json
 import logging
 import os
 os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
+import rasterio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -96,7 +98,6 @@ def parse_date(val) -> str:
 
 def _write_datetime_tag(path: Path, iso_dt: str) -> None:
     """Write acquisition UTC datetime into GeoTIFF TIFFTAG_DATETIME tag."""
-    import rasterio
     dt_tag = iso_dt[:19].replace("T", " ").replace("-", ":")
     with rasterio.open(path, "r+") as dst:
         dst.update_tags(TIFFTAG_DATETIME=dt_tag, datetime_utc=iso_dt)
@@ -201,6 +202,8 @@ def center_crop(da: xr.DataArray, size: int = PIXEL_SIZE) -> xr.DataArray:
     h, w = da.shape[-2], da.shape[-1]
     if h == size and w == size:
         return da
+    if h < size or w < size:
+        raise ValueError(f"Array too small to crop: {h}×{w} < {size}×{size}")
     sh = (h - size) // 2
     sw = (w - size) // 2
     return da[..., sh : sh + size, sw : sw + size]
@@ -216,14 +219,27 @@ def save_geotiff(da: xr.DataArray, path: Path, dtype: str, epsg: int):
     da.rio.to_raster(str(path), dtype=dtype, compress="deflate", tiled=True)
 
 
-def load_checkpoint() -> pd.DataFrame:
-    if LOG_FILE.exists():
-        return pd.read_csv(LOG_FILE, dtype=str)
-    return pd.DataFrame(columns=LOG_COLS)
+def load_checkpoint() -> set:
+    """Return set of station_ids already marked done (s1rtc + lulc both done/no_data)."""
+    if not LOG_FILE.exists():
+        return set()
+    df = pd.read_csv(LOG_FILE, dtype=str)
+    df = df.reindex(columns=LOG_COLS, fill_value="")
+    done_mask = df[["s1rtc_status", "lulc_status"]].apply(
+        lambda r: all(s in ("done", "no_data") for s in r), axis=1
+    )
+    return set(df.loc[done_mask, "station_id"])
 
 
-def save_checkpoint(df: pd.DataFrame):
-    df.to_csv(LOG_FILE, index=False)
+def append_checkpoint_row(row: dict, lock: threading.Lock):
+    """Append one row to the checkpoint CSV without rewriting the whole file."""
+    with lock:
+        write_header = not LOG_FILE.exists()
+        with open(LOG_FILE, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=LOG_COLS, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
 
 # ============================================================
 # DOWNLOAD: SENTINEL-1 RTC  (MPC)
@@ -281,9 +297,12 @@ def download_s1rtc(
         da = center_crop(da)
         da.values = linear_to_db(da.values)
         da = da.assign_coords(band=["VV", "VH"])
-        save_geotiff(da, fpath, "float32", epsg)
+        tmp = fpath.with_suffix(".tmp")
+        save_geotiff(da, tmp, "float32", epsg)
+        da.close()
         iso_dt = item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write_datetime_tag(fpath, iso_dt)
+        _write_datetime_tag(tmp, iso_dt)
+        tmp.rename(fpath)
 
         meta["S1RTC"][f"{date_str}_{suffix}"] = {
             "datetime_utc": iso_dt,
@@ -340,7 +359,10 @@ def download_lulc(
             da = da.expand_dims("band")
         da = center_crop(da)
         da.values = np.clip(da.values, 0, 9).astype(np.uint8)
-        save_geotiff(da, fpath, "uint8", epsg)
+        tmp = fpath.with_suffix(".tmp")
+        save_geotiff(da, tmp, "uint8", epsg)
+        da.close()
+        tmp.rename(fpath)
 
         meta["LULC"][str(year)] = {"source": "io-lulc-annual-v02"}
         n += 1
@@ -399,20 +421,17 @@ def process_station(row: pd.Series, catalog_mpc) -> dict:
                 log["error_msg"] = str(log["error_msg"]) + f"{label.upper()}:{exc}; "
             logging.error(f"  {station_id} {label.upper()} failed: {exc}")
 
-    # S1 RTC + LULC only — S2L2A and DEM handled by download_s2_dem_cdse.py
-    modality_tasks = [
-        ("s1rtc", download_s1rtc, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta),
-        ("lulc",  download_lulc,  station_dir, catalog_mpc, epsg, bounds, bbox,
-                  start_year, end_year, meta),
-    ]
-    with ThreadPoolExecutor(max_workers=len(modality_tasks)) as pool:
-        futs = {pool.submit(_run, *t): t[0] for t in modality_tasks}
-        for fut in as_completed(futs):
-            fut.result()  # propagate any unexpected exception
+    # S1 RTC + LULC — run sequentially to avoid nested thread pool anti-pattern
+    _run("s1rtc", download_s1rtc, station_dir, catalog_mpc, epsg, bounds, bbox, start, end, meta)
+    _run("lulc",  download_lulc,  station_dir, catalog_mpc, epsg, bounds, bbox,
+         start_year, end_year, meta)
 
     # Write metadata.json
-    with open(station_dir / "metadata.json", "w") as f:
-        json.dump(meta, f, indent=2)
+    try:
+        with open(station_dir / "metadata.json", "w") as f:
+            json.dump(meta, f, indent=2)
+    except Exception as exc:
+        logging.warning(f"  {station_id}: metadata.json write failed: {exc}")
 
     log["timestamp"] = datetime.now(timezone.utc).isoformat()
     return log
@@ -432,38 +451,21 @@ def main():
         log.info(f"TEST_MODE: running on {len(pilot)} station(s): {list(pilot.apply(_station_folder, axis=1))}")
     log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
 
-    # --- Skip already-completed stations (S1RTC + LULC only) ---
-    checkpoint = load_checkpoint()
-    if len(checkpoint):
-        done_mask = checkpoint[
-            ["s1rtc_status", "lulc_status"]
-        ].apply(lambda r: all(s in ("done", "no_data") for s in r), axis=1)
-        done_ids = set(checkpoint.loc[done_mask, "station_id"])
-    else:
-        done_ids = set()
+    # --- Skip already-completed stations ---
+    done_ids  = load_checkpoint()
     log.info(f"Already completed: {len(done_ids)} stations")
 
-    ckpt_lock   = threading.Lock()  # guards checkpoint file writes
-    completed   = [0]               # mutable counter for progress display
-    ckpt_state  = [checkpoint]      # mutable wrapper so the closure can update it
+    ckpt_lock = threading.Lock()
+    completed = [0]
 
     def _process_one(row):
-        """Worker: create per-thread STAC client then process station."""
         cat_mpc = pystac_client.Client.open(
             MPC_URL, modifier=planetary_computer.sign_inplace
         )
         return process_station(row, cat_mpc)
 
-    # Build work list (skip already-done stations)
     todo = [(i, row) for i, row in pilot.iterrows()
             if _station_folder(row) not in done_ids]
-
-    n_total = len(pilot)
-    for i, row in pilot.iterrows():
-        station_id = _station_folder(row)
-        if station_id in done_ids:
-            log.info(f"[{i+1:3d}/{n_total}] Skip  {station_id}")
-
     log.info(f"Stations to download: {len(todo)}  (workers={N_WORKERS})")
 
     with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
@@ -481,15 +483,9 @@ def main():
             completed[0] += 1
             log.info(
                 f"[{completed[0]:3d}/{len(todo)}] Done  {station_id}  "
-                f"S1RTC={row_dict['s1rtc_n']} LULC={row_dict['lulc_status']}"
+                f"S1RTC={row_dict.get('s1rtc_n', '?')} LULC={row_dict['lulc_status']}"
             )
-
-            with ckpt_lock:
-                updated = pd.concat(
-                    [ckpt_state[0], pd.DataFrame([row_dict])], ignore_index=True
-                ).drop_duplicates(subset="station_id", keep="last")
-                save_checkpoint(updated)
-                ckpt_state[0] = updated
+            append_checkpoint_row(row_dict, ckpt_lock)
 
     log.info("Done.")
 
