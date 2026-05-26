@@ -298,11 +298,17 @@ def download_s1rtc(
         da.values = linear_to_db(da.values)
         da = da.assign_coords(band=["VV", "VH"])
         tmp = fpath.with_suffix(".tmp")
-        save_geotiff(da, tmp, "float32", epsg)
-        da.close()
-        iso_dt = item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write_datetime_tag(tmp, iso_dt)
-        tmp.rename(fpath)
+        try:
+            save_geotiff(da, tmp, "float32", epsg)
+            iso_dt = item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
+            _write_datetime_tag(tmp, iso_dt)
+            tmp.rename(fpath)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+        finally:
+            da.close()
 
         meta["S1RTC"][f"{date_str}_{suffix}"] = {
             "datetime_utc": iso_dt,
@@ -353,16 +359,26 @@ def download_lulc(
             )
             return stackstac.mosaic(da).compute()
 
-        da = with_retry(_load)
+        try:
+            da = with_retry(_load)
+        except IndexError:
+            logging.debug(f"    LULC {year}: no spatial overlap — skipping")
+            continue
         da = da.squeeze(drop=True)
         if da.ndim == 2:
             da = da.expand_dims("band")
         da = center_crop(da)
         da.values = np.clip(da.values, 0, 9).astype(np.uint8)
         tmp = fpath.with_suffix(".tmp")
-        save_geotiff(da, tmp, "uint8", epsg)
-        da.close()
-        tmp.rename(fpath)
+        try:
+            save_geotiff(da, tmp, "uint8", epsg)
+            tmp.rename(fpath)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+        finally:
+            da.close()
 
         meta["LULC"][str(year)] = {"source": "io-lulc-annual-v02"}
         n += 1
