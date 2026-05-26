@@ -30,7 +30,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import planetary_computer
 import pystac_client
@@ -45,12 +44,12 @@ from rasterio.enums import Resampling
 # CONFIGURATION
 # ============================================================
 
-DATA_ROOT    = Path("/gpfs/work3/0/prjs1968/data")
+DATA_ROOT    = Path(os.getenv("SOIL_DATA_ROOT",   "/gpfs/work3/0/prjs1968/data"))
 STATION_CSV  = DATA_ROOT / "station_splits.csv"
 LOG_DIR      = DATA_ROOT / "logs"
 LOG_FILE     = LOG_DIR / "download_s2_mpc_log.csv"
 
-SCRATCH_DIR  = Path("/gpfs/scratch1/shared/pkhanal/satellite")
+SCRATCH_DIR  = Path(os.getenv("SOIL_SCRATCH_DIR", "/gpfs/scratch1/shared/pkhanal/satellite"))
 
 PIXEL_SIZE   = 224
 RES_M        = 10
@@ -80,10 +79,10 @@ def _station_folder(row) -> str:
 
 
 def parse_date(val) -> str:
-    s = str(val).split(".")[0].strip()
-    if len(s) == 8 and s.isdigit():
-        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
-    return s[:10]
+    try:
+        return pd.Timestamp(str(val)).strftime("%Y-%m-%d")
+    except Exception:
+        return str(val)[:10]
 
 
 def get_utm_epsg(lat: float, lon: float) -> int:
@@ -369,7 +368,7 @@ def main():
             completed[0] += 1
             log.info(
                 f"[{completed[0]:3d}/{len(todo)}] Done  {station_id}  "
-                f"S2={row_dict.get('n_scenes','?')}scenes  "
+                f"S2={row_dict.get('n_scenes','?')} scenes  "
                 f"DEM={row_dict.get('dem_status','?')}  "
                 f"status={row_dict.get('status')}"
             )
