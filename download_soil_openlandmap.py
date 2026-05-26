@@ -249,19 +249,26 @@ def process_station(row: pd.Series) -> str:
     # UTM is used only to size the bbox so all patches span ~2220 m physically;
     # pixels are NOT equal-area in the saved file — degree width shrinks toward poles.
 
-    with rasterio.open(
-        out_path, "w",
-        driver="GTiff",
-        height=PATCH_PX, width=PATCH_PX,
-        count=len(SOIL_LAYERS),
-        dtype="float32",
-        crs=src_crs,
-        transform=transform,
-        compress="deflate",
-    ) as dst:
-        dst.write(stack)
-        for i, layer in enumerate(SOIL_LAYERS, start=1):
-            dst.update_tags(i, name=layer["name"], units=layer["units"], depth=layer["depth"])
+    tmp_path = out_path.with_suffix(".tmp.tif")
+    try:
+        with rasterio.open(
+            tmp_path, "w",
+            driver="GTiff",
+            height=PATCH_PX, width=PATCH_PX,
+            count=len(SOIL_LAYERS),
+            dtype="float32",
+            crs=src_crs,
+            transform=transform,
+            compress="deflate",
+            nodata=np.nan,
+        ) as dst:
+            dst.write(stack)
+            for i, layer in enumerate(SOIL_LAYERS, start=1):
+                dst.update_tags(i, name=layer["name"], units=layer["units"], depth=layer["depth"])
+        tmp_path.rename(out_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
     log.debug(f"  {station_id}: soil_patch.tif saved")
     return "done"
