@@ -70,6 +70,15 @@ TEST_STATION  = "ISMN_TWENTE_Hupsel"
 N_WORKERS       = 6    # concurrent GEE getRegion calls (reduced from 16 to avoid 429 rate limits)
 GEE_RETRY_WAITS = [2, 4, 8]   # seconds between GEE retry attempts (exponential backoff)
 
+# Errors that will never succeed on retry — raise immediately
+_GEE_NO_RETRY = (
+    "403",
+    "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED",   # quota exceeded — retrying now won't help
+    "Invalid credentials",
+    "not found",
+)
+
 # ── ERA5-Land ─────────────────────────────────────────────────────────────────
 GEE_COLLECTION = "ECMWF/ERA5_LAND/HOURLY"
 
@@ -100,6 +109,18 @@ GRACE_MID_DOY = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
 
 LOG_COLS      = ["station_id", "year", "status", "error_msg", "timestamp"]
 TWSA_LOG_COLS = ["station_id", "year", "n_months", "status", "error_msg", "timestamp"]
+
+
+# ============================================================
+# VALIDATION
+# ============================================================
+
+def _validate_coords(lat: float, lon: float, station_id: str) -> None:
+    import math
+    if math.isnan(lat) or math.isnan(lon):
+        raise ValueError(f"{station_id}: NaN coordinates (lat={lat}, lon={lon})")
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        raise ValueError(f"{station_id}: out-of-bounds coordinates (lat={lat}, lon={lon})")
 
 
 # ============================================================
@@ -211,6 +232,8 @@ def _fetch_month_gee(lat: float, lon: float, year: int, month: int) -> pd.DataFr
             break
         except Exception as exc:
             last_exc = exc
+            if any(p in str(exc) for p in _GEE_NO_RETRY):
+                raise  # non-recoverable — don't waste retries
             if wait is None:
                 raise last_exc
             logging.getLogger(__name__).warning(
@@ -266,6 +289,7 @@ def process_station_year(job: dict) -> dict:
     }
 
     try:
+        _validate_coords(lat, lon, station_id)
         monthly = []
         for month in range(1, 13):
             df_m = _fetch_month_gee(lat, lon, year, month)
@@ -316,16 +340,19 @@ def process_station_year(job: dict) -> dict:
         ds.attrs["created"]    = datetime.now(timezone.utc).isoformat()
         ds.attrs["source"]     = GEE_COLLECTION
 
-        ds.to_netcdf(str(out))
+        tmp = out.with_suffix(".tmp")
+        ds.to_netcdf(str(tmp))
         ds.close()
+        tmp.rename(out)   # atomic on POSIX — file is complete or absent
         log.debug(f"    Saved {out.name}")
         result["status"] = "done"
 
     except Exception as exc:
         result["error_msg"] = str(exc)
         log.error(f"  {station_id} {year} FAILED: {exc}")
-        if out.exists():
-            out.unlink()
+        for p in (out.with_suffix(".tmp"), out):
+            if p.exists():
+                p.unlink()
 
     result["timestamp"] = datetime.now(timezone.utc).isoformat()
     return result
@@ -389,6 +416,7 @@ def process_twsa_station_year(job: dict) -> dict:
     }
 
     try:
+        _validate_coords(lat, lon, station_id)
         geometry = ee.Geometry.Point([lon, lat])
         start    = f"{year}-01-01"
         end      = f"{year + 1}-01-01"
@@ -407,6 +435,8 @@ def process_twsa_station_year(job: dict) -> dict:
                 break
             except Exception as exc:
                 last_exc = exc
+                if any(p in str(exc) for p in _GEE_NO_RETRY):
+                    raise  # non-recoverable — don't waste retries
                 if wait is None:
                     raise last_exc
                 logging.getLogger(__name__).warning(
@@ -456,8 +486,10 @@ def process_twsa_station_year(job: dict) -> dict:
         ds.attrs["source"]      = GRACE_COLLECTION
         ds.attrs["created"]     = datetime.now(timezone.utc).isoformat()
 
-        ds.to_netcdf(str(out))
+        tmp = out.with_suffix(".tmp")
+        ds.to_netcdf(str(tmp))
         ds.close()
+        tmp.rename(out)   # atomic on POSIX — file is complete or absent
         result["status"]   = "done"
         result["n_months"] = len(df)
         log.debug(f"    TWSA {station_id} {year}: {len(df)} months")
@@ -465,8 +497,9 @@ def process_twsa_station_year(job: dict) -> dict:
     except Exception as exc:
         result["error_msg"] = str(exc)
         log.error(f"  TWSA {station_id} {year} FAILED: {exc}")
-        if out.exists():
-            out.unlink()
+        for p in (out.with_suffix(".tmp"), out):
+            if p.exists():
+                p.unlink()
 
     result["timestamp"] = datetime.now(timezone.utc).isoformat()
     return result
