@@ -17,7 +17,7 @@ Patch: 224×224 pixels @ 10 m = 2.24 km × 2.24 km centred on station.
 
 Usage:
   python download_s2_mpc.py
-  nohup python download_s2_mpc.py > /tmp/download_s2_mpc.log 2>&1 &
+  nohup python download_s2_mpc.py > "$SOIL_DATA_ROOT/logs/download_s2_mpc.log" 2>&1 &
 """
 
 import csv
@@ -281,13 +281,13 @@ def download_dem(station_dir: Path, catalog, epsg: int, bounds: tuple,
     da = center_crop(da).astype("float32")
     # Add band dim back for save_geotiff (expects band × y × x)
     da = da.expand_dims("band")
-    save_geotiff(da, out_path, epsg, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                 dtype="float32")
+    _now = datetime.now(timezone.utc)
+    save_geotiff(da, out_path, epsg, _now.strftime("%Y-%m-%dT%H:%M:%SZ"), dtype="float32")
     meta["DEM"] = {
         "source":        "cop-dem-glo-30",
         "resolution_m":  RES_M,
         "epsg":          epsg,
-        "download_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "download_date": _now.strftime("%Y-%m-%d"),
     }
     logging.debug(f"    DEM saved → {out_path}")
     return True
@@ -309,6 +309,8 @@ def process_station(row: pd.Series, catalog) -> dict:
     end_dt   = parse_date(row.end_date) if pd.notna(row.end_date) else datetime.now(timezone.utc).date()
     start    = start_dt.isoformat()
     end      = end_dt.isoformat()
+    if start > end:
+        raise ValueError(f"start_date {start} is after end_date {end}")
 
     epsg, bounds, bbox = station_grid(lat, lon)
     station_dir = SCRATCH_DIR / station_id
@@ -404,7 +406,7 @@ def main():
             try:
                 row_dict = fut.result()
             except Exception as exc:
-                log.error(f"  {station_id} unexpected error: {exc}")
+                log.exception(f"  {station_id} unexpected error: {exc}")
                 continue
 
             completed[0] += 1
