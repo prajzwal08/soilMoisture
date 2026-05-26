@@ -45,7 +45,6 @@ import pystac_client
 DATA_ROOT     = Path("/gpfs/work3/0/prjs1968/data")
 STATION_CSV   = DATA_ROOT / "station_splits.csv"
 LOG_DIR       = DATA_ROOT / "logs"
-LOG_FILE      = LOG_DIR / "sif_download_log.csv"
 
 TEST_MODE     = False
 TEST_STATION  = "ISMN_TWENTE_Hupsel"
@@ -178,7 +177,7 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
         lat_arr = ds["latitude"].values.ravel().astype(np.float32)
         lon_arr = ds["longitude"].values.ravel().astype(np.float32)
         sif_arr = ds[sif_var].values.ravel().astype(np.float32)
-        unc_arr = ds[unc_var].values.ravel().astype(np.float32) if unc_var else np.full_like(sif_arr, np.nan)
+        unc_arr = ds[unc_var].values.ravel().astype(np.float32) if unc_var in ds else np.full_like(sif_arr, np.nan)
         ds.close()
 
         # Valid pixels only (filter NaN and fill values)
@@ -220,7 +219,10 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
 # ============================================================
 
 def _download(url: str, dest: Path, max_retries: int = 3, backoff_s: float = 15.0):
-    """Stream-download url → dest with exponential backoff on transient errors."""
+    """Stream-download url → dest with exponential backoff on transient errors.
+
+    Fails immediately on 4xx (client errors); retries on 5xx and network errors.
+    """
     log = logging.getLogger(__name__)
     for attempt in range(max_retries):
         try:
@@ -230,7 +232,15 @@ def _download(url: str, dest: Path, max_retries: int = 3, backoff_s: float = 15.
                     for chunk in r.iter_content(chunk_size=1 << 20):
                         f.write(chunk)
             return
-        except requests.RequestException as exc:
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code < 500:
+                raise  # 4xx — client error, retrying won't help
+            if attempt == max_retries - 1:
+                raise
+            wait = backoff_s * (2 ** attempt)
+            log.warning(f"  Download attempt {attempt + 1} failed ({exc}); retrying in {wait:.0f}s")
+            time.sleep(wait)
+        except (requests.Timeout, requests.ConnectionError) as exc:
             if attempt == max_retries - 1:
                 raise
             wait = backoff_s * (2 ** attempt)
@@ -256,6 +266,7 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
     if url is None:
         return result
 
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
             tmp_path = Path(tmp.name)
@@ -276,7 +287,7 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
         result["status"]    = "error"
         log.error(f"  Day {day}: {exc}")
     finally:
-        if tmp_path.exists():
+        if tmp_path is not None and tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
 
     return result
@@ -361,14 +372,19 @@ def main():
     }
     log.info(f"Station-year pairs still needing data: {len(needed)}")
 
+    # Pre-filter active stations per year (avoid repeated DataFrame.apply inside each worker)
+    year_to_active: dict[int, pd.DataFrame] = {
+        yr: df[df["station_id"].apply(lambda s: (s, yr) in needed)].reset_index(drop=True)
+        for yr in all_years
+    }
+
     done = [0]
 
     def _process_one_day(day):
         catalog = pystac_client.Client.open(STAC_URL)
-        year = day.year
-        active = df[df["station_id"].apply(lambda s: (s, year) in needed)]
+        active = year_to_active.get(day.year, pd.DataFrame())
         if active.empty:
-            log.debug(f"  Day {day}: all stations already have sif_{year}.nc, skipping")
+            log.debug(f"  Day {day}: all stations already have sif_{day.year}.nc, skipping")
             return {"date": day.isoformat(), "status": "skip",
                     "n_stations_found": 0, "error_msg": "", "timestamp": ""}
         return process_day(day, catalog, active)
