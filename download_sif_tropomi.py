@@ -102,7 +102,7 @@ def load_stations() -> pd.DataFrame:
         return DATA_ROOT / cat / r["station_id"]
     df["station_dir"] = df.apply(_dir, axis=1)
     # Only keep stations with records overlapping SIF coverage (post-2018)
-    df["end_year"] = df["end_date"].astype(str).str[:4].astype(int, errors="ignore")
+    df["end_year"] = pd.to_datetime(df["end_date"], errors="coerce").dt.year
     df = df[df["end_year"] >= 2018].reset_index(drop=True)
     logging.getLogger(__name__).info(f"Stations with SIF coverage: {len(df)}")
     return df
@@ -160,25 +160,22 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
     """
     results = {}
     try:
-        # L2B files store variables in the PRODUCT group
-        ds = xr.open_dataset(nc_path, engine="netcdf4", group="PRODUCT")
-
         sif_var = "SIF_743"
         unc_var = "SIF_ERROR_743"
 
-        if sif_var not in ds:
-            logging.getLogger(__name__).warning(
-                f"  No SIF_743 in {nc_path.name}/PRODUCT. Variables: {list(ds.data_vars)}"
-            )
-            ds.close()
-            return results
+        # L2B files store variables in the PRODUCT group
+        with xr.open_dataset(nc_path, engine="netcdf4", group="PRODUCT") as ds:
+            if sif_var not in ds:
+                logging.getLogger(__name__).warning(
+                    f"  No SIF_743 in {nc_path.name}/PRODUCT. Variables: {list(ds.data_vars)}"
+                )
+                return results
 
-        # Flatten lat/lon/sif arrays
-        lat_arr = ds["latitude"].values.ravel().astype(np.float32)
-        lon_arr = ds["longitude"].values.ravel().astype(np.float32)
-        sif_arr = ds[sif_var].values.ravel().astype(np.float32)
-        unc_arr = ds[unc_var].values.ravel().astype(np.float32) if unc_var in ds else np.full_like(sif_arr, np.nan)
-        ds.close()
+            # Flatten lat/lon/sif arrays
+            lat_arr = ds["latitude"].values.ravel().astype(np.float32)
+            lon_arr = ds["longitude"].values.ravel().astype(np.float32)
+            sif_arr = ds[sif_var].values.ravel().astype(np.float32)
+            unc_arr = ds[unc_var].values.ravel().astype(np.float32) if unc_var in ds else np.full_like(sif_arr, np.nan)
 
         # Valid pixels only (filter NaN and fill values)
         valid = np.isfinite(sif_arr) & np.isfinite(lat_arr) & np.isfinite(lon_arr)
@@ -192,10 +189,10 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
 
         radius_km = EXTRACT_RADIUS_M / 1000.0
 
-        for _, row in stations_df.iterrows():
-            sid  = row["station_id"]
-            slat = float(row["latitude"])
-            slon = float(row["longitude"])
+        for row in stations_df.itertuples(index=False):
+            sid  = row.station_id
+            slat = float(row.latitude)
+            slon = float(row.longitude)
 
             dist = haversine_km(slat, slon, lat_v, lon_v)
             nearby = dist <= radius_km
