@@ -8,7 +8,7 @@ Input  (scratch – purged ~14-30 days):
     /gpfs/scratch1/shared/pkhanal/satellite/{station}/
 
 Output (project – permanent):
-    /gpfs/work3/0/prjs1968/data/satellite/{station}/
+    /gpfs/work3/0/prjs1968/data/{sm_only|sm_and_flux|flux_only}/{station}/
 
 Saved per temporal acquisition (S2L2A, S1RTC):
     {stem}_L12.pt   (196, 768) fp16   semantic tokens → history bottleneck
@@ -44,6 +44,7 @@ Usage:
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -60,6 +61,8 @@ DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
 BATCH_SIZE  = 8
 
 TEMPORAL_LAYERS = ("L12", "L9", "L6", "L3")
+IMAGE_SIZE  = 224   # pixel dimensions of each input patch
+TOKEN_SIZE  = 16    # each token covers TOKEN_SIZE × TOKEN_SIZE pixels → 14×14 = 196 tokens
 
 
 # ── geo helpers ───────────────────────────────────────────────────────────────
@@ -68,7 +71,7 @@ def _read_geo(src: rasterio.DatasetReader,
               crop_top: int = 0, crop_left: int = 0) -> dict:
     """Build geo dict from an open rasterio dataset, adjusted for any crop."""
     T = src.transform * Affine.translation(crop_left, crop_top)
-    bounds = rasterio.transform.array_bounds(224, 224, T)
+    bounds = rasterio.transform.array_bounds(IMAGE_SIZE, IMAGE_SIZE, T)
     return {
         "crs"      : src.crs.to_string(),
         "transform": [T.a, T.b, T.c, T.d, T.e, T.f],
@@ -85,7 +88,7 @@ def _save_geo(geo: dict, path: Path) -> None:
 # ── tif loader ────────────────────────────────────────────────────────────────
 
 def _load_tif(path: Path,
-              band_indices=None,
+              band_indices: list[int] | None = None,
               do_crop: bool = False) -> tuple[torch.Tensor | None, dict | None]:
     """Load .tif → (C, H, W) float32 tensor + geo dict. Returns (None, None) on failure."""
     try:
@@ -93,12 +96,13 @@ def _load_tif(path: Path,
             arr    = src.read().astype(np.float32)
             nodata = src.nodata
             h, w   = src.shape
-            crop_top  = (h - 224) // 2 if do_crop else 0
-            crop_left = (w - 224) // 2 if do_crop else 0
+            crop_top  = (h - IMAGE_SIZE) // 2 if do_crop else 0
+            crop_left = (w - IMAGE_SIZE) // 2 if do_crop else 0
             geo = _read_geo(src, crop_top, crop_left)
 
         if nodata is not None:
-            arr[arr == nodata] = 0.0
+            mask = np.isclose(arr, nodata) if np.issubdtype(arr.dtype, np.floating) else (arr == nodata)
+            arr[mask] = 0.0
         if do_crop:
             arr = center_crop(arr)
         if band_indices is not None:
@@ -112,6 +116,18 @@ def _load_tif(path: Path,
 
 
 # ── batch runner ──────────────────────────────────────────────────────────────
+
+def _save_feats(feats: dict, out_idx: int, src_idx: int,
+                src_paths: list[Path], geos: list[dict | None],
+                out_dir: Path, layers: tuple[str, ...]) -> None:
+    stem = src_paths[src_idx].stem
+    for layer in layers:
+        tmp = out_dir / f"{stem}_{layer}.tmp"
+        torch.save(feats[layer][out_idx].half().cpu(), tmp)
+        tmp.rename(out_dir / f"{stem}_{layer}.pt")
+    if geos[src_idx] is not None:
+        _save_geo(geos[src_idx], out_dir / f"{stem}_geo.json")
+
 
 def _run_batch(encoder:   TerraMindEncoder,
                patches:   list[torch.Tensor | None],
@@ -127,18 +143,32 @@ def _run_batch(encoder:   TerraMindEncoder,
         return 0
 
     batch = torch.stack([patches[i] for i in valid_i]).float().to(device)
-    with torch.no_grad():
-        feats = encoder(batch, modality)
+    try:
+        with torch.no_grad():
+            feats = encoder(batch, modality)
+    except RuntimeError as exc:
+        if "out of memory" not in str(exc):
+            raise
+        print(f"    [warn] GPU OOM on batch of {len(valid_i)}; retrying one-at-a-time")
+        torch.cuda.empty_cache()
+        del batch
+        out_dir.mkdir(parents=True, exist_ok=True)
+        saved = 0
+        for src_idx in valid_i:
+            single = patches[src_idx].float().unsqueeze(0).to(device)
+            try:
+                with torch.no_grad():
+                    sf = encoder(single, modality)
+            except RuntimeError as exc2:
+                print(f"    [warn] OOM on single {src_paths[src_idx].name}: {exc2}")
+                continue
+            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
+            saved += 1
+        return saved
 
     out_dir.mkdir(parents=True, exist_ok=True)
     for out_idx, src_idx in enumerate(valid_i):
-        stem = src_paths[src_idx].stem
-        for layer in layers:
-            tmp = out_dir / f"{stem}_{layer}.tmp"
-            torch.save(feats[layer][out_idx].half().cpu(), tmp)
-            tmp.rename(out_dir / f"{stem}_{layer}.pt")
-        if geos[src_idx] is not None:
-            _save_geo(geos[src_idx], out_dir / f"{stem}_geo.json")
+        _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
 
     return len(valid_i)
 
@@ -151,7 +181,7 @@ def process_temporal(encoder:     TerraMindEncoder,
                      modality:    str,
                      device:      torch.device,
                      batch_size:  int,
-                     band_indices=None,
+                     band_indices: list[int] | None = None,
                      do_crop:     bool = False) -> int:
     """
     Process all .tif files for S2L2A or S1RTC.
@@ -262,12 +292,15 @@ def main():
     print(f"Stations to process: {n}\n")
 
     total_s2 = total_s1 = 0
+    skipped = []
 
     for idx, src_station in enumerate(station_dirs, 1):
+        t0          = time.time()
         sid         = src_station.name
         out_station = _station_data_dir(sid, args.data_dir)
         if out_station is None:
             print(f"[{idx:4d}/{n}] {sid}  [skip — no data directory found]")
+            skipped.append(sid)
             continue
 
         s2_new = process_temporal(
@@ -278,7 +311,7 @@ def main():
             device      = device,
             batch_size  = args.batch_size,
             band_indices= S2_BAND_INDICES,
-            do_crop     = True,
+            do_crop     = True,   # S2 tiles are 256×256; crop centre to IMAGE_SIZE
         )
         s1_new = process_temporal(
             encoder,
@@ -287,7 +320,7 @@ def main():
             modality   = "S1RTC",
             device     = device,
             batch_size = args.batch_size,
-            do_crop    = False,
+            do_crop    = False,   # S1 tiles are natively IMAGE_SIZE×IMAGE_SIZE
         )
         process_static(
             encoder,
@@ -296,7 +329,7 @@ def main():
             modality = "DEM",
             out_stem = "dem",
             device   = device,
-            do_crop  = True,
+            do_crop  = True,    # DEM tiles are 256×256; crop centre to IMAGE_SIZE
         )
         lulc_tif = _latest_lulc_tif(src_station / "LULC")
         if lulc_tif:
@@ -307,18 +340,22 @@ def main():
                 modality = "LULC",
                 out_stem = "lulc",
                 device   = device,
-                do_crop  = False,
+                do_crop  = False,   # LULC tiles are natively IMAGE_SIZE×IMAGE_SIZE
             )
 
         total_s2 += s2_new
         total_s1 += s1_new
 
+        elapsed = time.time() - t0
         if s2_new or s1_new:
-            print(f"[{idx:4d}/{n}] {sid}  S2={s2_new}  S1={s1_new}")
+            print(f"[{idx:4d}/{n}] {sid}  S2={s2_new}  S1={s1_new}  ({elapsed:.1f}s)")
         elif idx % 50 == 0:
             print(f"[{idx:4d}/{n}] ... (up to date)")
 
     print(f"\nDone.  New acquisitions → S2: {total_s2},  S1: {total_s1}")
+    if skipped:
+        tail = f" … and {len(skipped) - 10} more" if len(skipped) > 10 else ""
+        print(f"Skipped {len(skipped)} stations (no data dir): {', '.join(skipped[:10])}{tail}")
 
 
 if __name__ == "__main__":
