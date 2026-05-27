@@ -49,6 +49,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import rasterio.errors
 from affine import Affine
 import torch
 
@@ -90,7 +91,7 @@ def _save_geo(geo: dict, path: Path) -> None:
 def _load_tif(path: Path,
               band_indices: list[int] | None = None,
               do_crop: bool = False) -> tuple[torch.Tensor | None, dict | None]:
-    """Load .tif → (C, H, W) float32 tensor + geo dict. Returns (None, None) on failure."""
+    """Load .tif → (C, H, W) float32 tensor + geo dict. Returns (None, None) on I/O failure."""
     try:
         with rasterio.open(path) as src:
             arr    = src.read().astype(np.float32)
@@ -99,20 +100,19 @@ def _load_tif(path: Path,
             crop_top  = (h - IMAGE_SIZE) // 2 if do_crop else 0
             crop_left = (w - IMAGE_SIZE) // 2 if do_crop else 0
             geo = _read_geo(src, crop_top, crop_left)
-
-        if nodata is not None:
-            mask = np.isclose(arr, nodata) if np.issubdtype(arr.dtype, np.floating) else (arr == nodata)
-            arr[mask] = 0.0
-        if do_crop:
-            arr = center_crop(arr)
-        if band_indices is not None:
-            arr = arr[band_indices]
-
-        return torch.from_numpy(arr), geo
-
-    except Exception as exc:
+    except (OSError, rasterio.errors.RasterioIOError) as exc:
         print(f"    [warn] cannot load {path.name}: {exc}")
         return None, None
+
+    if nodata is not None:
+        mask = np.isclose(arr, nodata) if np.issubdtype(arr.dtype, np.floating) else (arr == nodata)
+        arr[mask] = 0.0
+    if do_crop:
+        arr = center_crop(arr)
+    if band_indices is not None:
+        arr = arr[band_indices]
+
+    return torch.from_numpy(arr), geo
 
 
 # ── batch runner ──────────────────────────────────────────────────────────────
@@ -120,10 +120,14 @@ def _load_tif(path: Path,
 def _save_feats(feats: dict, out_idx: int, src_idx: int,
                 src_paths: list[Path], geos: list[dict | None],
                 out_dir: Path, layers: tuple[str, ...]) -> None:
+    """Save one item's features to disk. Raises ValueError on non-finite tensors."""
     stem = src_paths[src_idx].stem
     for layer in layers:
+        t = feats[layer][out_idx]
+        if not torch.isfinite(t).all():
+            raise ValueError(f"non-finite values in {layer} for {stem}")
         tmp = out_dir / f"{stem}_{layer}.tmp"
-        torch.save(feats[layer][out_idx].half().cpu(), tmp)
+        torch.save(t.half().cpu(), tmp)
         tmp.rename(out_dir / f"{stem}_{layer}.pt")
     if geos[src_idx] is not None:
         _save_geo(geos[src_idx], out_dir / f"{stem}_geo.json")
@@ -136,7 +140,8 @@ def _run_batch(encoder:   TerraMindEncoder,
                out_dir:   Path,
                modality:  str,
                layers:    tuple[str, ...],
-               device:    torch.device) -> int:
+               device:    torch.device,
+               failures:  list[str]) -> int:
     """Forward a batch through TerraMind, save .pt and _geo.json. Returns count saved."""
     valid_i = [i for i, p in enumerate(patches) if p is not None]
     if not valid_i:
@@ -161,16 +166,26 @@ def _run_batch(encoder:   TerraMindEncoder,
                     sf = encoder(single, modality)
             except RuntimeError as exc2:
                 print(f"    [warn] OOM on single {src_paths[src_idx].name}: {exc2}")
+                failures.append(str(src_paths[src_idx]))
                 continue
-            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
-            saved += 1
+            try:
+                _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
+                saved += 1
+            except ValueError as exc2:
+                print(f"    [warn] {exc2}")
+                failures.append(str(src_paths[src_idx]))
         return saved
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    saved = 0
     for out_idx, src_idx in enumerate(valid_i):
-        _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
-
-    return len(valid_i)
+        try:
+            _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
+            saved += 1
+        except ValueError as exc:
+            print(f"    [warn] {exc}")
+            failures.append(str(src_paths[src_idx]))
+    return saved
 
 
 # ── per-modality processors ───────────────────────────────────────────────────
@@ -182,12 +197,15 @@ def process_temporal(encoder:     TerraMindEncoder,
                      device:      torch.device,
                      batch_size:  int,
                      band_indices: list[int] | None = None,
-                     do_crop:     bool = False) -> int:
+                     do_crop:     bool = False,
+                     failures:    list[str] | None = None) -> int:
     """
     Process all .tif files for S2L2A or S1RTC.
     Saves L3/L6/L9/L12 + geo.json per acquisition to out_dir.
     Returns count of newly processed acquisitions.
     """
+    if failures is None:
+        failures = []
     if not src_dir.exists():
         return 0
 
@@ -205,7 +223,7 @@ def process_temporal(encoder:     TerraMindEncoder,
         patches, geos = zip(*results)
         processed += _run_batch(
             encoder, list(patches), list(geos),
-            batch_files, out_dir, modality, TEMPORAL_LAYERS, device,
+            batch_files, out_dir, modality, TEMPORAL_LAYERS, device, failures,
         )
 
     return processed
@@ -217,11 +235,14 @@ def process_static(encoder:  TerraMindEncoder,
                    modality: str,
                    out_stem: str,
                    device:   torch.device,
-                   do_crop:  bool = False) -> None:
+                   do_crop:  bool = False,
+                   failures: list[str] | None = None) -> None:
     """
     Process a single static .tif (DEM or LULC). Saves L12 + geo.json only.
     Skip connections (L3/L6/L9) are not needed for static modalities.
     """
+    if failures is None:
+        failures = []
     out_pt = out_dir / f"{out_stem}_L12.pt"
     if out_pt.exists() or not src_path.exists():
         return
@@ -233,9 +254,15 @@ def process_static(encoder:  TerraMindEncoder,
     with torch.no_grad():
         feats = encoder(patch.float().unsqueeze(0).to(device), modality)
 
+    t = feats["L12"][0]
+    if not torch.isfinite(t).all():
+        print(f"    [warn] non-finite values in L12 for {out_stem} ({src_path.name})")
+        failures.append(str(src_path))
+        return
+
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp = out_dir / f"{out_stem}_L12.tmp"
-    torch.save(feats["L12"][0].half().cpu(), tmp)
+    torch.save(t.half().cpu(), tmp)
     tmp.rename(out_pt)
 
     if geo is not None:
@@ -292,7 +319,8 @@ def main():
     print(f"Stations to process: {n}\n")
 
     total_s2 = total_s1 = 0
-    skipped = []
+    skipped: list[str] = []
+    failures: list[str] = []
 
     for idx, src_station in enumerate(station_dirs, 1):
         t0          = time.time()
@@ -312,6 +340,7 @@ def main():
             batch_size  = args.batch_size,
             band_indices= S2_BAND_INDICES,
             do_crop     = True,   # S2 tiles are 256×256; crop centre to IMAGE_SIZE
+            failures    = failures,
         )
         s1_new = process_temporal(
             encoder,
@@ -321,6 +350,7 @@ def main():
             device     = device,
             batch_size = args.batch_size,
             do_crop    = False,   # S1 tiles are natively IMAGE_SIZE×IMAGE_SIZE
+            failures   = failures,
         )
         process_static(
             encoder,
@@ -330,6 +360,7 @@ def main():
             out_stem = "dem",
             device   = device,
             do_crop  = True,    # DEM tiles are 256×256; crop centre to IMAGE_SIZE
+            failures = failures,
         )
         lulc_tif = _latest_lulc_tif(src_station / "LULC")
         if lulc_tif:
@@ -341,6 +372,7 @@ def main():
                 out_stem = "lulc",
                 device   = device,
                 do_crop  = False,   # LULC tiles are natively IMAGE_SIZE×IMAGE_SIZE
+                failures = failures,
             )
 
         total_s2 += s2_new
@@ -356,6 +388,12 @@ def main():
     if skipped:
         tail = f" … and {len(skipped) - 10} more" if len(skipped) > 10 else ""
         print(f"Skipped {len(skipped)} stations (no data dir): {', '.join(skipped[:10])}{tail}")
+    if failures:
+        manifest = args.data_dir / "failures.log"
+        with manifest.open("a") as fh:
+            for path in failures:
+                fh.write(f"{path}\n")
+        print(f"{len(failures)} file(s) failed (NaN/OOM/IO) — appended to {manifest}")
 
 
 if __name__ == "__main__":
