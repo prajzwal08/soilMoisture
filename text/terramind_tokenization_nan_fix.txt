@@ -24,23 +24,33 @@ processed (~47% failure rate). The error message in every case was:
 
 S1RTC, DEM, and LULC had no NaN failures. The problem is specific to S2L2A.
 
-Investigation of a failing tile (AmeriFlux_CA-Cbo/S2L2A/20170105.tif) revealed:
+Deeper analysis revealed TWO distinct failure categories:
+  118 tiles — failed WITH all-zero pixels (swath edge)
+  188 tiles — failed WITHOUT any all-zero pixels
 
-  - 3,582 pixels (7.1% of the 224×224 image) have value = 0 across ALL 12 bands
-  - These zero pixels form a contiguous L-shaped region at the swath edge
-    (rows 62–223, cols 179–223) — the area outside the Sentinel-2 overpass
-  - The GeoTIFF has nodata = None (no nodata tag in the file header)
-  - 8 out of 196 token windows (16×16 pixel patches) fall entirely within this
-    zero region
+Investigation of a failing tile (AmeriFlux_CA-Cbo/S2L2A/20170105.tif) revealed:
+  - 3,582 pixels (7.1%) have value = 0 across ALL 12 bands (swath edge)
+  - 8 out of 196 token windows fall entirely within this zero region
   - A passing tile (20170323.tif) has 0% zero pixels
 
-Root cause: Sentinel-2 L2A products fill pixels outside the valid satellite
-swath with DN = 0 by convention. The download pipeline wrote these tiles without
-embedding the nodata tag in the GeoTIFF header (nodata = None). So our
-_load_tif() code does not detect or replace these invalid pixels. When a fully-
-zero 16×16 patch reaches TerraMind's encoder, the large contiguous block of
-near-identical activations causes fp16 attention softmax overflow, producing NaN
-values that propagate to L12.
+Root cause A — swath edge zeros (118 tiles):
+  Sentinel-2 L2A fills pixels outside the satellite swath with DN = 0.
+  Our pipeline wrote these tiles without a nodata tag (nodata = None).
+  Fully-zero patches produce degenerate, uniform activations.
+
+Root cause B — missing input normalization (188 tiles + contributes to A):
+  TerraMind's backbone (terramind_v1_base) does NOT apply z-score normalization
+  internally. The normalization is only built into the generation model variant
+  (terramind_generation.py line 265: d[mod] = (value - mean) / std).
+  During TerraMesh pretraining, inputs were z-scored at the dataset level.
+  We were passing raw DN values (0–10000) directly to the backbone.
+  Without normalization, input magnitudes are ~1000× larger than expected,
+  causing fp16 attention softmax overflow (max fp16 = 65504) on any tile with
+  high or uniform reflectance — cloud cover, snow, bright surfaces.
+  This is confirmed by inspecting the pretraining stats stored in
+  terramind_register.py: v1_pretraining_mean["untok_sen2l2a@224"] values are
+  in raw DN units (1390–3163), showing the model was trained on normalized
+  inputs using those exact statistics.
 
 
 WHAT TERRAMESH DOES
@@ -81,71 +91,85 @@ that our pipeline passes through unchecked.
 
 OUR FIX — MATCHING TERRAMESH EXACTLY
 --------------------------------------
-We use SEnSeIv2 directly — the same model TerraMesh used. Specifically the
-sensor-independent variant:
+Two complementary fixes, both needed:
+
+FIX A — Z-score normalization (addresses root cause B, also stabilises A)
+  Added to precompute_terramind.py in TerraMindEncoder:
+  - Precompute per-modality (mean, std) tensors of shape (C,1,1) in __init__
+  - In forward(), before calling backbone: patch = (patch - mean) / std
+  - Stats from terramind_register.py v1_pretraining_{mean,std}:
+
+  Modality  Bands  Mean range (raw units)       Std range
+  --------  -----  ---------------------------  ---------------
+  S2L2A      12    1390–3163 (DN, 0–10000)      1334–2142
+  S1RTC       2    -10.93, -17.33 (dB)          4.39, 4.46
+  DEM         1    670.7 (m)                    951.3
+  LULC        1    0 (v1_5: mean=0, std=1)      identity
+
+  LULC uses class labels (small integers, no overflow risk), so no normalization.
+
+FIX B — SEnSeIv2 cloud masking (addresses root cause A, improves quality)
+  We use SEnSeIv2 directly — the same model TerraMesh used:
 
     Model: SEnSeIv2-SegFormerB2-alldata-ambiguous
     GitHub: https://github.com/aliFrancis/SEnSeIv2
     Weights: https://huggingface.co/aliFrancis/SEnSeIv2 (auto-downloaded)
 
-Why we can use it:
-  - Installed in a dedicated conda env (sensei) via pip install from GitHub
+  Why we can use it:
+  - Installed in a dedicated conda env (sensei)
   - GPL-3.0 licence is fine for academic research
-  - Sensor-independent: accepts any band subset via wavelength descriptors,
-    so our 12-band S2L2A tiles (no B10 cirrus) are handled natively —
-    no zero-padding or workarounds needed
-  - Speed at 224×224 patch size is not a bottleneck (full-scene benchmarks
-    do not apply; our patches are processed in a single forward pass)
-  - transformers pinned to 4.46.3 in sensei env (v5.x renamed .encoder → .stages
-    which broke SEnSeIv2's model loading; 4.x is fully compatible)
+  - Sensor-independent: handles our 12-band S2L2A tiles (no B10) natively
+  - transformers pinned to 4.46.3 in sensei env (v5.x broke SEnSeIv2)
 
-Smoke test result (2026-05-27):
-  FAILING tile (20170105, January, Canada):
-    clear=1.8%  thick cloud=32.3%  thin cloud=45.4%  shadow=13.3%  nodata=7.1%
-    → correctly flagged as ~91% invalid; would be discarded by TerraMesh rule
+  Smoke test result (2026-05-27):
+    FAILING tile (20170105, Canada, January):
+      land=0.8%  thin cloud=46.2%  thick cloud=32.3%  shadow=13.4%  nodata=7.1%
+      → ~99% invalid; correctly flagged for discard by TerraMesh rule
+    PASSING tile (20170323, Canada, March):
+      land=91.9%  thick cloud=3.7%  shadow=4.5%  nodata=0%
+      → clean tile, passes with NN-fill
 
-  PASSING tile (20170323, March, Canada):
-    clear=91.9%  thick cloud=3.7%  shadow=4.4%  nodata=0%
-    → clean tile, passes through NN-fill with no issue
+  Output class encoding (full 7-class, matches TerraMesh):
+      0 = land, 1 = water, 2 = snow/ice, 3 = thin cloud
+      4 = thick cloud, 5 = cloud shadow, 255 = nodata (all bands == 0)
+  Invalid classes in precompute_terramind.py: {3, 4, 5, 255}
 
-Output class encoding (unchanged from original cloud_masking_inference.py):
-    0 = clear (land + water + snow)
-    1 = thick cloud
-    2 = thin cloud
-    3 = cloud shadow
-  255 = nodata (all bands == 0, i.e. swath edge fill value)
 
-The fix proceeds in two steps:
+IMPLEMENTATION STEPS
+--------------------
+STEP 1 — Z-score normalization ✓ (2026-05-27, precompute_terramind.py)
+  Applied in TerraMindEncoder.forward() for S2L2A, S1RTC, DEM.
+  Expected to eliminate the 188 non-zero NaN failures entirely.
+  Also stabilises all-zero swath edge tiles (0 normalises to ~-0.7 to -2.4 σ,
+  finite values — no overflow even before cloud masking is applied).
 
-STEP 1 — Precompute cloud masks (SLURM CPU array job)
-  - cloud_masking_inference.py rewritten to use SEnSeIv2
-  - Run as a cheap thin-node CPU SLURM array job across all 1048 stations
+STEP 2 — Precompute cloud masks (SLURM CPU array job)
+  - cloud_masking_inference.py rewritten and smoke-tested ✓ (2026-05-27)
+  - Run as a thin-node CPU SLURM array job across all 1048 stations
   - Output: /gpfs/scratch1/shared/pkhanal/satellite/{station}/CloudMask/YYYYMMDD.tif
   - Zero GPU cost. SEnSeIv2 runs on CPU for 224×224 patches.
 
-STEP 2 — Use masks in precompute_terramind.py
-  - In _load_tif(), after loading the S2L2A array, load the corresponding
-    CloudMask/YYYYMMDD.tif from the same station scratch directory
-  - Build an invalid pixel mask: classes {1, 2, 3, 255} → invalid
-  - If > 1% of pixels are invalid: skip the tile entirely (matches TerraMesh
-    curation rule — these tiles are out-of-distribution for TerraMind)
-  - If ≤ 1% of pixels are invalid: fill with nearest-neighbour interpolation
-    using scipy.ndimage.distance_transform_edt, then proceed to TerraMind
-  - If no CloudMask file exists for a tile: fall back to the all-zero heuristic
-    (detect (arr == 0).all(axis=0) as nodata) for robustness
+STEP 3 — Use masks in precompute_terramind.py
+  - Load CloudMask/YYYYMMDD.tif alongside each S2L2A tile
+  - Build invalid pixel mask: classes {3, 4, 5, 255} → invalid
+  - If > 1% invalid: skip tile entirely (TerraMesh curation rule)
+  - If ≤ 1% invalid: fill with nearest-neighbour (scipy distance_transform_edt)
+  - Fallback if no CloudMask: use (arr == 0).all(axis=0) as nodata proxy
 
-The nearest-neighbour fill exactly matches TerraMesh's preprocessing.
-Median or constant substitution is not used.
-
+STEP 4 — Trial re-run
+  - Re-run precompute_terramind.py --trial 3 after Step 1 is committed
+  - Expect NaN count ≈ 0 after normalization fix
+  - Then submit cloud masking SLURM job, then full tokenization
 
 TIMELINE
 --------
-1. cloud_masking_inference.py rewritten and smoke-tested ✓ (2026-05-27)
-2. Write SLURM array script for cloud masking across all 1048 stations
-3. Review code on GitHub, then submit cloud masking job
-4. Update precompute_terramind.py to consume masks (NN-fill + 1% discard rule)
-5. Re-run precompute_terramind.py trial (--trial 3) — expect NaN count ~ 0
-6. Submit full tokenization SLURM array job
+1. Z-score normalization added to TerraMindEncoder ✓ (2026-05-27)
+2. cloud_masking_inference.py rewritten and smoke-tested ✓ (2026-05-27)
+3. Re-run trial to confirm normalization fix eliminates NaNs
+4. Write and submit SLURM array script for cloud masking (all 1048 stations)
+5. Update precompute_terramind.py to consume masks (NN-fill + 1% discard rule)
+6. Final trial run — expect NaN ≈ 0 from both fixes
+7. Submit full tokenization SLURM array job
 
 
 REFERENCES

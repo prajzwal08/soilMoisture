@@ -63,6 +63,24 @@ from dataset import S2_BAND_INDICES
 
 # ── TerraMind encoder ────────────────────────────────────────────────────────
 
+# Z-score normalization stats from v1_pretraining_{mean,std} in terramind_register.py.
+# The backbone does not normalize internally; the generation model does (terramind_generation.py:265).
+# We must apply the same (value - mean) / std before passing to the backbone.
+# LULC: v1_5 stats are mean=0, std=1 → identity, so no normalization needed.
+_NORM_MEAN = {
+    "S2L2A": [1390.458, 1503.317, 1718.197, 1853.91,  2199.1,   2779.975,
+              2987.011, 3083.234, 3132.22,  3162.988, 2424.884, 1857.648],
+    "S1RTC": [-10.93, -17.329],
+    "DEM"  : [670.665],
+}
+_NORM_STD = {
+    "S2L2A": [2106.761, 2141.107, 2038.973, 2134.138, 2085.321, 1889.926,
+              1820.257, 1871.918, 1753.829, 1797.379, 1434.261, 1334.311],
+    "S1RTC": [4.391, 4.459],
+    "DEM"  : [951.272],
+}
+
+
 class TerraMindEncoder(nn.Module):
     """
     Wraps TerraMind Base and exposes intermediate layer outputs via hooks.
@@ -94,6 +112,12 @@ class TerraMindEncoder(nn.Module):
             self._handles.append(
                 self.backbone.encoder[idx].register_forward_hook(self._make_hook(name))
             )
+        # Pre-build normalisation buffers; shape (C,1,1) for broadcast over (B,C,H,W)
+        self._norm: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        for mod in ("S2L2A", "S1RTC", "DEM"):
+            m = torch.tensor(_NORM_MEAN[mod], dtype=torch.float32).view(-1, 1, 1)
+            s = torch.tensor(_NORM_STD[mod],  dtype=torch.float32).view(-1, 1, 1)
+            self._norm[mod] = (m, s)
 
     def _make_hook(self, name: str):
         def hook(_, __, output):
@@ -102,6 +126,9 @@ class TerraMindEncoder(nn.Module):
 
     def forward(self, patch: torch.Tensor, modality: str) -> dict:
         """patch: (B, C, 224, 224) → dict L3/L6/L9/L12 → (B, 196, 768)"""
+        if modality in self._norm:
+            mean, std = self._norm[modality]
+            patch = (patch - mean.to(patch)) / std.to(patch)
         self._feats = {}
         with torch.no_grad():
             self.backbone({self.MODALITY_MAP[modality]: patch})
