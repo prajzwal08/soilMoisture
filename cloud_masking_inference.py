@@ -18,12 +18,16 @@ Input  (scratch):
 Output (scratch, alongside input):
     /gpfs/scratch1/shared/pkhanal/satellite/{station}/CloudMask/YYYYMMDD.tif
 
-Output class encoding:
-    0 = clear (land + water + snow)
-    1 = thick cloud
-    2 = thin cloud
-    3 = cloud shadow
+Output class encoding (full 7-class, matching TerraMesh):
+    0 = land
+    1 = water
+    2 = snow / ice
+    3 = thin cloud
+    4 = thick cloud
+    5 = cloud shadow
   255 = nodata (all bands == 0, i.e. swath edge)
+
+In precompute_terramind.py, invalid pixels = classes {3, 4, 5, 255}.
 
 Resume-safe: skips tiles whose CloudMask already exists.
 
@@ -66,7 +70,7 @@ def load_sensei(device: str = "cpu") -> CloudMask:
     return CloudMask(
         cfg_path, wts_path,
         device=device,
-        output_style="4-class",
+        output_style=None,   # preserve all 7 classes (matches TerraMesh storage)
         categorise=True,
         batch_size=1,
     )
