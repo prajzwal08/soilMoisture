@@ -41,6 +41,8 @@ Usage:
     python precompute_terramind.py --batch-size 16
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -97,6 +99,9 @@ def _load_tif(path: Path,
             arr    = src.read().astype(np.float32)
             nodata = src.nodata
             h, w   = src.shape
+            if do_crop and (h < IMAGE_SIZE or w < IMAGE_SIZE):
+                print(f"    [warn] {path.name}: image {h}×{w} smaller than IMAGE_SIZE={IMAGE_SIZE}; skipping")
+                return None, None
             crop_top  = (h - IMAGE_SIZE) // 2 if do_crop else 0
             crop_left = (w - IMAGE_SIZE) // 2 if do_crop else 0
             geo = _read_geo(src, crop_top, crop_left)
@@ -148,42 +153,46 @@ def _run_batch(encoder:   TerraMindEncoder,
         return 0
 
     batch = torch.stack([patches[i] for i in valid_i]).float().to(device)
+    oom = False
     try:
         with torch.no_grad():
             feats = encoder(batch, modality)
-    except RuntimeError as exc:
-        if "out of memory" not in str(exc):
+    except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+        if isinstance(exc, RuntimeError) and "out of memory" not in str(exc).lower():
             raise
-        print(f"    [warn] GPU OOM on batch of {len(valid_i)}; retrying one-at-a-time")
-        torch.cuda.empty_cache()
-        del batch
+        oom = True
+
+    if not oom:
         out_dir.mkdir(parents=True, exist_ok=True)
         saved = 0
-        for src_idx in valid_i:
-            single = patches[src_idx].float().unsqueeze(0).to(device)
+        for out_idx, src_idx in enumerate(valid_i):
             try:
-                with torch.no_grad():
-                    sf = encoder(single, modality)
-            except RuntimeError as exc2:
-                print(f"    [warn] OOM on single {src_paths[src_idx].name}: {exc2}")
-                failures.append(str(src_paths[src_idx]))
-                continue
-            try:
-                _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
+                _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
                 saved += 1
-            except ValueError as exc2:
-                print(f"    [warn] {exc2}")
+            except ValueError as exc:
+                print(f"    [warn] {exc}")
                 failures.append(str(src_paths[src_idx]))
         return saved
 
+    print(f"    [warn] GPU OOM on batch of {len(valid_i)}; retrying one-at-a-time")
+    torch.cuda.empty_cache()
+    del batch
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = 0
-    for out_idx, src_idx in enumerate(valid_i):
+    for src_idx in valid_i:
+        single = patches[src_idx].float().unsqueeze(0).to(device)
         try:
-            _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
+            with torch.no_grad():
+                sf = encoder(single, modality)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as exc2:
+            print(f"    [warn] OOM on single {src_paths[src_idx].name}: {exc2}")
+            failures.append(str(src_paths[src_idx]))
+            continue
+        try:
+            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
             saved += 1
-        except ValueError as exc:
-            print(f"    [warn] {exc}")
+        except ValueError as exc2:
+            print(f"    [warn] {exc2}")
             failures.append(str(src_paths[src_idx]))
     return saved
 
