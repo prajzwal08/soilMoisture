@@ -151,6 +151,9 @@ def _load_tif(path: Path,
             if do_crop and (h < IMAGE_SIZE or w < IMAGE_SIZE):
                 print(f"    [warn] {path.name}: image {h}×{w} smaller than IMAGE_SIZE={IMAGE_SIZE}; skipping")
                 return None, None
+            if not do_crop and (h != IMAGE_SIZE or w != IMAGE_SIZE):
+                print(f"    [warn] {path.name}: expected {IMAGE_SIZE}×{IMAGE_SIZE}, got {h}×{w}; skipping")
+                return None, None
             crop_top  = (h - IMAGE_SIZE) // 2 if do_crop else 0
             crop_left = (w - IMAGE_SIZE) // 2 if do_crop else 0
             geo = _read_geo(src, crop_top, crop_left)
