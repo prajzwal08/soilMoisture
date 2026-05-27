@@ -3,14 +3,10 @@ SoilMoistureModel
 =================
 Full architecture:
 
-  TerraMind (frozen by default)
-    ├─ S2L2A / S1RTC / DEM patches → L3, L6, L9, L12 features
-    └─ L12 → spatial pyramid → 4 × 768 tokens per acquisition
-
-  Pre-computed L12 (loaded from disk, see precompute_terramind.py):
-    S2: (MAX_S2, 196, 768) fp16  per sample
-    S1: (MAX_S1, 196, 768) fp16  per sample
-    → s2_pyramid_attn / s1_pyramid_attn (learned, modality-specific) → 4×768 tokens
+  Pre-computed TerraMind features (loaded from disk, see precompute_terramind.py):
+    S2: L12 (MAX_S2, 196, 768) fp16  per sample → s2_pyramid_attn → 4×768 tokens
+    S1: L12 (MAX_S1, 196, 768) fp16  per sample → s1_pyramid_attn → 4×768 tokens
+    Skip: L3/L6/L9 (196, 768) fp16 for most-recent acquisition → U-Net decoder
 
   ERA5 MLP  :  (B, 365, 19) → (B, 365, 768)
 
@@ -23,9 +19,6 @@ Full architecture:
 
   Target spatial tokens:
     Most-recent S2 or S1 L12 (196×768) from stored features — no TerraMind pass.
-
-  Skip connections (L3, L6, L9):
-    1 TerraMind pass per sample on the most-recent raw patch only.
 
   Bottleneck: transformer output at target DoY → reshape (B, 768, 14, 14)
 
@@ -41,7 +34,6 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from terratorch import BACKBONE_REGISTRY
 
 # ── Positional encoding ──────────────────────────────────────────────────────
 
@@ -111,78 +103,6 @@ def spatial_pyramid_pool(tokens: torch.Tensor,
     t2 = _pool(2, 12, 2, 12)
     t3 = _pool(0, 14, 0, 14)
     return torch.stack([t0, t1, t2, t3], dim=1)                        # (B, 4, 768)
-
-
-# ── TerraMind wrapper ────────────────────────────────────────────────────────
-
-class TerraMindEncoder(nn.Module):
-    """
-    Wraps TerraMind Base and exposes intermediate layer outputs via hooks.
-
-    Intermediate outputs extracted:
-        L3  (after block 2)  — fine / low-level features
-        L6  (after block 5)  — mid-level features
-        L9  (after block 8)  — deep features
-        L12 (after block 11) — final semantic features
-
-    All outputs are (B, 196, 768).
-
-    frozen=True (default): TerraMind weights are not updated.
-    """
-
-    HOOK_LAYERS = {"L3": 2, "L6": 5, "L9": 8, "L12": 11}
-
-    MODALITY_MAP = {
-        "S2L2A": "untok_sen2l2a@224",
-        "S1RTC": "untok_sen1rtc@224",
-        "DEM"  : "untok_dem@224",
-        "LULC" : "untok_lulc@224",
-    }
-
-    def __init__(self, frozen: bool = True):
-        super().__init__()
-        self.backbone = BACKBONE_REGISTRY.build(
-            "terramind_v1_base",
-            pretrained=True,
-            modalities=list(self.MODALITY_MAP.values()),
-        )
-        self.frozen = frozen
-        if frozen:
-            for p in self.backbone.parameters():
-                p.requires_grad_(False)
-
-        self._feats   = {}
-        self._handles = []
-        self._register_hooks()
-
-    def _register_hooks(self):
-        for name, idx in self.HOOK_LAYERS.items():
-            handle = self.backbone.encoder[idx].register_forward_hook(
-                self._make_hook(name)
-            )
-            self._handles.append(handle)
-
-    def _make_hook(self, name: str):
-        def hook(_, __, output):
-            self._feats[name] = output if output.dim() == 3 else output[0]
-        return hook
-
-    def forward(self, patch: torch.Tensor, modality: str) -> dict:
-        """
-        patch    : (B, C, 224, 224) float32
-        modality : one of 'S2L2A', 'S1RTC', 'DEM'
-        returns  : dict  L3/L6/L9/L12 → (B, 196, 768)
-        """
-        self._feats = {}
-        tm_key = self.MODALITY_MAP[modality]
-        ctx = torch.no_grad() if self.frozen else torch.enable_grad()
-        with ctx:
-            _ = self.backbone({tm_key: patch})
-        return {k: v.clone() for k, v in self._feats.items()}
-
-    def remove_hooks(self):
-        for h in self._handles:
-            h.remove()
 
 
 # ── U-Net decoder ────────────────────────────────────────────────────────────

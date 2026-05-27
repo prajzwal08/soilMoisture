@@ -54,10 +54,60 @@ import rasterio
 import rasterio.errors
 from affine import Affine
 import torch
+import torch.nn as nn
+from terratorch import BACKBONE_REGISTRY
 
 sys.path.insert(0, str(Path(__file__).parent))
 from dataset import S2_BAND_INDICES
-from model import TerraMindEncoder
+
+# ── TerraMind encoder ────────────────────────────────────────────────────────
+
+class TerraMindEncoder(nn.Module):
+    """
+    Wraps TerraMind Base and exposes intermediate layer outputs via hooks.
+    All outputs are (B, 196, 768).
+    """
+
+    HOOK_LAYERS = {"L3": 2, "L6": 5, "L9": 8, "L12": 11}
+
+    MODALITY_MAP = {
+        "S2L2A": "untok_sen2l2a@224",
+        "S1RTC": "untok_sen1rtc@224",
+        "DEM"  : "untok_dem@224",
+        "LULC" : "untok_lulc@224",
+    }
+
+    def __init__(self, frozen: bool = True):
+        super().__init__()
+        self.backbone = BACKBONE_REGISTRY.build(
+            "terramind_v1_base",
+            pretrained=True,
+            modalities=list(self.MODALITY_MAP.values()),
+        )
+        if frozen:
+            for p in self.backbone.parameters():
+                p.requires_grad_(False)
+        self._feats   = {}
+        self._handles = []
+        for name, idx in self.HOOK_LAYERS.items():
+            self._handles.append(
+                self.backbone.encoder[idx].register_forward_hook(self._make_hook(name))
+            )
+
+    def _make_hook(self, name: str):
+        def hook(_, __, output):
+            self._feats[name] = output if output.dim() == 3 else output[0]
+        return hook
+
+    def forward(self, patch: torch.Tensor, modality: str) -> dict:
+        """patch: (B, C, 224, 224) → dict L3/L6/L9/L12 → (B, 196, 768)"""
+        self._feats = {}
+        with torch.no_grad():
+            self.backbone({self.MODALITY_MAP[modality]: patch})
+        return {k: v.clone() for k, v in self._feats.items()}
+
+
+# ── Constants ─────────────────────────────────────────────────────────────────
 
 SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
 DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
