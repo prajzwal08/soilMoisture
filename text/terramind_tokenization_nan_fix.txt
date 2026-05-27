@@ -135,41 +135,63 @@ FIX B — SEnSeIv2 cloud masking (addresses root cause A, improves quality)
   Invalid classes in precompute_terramind.py: {3, 4, 5, 255}
 
 
+FINALIZED PIPELINE DESIGN
+--------------------------
+Cloud masking MUST run before tokenization. The correct per-tile flow is:
+
+  1. Load S2L2A tile (raw DN)
+  2. Load CloudMask → invalid pixel mask: classes {3, 4, 5, 255} → True
+  3. NN-fill invalid pixels in raw array BEFORE running TerraMind
+       Why: a "valid" token (≤1% invalid pixels) would still be corrupted if
+       the 1-2 bad pixels are passed as raw cloud/zero values to the encoder.
+       NN-fill ensures TerraMind always sees realistic land surface values.
+       For tokens with >1% invalid: fill doesn't matter — they're masked in training.
+  4. Run TerraMind on the NN-filled array → 196 tokens, all finite, no NaN
+  5. Compute per-token validity mask from ORIGINAL (pre-fill) invalid mask:
+       - Reshape invalid mask to (14, 16, 14, 16), transpose to (14, 14, 16, 16)
+       - token_valid[i] = True  if invalid fraction in patch i ≤ 1%  (≤2 pixels)
+       - token_valid[i] = False if invalid fraction in patch i >  1%
+       - Save as (196,) bool tensor: {stem}_mask.pt
+  6. Save 196 tokens as usual: {stem}_L3.pt, _L6.pt, _L9.pt, _L12.pt
+  Fallback (no CloudMask yet): use (arr == 0).all(axis=0) as nodata proxy
+
+During training (temporal transformer):
+  - Load tokens + validity mask per tile
+  - Pass mask as key-padding mask → model attends only to valid tokens
+  - Invalid tokens (cloud, swath edge) are ignored, not used for gradient
+
+
 IMPLEMENTATION STEPS
 --------------------
 STEP 1 — Z-score normalization ✓ (2026-05-27, precompute_terramind.py)
   Applied in TerraMindEncoder.forward() for S2L2A, S1RTC, DEM.
-  Expected to eliminate the 188 non-zero NaN failures entirely.
-  Also stabilises all-zero swath edge tiles (0 normalises to ~-0.7 to -2.4 σ,
-  finite values — no overflow even before cloud masking is applied).
+  Trial confirmed: AmeriFlux_CA-Cbo, 146 S2L2A images → 0 NaN failures ✓
 
-STEP 2 — Precompute cloud masks (SLURM CPU array job)
+STEP 2 — Precompute cloud masks (SLURM CPU array job)  ← NEXT
   - cloud_masking_inference.py rewritten and smoke-tested ✓ (2026-05-27)
-  - Run as a thin-node CPU SLURM array job across all 1048 stations
+  - Write SLURM array script to run across all 1048 stations
   - Output: /gpfs/scratch1/shared/pkhanal/satellite/{station}/CloudMask/YYYYMMDD.tif
   - Zero GPU cost. SEnSeIv2 runs on CPU for 224×224 patches.
+  - Must complete BEFORE tokenization starts.
 
-STEP 3 — Use masks in precompute_terramind.py
-  - Load CloudMask/YYYYMMDD.tif alongside each S2L2A tile
-  - Build invalid pixel mask: classes {3, 4, 5, 255} → invalid
-  - If > 1% invalid: skip tile entirely (TerraMesh curation rule)
-  - If ≤ 1% invalid: fill with nearest-neighbour (scipy distance_transform_edt)
-  - Fallback if no CloudMask: use (arr == 0).all(axis=0) as nodata proxy
+STEP 3 — Update precompute_terramind.py (NN-fill + token validity mask)
+  - Load CloudMask before running TerraMind
+  - NN-fill invalid pixels using scipy.ndimage.distance_transform_edt
+  - Compute and save (196,) bool token validity mask per tile
+  - Fallback to zero-detection if no CloudMask exists
 
-STEP 4 — Trial re-run
-  - Re-run precompute_terramind.py --trial 3 after Step 1 is committed
-  - Expect NaN count ≈ 0 after normalization fix
-  - Then submit cloud masking SLURM job, then full tokenization
+STEP 4 — Submit full tokenization SLURM array job
+  - After cloud masks are complete and precompute_terramind.py is updated
+  - All 1048 stations, GPU array job on gpu_mig or gpu_a100
 
 TIMELINE
 --------
 1. Z-score normalization added to TerraMindEncoder ✓ (2026-05-27)
 2. cloud_masking_inference.py rewritten and smoke-tested ✓ (2026-05-27)
-3. Re-run trial to confirm normalization fix eliminates NaNs
+3. NaN fix confirmed via CPU trial (146 images, 0 failures) ✓ (2026-05-27)
 4. Write and submit SLURM array script for cloud masking (all 1048 stations)
-5. Update precompute_terramind.py to consume masks (NN-fill + 1% discard rule)
-6. Final trial run — expect NaN ≈ 0 from both fixes
-7. Submit full tokenization SLURM array job
+5. Update precompute_terramind.py: NN-fill before TerraMind + save token mask
+6. Submit full tokenization SLURM array job
 
 
 REFERENCES
