@@ -425,13 +425,17 @@ class SoilMoistureDataset(Dataset):
             target_doy = doy,
         )
 
-        # ── DEM pyramid (pre-computed, static) ────────────────────────
-        dem_pyramid_path = sat_dir / "DEM" / "dem_pyramid.pt"
-        if dem_pyramid_path.exists():
-            dem_pyramid = torch.load(dem_pyramid_path, weights_only=True,
-                                     map_location="cpu")          # (4, 768) fp32
-        else:
-            dem_pyramid = torch.zeros(4, 768, dtype=torch.float32)
+        # ── DEM L12 (pre-computed, static) ────────────────────────────
+        dem_l12_path = sat_dir / "DEM" / "dem_L12.pt"
+        dem_l12 = (torch.load(dem_l12_path, weights_only=True, map_location="cpu")
+                   if dem_l12_path.exists()
+                   else torch.zeros(196, 768, dtype=torch.float16))
+
+        # ── LULC L12 (pre-computed, static) ───────────────────────────
+        lulc_l12_path = sat_dir / "LULC" / "lulc_L12.pt"
+        lulc_l12 = (torch.load(lulc_l12_path, weights_only=True, map_location="cpu")
+                    if lulc_l12_path.exists()
+                    else torch.zeros(196, 768, dtype=torch.float16))
 
         # ── Skip connection features (precomputed L3/L6/L9) ──────────
         skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(
@@ -476,7 +480,8 @@ class SoilMoistureDataset(Dataset):
             "s1_rel_pos"    : s1_rel_pos,        # (MAX_S1,) long
 
             # Static
-            "dem_pyramid"   : dem_pyramid,       # (4, 768) fp32
+            "dem_l12"       : dem_l12,           # (196, 768) fp16
+            "lulc_l12"      : lulc_l12,          # (196, 768) fp16
 
             # Skip connection features (most-recent acquisition, precomputed)
             "skip_l3"       : skip_l3,           # (196, 768) fp16

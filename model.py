@@ -4,8 +4,10 @@ SoilMoistureModel
 Full architecture:
 
   Pre-computed TerraMind features (loaded from disk, see precompute_terramind.py):
-    S2: L12 (MAX_S2, 196, 768) fp16  per sample → s2_pyramid_attn → 4×768 tokens
-    S1: L12 (MAX_S1, 196, 768) fp16  per sample → s1_pyramid_attn → 4×768 tokens
+    S2:   L12 (MAX_S2, 196, 768) fp16 → s2_pyramid_attn   → 4×768 tokens per acquisition
+    S1:   L12 (MAX_S1, 196, 768) fp16 → s1_pyramid_attn   → 4×768 tokens per acquisition
+    DEM:  L12 (196, 768) fp16         → dem_pyramid_attn  → 4×768 static tokens
+    LULC: L12 (196, 768) fp16         → lulc_pyramid_attn → 4×768 static tokens
     Skip: L3/L6/L9 (196, 768) fp16 for most-recent acquisition → U-Net decoder
 
   ERA5 MLP  :  (B, 365, 19) → (B, 365, 768)
@@ -274,8 +276,13 @@ class SoilMoistureModel(nn.Module):
         self.rel_pos_emb = nn.Embedding(365, d_model)
 
         # Modality-specific learned pyramid attention scorers
-        self.s2_pyramid_attn = nn.Linear(d_model, 1)   # for S2 acquisitions
-        self.s1_pyramid_attn = nn.Linear(d_model, 1)   # for S1 acquisitions
+        self.s2_pyramid_attn   = nn.Linear(d_model, 1)
+        self.s1_pyramid_attn   = nn.Linear(d_model, 1)
+        self.dem_pyramid_attn  = nn.Linear(d_model, 1)
+        self.lulc_pyramid_attn = nn.Linear(d_model, 1)
+
+        # Static modality embedding: 0 = DEM, 1 = LULC
+        self.static_modality_emb = nn.Embedding(2, d_model)
 
         # Target-day spatial tokens: 2D spatial PE + modality embedding
         self.spatial_row_emb      = nn.Embedding(14, d_model)
@@ -346,6 +353,10 @@ class SoilMoistureModel(nn.Module):
 
         return pyramid                                                   # (B, MAX_ACQ, 4, 768)
 
+    def _static_pyramid(self, l12: torch.Tensor, attn: nn.Linear) -> torch.Tensor:
+        """l12: (B, 196, 768) fp16 → (B, 4, 768) fp32 pyramid."""
+        return spatial_pyramid_pool(l12.float(), token_valid=None, attn=attn)
+
     def _get_target_spatial_tokens(self, batch: dict, B: int,
                                    device) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -409,40 +420,47 @@ class SoilMoistureModel(nn.Module):
 
         return to_spatial("skip_l3"), to_spatial("skip_l6"), to_spatial("skip_l9")
 
-    def _build_sequence(self, batch: dict, dem_pyr, soil_tok,
+    def _build_sequence(self, batch: dict, dem_pyr, lulc_pyr, soil_tok,
                         s2_pyr, s2_doys, s2_valid,
                         s1_pyr, s1_doys, s1_valid,
                         spatial_tokens):
         """
         Assemble the full token sequence:
-            [static_prefix | target_spatial | satellite_history | era5_tokens]
+            [DEM×4 | LULC×4 | Soil×4 | target_spatial×196 | satellite_history | era5×365]
 
         Returns:
             seq           : (B, T, 768)
             key_mask      : (B, T)  True = ignore
-            spatial_start : int
+            spatial_start : int     index of first spatial token (= 12)
         """
         B      = batch["era5"].shape[0]
         device = batch["era5"].device
         tokens = []
         is_pad = []
 
+        scale_e    = self.scale_emb(torch.arange(4, device=device))        # (4, 768)
+        static_mod = self.static_modality_emb.weight                       # (2, 768)
+
         # ── Static prefix: DEM ─────────────────────────────────────────
-        scale_e = self.scale_emb(torch.arange(4, device=device))      # (4, 768)
-        dem_tok = dem_pyr + scale_e.unsqueeze(0)
-        tokens.append(dem_tok)                                         # (B, 4, 768)
+        dem_tok = dem_pyr + scale_e + static_mod[0]
+        tokens.append(dem_tok)                                             # (B, 4, 768)
+        is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
+
+        # ── Static prefix: LULC ────────────────────────────────────────
+        lulc_tok = lulc_pyr + scale_e + static_mod[1]
+        tokens.append(lulc_tok)                                            # (B, 4, 768)
         is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
 
         # ── Static prefix: Soil ────────────────────────────────────────
         soil_mod_e = self.soil_modality_emb(
             torch.zeros(1, dtype=torch.long, device=device)
-        )                                                              # (1, 768)
+        )                                                                  # (1, 768)
         soil_tokens = soil_tok + scale_e.unsqueeze(0) + soil_mod_e.unsqueeze(0)
-        tokens.append(soil_tokens)                                     # (B, 4, 768)
+        tokens.append(soil_tokens)                                         # (B, 4, 768)
         is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
 
         # ── Target-day spatial tokens ──────────────────────────────────
-        spatial_start = sum(t.shape[1] for t in tokens)               # = 4
+        spatial_start = sum(t.shape[1] for t in tokens)                   # = 12
         tokens.append(spatial_tokens)                                  # (B, 196, 768)
         is_pad.append(torch.zeros(B, 196, device=device, dtype=torch.bool))
 
@@ -517,8 +535,9 @@ class SoilMoistureModel(nn.Module):
             attn       = self.s1_pyramid_attn,
         )
 
-        # ── 2. DEM pyramid from batch (pre-computed) ───────────────────
-        dem_pyr = batch["dem_pyramid"].to(device)                      # (B, 4, 768)
+        # ── 2. Static pyramid tokens (DEM + LULC) ─────────────────────
+        dem_pyr  = self._static_pyramid(batch["dem_l12"].to(device),  self.dem_pyramid_attn)
+        lulc_pyr = self._static_pyramid(batch["lulc_l12"].to(device), self.lulc_pyramid_attn)
 
         # ── 2b. Soil tokens ────────────────────────────────────────────
         soil_tok = self.soil_encoder(batch["soil_patch"].to(device))   # (B, 4, 768)
@@ -533,6 +552,7 @@ class SoilMoistureModel(nn.Module):
         seq, key_mask, spatial_start = self._build_sequence(
             batch,
             dem_pyr,
+            lulc_pyr,
             soil_tok,
             s2_pyr, batch["s2_doys"].to(device), batch["s2_valid"].to(device),
             s1_pyr, batch["s1_doys"].to(device), batch["s1_valid"].to(device),
