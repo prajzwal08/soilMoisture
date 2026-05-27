@@ -56,7 +56,7 @@ from affine import Affine
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from dataset import center_crop, S2_BAND_INDICES
+from dataset import S2_BAND_INDICES
 from model import TerraMindEncoder
 
 SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
@@ -96,7 +96,6 @@ def _load_tif(path: Path,
     """Load .tif → (C, H, W) float32 tensor + geo dict. Returns (None, None) on I/O failure."""
     try:
         with rasterio.open(path) as src:
-            arr    = src.read().astype(np.float32)
             nodata = src.nodata
             h, w   = src.shape
             if do_crop and (h < IMAGE_SIZE or w < IMAGE_SIZE):
@@ -105,6 +104,11 @@ def _load_tif(path: Path,
             crop_top  = (h - IMAGE_SIZE) // 2 if do_crop else 0
             crop_left = (w - IMAGE_SIZE) // 2 if do_crop else 0
             geo = _read_geo(src, crop_top, crop_left)
+            if do_crop:
+                window = rasterio.windows.Window(crop_left, crop_top, IMAGE_SIZE, IMAGE_SIZE)
+                arr = src.read(window=window).astype(np.float32)
+            else:
+                arr = src.read().astype(np.float32)
     except (OSError, rasterio.errors.RasterioIOError) as exc:
         print(f"    [warn] cannot load {path.name}: {exc}")
         return None, None
@@ -112,8 +116,6 @@ def _load_tif(path: Path,
     if nodata is not None:
         mask = np.isclose(arr, nodata) if np.issubdtype(arr.dtype, np.floating) else (arr == nodata)
         arr[mask] = 0.0
-    if do_crop:
-        arr = center_crop(arr)
     if band_indices is not None:
         arr = arr[band_indices]
 
@@ -121,6 +123,12 @@ def _load_tif(path: Path,
 
 
 # ── batch runner ──────────────────────────────────────────────────────────────
+
+def _amp_ctx(device: torch.device):
+    """AMP context: fp16 autocast on CUDA, no-op on CPU."""
+    return torch.autocast(device_type=device.type, dtype=torch.float16,
+                          enabled=device.type == "cuda")
+
 
 def _save_feats(feats: dict, out_idx: int, src_idx: int,
                 src_paths: list[Path], geos: list[dict | None],
@@ -155,7 +163,7 @@ def _run_batch(encoder:   TerraMindEncoder,
     batch = torch.stack([patches[i] for i in valid_i]).float().to(device)
     oom = False
     try:
-        with torch.no_grad():
+        with torch.no_grad(), _amp_ctx(device):
             feats = encoder(batch, modality)
     except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
         if isinstance(exc, RuntimeError) and "out of memory" not in str(exc).lower():
@@ -182,7 +190,7 @@ def _run_batch(encoder:   TerraMindEncoder,
     for src_idx in valid_i:
         single = patches[src_idx].float().unsqueeze(0).to(device)
         try:
-            with torch.no_grad():
+            with torch.no_grad(), _amp_ctx(device):
                 sf = encoder(single, modality)
         except (torch.cuda.OutOfMemoryError, RuntimeError) as exc2:
             print(f"    [warn] OOM on single {src_paths[src_idx].name}: {exc2}")
@@ -260,7 +268,7 @@ def process_static(encoder:  TerraMindEncoder,
     if patch is None:
         return
 
-    with torch.no_grad():
+    with torch.no_grad(), _amp_ctx(device):
         feats = encoder(patch.float().unsqueeze(0).to(device), modality)
 
     t = feats["L12"][0]
