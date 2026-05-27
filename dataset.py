@@ -1,19 +1,19 @@
 """
 SoilMoistureDataset
 ====================
-Loads pre-computed TerraMind L12 features, ERA5-Land meteo, and ISMN labels
+Loads pre-computed TerraMind features, ERA5-Land meteo, and ISMN labels
 for one station × year × day-of-year sample.
 
 Requires precompute_terramind.py to have been run first so that
-  {satellite_dir}/{station}/S2L2A/{YYYYMMDD}_L12.pt  and
-  {satellite_dir}/{station}/S1RTC/{stem}_L12.pt
-exist alongside the original .tif files.
+  {satellite_dir}/{station}/S2L2A/{YYYYMMDD}_L{3,6,9,12}.pt  and
+  {satellite_dir}/{station}/S1RTC/{stem}_L{3,6,9,12}.pt
+exist. The raw .tif files are no longer read at training time.
 
 Directory layout:
   {satellite_dir}/{network}_{station}/
-      S2L2A/   YYYYMMDD.tif + YYYYMMDD_L12.pt   (12 bands → 196×768 fp16)
-      S1RTC/   YYYYMMDD_ASC.tif + stem_L12.pt   (2 bands  → 196×768 fp16)
-      DEM/     dem.tif + dem_pyramid.pt           (4×768 fp32)
+      S2L2A/   YYYYMMDD_L{3,6,9,12}.pt  (196×768 fp16 per layer)
+      S1RTC/   {stem}_L{3,6,9,12}.pt    (196×768 fp16 per layer)
+      DEM/     dem_pyramid.pt            (4×768 fp32)
       CloudMask/ YYYYMMDD.tif                    (cloud labels)
       ERA5Land/  meteo_YYYY.nc
 
@@ -248,48 +248,19 @@ def load_s1_rolling(patch_dir: Path, year: int, target_doy: int,
     return l12, doys, valid, rel_pos
 
 
-# ── Most-recent raw patch loader (for skip connections) ──────────────────────
+# ── Skip-connection feature loader ───────────────────────────────────────────
 
-def load_recent_raw_patches(sat_dir: Path, year: int, target_doy: int):
+def load_recent_skip_features(sat_dir: Path, year: int, target_doy: int):
     """
-    Load the most recent S2 and S1 raw patches in the rolling window.
-    Both are always returned (zeros if modality has no acquisitions).
-    `recent_is_s1` indicates which is actually more recent (used in model.py).
+    Load precomputed L3/L6/L9 skip features for the most-recent acquisition
+    (S2 or S1) in the rolling 365-day window.
 
     Returns:
-        recent_s2  : (12, 224, 224) float32
-        recent_s1  : (2,  224, 224) float32
-        recent_is_s1 : bool
+        skip_l3, skip_l6, skip_l9 : each (196, 768) float16 — zeros if unavailable
+        recent_is_s1               : bool
     """
     s2_files = _files_in_window(sat_dir / "S2L2A", year, target_doy)
     s1_files = _files_in_window(sat_dir / "S1RTC", year, target_doy)
-
-    recent_s2 = torch.zeros(12, 224, 224, dtype=torch.float32)
-    recent_s1 = torch.zeros(2,  224, 224, dtype=torch.float32)
-
-    if s2_files:
-        tif = s2_files[-1]
-        try:
-            with rasterio.open(tif) as src:
-                arr    = src.read().astype(np.float32)
-                nodata = src.nodata
-            if nodata is not None:
-                arr[arr == nodata] = 0.0
-            recent_s2 = torch.from_numpy(center_crop(arr)[S2_BAND_INDICES])
-        except Exception:
-            s2_files = []   # treat as absent if load fails
-
-    if s1_files:
-        tif = s1_files[-1]
-        try:
-            with rasterio.open(tif) as src:
-                arr    = src.read().astype(np.float32)
-                nodata = src.nodata
-            if nodata is not None:
-                arr[arr == nodata] = 0.0
-            recent_s1 = torch.from_numpy(arr)
-        except Exception:
-            s1_files = []
 
     # Determine which modality is more recent
     recent_is_s1 = False
@@ -304,7 +275,21 @@ def load_recent_raw_patches(sat_dir: Path, year: int, target_doy: int):
     elif s1_files:
         recent_is_s1 = True
 
-    return recent_s2, recent_s1, recent_is_s1
+    zeros         = torch.zeros(196, 768, dtype=torch.float16)
+    recent_files  = s1_files if recent_is_s1 else s2_files
+    if not recent_files:
+        return zeros, zeros.clone(), zeros.clone(), recent_is_s1
+
+    tif       = recent_files[-1]
+    patch_dir = sat_dir / ("S1RTC" if recent_is_s1 else "S2L2A")
+    skips = []
+    for layer in ("L3", "L6", "L9"):
+        pt = patch_dir / f"{tif.stem}_{layer}.pt"
+        skips.append(
+            torch.load(pt, weights_only=True, map_location="cpu")
+            if pt.exists() else zeros.clone()
+        )
+    return skips[0], skips[1], skips[2], recent_is_s1
 
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
@@ -448,8 +433,8 @@ class SoilMoistureDataset(Dataset):
         else:
             dem_pyramid = torch.zeros(4, 768, dtype=torch.float32)
 
-        # ── Most-recent raw patches (for skip connections in model) ────
-        recent_s2, recent_s1, recent_is_s1 = load_recent_raw_patches(
+        # ── Skip connection features (precomputed L3/L6/L9) ──────────
+        skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(
             sat_dir, year, doy
         )
 
@@ -493,9 +478,10 @@ class SoilMoistureDataset(Dataset):
             # Static
             "dem_pyramid"   : dem_pyramid,       # (4, 768) fp32
 
-            # Most-recent raw patches — for skip connections (L3/L6/L9)
-            "recent_s2"     : recent_s2,         # (12, 224, 224) fp32
-            "recent_s1"     : recent_s1,         # (2,  224, 224) fp32
+            # Skip connection features (most-recent acquisition, precomputed)
+            "skip_l3"       : skip_l3,           # (196, 768) fp16
+            "skip_l6"       : skip_l6,           # (196, 768) fp16
+            "skip_l9"       : skip_l9,           # (196, 768) fp16
             "recent_is_s1"  : torch.tensor(recent_is_s1, dtype=torch.bool),
 
             # Soil (static)

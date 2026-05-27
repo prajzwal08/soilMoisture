@@ -315,11 +315,10 @@ class SoilEncoder(nn.Module):
 class SoilMoistureModel(nn.Module):
     """
     Args:
-        n_depths         : number of SM depth bins (default 4)
-        d_model          : transformer / token dimension (default 768)
-        n_heads          : attention heads (default 12)
-        n_layers         : transformer layers (default 6)
-        freeze_terramind : keep TerraMind weights frozen (default True)
+        n_depths  : number of SM depth bins (default 4)
+        d_model   : transformer / token dimension (default 768)
+        n_heads   : attention heads (default 12)
+        n_layers  : transformer layers (default 6)
     """
 
     STATION_ROW = 112
@@ -327,18 +326,16 @@ class SoilMoistureModel(nn.Module):
 
     def __init__(
         self,
-        n_depths:  int  = 4,
-        d_model:   int  = 768,
-        n_heads:   int  = 12,
-        n_layers:  int  = 6,
-        freeze_terramind: bool = True,
+        n_depths: int = 4,
+        d_model:  int = 768,
+        n_heads:  int = 12,
+        n_layers: int = 6,
     ):
         super().__init__()
         self.d_model  = d_model
         self.n_depths = n_depths
 
         # ── Encoders ──────────────────────────────────────────────────
-        self.terramind    = TerraMindEncoder(frozen=freeze_terramind)
         self.soil_encoder = SoilEncoder(d_model=d_model)
 
         self.era5_mlp = nn.Sequential(
@@ -482,36 +479,15 @@ class SoilMoistureModel(nn.Module):
     def _get_skip_connections(self, batch: dict, B: int,
                               device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Run TerraMind once per sample on the most-recent raw patch to get
-        L3/L6/L9 skip connections for the U-Net decoder.
-
-        Returns:
-            skip_L3, skip_L6, skip_L9 : each (B, 768, 14, 14)
+        Reshape preloaded L3/L6/L9 skip features to (B, 768, 14, 14) spatial maps.
+        Features are precomputed by precompute_terramind.py and loaded by the dataset.
         """
-        recent_is_s1 = batch["recent_is_s1"]                          # (B,) bool
+        def to_spatial(key: str) -> torch.Tensor:
+            return (batch[key].float().to(device)          # (B, 196, 768)
+                    .reshape(B, 14, 14, self.d_model)
+                    .permute(0, 3, 1, 2))                  # (B, 768, 14, 14)
 
-        skip_L3 = torch.zeros(B, 196, self.d_model, device=device)
-        skip_L6 = torch.zeros(B, 196, self.d_model, device=device)
-        skip_L9 = torch.zeros(B, 196, self.d_model, device=device)
-
-        for mask, key, modality in [
-            (~recent_is_s1, "recent_s2", "S2L2A"),
-            ( recent_is_s1, "recent_s1", "S1RTC"),
-        ]:
-            if not mask.any():
-                continue
-            patches = batch[key][mask].float().to(device)             # (n, C, 224, 224)
-            feats   = self.terramind(patches, modality)
-
-            skip_L3[mask] = feats["L3"]
-            skip_L6[mask] = feats["L6"]
-            skip_L9[mask] = feats["L9"]
-
-        return (
-            skip_L3.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2),  # (B,768,14,14)
-            skip_L6.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2),
-            skip_L9.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2),
-        )
+        return to_spatial("skip_l3"), to_spatial("skip_l6"), to_spatial("skip_l9")
 
     def _build_sequence(self, batch: dict, dem_pyr, soil_tok,
                         s2_pyr, s2_doys, s2_valid,
@@ -630,7 +606,7 @@ class SoilMoistureModel(nn.Module):
         # ── 3. Target spatial tokens from stored L12 ──────────────────
         spatial_tokens, _ = self._get_target_spatial_tokens(batch, B, device)
 
-        # ── 4. Skip connections: 1 TerraMind pass on most-recent patch ─
+        # ── 4. Skip connections from precomputed features ─────────────
         skip_L3, skip_L6, skip_L9 = self._get_skip_connections(batch, B, device)
 
         # ── 5. Build sequence and run transformer ──────────────────────
