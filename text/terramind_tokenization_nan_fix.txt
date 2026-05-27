@@ -1,0 +1,141 @@
+TerraMind Tokenization — NaN Issue and Fix Plan
+================================================
+Date: 2026-05-27
+Author: Prajwal Khanal
+
+
+BACKGROUND
+----------
+After completing all satellite data downloads, the next pipeline step is to
+precompute TerraMind features (tokens) for every S2L2A, S1RTC, DEM, and LULC
+tile and save them as .pt files to permanent project storage. This is done by
+precompute_terramind.py.
+
+A trial run was submitted to the gpu_mig partition (A100 MIG slice, 20 GB VRAM)
+processing 3 stations (AmeriFlux_CA-Cbo, CA-DB2, CA-DBB) with batch_size=4.
+
+
+ISSUE DISCOVERED
+----------------
+The trial run completed but produced 310 NaN failures out of ~657 S2L2A images
+processed (~47% failure rate). The error message in every case was:
+
+    [warn] non-finite values in L12 for YYYYMMDD
+
+S1RTC, DEM, and LULC had no NaN failures. The problem is specific to S2L2A.
+
+Investigation of a failing tile (AmeriFlux_CA-Cbo/S2L2A/20170105.tif) revealed:
+
+  - 3,582 pixels (7.1% of the 224×224 image) have value = 0 across ALL 12 bands
+  - These zero pixels form a contiguous L-shaped region at the swath edge
+    (rows 62–223, cols 179–223) — the area outside the Sentinel-2 overpass
+  - The GeoTIFF has nodata = None (no nodata tag in the file header)
+  - 8 out of 196 token windows (16×16 pixel patches) fall entirely within this
+    zero region
+  - A passing tile (20170323.tif) has 0% zero pixels
+
+Root cause: Sentinel-2 L2A products fill pixels outside the valid satellite
+swath with DN = 0 by convention. The download pipeline wrote these tiles without
+embedding the nodata tag in the GeoTIFF header (nodata = None). So our
+_load_tif() code does not detect or replace these invalid pixels. When a fully-
+zero 16×16 patch reaches TerraMind's encoder, the large contiguous block of
+near-identical activations causes fp16 attention softmax overflow, producing NaN
+values that propagate to L12.
+
+
+WHAT TERRAMESH DOES
+-------------------
+TerraMind v1 was pretrained on TerraMesh, an IBM/ESA dataset built on top of
+SSL4EO-S12 v1.1. The TerraMesh paper (arXiv 2504.11172) documents the following
+S2L2A preprocessing pipeline:
+
+1. Cloud and invalid pixel detection via SEnSeIv2
+   SEnSeIv2 (Francis et al., IEEE TGRS 2024) is a sensor-independent cloud
+   masking model that classifies every pixel into 6 classes:
+       0 = land, 1 = water, 2 = snow, 3 = thin cloud,
+       4 = thick cloud, 5 = cloud shadow
+   A separate no-data class (6) is added for pixels with all bands = 0.
+   These masks are stored as metadata alongside each S2L2A tile in TerraMesh.
+   Native S2 SCL flags are explicitly NOT used — the paper notes they are
+   unreliable.
+
+2. Patch-level quality filtering
+   Any patch where more than 1% of pixels are NaN (invalid) is discarded
+   entirely from the training corpus.
+
+3. NaN filling for small invalid regions
+   Patches with ≤ 1% NaN are retained. Remaining NaN pixels are filled via
+   nearest-neighbour interpolation before normalisation.
+
+4. Z-score normalisation
+   Per-band normalisation using TerraMesh pretraining statistics (means and
+   stds over the training corpus). Raw DN values (int16, 0–10000) are
+   normalised internally by the TerraMind tokenizer.
+
+The consequence: TerraMind was NEVER trained on tiles with large all-zero
+regions. Any such tile is severely out-of-distribution and produces NaN outputs.
+The ~47% failure rate in our trial reflects this — many winter/early-season
+S2L2A acquisitions in Canada have partial swath coverage or heavy cloud cover
+that our pipeline passes through unchecked.
+
+
+OUR FIX — MATCHING TERRAMESH
+------------------------------
+We cannot use SEnSeIv2 directly (requires non-pip install, GPL-3.0 licence,
+slow at ~5 FPS full-scene). However, our codebase already contains:
+
+    cloud_masking_inference.py
+
+which uses CloudSEN12 (cloudsen12_models, pip-installable) — a SegFormer-based
+model trained on the CloudSEN12 dataset for S2L2A. It produces the same
+operationally relevant classes:
+
+    0 = clear   1 = thick cloud   2 = thin cloud
+    3 = cloud shadow              255 = nodata (all bands = 0)
+
+This is functionally equivalent to SEnSeIv2 for our purpose (masking invalid
+pixels before tokenization).
+
+The fix proceeds in two steps:
+
+STEP 1 — Precompute cloud masks (new SLURM CPU job)
+  - Fix cloud_masking_inference.py: update DATA_ROOT from ~/data/satellite/
+    to /gpfs/scratch1/shared/pkhanal/satellite/, add --station / --start-idx /
+    --end-idx arguments for SLURM array slicing
+  - Run as a cheap thin-node CPU SLURM array job across all 1048 stations
+  - Output: /gpfs/scratch1/shared/pkhanal/satellite/{station}/CloudMask/YYYYMMDD.tif
+  - This step has zero GPU cost. CloudSEN12 runs on CPU.
+
+STEP 2 — Use masks in precompute_terramind.py
+  - In _load_tif(), after loading the S2L2A array, look for the corresponding
+    CloudMask/YYYYMMDD.tif in the same station scratch directory
+  - Build an invalid pixel mask: classes {1, 2, 3, 255} → invalid
+  - If > 1% of pixels are invalid: skip the tile entirely (matches TerraMesh
+    curation rule — these tiles are out-of-distribution)
+  - If ≤ 1% of pixels are invalid: fill with nearest-neighbour interpolation
+    using scipy.ndimage.distance_transform_edt, then proceed to TerraMind
+  - If no CloudMask file exists for a tile: fall back to the all-zero heuristic
+    (detect (arr == 0).all(axis=0) as nodata) for robustness
+
+The nearest-neighbour fill exactly matches TerraMesh's preprocessing.
+Median or constant substitution would not be used.
+
+
+TIMELINE
+--------
+1. Fix cloud_masking_inference.py and write SLURM array script
+2. Dry-run cloud masking on 3 stations to verify output
+3. Submit full cloud masking job across all 1048 stations
+4. Re-run precompute_terramind.py trial (--trial 3) — expect NaN count ~ 0
+5. Submit full tokenization SLURM array job
+
+
+REFERENCES
+----------
+- TerraMesh paper: arXiv 2504.11172 (IBM/ESA, 2025)
+- SEnSeIv2 paper: IEEE TGRS 2024, Francis et al.
+  GitHub: https://github.com/aliFrancis/SEnSeIv2
+- CloudSEN12 dataset and models:
+  GitHub: https://github.com/IPL-UV/cloudsen12_models
+- SSL4EO-S12 v1.1 paper: arXiv 2503.00168
+- TerraMind v1 model: https://github.com/IBM/terramind

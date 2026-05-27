@@ -47,6 +47,7 @@ import argparse
 import json
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -105,6 +106,45 @@ class TerraMindEncoder(nn.Module):
         with torch.no_grad():
             self.backbone({self.MODALITY_MAP[modality]: patch})
         return {k: v.clone() for k, v in self._feats.items()}
+
+
+# ── Performance tracker ───────────────────────────────────────────────────────
+
+class PerfTracker:
+    """Accumulates timing and GPU memory stats across batches for trial runs."""
+
+    def __init__(self, device: torch.device):
+        self.device   = device
+        self.batches  = 0
+        self.images   = 0
+        self.t_load   = 0.0
+        self.t_encode = 0.0
+        self.t_save   = 0.0
+        self.peak_mb  = 0.0
+
+    def record(self, n_images: int, t_load: float, t_encode: float,
+               t_save: float, peak_bytes: int) -> None:
+        self.batches  += 1
+        self.images   += n_images
+        self.t_load   += t_load
+        self.t_encode += t_encode
+        self.t_save   += t_save
+        self.peak_mb   = max(self.peak_mb, peak_bytes / 1e6)
+
+    def report(self) -> str:
+        if self.images == 0:
+            return "  (no images processed)"
+        total = self.t_load + self.t_encode + self.t_save
+        img_s = self.images / total if total > 0 else 0
+        lines = [
+            f"  images      : {self.images}  in {self.batches} batch(es)",
+            f"  load        : {self.t_load:.2f}s  ({100*self.t_load/total:.0f}%)",
+            f"  encode      : {self.t_encode:.2f}s  ({100*self.t_encode/total:.0f}%)",
+            f"  save        : {self.t_save:.2f}s  ({100*self.t_save/total:.0f}%)",
+            f"  total       : {total:.2f}s   →  {img_s:.2f} img/s",
+            f"  peak GPU mem: {self.peak_mb:.0f} MB",
+        ]
+        return "\n".join(lines)
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -207,11 +247,22 @@ def _run_batch(encoder:   TerraMindEncoder,
                modality:  str,
                layers:    tuple[str, ...],
                device:    torch.device,
-               failures:  list[str]) -> int:
+               failures:  list[str],
+               perf:      PerfTracker | None = None,
+               dry_run:   bool = False) -> int:
     """Forward a batch through TerraMind, save .pt and _geo.json. Returns count saved."""
     valid_i = [i for i, p in enumerate(patches) if p is not None]
     if not valid_i:
         return 0
+
+    if dry_run:
+        shapes = [tuple(patches[i].shape) for i in valid_i]
+        print(f"    [dry-run] {modality} batch of {len(valid_i)}: shapes {shapes}")
+        return len(valid_i)
+
+    t0_encode = time.perf_counter()
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
     batch = torch.stack([patches[i] for i in valid_i]).float().to(device)
     oom = False
@@ -223,8 +274,12 @@ def _run_batch(encoder:   TerraMindEncoder,
             raise
         oom = True
 
+    t_encode = time.perf_counter() - t0_encode
+    peak_bytes = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
+
     if not oom:
         out_dir.mkdir(parents=True, exist_ok=True)
+        t0_save = time.perf_counter()
         saved = 0
         for out_idx, src_idx in enumerate(valid_i):
             try:
@@ -233,6 +288,9 @@ def _run_batch(encoder:   TerraMindEncoder,
             except ValueError as exc:
                 print(f"    [warn] {exc}")
                 failures.append(str(src_paths[src_idx]))
+        t_save = time.perf_counter() - t0_save
+        if perf is not None:
+            perf.record(len(valid_i), 0.0, t_encode, t_save, peak_bytes)
         return saved
 
     print(f"    [warn] GPU OOM on batch of {len(valid_i)}; retrying one-at-a-time")
@@ -242,6 +300,7 @@ def _run_batch(encoder:   TerraMindEncoder,
     saved = 0
     for src_idx in valid_i:
         single = patches[src_idx].float().unsqueeze(0).to(device)
+        t0_enc1 = time.perf_counter()
         try:
             with torch.no_grad(), _amp_ctx(device):
                 sf = encoder(single, modality)
@@ -249,12 +308,17 @@ def _run_batch(encoder:   TerraMindEncoder,
             print(f"    [warn] OOM on single {src_paths[src_idx].name}: {exc2}")
             failures.append(str(src_paths[src_idx]))
             continue
+        t_enc1 = time.perf_counter() - t0_enc1
+        pk1 = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
+        t0_sv1 = time.perf_counter()
         try:
             _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
             saved += 1
         except ValueError as exc2:
             print(f"    [warn] {exc2}")
             failures.append(str(src_paths[src_idx]))
+        if perf is not None:
+            perf.record(1, 0.0, t_enc1, time.perf_counter() - t0_sv1, pk1)
     return saved
 
 
@@ -268,7 +332,9 @@ def process_temporal(encoder:     TerraMindEncoder,
                      batch_size:  int,
                      band_indices: list[int] | None = None,
                      do_crop:     bool = False,
-                     failures:    list[str] | None = None) -> int:
+                     failures:    list[str] | None = None,
+                     perf:        PerfTracker | None = None,
+                     dry_run:     bool = False) -> int:
     """
     Process all .tif files for S2L2A or S1RTC.
     Saves L3/L6/L9/L12 + geo.json per acquisition to out_dir.
@@ -281,20 +347,32 @@ def process_temporal(encoder:     TerraMindEncoder,
 
     pending = [
         f for f in sorted(src_dir.glob("*.tif"))
-        if not (out_dir / f"{f.stem}_L12.pt").exists()
+        if dry_run or not (out_dir / f"{f.stem}_L12.pt").exists()
     ]
     if not pending:
         return 0
 
+    # In dry-run, only check the first batch to keep it fast
+    if dry_run:
+        pending = pending[:batch_size]
+
     processed = 0
     for start in range(0, len(pending), batch_size):
         batch_files = pending[start : start + batch_size]
-        results     = [_load_tif(f, band_indices, do_crop) for f in batch_files]
+        t0_load = time.perf_counter()
+        results  = [_load_tif(f, band_indices, do_crop) for f in batch_files]
+        t_load   = time.perf_counter() - t0_load
         patches, geos = zip(*results)
-        processed += _run_batch(
+        n_valid  = sum(1 for p in patches if p is not None)
+        saved = _run_batch(
             encoder, list(patches), list(geos),
-            batch_files, out_dir, modality, TEMPORAL_LAYERS, device, failures,
+            batch_files, out_dir, modality, TEMPORAL_LAYERS, device, failures, perf,
+            dry_run=dry_run,
         )
+        # patch load time into the last perf record (recorded inside _run_batch as 0)
+        if perf is not None and n_valid > 0:
+            perf.t_load += t_load
+        processed += saved
 
     return processed
 
@@ -369,15 +447,32 @@ def main():
                         help="First station index, inclusive (for SLURM array slicing)")
     parser.add_argument("--end-idx",     type=int,  default=None,
                         help="Last station index, exclusive (for SLURM array slicing)")
+    parser.add_argument("--trial",       type=int,  default=None, metavar="N",
+                        help="Trial mode: process only first N stations and print detailed "
+                             "timing + GPU memory breakdown (default: off)")
+    parser.add_argument("--dry-run",     action="store_true",
+                        help="Load tiles and print shapes without running the encoder. "
+                             "Fast CPU smoke test to verify paths and data before GPU submission.")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    trial   = args.trial
+    dry_run = args.dry_run
+
     print(f"Device     : {device}")
     print(f"Scratch    : {args.scratch_dir}")
     print(f"Data dir   : {args.data_dir}")
-    print(f"Batch size : {args.batch_size}\n")
+    print(f"Batch size : {args.batch_size}")
+    if dry_run:
+        print("Mode       : DRY-RUN (load + shape check only, no inference)")
+    elif trial:
+        print(f"Trial mode : first {trial} stations — detailed timing enabled")
+    print()
 
-    encoder = TerraMindEncoder(frozen=True).to(device).eval()
+    if dry_run:
+        encoder = None   # not used
+    else:
+        encoder = TerraMindEncoder(frozen=True).to(device).eval()
 
     if args.station:
         station_dirs = [args.scratch_dir / args.station]
@@ -385,12 +480,18 @@ def main():
         station_dirs = sorted(d for d in args.scratch_dir.iterdir() if d.is_dir())
         station_dirs = station_dirs[args.start_idx : args.end_idx]
 
+    if trial:
+        station_dirs = station_dirs[:trial]
+
     n = len(station_dirs)
     print(f"Stations to process: {n}\n")
 
     total_s2 = total_s1 = 0
     skipped: list[str] = []
     failures: list[str] = []
+
+    perf_s2 = PerfTracker(device) if trial else None
+    perf_s1 = PerfTracker(device) if trial else None
 
     for idx, src_station in enumerate(station_dirs, 1):
         t0          = time.time()
@@ -409,8 +510,10 @@ def main():
             device      = device,
             batch_size  = args.batch_size,
             band_indices= S2_BAND_INDICES,
-            do_crop     = True,   # S2 tiles are 256×256; crop centre to IMAGE_SIZE
+            do_crop     = True,
             failures    = failures,
+            perf        = perf_s2,
+            dry_run     = dry_run,
         )
         s1_new = process_temporal(
             encoder,
@@ -419,31 +522,34 @@ def main():
             modality   = "S1RTC",
             device     = device,
             batch_size = args.batch_size,
-            do_crop    = False,   # S1 tiles are natively IMAGE_SIZE×IMAGE_SIZE
+            do_crop    = False,
             failures   = failures,
+            perf       = perf_s1,
+            dry_run    = dry_run,
         )
-        process_static(
-            encoder,
-            src_path = src_station / "DEM" / "dem.tif",
-            out_dir  = out_station / "DEM",
-            modality = "DEM",
-            out_stem = "dem",
-            device   = device,
-            do_crop  = True,    # DEM tiles are 256×256; crop centre to IMAGE_SIZE
-            failures = failures,
-        )
-        lulc_tif = _latest_lulc_tif(src_station / "LULC")
-        if lulc_tif:
+        if not dry_run:
             process_static(
                 encoder,
-                src_path = lulc_tif,
-                out_dir  = out_station / "LULC",
-                modality = "LULC",
-                out_stem = "lulc",
+                src_path = src_station / "DEM" / "dem.tif",
+                out_dir  = out_station / "DEM",
+                modality = "DEM",
+                out_stem = "dem",
                 device   = device,
-                do_crop  = False,   # LULC tiles are natively IMAGE_SIZE×IMAGE_SIZE
+                do_crop  = True,
                 failures = failures,
             )
+            lulc_tif = _latest_lulc_tif(src_station / "LULC")
+            if lulc_tif:
+                process_static(
+                    encoder,
+                    src_path = lulc_tif,
+                    out_dir  = out_station / "LULC",
+                    modality = "LULC",
+                    out_stem = "lulc",
+                    device   = device,
+                    do_crop  = False,
+                    failures = failures,
+                )
 
         total_s2 += s2_new
         total_s1 += s1_new
@@ -453,6 +559,19 @@ def main():
             print(f"[{idx:4d}/{n}] {sid}  S2={s2_new}  S1={s1_new}  ({elapsed:.1f}s)")
         elif idx % 50 == 0:
             print(f"[{idx:4d}/{n}] ... (up to date)")
+
+    if trial:
+        print("\n" + "="*60)
+        print("TRIAL SUMMARY")
+        print("="*60)
+        print(f"\nS2L2A (batch_size={args.batch_size}):")
+        print(perf_s2.report())
+        print(f"\nS1RTC (batch_size={args.batch_size}):")
+        print(perf_s1.report())
+        if device.type == "cuda":
+            total_vram = torch.cuda.get_device_properties(device).total_memory / 1e9
+            print(f"\nGPU total VRAM : {total_vram:.1f} GB")
+        print("="*60)
 
     print(f"\nDone.  New acquisitions → S2: {total_s2},  S1: {total_s1}")
     if skipped:
