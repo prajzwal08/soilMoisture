@@ -55,7 +55,7 @@ def harmonize_station(station_dir: Path) -> tuple[int, int]:
     if not pending:
         return 0, 0
 
-    rewritten = errors = 0
+    rewritten = skipped = errors = 0
     for path in pending:
         tmp = path.with_suffix(".tmp")
         try:
@@ -63,9 +63,18 @@ def harmonize_station(station_dir: Path) -> tuple[int, int]:
                 arr     = src.read()           # (C, H, W) int16
                 profile = src.profile.copy()
 
+            # ── idempotency check ─────────────────────────────────────────────
+            # After harmonization every valid pixel has DN >= 1000 (the minimum
+            # valid reflectance in baseline 4.0 convention). If the tile's
+            # minimum non-zero DN is already >= 1000 it has been processed —
+            # adding +1000 again would corrupt it. Safe to skip.
+            arr32       = arr.astype(np.int32)
+            valid       = arr32[arr32 != 0]
+            if len(valid) > 0 and valid.min() >= 1000:
+                skipped += 1
+                continue
+
             # Add +1000 to valid pixels; leave nodata (DN=0) unchanged.
-            # Use int32 to avoid overflow during arithmetic, then cast back.
-            arr32 = arr.astype(np.int32)
             arr32[arr32 != 0] += 1000
 
             # Write to .tmp first — if we crash mid-write the original is intact
@@ -80,7 +89,7 @@ def harmonize_station(station_dir: Path) -> tuple[int, int]:
             tmp.unlink(missing_ok=True)
             errors += 1
 
-    return rewritten, errors
+    return rewritten, skipped, errors
 
 
 def main() -> None:
@@ -99,20 +108,21 @@ def main() -> None:
         station_dirs = station_dirs[args.start_idx : args.end_idx]
 
     n = len(station_dirs)
-    total_rewritten = total_errors = 0
+    total_rewritten = total_skipped = total_errors = 0
     t0 = time.time()
 
     for idx, station_dir in enumerate(station_dirs, 1):
-        rewritten, errors = harmonize_station(station_dir)
+        rewritten, skipped, errors = harmonize_station(station_dir)
         total_rewritten += rewritten
+        total_skipped   += skipped
         total_errors    += errors
-        if rewritten:
-            log.info("[%4d/%d] %s  rewritten=%d  errors=%d",
-                     idx, n, station_dir.name, rewritten, errors)
+        if rewritten or errors:
+            log.info("[%4d/%d] %s  rewritten=%d  skipped=%d  errors=%d",
+                     idx, n, station_dir.name, rewritten, skipped, errors)
 
     elapsed = time.time() - t0
-    log.info("Done.  Rewritten: %d   Errors: %d   Elapsed: %.1fs",
-             total_rewritten, total_errors, elapsed)
+    log.info("Done.  Rewritten: %d   Skipped (already done): %d   Errors: %d   Elapsed: %.1fs",
+             total_rewritten, total_skipped, total_errors, elapsed)
 
 
 if __name__ == "__main__":
