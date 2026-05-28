@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=tm_trial
-#SBATCH --partition=gpu_mig
+#SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4

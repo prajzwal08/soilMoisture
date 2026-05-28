@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tokenize
 #SBATCH --array=0-1047
-#SBATCH --partition=gpu
+#SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
