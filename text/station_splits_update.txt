@@ -1,0 +1,58 @@
+Station Splits Update — Removal of 20 Excluded Stations
+=========================================================
+Date: 2026-05-28
+Job (real deletion): 23172099  (ran 11:09–12:41 CEST)
+
+Summary
+-------
+20 stations removed from both station_splits CSV files after tier-1 cleanup
+confirmed their data was unusable or too sparse for tokenization.
+
+Files updated
+-------------
+  csvs/station_splits.csv        1,048 → 1,028 rows
+  /gpfs/work3/0/prjs1968/data/station_splits.csv  1,048 → 1,028 rows
+
+Stations Removed
+----------------
+Reason A — MGRS boundary (>50% S2L2A tiles lost at tier-1):  17 stations
+  Station                                      Split         S2 Loss
+  -------------------------------------------- ------------- -------
+  ISMN_SNOTEL_CopperMountain                   sm_only           96%
+  ISMN_SNOTEL_DiamondPeak                      sm_only           96%
+  ISMN_CW3E_WindyGap                           sm_only           96%
+  ISMN_SNOTEL_WhiteHorseLake                   sm_only           95%
+  ISMN_SNOTEL_BurnsideLake                     sm_only           94%
+  ISMN_SCAN_CochoraRanch                       sm_only           94%
+  ISMN_SNOTEL_Corral                           sm_only           94%
+  ISMN_REMEDHUS_LaAtalaya                      sm_only           94%
+  ISMN_SCAN_Wedowee                            sm_only           93%
+  ISMN_SNOTEL_Lakefork#3                       sm_only           93%
+  ISMN_SNOTEL_MedanoPass                       sm_only           92%
+  ISMN_SCAN_JordanValleyCwma                   sm_only           92%
+  ISMN_TAHMO_CRIG(SoilMoistureStation1)        sm_only           89%
+  ICOS_DE-Tha                                  sm_and_flux       88%
+  ISMN_SCAN_Tuskegee                           sm_only           86%
+  ISMN_NGARI_SQ06                              sm_only           83%
+  ISMN_HOAL_Hoal-16                            sm_only           54%
+
+Reason B — Minimum coverage (<12 avg S2L2A tiles/year after tier-1):  3 stations
+  Station                          Split    Avg S2/yr
+  -------------------------------- -------  ---------
+  ISMN_SCAN_WearyLake              sm_only   10.0
+  ISMN_SNOTEL_Brumley              sm_only   11.0
+  ISMN_USCRN_Darrington-21-NNE     sm_only   11.0
+
+Split breakdown after removal
+------------------------------
+  sm_only     : 894 − 19 = 875
+  sm_and_flux :  49 −  1 =  48
+  flux_only   : 105 −  0 = 105
+  ──────────────────────────────
+  Total        1,048 − 20 = 1,028
+
+References
+----------
+  Full exclusion rationale (MGRS):     text/nan_station_exclusions.txt
+  Full exclusion rationale (coverage): text/nan_minimum_coverage_exclusions.txt
+  All 25,362 deleted tile records:     text/tier1_deleted_records.csv
