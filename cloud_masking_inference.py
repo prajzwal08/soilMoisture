@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -103,15 +104,38 @@ def load_sensei(device: str = "cpu") -> CloudMask:
     )
 
 
+# ── tile loader (runs in thread pool) ────────────────────────────────────────
+
+def _load_tile(
+    path: Path,
+) -> tuple[str, np.ndarray, np.ndarray, dict] | tuple[str, None, None, None]:
+    """Read one S2L2A tile from disk. Designed to run in a worker thread."""
+    try:
+        with rasterio.open(path) as src:
+            arr_int = src.read()
+            profile = src.profile
+        nodata_mask = (arr_int == 0).all(axis=0)
+        arr = arr_int.astype(np.float32)
+        del arr_int
+        arr /= 10_000.0
+        return path.name, arr, nodata_mask, profile
+    except (OSError, rasterio.errors.RasterioIOError) as exc:
+        log.error("[io error] %s: %s", path.name, exc)
+        return path.name, None, None, None
+
+
 # ── per-station inference ─────────────────────────────────────────────────────
 
 def process_station(model: CloudMask, station_dir: Path,
-                    out_dir: Path, batch_size: int) -> tuple[int, int]:
+                    out_dir: Path, batch_size: int,
+                    io_workers: int = 3) -> tuple[int, int]:
     """Run SEnSeIv2 on all pending S2L2A tiles. Returns (done, errors).
 
-    Bypasses CloudMask.__call__ (which only handles one image) and calls
-    model.model directly with a (B, C, H, W) tensor so the GPU processes
-    batch_size images per forward pass instead of one at a time.
+    I/O and GPU are pipelined: all tile reads are submitted to a thread pool
+    upfront so worker threads pre-fetch disk → RAM while the GPU computes the
+    previous batch. On a GPFS filesystem where I/O (≈18 tiles/sec) is the
+    bottleneck rather than the GPU (≈80 tiles/sec), this overlap is the main
+    source of throughput gain.
     """
     s2_dir = station_dir / "S2L2A"
     if not s2_dir.exists():
@@ -128,61 +152,61 @@ def process_station(model: CloudMask, station_dir: Path,
     device = next(model.model.parameters()).device
     done = errors = 0
 
-    for i in tqdm(range(0, len(pending_names), batch_size),
-                  desc=station_dir.name, unit="batch", leave=False):
-        chunk = pending_names[i : i + batch_size]
+    with ThreadPoolExecutor(max_workers=io_workers) as pool:
+        # Submit ALL reads immediately — threads start filling RAM while the
+        # GPU works through earlier batches
+        futures = [pool.submit(_load_tile, s2_dir / name) for name in pending_names]
 
-        # ── load chunk ────────────────────────────────────────────────────────
-        arrays, nodata_masks, profiles, names = [], [], [], []
-        for name in chunk:
-            try:
-                with rasterio.open(s2_dir / name) as src:
-                    arr_int = src.read()   # raw DN integers
-                    profile = src.profile
-                nodata_masks.append((arr_int == 0).all(axis=0))
-                arr = arr_int.astype(np.float32)
-                del arr_int
-                arr /= 10_000.0
-                arrays.append(arr)
-                profiles.append(profile)
+        for i in tqdm(range(0, len(futures), batch_size),
+                      desc=station_dir.name, unit="batch", leave=False):
+            chunk_futures = futures[i : i + batch_size]
+
+            # ── collect prefetched tiles ──────────────────────────────────────
+            names, arrays, nodata_masks, profiles = [], [], [], []
+            for fut in chunk_futures:
+                name, arr, nodata_mask, profile = fut.result()
+                if arr is None:
+                    errors += 1
+                    continue
                 names.append(name)
-            except (OSError, rasterio.errors.RasterioIOError) as exc:
-                log.error("[io error] %s: %s", name, exc)
-                errors += 1
+                arrays.append(arr)
+                nodata_masks.append(nodata_mask)
+                profiles.append(profile)
 
-        if not arrays:
-            continue
+            if not arrays:
+                continue
 
-        # ── batched GPU forward pass ──────────────────────────────────────────
-        try:
-            batch = torch.from_numpy(np.stack(arrays)).to(device)  # (B, C, H, W)
-            desc_batch = [S2_L2A_DESCRIPTORS for _ in range(len(arrays))]
-            with torch.no_grad():
-                preds = model.model(batch, desc_batch)   # (B, num_classes, H, W)
-            preds_np = preds.cpu().numpy()
-        except Exception as exc:
-            log.error("[model error] batch starting %s: %s", names[0], exc)
-            errors += len(arrays)
-            continue
-
-        # ── write results ─────────────────────────────────────────────────────
-        for name, pred, nodata_mask, profile in zip(names, preds_np, nodata_masks, profiles):
+            # ── batched GPU forward pass ──────────────────────────────────────
             try:
-                mask = model.postprocess(pred)   # (H, W) argmax uint8
-                mask = mask.astype(np.uint8)
-                mask[nodata_mask] = 255
-
-                out_path = out_dir / name
-                out_profile = profile.copy()
-                out_profile.update(count=1, dtype="uint8", nodata=255, compress="deflate")
-                tmp = out_path.with_suffix(".tmp")
-                with rasterio.open(tmp, "w", **out_profile) as dst:
-                    dst.write(mask[np.newaxis])
-                tmp.rename(out_path)
-                done += 1
+                batch = torch.from_numpy(np.stack(arrays)).to(device)  # (B, C, H, W)
+                desc_batch = [S2_L2A_DESCRIPTORS for _ in range(len(arrays))]
+                with torch.no_grad():
+                    preds = model.model(batch, desc_batch)   # (B, num_classes, H, W)
+                preds_np = preds.cpu().numpy()
+                del batch, preds
             except Exception as exc:
-                log.error("[write error] %s: %s", name, exc)
-                errors += 1
+                log.error("[model error] batch starting %s: %s", names[0], exc)
+                errors += len(arrays)
+                continue
+
+            # ── write results ─────────────────────────────────────────────────
+            for name, pred, nodata_mask, profile in zip(names, preds_np, nodata_masks, profiles):
+                try:
+                    mask = model.postprocess(pred)   # (H, W) argmax uint8
+                    mask = mask.astype(np.uint8)
+                    mask[nodata_mask] = 255
+
+                    out_path = out_dir / name
+                    out_profile = profile.copy()
+                    out_profile.update(count=1, dtype="uint8", nodata=255, compress="deflate")
+                    tmp = out_path.with_suffix(".tmp")
+                    with rasterio.open(tmp, "w", **out_profile) as dst:
+                        dst.write(mask[np.newaxis])
+                    tmp.rename(out_path)
+                    done += 1
+                except Exception as exc:
+                    log.error("[write error] %s: %s", name, exc)
+                    errors += 1
 
     return done, errors
 
@@ -200,15 +224,18 @@ def main():
                         help="First station index, inclusive (SLURM array slicing)")
     parser.add_argument("--end-idx",     type=int,  default=None,
                         help="Last station index, exclusive (SLURM array slicing)")
-    parser.add_argument("--batch-size",  type=int,  default=8,
-                        help="Inference batch size (default 8; reduce if OOM)")
+    parser.add_argument("--batch-size",  type=int,  default=16,
+                        help="GPU inference batch size (default 16)")
+    parser.add_argument("--io-workers", type=int,  default=3,
+                        help="Threads for async tile prefetch (default 3; "
+                             "set to cpus-per-task minus 1)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info("Device     : %s", device)
     log.info("Scratch    : %s", args.scratch_dir)
     log.info("Data dir   : %s", args.data_dir)
-    log.info("Batch size : %d", args.batch_size)
+    log.info("Batch size : %d  IO workers: %d", args.batch_size, args.io_workers)
     log.info("Model      : SEnSeIv2-SegFormerB2-alldata-ambiguous")
 
     log.info("Loading SEnSeIv2...")
@@ -236,7 +263,8 @@ def main():
                 continue
             out_dir = perm_dir / "CloudMask"
             t0 = time.time()
-            done, errors = process_station(model, station_dir, out_dir, args.batch_size)
+            done, errors = process_station(model, station_dir, out_dir,
+                                           args.batch_size, args.io_workers)
             total_done   += done
             total_errors += errors
             elapsed = time.time() - t0

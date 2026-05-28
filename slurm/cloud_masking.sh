@@ -29,7 +29,8 @@ echo ""
 $PYTHON cloud_masking_inference.py \
     --start-idx  $SLURM_ARRAY_TASK_ID \
     --end-idx    $((SLURM_ARRAY_TASK_ID + 1)) \
-    --batch-size 8
+    --batch-size 16 \
+    --io-workers 3
 
 echo ""
 echo "Finished  : $(date)"
