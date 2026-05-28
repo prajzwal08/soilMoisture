@@ -48,6 +48,7 @@ import json
 import sys
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -374,7 +375,8 @@ def process_temporal(encoder:     TerraMindEncoder,
 
     pending = [
         f for f in sorted(src_dir.glob("*.tif"))
-        if dry_run or not (out_dir / f"{f.stem}_L12.pt").exists()
+        if dry_run or not all((out_dir / f"{f.stem}_{lay}.pt").exists()
+                              for lay in TEMPORAL_LAYERS)
     ]
     if not pending:
         return 0
@@ -606,9 +608,10 @@ def main():
         print(f"Skipped {len(skipped)} stations (no data dir): {', '.join(skipped[:10])}{tail}")
     if failures:
         manifest = args.data_dir / "failures.log"
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with manifest.open("a") as fh:
             for path in failures:
-                fh.write(f"{path}\n")
+                fh.write(f"{ts}  {path}\n")
         print(f"{len(failures)} file(s) failed (NaN/OOM/IO) — appended to {manifest}")
 
 
