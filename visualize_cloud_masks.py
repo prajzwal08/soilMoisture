@@ -38,7 +38,7 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 # ── paths ─────────────────────────────────────────────────────────────────────
 SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
 DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
-LOGS_DIR    = DATA_DIR / "logs"
+LOGS_DIR    = Path(__file__).parent / "fig"
 SPLITS      = ["sm_only", "sm_and_flux", "flux_only"]
 
 # ── cloud mask colour scheme (7-class SEnSeIv2 encoding) ──────────────────────
