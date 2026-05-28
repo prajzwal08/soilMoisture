@@ -212,10 +212,11 @@ def render_station(station_name: str, masks: list[Path], out_dir: Path) -> Path:
     axes[1, -1].legend(handles=patches, loc="lower right",
                        fontsize=5.5, framealpha=0.85, ncol=1, borderpad=0.3)
 
-    out_path = out_dir / f"cloud_mask_vis_{station_name}.svg"
-    fig.savefig(out_path, format="svg", bbox_inches="tight")
+    stem = out_dir / f"cloud_mask_vis_{station_name}"
+    fig.savefig(stem.with_suffix(".svg"), format="svg", bbox_inches="tight")
+    fig.savefig(stem.with_suffix(".png"), format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    return out_path
+    return stem.with_suffix(".svg")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
