@@ -131,11 +131,11 @@ def process_station(model: CloudMask, station_dir: Path,
                     io_workers: int = 3) -> tuple[int, int]:
     """Run SEnSeIv2 on all pending S2L2A tiles. Returns (done, errors).
 
-    I/O and GPU are pipelined: all tile reads are submitted to a thread pool
-    upfront so worker threads pre-fetch disk → RAM while the GPU computes the
-    previous batch. On a GPFS filesystem where I/O (≈18 tiles/sec) is the
-    bottleneck rather than the GPU (≈80 tiles/sec), this overlap is the main
-    source of throughput gain.
+    Double-buffer pipeline: at any moment at most 2 * batch_size tiles occupy
+    RAM — the batch the GPU is computing, and the next batch being prefetched
+    by IO threads in parallel. Reads for batch N+1 are submitted immediately
+    after batch N's futures are collected, so all io_workers threads stay busy
+    during the GPU forward pass and deflate writes.
     """
     s2_dir = station_dir / "S2L2A"
     if not s2_dir.exists():
@@ -152,18 +152,18 @@ def process_station(model: CloudMask, station_dir: Path,
     device = next(model.model.parameters()).device
     done = errors = 0
 
+    chunks = [pending_names[i : i + batch_size]
+              for i in range(0, len(pending_names), batch_size)]
+
     with ThreadPoolExecutor(max_workers=io_workers) as pool:
-        # Submit ALL reads immediately — threads start filling RAM while the
-        # GPU works through earlier batches
-        futures = [pool.submit(_load_tile, s2_dir / name) for name in pending_names]
+        # Pre-fetch the first batch before entering the loop
+        next_futures = [pool.submit(_load_tile, s2_dir / n) for n in chunks[0]]
 
-        for i in tqdm(range(0, len(futures), batch_size),
-                      desc=station_dir.name, unit="batch", leave=False):
-            chunk_futures = futures[i : i + batch_size]
-
-            # ── collect prefetched tiles ──────────────────────────────────────
+        for idx in tqdm(range(len(chunks)), desc=station_dir.name,
+                        unit="batch", leave=False):
+            # ── collect the batch that was prefetched last iteration ──────────
             names, arrays, nodata_masks, profiles = [], [], [], []
-            for fut in chunk_futures:
+            for fut in next_futures:
                 name, arr, nodata_mask, profile = fut.result()
                 if arr is None:
                     errors += 1
@@ -172,6 +172,13 @@ def process_station(model: CloudMask, station_dir: Path,
                 arrays.append(arr)
                 nodata_masks.append(nodata_mask)
                 profiles.append(profile)
+
+            # ── kick off next batch reads immediately ─────────────────────────
+            # Threads now read batch idx+1 from disk while the GPU and write
+            # loop below consume batch idx — true overlap, bounded to 2 batches
+            if idx + 1 < len(chunks):
+                next_futures = [pool.submit(_load_tile, s2_dir / n)
+                                for n in chunks[idx + 1]]
 
             if not arrays:
                 continue
@@ -192,8 +199,7 @@ def process_station(model: CloudMask, station_dir: Path,
             # ── write results ─────────────────────────────────────────────────
             for name, pred, nodata_mask, profile in zip(names, preds_np, nodata_masks, profiles):
                 try:
-                    mask = model.postprocess(pred)   # (H, W) argmax uint8
-                    mask = mask.astype(np.uint8)
+                    mask = model.postprocess(pred).astype(np.uint8)
                     mask[nodata_mask] = 255
 
                     out_path = out_dir / name
