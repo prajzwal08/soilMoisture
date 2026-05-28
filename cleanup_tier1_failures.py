@@ -76,6 +76,10 @@ EXCLUDED_STATIONS: dict[str, str] = {
     "ISMN_SCAN_Tuskegee":                     "sm_only",
     "ISMN_NGARI_SQ06":                        "sm_only",
     "ISMN_HOAL_Hoal-16":                      "sm_only",
+    # Minimum coverage exclusions (<12 avg S2L2A tiles/year after tier-1)
+    "ISMN_SCAN_WearyLake":                    "sm_only",
+    "ISMN_SNOTEL_Brumley":                    "sm_only",
+    "ISMN_USCRN_Darrington-21-NNE":           "sm_only",
 }
 
 

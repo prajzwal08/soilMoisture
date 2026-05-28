@@ -1,0 +1,46 @@
+Minimum Coverage Exclusions — S2L2A < 12 tiles/year
+=====================================================
+Date: 2026-05-28
+Criterion: average S2L2A surviving tiles per year (after tier-1 cleanup) < 12
+Rationale: fewer than 12 images/year (~1/month) is insufficient for meaningful
+temporal modelling in the TerraMind encoder.
+
+Result: 3 additional stations excluded
+---------------------------------------
+  Station                          Split    Years  Total  Avg/yr  Min/yr
+  -------------------------------- -------  -----  -----  ------  ------
+  ISMN_SCAN_WearyLake              sm_only    2      20    10.0       5
+  ISMN_SNOTEL_Brumley              sm_only    2      22    11.0       9
+  ISMN_USCRN_Darrington-21-NNE     sm_only    2      22    11.0       4
+
+All three have only 2 years of data and were likely acquired near the start
+or end of the archive window — giving artificially low annual tile counts.
+
+S2L2A tiles/year distribution (1,031 surviving stations, after tier-1)
+-----------------------------------------------------------------------
+  Min    :   1
+  P10    :  19
+  Median :  58
+  Mean   :  62
+  P90    : 115
+  Max    : 148
+
+  6,660 station-years analysed across 1,031 stations.
+
+Combined exclusion summary (all reasons)
+-----------------------------------------
+  Reason                              Stations excluded
+  ----------------------------------  -----------------
+  MGRS boundary (>50% S2L2A tier-1)             17
+  Minimum coverage (<12 tiles/year)               3
+  ─────────────────────────────────              ──
+  Total excluded                                 20
+
+  Stations remaining: 1,048 − 20 = 1,028
+  (17 already in nan_station_exclusions.txt)
+
+What will be deleted for the 3 new stations
+--------------------------------------------
+  Same as for the 17 MGRS-boundary stations:
+  1. Entire scratch dir: /gpfs/scratch1/shared/pkhanal/satellite/{station}/
+  2. Entire data dir:    /gpfs/work3/0/prjs1968/data/sm_only/{station}/
