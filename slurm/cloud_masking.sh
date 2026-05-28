@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=01:30:00
+#SBATCH --time=02:30:00
 #SBATCH --mem=8G
 #SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/cloud_mask_%A_%a.out
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/cloud_mask_%A_%a.err
