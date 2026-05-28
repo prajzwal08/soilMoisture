@@ -41,7 +41,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
+import logging
 import time
 from pathlib import Path
 
@@ -51,20 +51,35 @@ import rasterio.errors
 import torch
 from tqdm import tqdm
 
-# ── GPFS / GDAL performance ───────────────────────────────────────────────────
-os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
-os.environ.setdefault("GDAL_MAX_RAW_BLOCK_CACHE_SIZE", "200000000")
-os.environ.setdefault("GDAL_SWATH_SIZE",               "200000000")
-os.environ.setdefault("VSI_CACHE",                     "TRUE")
-
 from senseiv2.inference import CloudMask
 from senseiv2.utils import get_model_files
 from senseiv2.constants import SENTINEL2_DESCRIPTORS
 
-# ── constants ─────────────────────────────────────────────────────────────────
+# ── logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
+# ── GPFS / GDAL config (applied via rasterio.Env in main) ────────────────────
+_GDAL_ENV = {
+    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+    "GDAL_MAX_RAW_BLOCK_CACHE_SIZE": "200000000",
+    "GDAL_SWATH_SIZE":               "200000000",
+    "VSI_CACHE":                     "TRUE",
+}
+
+# ── constants ─────────────────────────────────────────────────────────────────
 SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
 DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
+
+# Our S2L2A tiles have 12 bands: B01–B09, B11, B12 (B10 absent in L2A).
+# Indices into SENTINEL2_DESCRIPTORS (0-based) for those 12 bands:
+#   B01=0 B02=1 B03=2 B04=3 B05=4 B06=5 B07=6 B08=7 B8A=8 B09=9 B11=11 B12=12
+S2_L2A_DESCRIPTOR_IDX = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12]
+S2_L2A_DESCRIPTORS    = [SENTINEL2_DESCRIPTORS[i] for i in S2_L2A_DESCRIPTOR_IDX]
 
 
 def _station_data_dir(station_id: str, data_dir: Path) -> Path | None:
@@ -75,23 +90,17 @@ def _station_data_dir(station_id: str, data_dir: Path) -> Path | None:
             return d
     return None
 
-# Our S2L2A tiles have 12 bands: B01–B09, B11, B12 (B10 absent in L2A).
-# Indices into SENTINEL2_DESCRIPTORS (0-based) for those 12 bands:
-#   B01=0 B02=1 B03=2 B04=3 B05=4 B06=5 B07=6 B08=7 B8A=8 B09=9 B11=11 B12=12
-S2_L2A_DESCRIPTOR_IDX = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12]
-S2_L2A_DESCRIPTORS    = [SENTINEL2_DESCRIPTORS[i] for i in S2_L2A_DESCRIPTOR_IDX]
-
 
 # ── model loader ──────────────────────────────────────────────────────────────
 
-def load_sensei(device: str = "cpu") -> CloudMask:
+def load_sensei(device: str = "cpu", batch_size: int = 1) -> CloudMask:
     cfg_path, wts_path = get_model_files("SEnSeIv2-SegFormerB2-alldata-ambiguous")
     return CloudMask(
         cfg_path, wts_path,
         device=device,
         output_style=None,   # preserve all 7 classes (matches TerraMesh storage)
         categorise=True,
-        batch_size=1,
+        batch_size=batch_size,
     )
 
 
@@ -101,36 +110,38 @@ def process_station(model: CloudMask, station_dir: Path,
                     out_dir: Path) -> tuple[int, int]:
     """Run SEnSeIv2 on all pending S2L2A tiles. Returns (done, errors)."""
     s2_dir = station_dir / "S2L2A"
-
     if not s2_dir.exists():
         return 0, 0
 
-    pending = [f for f in sorted(s2_dir.glob("*.tif"))
-               if not (out_dir / f.name).exists()]
-    if not pending:
+    # Set-based resume check: two readdir ops instead of N individual stat calls
+    all_inputs     = {f.name for f in s2_dir.glob("*.tif")}
+    existing       = {f.name for f in out_dir.glob("*.tif")} if out_dir.exists() else set()
+    pending_names  = sorted(all_inputs - existing)
+    if not pending_names:
         return 0, 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
     done = errors = 0
 
-    for tif_path in tqdm(pending, desc=station_dir.name, unit="tile", leave=False):
-        out_path = out_dir / tif_path.name
+    for name in tqdm(pending_names, desc=station_dir.name, unit="tile", leave=False):
+        tif_path = s2_dir / name
+        out_path = out_dir / name
         try:
             with rasterio.open(tif_path) as src:
-                arr     = src.read().astype(np.float32)
-                arr    /= 10_000.0   # in-place: avoids float64 upcast
+                arr_int = src.read()   # raw DN integers
                 profile = src.profile
 
-            # Pixels where ALL bands are 0 are swath-edge fill values (no nodata tag)
-            nodata_mask = (arr == 0).all(axis=0)
+            # Check nodata on raw integers before any float arithmetic
+            nodata_mask = (arr_int == 0).all(axis=0)
+            arr = arr_int.astype(np.float32)
+            del arr_int
+            arr /= 10_000.0            # in-place: avoids float64 upcast
 
-            # Run SEnSeIv2 — pass wavelength descriptors so it knows which
-            # bands are present (handles missing B10 natively)
             try:
                 with torch.no_grad():
                     mask = model(arr, descriptors=S2_L2A_DESCRIPTORS)  # (H, W) uint8
             except Exception as exc:
-                print(f"    [model error] {tif_path.name}: {exc}")
+                log.error("[model error] %s: %s", name, exc)
                 errors += 1
                 continue
 
@@ -143,11 +154,10 @@ def process_station(model: CloudMask, station_dir: Path,
             with rasterio.open(tmp, "w", **out_profile) as dst:
                 dst.write(mask[np.newaxis])
             tmp.rename(out_path)
-
             done += 1
 
         except (OSError, rasterio.errors.RasterioIOError) as exc:
-            print(f"    [io error] {tif_path.name}: {exc}")
+            log.error("[io error] %s: %s", name, exc)
             errors += 1
 
     return done, errors
@@ -166,17 +176,20 @@ def main():
                         help="First station index, inclusive (SLURM array slicing)")
     parser.add_argument("--end-idx",     type=int,  default=None,
                         help="Last station index, exclusive (SLURM array slicing)")
+    parser.add_argument("--batch-size",  type=int,  default=8,
+                        help="Inference batch size (default 8; reduce if OOM)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device     : {device}")
-    print(f"Scratch    : {args.scratch_dir}")
-    print(f"Data dir   : {args.data_dir}")
-    print(f"Model      : SEnSeIv2-SegFormerB2-alldata-ambiguous\n")
+    log.info("Device     : %s", device)
+    log.info("Scratch    : %s", args.scratch_dir)
+    log.info("Data dir   : %s", args.data_dir)
+    log.info("Batch size : %d", args.batch_size)
+    log.info("Model      : SEnSeIv2-SegFormerB2-alldata-ambiguous")
 
-    print("Loading SEnSeIv2...")
-    model = load_sensei(device)
-    print("Model loaded.\n")
+    log.info("Loading SEnSeIv2...")
+    model = load_sensei(device, batch_size=args.batch_size)
+    log.info("Model loaded.")
 
     if args.station:
         station_dirs = [args.scratch_dir / args.station]
@@ -185,27 +198,32 @@ def main():
         station_dirs = station_dirs[args.start_idx : args.end_idx]
 
     n = len(station_dirs)
-    print(f"Stations to process: {n}\n")
+    log.info("Stations to process: %d", n)
 
-    total_done = total_errors = 0
-    skipped = 0
-    for idx, station_dir in enumerate(station_dirs, 1):
-        perm_dir = _station_data_dir(station_dir.name, args.data_dir)
-        if perm_dir is None:
-            skipped += 1
-            continue
-        out_dir = perm_dir / "CloudMask"
-        t0 = time.time()
-        done, errors = process_station(model, station_dir, out_dir)
-        total_done   += done
-        total_errors += errors
-        elapsed = time.time() - t0
-        if done > 0:
-            print(f"[{idx:4d}/{n}] {station_dir.name}  done={done}  errors={errors}  ({elapsed:.1f}s)")
-        elif idx % 50 == 0:
-            print(f"[{idx:4d}/{n}] ... (up to date)")
+    total_done = total_errors = skipped = 0
 
-    print(f"\nFinished.  Masks written: {total_done}   errors: {total_errors}   skipped: {skipped}")
+    with rasterio.Env(**_GDAL_ENV):
+        for idx, station_dir in enumerate(station_dirs, 1):
+            perm_dir = _station_data_dir(station_dir.name, args.data_dir)
+            if perm_dir is None:
+                log.warning("[skip] %s — no permanent directory in %s (setup failure?)",
+                            station_dir.name, args.data_dir)
+                skipped += 1
+                continue
+            out_dir = perm_dir / "CloudMask"
+            t0 = time.time()
+            done, errors = process_station(model, station_dir, out_dir)
+            total_done   += done
+            total_errors += errors
+            elapsed = time.time() - t0
+            if done > 0:
+                log.info("[%4d/%d] %s  done=%d  errors=%d  (%.1fs)",
+                         idx, n, station_dir.name, done, errors, elapsed)
+            elif idx % 50 == 0:
+                log.info("[%4d/%d] ... (up to date)", idx, n)
+
+    log.info("Finished.  Masks written: %d   errors: %d   skipped: %d",
+             total_done, total_errors, skipped)
 
 
 if __name__ == "__main__":
