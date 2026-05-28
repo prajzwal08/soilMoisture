@@ -541,6 +541,12 @@ def main():
     os.environ.setdefault("GDAL_MAX_RAW_BLOCK_CACHE_SIZE", "200000000")
     os.environ.setdefault("GDAL_SWATH_SIZE", "200000000")
     os.environ.setdefault("VSI_CACHE", "TRUE")
+    # Prevent thread thrashing: each DataLoader worker handles one file at a time,
+    # so internal thread parallelism inside GDAL/OpenMP/MKL is counterproductive.
+    # Without this, num_workers=3 on 4 CPUs can spawn 3×N threads, causing context-switch overhead.
+    os.environ.setdefault("OMP_NUM_THREADS",  "1")
+    os.environ.setdefault("MKL_NUM_THREADS",  "1")
+    os.environ.setdefault("GDAL_NUM_THREADS", "1")
 
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     trial   = args.trial
