@@ -41,6 +41,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from pathlib import Path
 
@@ -48,6 +49,13 @@ import numpy as np
 import rasterio
 import rasterio.errors
 import torch
+from tqdm import tqdm
+
+# ── GPFS / GDAL performance ───────────────────────────────────────────────────
+os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+os.environ.setdefault("GDAL_MAX_RAW_BLOCK_CACHE_SIZE", "200000000")
+os.environ.setdefault("GDAL_SWATH_SIZE",               "200000000")
+os.environ.setdefault("VSI_CACHE",                     "TRUE")
 
 from senseiv2.inference import CloudMask
 from senseiv2.utils import get_model_files
@@ -105,11 +113,12 @@ def process_station(model: CloudMask, station_dir: Path,
     out_dir.mkdir(parents=True, exist_ok=True)
     done = errors = 0
 
-    for tif_path in pending:
+    for tif_path in tqdm(pending, desc=station_dir.name, unit="tile", leave=False):
         out_path = out_dir / tif_path.name
         try:
             with rasterio.open(tif_path) as src:
-                arr     = src.read().astype(np.float32) / 10_000  # (12, H, W)
+                arr     = src.read().astype(np.float32)
+                arr    /= 10_000.0   # in-place: avoids float64 upcast
                 profile = src.profile
 
             # Pixels where ALL bands are 0 are swath-edge fill values (no nodata tag)
@@ -117,10 +126,14 @@ def process_station(model: CloudMask, station_dir: Path,
 
             # Run SEnSeIv2 — pass wavelength descriptors so it knows which
             # bands are present (handles missing B10 natively)
-            mask = model(arr, descriptors=S2_L2A_DESCRIPTORS)  # (H, W) uint8
+            try:
+                with torch.no_grad():
+                    mask = model(arr, descriptors=S2_L2A_DESCRIPTORS)  # (H, W) uint8
+            except Exception as exc:
+                print(f"    [model error] {tif_path.name}: {exc}")
+                errors += 1
+                continue
 
-            # 4-class output: 0=clear 1=thick 2=thin 3=shadow
-            # Override nodata pixels regardless of what the model predicted
             mask = mask.astype(np.uint8)
             mask[nodata_mask] = 255
 
@@ -134,7 +147,7 @@ def process_station(model: CloudMask, station_dir: Path,
             done += 1
 
         except (OSError, rasterio.errors.RasterioIOError) as exc:
-            print(f"    [error] {tif_path.name}: {exc}")
+            print(f"    [io error] {tif_path.name}: {exc}")
             errors += 1
 
     return done, errors
