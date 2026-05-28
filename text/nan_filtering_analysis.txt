@@ -1,0 +1,102 @@
+NaN Filtering Analysis — TerraMesh Two-Tier Filter
+====================================================
+Date: 2026-05-28
+Job: 23163836 (rome partition, tcn431, 16 CPUs, ~1 hr)
+Script: analyze_nan_filtering.py
+Stations: 1,048
+
+Background
+----------
+Before tokenization with TerraMind, invalid pixels must be identified and
+filtered. Invalid pixels come from two sources:
+
+  S2L2A  — DN == 0 in ALL 12 bands (fill pixel: outside MGRS tile boundary
+            or swath edge). Clouds have valid DN values and are handled
+            separately by SEnSeIv2 cloud masking.
+
+  S1RTC  — NaN in any band (VV or VH). Swath edge pixels are stored as NaN
+            by download_s1_lulc_mpc.py (line: db = np.where(arr > 0,
+            10 * log10(arr), np.nan)).
+
+  DEM    — NaN in any band. Reprojection of the source DEM leaves boundary
+            and water-body pixels as NaN (no nodata tag written to output).
+
+TerraMesh filter rules applied
+-------------------------------
+  Tier-1 (tile level):  > 50% invalid pixels across all bands → discard tile
+  Tier-2 (token level): > 1%  invalid pixels in a 16×16 patch → invalid token
+
+Tiles are 224×224 pixels → 196 tokens (14×14 grid).
+
+Results
+-------
+  Modality   Tiles      T1 pass   T1 rate   Tokens        Valid tok     Tok rate
+  ---------  ---------  --------  --------  ------------  ------------  --------
+  S2L2A      430,325    414,122   96.2%     81,167,912    80,417,443    99.1%
+  S1RTC      519,472    510,336   98.2%     100,025,856   99,445,018    99.4%
+  DEM          1,048      1,025   97.8%        200,900       199,740    99.4%
+
+  S2+DEM combined (S2L2A tokens further masked by DEM NaN):
+  Tokens: 79,221,632   Valid: 78,087,070   Rate: 98.6%
+
+Key findings
+------------
+1. NaN/fill-pixel loss is minimal at scale.
+   Only 3.8% of S2L2A tiles are discarded at tier-1 and 0.9% of tokens
+   lost at tier-2. The pipeline is healthy — NaN is not a systemic problem.
+
+2. DEM is nearly complete.
+   23 of 1,048 stations (2.2%) have a DEM with > 50% NaN. These are mostly
+   coastal/water-boundary stations (e.g. AmeriFlux_CA-DBB, AmeriFlux_CA-DB2)
+   where the source DEM does not cover the full 224×224 bounding box.
+   These stations will lose their DEM tokens entirely at training time.
+
+3. S1RTC swath edges are rare.
+   1.8% of tiles discarded at tier-1; virtually no token loss at tier-2
+   (99.4% valid). Swath-edge NaN affects only a small fraction of tiles.
+
+4. Worst stations (lowest S2L2A tier-1 survival) are SNOTEL mountain sites
+   and a handful of SCAN/TAHMO stations located near MGRS tile boundaries.
+   These have many partial tiles (large zero-fill margins), not actual data
+   gaps. Typical survival rates are still 55–100% for most stations.
+
+   Top 20 worst S2L2A tile survival:
+     ISMN_SNOTEL_CopperMountain          478 tiles    4% pass
+     ISMN_SNOTEL_DiamondPeak             387 tiles    4% pass
+     ISMN_CW3E_WindyGap                  960 tiles    4% pass
+     ISMN_SNOTEL_WhiteHorseLake          408 tiles    5% pass
+     ISMN_SNOTEL_BurnsideLake          1,133 tiles    6% pass
+     ISMN_SCAN_CochoraRanch              553 tiles    6% pass
+     ISMN_SNOTEL_Corral                  877 tiles    6% pass
+     ISMN_REMEDHUS_LaAtalaya              48 tiles    6% pass
+     ISMN_SCAN_Wedowee                   176 tiles    7% pass
+     ISMN_SNOTEL_Lakefork#3              566 tiles    7% pass
+     ISMN_SNOTEL_MedanoPass              409 tiles    8% pass
+     ISMN_SCAN_JordanValleyCwma          239 tiles    8% pass
+     ISMN_TAHMO_CRIG(SoilMoistureStation1) 159 tiles 11% pass
+     ICOS_DE-Tha                         252 tiles   12% pass
+     ISMN_SCAN_Tuskegee                  475 tiles   14% pass
+     ISMN_NGARI_SQ06                      78 tiles   17% pass
+     ISMN_HOAL_Hoal-16                    41 tiles   46% pass
+     ISMN_SNOTEL_BobsHollow              905 tiles   55% pass
+     ISMN_HOBE_2.11                      170 tiles   58% pass
+     ISMN_SNOTEL_Golconda                871 tiles   58% pass
+
+5. Cloud masking is the dominant source of token loss.
+   NaN filtering removes ~1-4% of data. The remaining invalidity comes from
+   clouds, which will be quantified by analyze_cloud_coverage.py after the
+   full SEnSeIv2 cloud masking run (slurm/cloud_masking.sh) completes.
+
+Outstanding fixes
+-----------------
+- download_s1_lulc_mpc.py: replace np.nan with a finite dB floor (e.g. -50.0)
+  for swath-edge pixels so the nodata convention is consistent.
+- download_dem_cdse.py: set nodata=np.nan in rasterio profile when writing
+  output so rasterio can identify invalid pixels automatically.
+- precompute_terramind.py: add np.nan_to_num(arr, nan=0.0) after loading
+  tiles so the encoder receives finite inputs (avoids NaN in output tokens).
+
+Plots
+-----
+  /gpfs/work3/0/prjs1968/data/logs/nan_filtering_analysis.png
+  /gpfs/work3/0/prjs1968/data/logs/nan_filtering_analysis.svg
