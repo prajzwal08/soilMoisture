@@ -221,6 +221,7 @@ def render_station(station_name: str, masks: list[Path], out_dir: Path) -> Path:
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    global SCRATCH_DIR  # updated after args parsed
     parser = argparse.ArgumentParser(description="Visualise S2L2A + cloud masks by month")
     parser.add_argument("--station",     type=str,  default=None)
     parser.add_argument("--n-stations",  type=int,  default=None)
@@ -229,7 +230,6 @@ def main():
     parser.add_argument("--out-dir",     type=Path, default=LOGS_DIR)
     args = parser.parse_args()
 
-    global SCRATCH_DIR
     SCRATCH_DIR = args.scratch_dir
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
