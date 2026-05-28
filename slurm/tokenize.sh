@@ -12,7 +12,9 @@
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/tokenize_%A_%a.err
 
 # ── env ───────────────────────────────────────────────────────────────────────
-PYTHON=/gpfs/home5/pkhanal/miniforge3/envs/terramind/bin/python
+source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
+conda activate terramind
+PYTHON=$(which python)
 export PROJ_LIB=/gpfs/home5/pkhanal/miniforge3/envs/terramind/share/proj
 
 cd /gpfs/work3/0/prjs1968/soilMoisture

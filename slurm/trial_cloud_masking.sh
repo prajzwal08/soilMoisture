@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=cm_trial
-#SBATCH --partition=thin
+#SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -10,7 +10,9 @@
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/trial_cloud_mask_%j.err
 
 # ── env ───────────────────────────────────────────────────────────────────────
-PYTHON=/gpfs/home5/pkhanal/miniforge3/envs/sensei/bin/python
+source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
+conda activate sensei
+PYTHON=$(which python)
 DATA_DIR=/gpfs/work3/0/prjs1968/data
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
