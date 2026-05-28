@@ -23,8 +23,10 @@ echo "CPUs     : $SLURM_CPUS_PER_TASK"
 echo "Started  : $(date)"
 echo ""
 
-# ── cleanup (remove --dry-run to actually delete) ────────────────────────────
-$PYTHON cleanup_tier1_failures.py --workers 14 --dry-run
+# ── cleanup ───────────────────────────────────────────────────────────────────
+# Phase A: delete 17 excluded station directories entirely (scratch + data)
+# Phase B: delete remaining individual tier-1 failing tiles
+$PYTHON cleanup_tier1_failures.py --workers 14
 
 echo ""
 echo "Finished : $(date)"

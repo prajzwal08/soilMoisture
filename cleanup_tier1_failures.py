@@ -53,6 +53,31 @@ TIER1_THRESHOLD = 0.50   # > 50 % invalid pixels → tier-1 failure
 
 RGB_IDX = (3, 2, 1)      # S2L2A: B04 / B03 / B02
 
+DATA_DIR = Path("/gpfs/work3/0/prjs1968/data")
+
+# Stations excluded entirely (>50% S2L2A tile loss — MGRS boundary issue).
+# Both their scratch directory AND data directory will be deleted.
+EXCLUDED_STATIONS: dict[str, str] = {
+    # station_name: split
+    "ISMN_SNOTEL_CopperMountain":             "sm_only",
+    "ISMN_SNOTEL_DiamondPeak":                "sm_only",
+    "ISMN_CW3E_WindyGap":                     "sm_only",
+    "ISMN_SNOTEL_WhiteHorseLake":             "sm_only",
+    "ISMN_SNOTEL_BurnsideLake":               "sm_only",
+    "ISMN_SCAN_CochoraRanch":                 "sm_only",
+    "ISMN_SNOTEL_Corral":                     "sm_only",
+    "ISMN_REMEDHUS_LaAtalaya":                "sm_only",
+    "ISMN_SCAN_Wedowee":                      "sm_only",
+    "ISMN_SNOTEL_Lakefork#3":                 "sm_only",
+    "ISMN_SNOTEL_MedanoPass":                 "sm_only",
+    "ISMN_SCAN_JordanValleyCwma":             "sm_only",
+    "ISMN_TAHMO_CRIG(SoilMoistureStation1)":  "sm_only",
+    "ICOS_DE-Tha":                            "sm_and_flux",
+    "ISMN_SCAN_Tuskegee":                     "sm_only",
+    "ISMN_NGARI_SQ06":                        "sm_only",
+    "ISMN_HOAL_Hoal-16":                      "sm_only",
+}
+
 
 # ── NaN / invalidity maps ─────────────────────────────────────────────────────
 
@@ -271,9 +296,12 @@ def _render_summary(records: list[dict],
 # ── deletion ──────────────────────────────────────────────────────────────────
 
 def delete_files(records: list[dict]) -> tuple[int, int]:
-    """Delete all files in records. Returns (deleted, errors)."""
+    """Delete individual tier-1 failing tiles (skip excluded stations — whole
+    dir is removed by delete_excluded_stations instead)."""
     deleted = errors = 0
     for rec in records:
+        if rec["station"] in EXCLUDED_STATIONS:
+            continue   # handled by delete_excluded_stations
         p = Path(rec["path"])
         try:
             p.unlink()
@@ -281,6 +309,28 @@ def delete_files(records: list[dict]) -> tuple[int, int]:
         except Exception as exc:
             print(f"  [error] could not delete {p}: {exc}")
             errors += 1
+    return deleted, errors
+
+
+def delete_excluded_stations(scratch_dir: Path, data_dir: Path) -> tuple[int, int]:
+    """
+    Remove entire scratch and data directories for the 17 excluded stations.
+    Returns (stations_deleted, errors).
+    """
+    import shutil
+    deleted = errors = 0
+    for stn, split in EXCLUDED_STATIONS.items():
+        for root in [scratch_dir / stn, data_dir / split / stn]:
+            if root.exists():
+                try:
+                    shutil.rmtree(root)
+                    print(f"  Removed: {root}")
+                    deleted += 1
+                except Exception as exc:
+                    print(f"  [error] could not remove {root}: {exc}")
+                    errors += 1
+            else:
+                print(f"  [skip]  {root}  (not found)")
     return deleted, errors
 
 
@@ -371,11 +421,20 @@ def main():
         print("\n[DRY RUN] Skipping deletion. Re-run without --dry-run to delete.")
         return
 
-    print(f"\nDeleting {len(all_records):,} files…")
-    deleted, errors = delete_files(all_records)
-    print(f"  Deleted : {deleted:,}")
+    # Step A — delete 17 excluded station directories entirely
+    print(f"\nDeleting {len(EXCLUDED_STATIONS)} excluded station directories…")
+    st_del, st_err = delete_excluded_stations(args.scratch_dir, DATA_DIR)
+    print(f"  Directories removed : {st_del}")
+    if st_err:
+        print(f"  Errors              : {st_err}")
+
+    # Step B — delete individual tier-1 failing tiles from remaining stations
+    remaining = [r for r in all_records if r["station"] not in EXCLUDED_STATIONS]
+    print(f"\nDeleting {len(remaining):,} individual tier-1 failing tiles…")
+    deleted, errors = delete_files(remaining)
+    print(f"  Files deleted : {deleted:,}")
     if errors:
-        print(f"  Errors  : {errors}")
+        print(f"  Errors        : {errors}")
     print("Done.")
 
 

@@ -1,0 +1,92 @@
+Tier-1 Deletion Summary — Station-wise Breakdown
+==================================================
+Date: 2026-05-28
+Source: text/tier1_deleted_records.csv  (25,362 records)
+
+Key finding: S2L2A and S1RTC failures are largely on DIFFERENT stations.
+  S2L2A failures are caused by MGRS tile boundary crops (fill pixels).
+  S1RTC failures are caused by SAR swath edges (NaN pixels).
+  They rarely co-occur on the same station at high rates.
+
+Distribution of failures across station groups
+-----------------------------------------------
+  Modality  On excluded stations  On surviving stations
+  --------  --------------------  ---------------------
+  S2L2A              6,738                9,465
+  S1RTC                 48                9,088
+  DEM                    0                   23
+
+  → 99.5% of S1RTC failures are on stations that are NOT being excluded.
+  → These tiles will be individually deleted by cleanup_tier1_failures.py.
+
+Top 15 stations by S2L2A tier-1 failures (surviving stations only)
+-------------------------------------------------------------------
+  These have partial MGRS boundary crops but below the 50% exclusion threshold.
+  Their failing tiles are deleted; the station itself is kept.
+
+  Station                                       S2 deleted  (rate estimated)
+  --------------------------------------------- ----------
+  ISMN_SNOTEL_TimpanogosDivide                         271
+  ISMN_SCAN_ChickenRidge                               163
+  ISMN_RSMN_Barlad                                      73
+  ISMN_SCAN_ShagbarkHills                               91
+  ICOS_ES-Agu                                           77
+  ICOS_FI-Var                                           74
+  ISMN_SCAN_Tuskegee (excl.)                           409
+  ISMN_HOAL_Hoal-16  (excl.)                            22
+  ISMN_SNOTEL_DisasterPeak                              29
+  ISMN_SNOTEL_SeventysixCreek                           19
+
+Top 15 stations by S1RTC tier-1 failures (all surviving)
+---------------------------------------------------------
+  These have SAR swath-edge NaN tiles. S2L2A is largely unaffected.
+  Only the specific failing S1RTC TIF files are deleted; station is kept.
+
+  Station                                       S1 deleted  S2 deleted  overlap?
+  --------------------------------------------- ----------  ----------  --------
+  ISMN_SCAN_DoeRidge                                   364           5  minor
+  ISMN_REMEDHUS_LasTresRayas                           299          19  minor
+  ISMN_RSMN_Cotnari                                    291           0  none
+  ISMN_SNOTEL_BuckboardFlat                            254           8  minor
+  ISMN_SCAN_PowderMill                                 227          10  minor
+  ISMN_ROMPS_Maidanak                                  213           4  minor
+  ISMN_COSMOS-UK_Heytesbury                            202           0  none
+  ISMN_SNOTEL_UpperTsainaRiver                         198           1  none
+  ICOS_FR-Mej                                          192           0  none
+  ISMN_SCAN_Nephi                                      181          14  minor
+  ISMN_SCAN_MarbleCreek                                180           0  none
+  ISMN_SNOTEL_FryCanyon                                174           3  minor
+  ISMN_SNOTEL_BigCreekSum                              172           8  minor
+  ISMN_REMEDHUS_ElCoto                                 166           2  minor
+  ICOS_FR-Aur                                          150           0  none
+
+  Observation: high S1RTC failures do NOT correlate with high S2L2A failures.
+  These stations retain most of their S2L2A tiles and remain in the pipeline.
+
+DEM failures (23 stations)
+---------------------------
+  These stations have a mostly-NaN DEM (>50% reprojection gap).
+  The dem.tif is deleted; S2L2A and S1RTC for these stations are unaffected.
+
+  AmeriFlux_CA-DB2, AmeriFlux_CA-DBB, and 21 others.
+  Full list in text/tier1_deleted_records.csv  (modality = DEM).
+
+Summary of what will be deleted
+--------------------------------
+  Operation                              Files    Stations affected
+  ------------------------------------   -------  -----------------
+  Excluded station dirs (scratch+data)   ~8,038*  17
+  Individual S2L2A tier-1 tiles           9,465   ~200+
+  Individual S1RTC tier-1 tiles           9,088   ~200+
+  Individual DEM tier-1 files                23   23
+  ─────────────────────────────────────  ───────
+  Total                                  ~26,614
+
+  * Approximate: includes all modalities inside those 17 station dirs.
+
+After cleanup
+-------------
+  Stations: 1,048 → 1,031  (17 excluded)
+  S2L2A tiles: 430,325 → ~405,000  (tier-1 survivors only)
+  S1RTC tiles: 519,472 → ~501,000  (tier-1 survivors only)
+  DEM files:     1,048 → 1,025  (23 deleted)
