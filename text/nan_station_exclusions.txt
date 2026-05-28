@@ -1,0 +1,92 @@
+NaN Tier-1 Station Exclusions
+==============================
+Date: 2026-05-28
+Analysis source: cleanup_tier1_failures.py (dry-run job 23164661)
+Decision: exclude 17 stations entirely from training
+
+Background
+----------
+After applying TerraMesh tier-1 filtering (discard tiles with > 50% invalid
+pixels), 17 stations lose more than 50% of their S2L2A tiles. The surviving
+tile counts are too low for meaningful temporal sequences at training time.
+These stations are excluded entirely from the pipeline.
+
+Root Cause
+----------
+All 17 stations sit at or near the boundary of an MGRS (Military Grid Reference
+System) tile. The 224×224 pixel crop centred on the station straddles the edge
+of the tile, so a large fraction of the crop falls outside the MGRS boundary
+and is filled with DN=0 across all 12 bands. This is not a data quality issue —
+the data for pixels inside the boundary is valid — but the tile geometry makes
+the crop unusable for tokenization.
+
+Criterion
+---------
+Excluded if: (S2L2A tiles deleted at tier-1) / (S2L2A tiles total) > 50 %
+
+Exclusion List (sorted by S2L2A loss rate)
+------------------------------------------
+  Station                                      Split         S2 Total  S2 Del  S2 Surv  S2 Loss
+  -------------------------------------------- ------------- --------  ------  -------  -------
+  ISMN_SNOTEL_CopperMountain                   sm_only            478     459       19     96%
+  ISMN_SNOTEL_DiamondPeak                      sm_only            387     371       16     96%
+  ISMN_CW3E_WindyGap                           sm_only            960     920       40     96%
+  ISMN_SNOTEL_WhiteHorseLake                   sm_only            408     388       20     95%
+  ISMN_SNOTEL_BurnsideLake                     sm_only          1,133   1,068       65     94%
+  ISMN_SCAN_CochoraRanch                       sm_only            553     520       33     94%
+  ISMN_SNOTEL_Corral                           sm_only            877     823       54     94%
+  ISMN_REMEDHUS_LaAtalaya                      sm_only             48      45        3     94%
+  ISMN_SCAN_Wedowee                            sm_only            176     164       12     93%
+  ISMN_SNOTEL_Lakefork#3                       sm_only            566     525       41     93%
+  ISMN_SNOTEL_MedanoPass                       sm_only            409     376       33     92%
+  ISMN_SCAN_JordanValleyCwma                   sm_only            239     219       20     92%
+  ISMN_TAHMO_CRIG(SoilMoistureStation1)        sm_only            159     141       18     89%
+  ICOS_DE-Tha                                  sm_and_flux        252     223       29     88%
+  ISMN_SCAN_Tuskegee                           sm_only            475     409       66     86%
+  ISMN_NGARI_SQ06                              sm_only             78      65       13     83%
+  ISMN_HOAL_Hoal-16                            sm_only             41      22       19     54%
+
+  Total: 17 stations (16 in sm_only, 1 in sm_and_flux)
+
+Pipeline impact after exclusion
+--------------------------------
+  Stations remaining : 1,048 − 17 = 1,031
+  S2L2A tiles freed  : 8,038 tiles (all files in those station scratch dirs)
+  sm_only stations   : 894 − 16 = 878
+  sm_and_flux stations: 49 − 1  = 48
+
+What will be deleted
+--------------------
+For each of the 17 stations above, the following will be removed:
+
+  1. Entire scratch directory:
+     /gpfs/scratch1/shared/pkhanal/satellite/{station}/
+     (S2L2A, S1RTC, DEM, LULC, CloudMask subdirs)
+
+  2. Entire data directory:
+     /gpfs/work3/0/prjs1968/data/{split}/{station}/
+     (ERA5Land, labels.nc, SIF, soil, TWSA subdirs)
+
+Note on ICOS_DE-Tha (sm_and_flux)
+----------------------------------
+This is the only sm_and_flux station being excluded. It has flux tower data
+(FLUXNET/ICOS) in addition to soil moisture. Its exclusion reduces sm_and_flux
+from 49 to 48 stations but does not affect the sm_only or flux_only splits.
+
+Note on ISMN_SNOTEL stations
+-----------------------------
+SNOTEL (Snow Telemetry) stations are high-elevation mountain sites in the US
+Rocky Mountains and Alaska. They cluster around partial MGRS tile boundaries,
+explaining why 9 of the 17 excluded stations are SNOTEL. Their soil moisture
+measurements are also at high elevation with complex snow/ice dynamics —
+excluding them simplifies training.
+
+Figures
+-------
+  fig/tier1_failures_s2l2a.png   — example S2L2A tiles with large zero-fill margins
+  fig/tier1_failures_s1rtc.png   — example S1RTC tiles with NaN swath edges
+  fig/tier1_failures_dem.png     — example DEM tiles with NaN reprojection gaps
+  fig/tier1_failures_summary.png — histogram of nan_frac for all tier-1 failures
+
+Full record of all 25,362 tier-1 failures (including non-excluded stations):
+  text/tier1_deleted_records.csv
