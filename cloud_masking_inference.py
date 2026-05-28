@@ -261,8 +261,7 @@ def main():
     log.info("Stations to process: %d", n)
 
     total_done = total_errors = skipped = 0
-    station_stats: list[dict] = []
-    job_start = time.time()
+    job_start     = time.time()
     job_start_utc = datetime.now(timezone.utc).isoformat()
 
     if torch.cuda.is_available():
@@ -275,7 +274,6 @@ def main():
                 log.warning("[skip] %s — no permanent directory in %s (setup failure?)",
                             station_dir.name, args.data_dir)
                 skipped += 1
-                station_stats.append({"station": station_dir.name, "status": "skipped"})
                 continue
             out_dir = perm_dir / "CloudMask"
             t0 = time.time()
@@ -283,26 +281,18 @@ def main():
                                            args.batch_size, args.io_workers)
             total_done   += done
             total_errors += errors
-            elapsed = time.time() - t0
+            elapsed       = time.time() - t0
             tiles_per_sec = done / elapsed if elapsed > 0 and done > 0 else 0.0
-            station_stats.append({
-                "station":       station_dir.name,
-                "status":        "ok" if errors == 0 else "partial",
-                "masks_written": done,
-                "errors":        errors,
-                "elapsed_s":     round(elapsed, 2),
-                "tiles_per_sec": round(tiles_per_sec, 1),
-            })
             if done > 0:
                 log.info("[%4d/%d] %s  done=%d  errors=%d  (%.1fs  %.1f tiles/s)",
                          idx, n, station_dir.name, done, errors, elapsed, tiles_per_sec)
             elif idx % 50 == 0:
                 log.info("[%4d/%d] ... (up to date)", idx, n)
 
-    job_elapsed   = time.time() - job_start
-    overall_tps   = total_done / job_elapsed if job_elapsed > 0 else 0.0
-    peak_vram_gb  = (torch.cuda.max_memory_allocated() / 1e9
-                     if torch.cuda.is_available() else 0.0)
+    job_elapsed  = time.time() - job_start
+    overall_tps  = total_done / job_elapsed if job_elapsed > 0 else 0.0
+    peak_vram_gb = (torch.cuda.max_memory_allocated() / 1e9
+                    if torch.cuda.is_available() else 0.0)
 
     log.info("=" * 60)
     log.info("SUMMARY")
@@ -314,27 +304,29 @@ def main():
     log.info("  Peak VRAM     : %.2f GB", peak_vram_gb)
     log.info("=" * 60)
 
-    # ── write JSON summary ────────────────────────────────────────────────────
+    # ── write JSON summary (one file per array task) ──────────────────────────
+    # After the full run, aggregate with:
+    #   python3 -c "import json,pathlib; fs=list(pathlib.Path('data/logs').glob('cloud_mask_stats_*.json')); \
+    #     print(sum(json.loads(f.read_text())['masks_written'] for f in fs), 'masks across', len(fs), 'tasks')"
+    job_id  = os.environ.get("SLURM_JOB_ID",        "local")
+    task_id = os.environ.get("SLURM_ARRAY_TASK_ID",  "0")
     summary = {
-        "job_id":          os.environ.get("SLURM_JOB_ID", "local"),
-        "array_task_id":   os.environ.get("SLURM_ARRAY_TASK_ID", "n/a"),
-        "node":            os.environ.get("SLURMD_NODENAME", "local"),
-        "start_utc":       job_start_utc,
-        "end_utc":         datetime.now(timezone.utc).isoformat(),
-        "elapsed_s":       round(job_elapsed, 2),
-        "batch_size":      args.batch_size,
-        "io_workers":      args.io_workers,
-        "masks_written":   total_done,
-        "errors":          total_errors,
-        "skipped":         skipped,
-        "tiles_per_sec":   round(overall_tps, 2),
-        "peak_vram_gb":    round(peak_vram_gb, 3),
-        "stations":        station_stats,
+        "job_id":        job_id,
+        "task_id":       task_id,
+        "node":          os.environ.get("SLURMD_NODENAME", "local"),
+        "start_utc":     job_start_utc,
+        "end_utc":       datetime.now(timezone.utc).isoformat(),
+        "elapsed_s":     round(job_elapsed, 2),
+        "batch_size":    args.batch_size,
+        "io_workers":    args.io_workers,
+        "masks_written": total_done,
+        "errors":        total_errors,
+        "skipped":       skipped,
+        "tiles_per_sec": round(overall_tps, 2),
+        "peak_vram_gb":  round(peak_vram_gb, 3),
     }
-    log_dir = args.data_dir / "logs"
+    log_dir  = args.data_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    job_id   = os.environ.get("SLURM_JOB_ID", "local")
-    task_id  = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
     out_json = log_dir / f"cloud_mask_stats_{job_id}_{task_id}.json"
     out_json.write_text(json.dumps(summary, indent=2))
     log.info("Stats saved → %s", out_json)
