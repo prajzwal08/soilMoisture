@@ -1,0 +1,118 @@
+Cloud Masking Pipeline — SEnSeIv2 + Cloud Tile Filter
+======================================================
+Date: 2026-05-28
+
+Overview
+--------
+After tier-1 NaN cleanup (20 stations excluded, 25,362 individual tiles deleted),
+the next pipeline step is cloud masking using SEnSeIv2, followed by deleting
+tiles that are too cloudy to be useful for TerraMind tokenization.
+
+Input : 1,028 stations, ~405k S2L2A tiles in scratch
+Output: CloudMask TIFs in data dir + cleaned S2L2A tiles in scratch
+
+Pipeline order
+--------------
+  1. Cloud masking inference  (slurm/cloud_masking.sh)
+  2. Cloud tile filter        (slurm/cleanup_cloud.sh)
+  3. TerraMind tokenization   (slurm/tokenize.sh)
+
+Step 1 — Cloud Masking Inference
+---------------------------------
+Script  : cloud_masking_inference.py
+Model   : SEnSeIv2-SegFormerB2-alldata-ambiguous (conda env: sensei)
+Input   : /gpfs/scratch1/shared/pkhanal/satellite/{station}/S2L2A/YYYYMMDD.tif
+Output  : /gpfs/work3/0/prjs1968/data/{split}/{station}/CloudMask/YYYYMMDD.tif
+
+Output class encoding (7-class, matching TerraMesh):
+  0  = land (clear)
+  1  = water
+  2  = snow / ice
+  3  = thin cloud
+  4  = thick cloud
+  5  = cloud shadow
+  255 = nodata (all 12 bands == 0, swath edge / outside MGRS boundary)
+
+Resume-safe: output file is written atomically via a .tmp rename; existing
+files are skipped. Safe to re-run after partial completion.
+
+SLURM job (slurm/cloud_masking.sh):
+  partition  : rome
+  array      : 0-1027  (1 task per station, 1,028 total)
+  CPUs       : 1 per task
+  RAM        : 8 GB
+  wall time  : 2:30:00
+  SBU cost   : ~1,028 SBU (CPU)
+
+Step 2 — Cloud Tile Filter
+---------------------------
+Script  : cleanup_cloud_tiles.py
+
+Rationale: tiles that are mostly cloudy are useless for training. Removing
+them before tokenization saves GPU time and storage.
+
+Filter criterion:
+  valid_token_fraction = fraction of 196 (14×14) tokens that are "clean"
+  A token (16×16 patch) is clean if <1% of pixels are in {3, 4, 5, 255}
+  (thin cloud, thick cloud, shadow, nodata)
+
+  Keep tile  : valid_token_fraction >= 0.50  (at least 50% clean tokens)
+  Delete tile: valid_token_fraction <  0.50  (includes 100%-cloud tiles)
+
+On deletion: both files are removed —
+  - S2L2A TIF from scratch: /gpfs/scratch1/shared/pkhanal/satellite/{station}/S2L2A/YYYYMMDD.tif
+  - CloudMask TIF from data: /gpfs/work3/0/prjs1968/data/{split}/{station}/CloudMask/YYYYMMDD.tif
+
+A full deletion record is saved to text/cloud_tile_deleted_records.csv before
+any deletion occurs. A summary histogram is saved to fig/cloud_tile_filter_summary.png.
+
+SLURM job (slurm/cleanup_cloud.sh):
+  partition  : rome
+  CPUs       : 16
+  RAM        : 32 GB
+  wall time  : 1:00:00
+  dependency : afterok:<cloud_masking_job_id>
+
+Step 3 — TerraMind Tokenization
+---------------------------------
+Script  : precompute_terramind.py
+See     : text/terramind_tokenization_nan_fix.txt for full details
+
+Key addition (planned): during tokenization, for each S2L2A tile that passes
+the cloud filter, compute a per-token validity mask from the surviving
+CloudMask TIF and save as {stem}_mask.pt alongside the token .pt files.
+This (196,) bool tensor is used at training time as the attention key-padding
+mask in the temporal transformer.
+
+SLURM job (slurm/tokenize.sh):
+  partition  : gpu_a100
+  array      : 0-1027
+  GPUs       : 1 per task
+  wall time  : 1:00:00
+  SBU cost   : ~65,800 SBU (GPU)
+  dependency : afterok:<cloud_filter_job_id>
+
+Submission sequence
+--------------------
+  CLOUD_JOB=$(sbatch --parsable slurm/cloud_masking.sh)
+  FILTER_JOB=$(sbatch --parsable --dependency=afterok:$CLOUD_JOB slurm/cleanup_cloud.sh)
+  sbatch --dependency=afterok:$FILTER_JOB slurm/tokenize.sh
+
+Expected data volume after cloud filter
+-----------------------------------------
+Based on analyze_cloud_coverage.py results (3-station trial):
+  ~30% threshold survival: most tiles in temperate zones pass easily
+  ~50% threshold: estimated 70-85% of tiles survive (depends on region/season)
+  Exact numbers available after full cloud masking run via analyze_cloud_coverage.py
+
+Post-filter re-check
+---------------------
+After cloud filtering, re-run the minimum coverage check (12 S2L2A tiles/year)
+to ensure no station drops below the threshold due to cloud loss. Any such
+stations should be excluded before tokenization.
+
+Files produced
+--------------
+  text/cloud_tile_deleted_records.csv  — per-tile deletion log
+  fig/cloud_tile_filter_summary.png    — histogram + survival rates
+  data/{split}/{station}/CloudMask/    — CloudMask TIFs (surviving tiles only)
