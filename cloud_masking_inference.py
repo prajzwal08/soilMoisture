@@ -2,7 +2,7 @@
 cloud_masking_inference.py
 ==========================
 Run SEnSeIv2 (sensor-independent SegFormerB2, alldata-ambiguous) on every
-S2L2A tile in scratch and write per-pixel cloud masks.
+S2L2A tile in scratch and write per-pixel cloud masks to permanent storage.
 
 Uses the same model as TerraMesh (arXiv 2504.11172) to keep inputs
 in-distribution for TerraMind tokenization.
@@ -15,8 +15,8 @@ Model: SEnSeIv2-SegFormerB2-alldata-ambiguous
 Input  (scratch):
     /gpfs/scratch1/shared/pkhanal/satellite/{station}/S2L2A/YYYYMMDD.tif
 
-Output (scratch, alongside input):
-    /gpfs/scratch1/shared/pkhanal/satellite/{station}/CloudMask/YYYYMMDD.tif
+Output (permanent project storage):
+    /gpfs/work3/0/prjs1968/data/{sm_only|sm_and_flux|flux_only}/{station}/CloudMask/YYYYMMDD.tif
 
 Output class encoding (full 7-class, matching TerraMesh):
     0 = land
@@ -27,9 +27,10 @@ Output class encoding (full 7-class, matching TerraMesh):
     5 = cloud shadow
   255 = nodata (all bands == 0, i.e. swath edge)
 
-In precompute_terramind.py, invalid pixels = classes {3, 4, 5, 255}.
+At training time, dataset.py reads these masks and uses them to build a
+per-token validity mask for the temporal transformer attention.
 
-Resume-safe: skips tiles whose CloudMask already exists.
+Resume-safe: skips tiles whose CloudMask already exists in permanent storage.
 
 Usage:
     python cloud_masking_inference.py                          # all stations
@@ -55,6 +56,16 @@ from senseiv2.constants import SENTINEL2_DESCRIPTORS
 # ── constants ─────────────────────────────────────────────────────────────────
 
 SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
+DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
+
+
+def _station_data_dir(station_id: str, data_dir: Path) -> Path | None:
+    """Find the permanent data directory for a station across sm_only/sm_and_flux/flux_only."""
+    for subfolder in ("sm_only", "sm_and_flux", "flux_only"):
+        d = data_dir / subfolder / station_id
+        if d.exists():
+            return d
+    return None
 
 # Our S2L2A tiles have 12 bands: B01–B09, B11, B12 (B10 absent in L2A).
 # Indices into SENTINEL2_DESCRIPTORS (0-based) for those 12 bands:
@@ -78,10 +89,10 @@ def load_sensei(device: str = "cpu") -> CloudMask:
 
 # ── per-station inference ─────────────────────────────────────────────────────
 
-def process_station(model: CloudMask, station_dir: Path) -> tuple[int, int]:
+def process_station(model: CloudMask, station_dir: Path,
+                    out_dir: Path) -> tuple[int, int]:
     """Run SEnSeIv2 on all pending S2L2A tiles. Returns (done, errors)."""
-    s2_dir  = station_dir / "S2L2A"
-    out_dir = station_dir / "CloudMask"
+    s2_dir = station_dir / "S2L2A"
 
     if not s2_dir.exists():
         return 0, 0
@@ -91,7 +102,7 @@ def process_station(model: CloudMask, station_dir: Path) -> tuple[int, int]:
     if not pending:
         return 0, 0
 
-    out_dir.mkdir(exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     done = errors = 0
 
     for tif_path in pending:
@@ -134,6 +145,8 @@ def process_station(model: CloudMask, station_dir: Path) -> tuple[int, int]:
 def main():
     parser = argparse.ArgumentParser(description="SEnSeIv2 cloud masking for S2L2A tiles")
     parser.add_argument("--scratch-dir", type=Path, default=SCRATCH_DIR)
+    parser.add_argument("--data-dir",    type=Path, default=DATA_DIR,
+                        help="Root of permanent station directories")
     parser.add_argument("--station",     type=str,  default=None,
                         help="Process a single station (smoke test)")
     parser.add_argument("--start-idx",   type=int,  default=0,
@@ -145,6 +158,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device     : {device}")
     print(f"Scratch    : {args.scratch_dir}")
+    print(f"Data dir   : {args.data_dir}")
     print(f"Model      : SEnSeIv2-SegFormerB2-alldata-ambiguous\n")
 
     print("Loading SEnSeIv2...")
@@ -161,9 +175,15 @@ def main():
     print(f"Stations to process: {n}\n")
 
     total_done = total_errors = 0
+    skipped = 0
     for idx, station_dir in enumerate(station_dirs, 1):
+        perm_dir = _station_data_dir(station_dir.name, args.data_dir)
+        if perm_dir is None:
+            skipped += 1
+            continue
+        out_dir = perm_dir / "CloudMask"
         t0 = time.time()
-        done, errors = process_station(model, station_dir)
+        done, errors = process_station(model, station_dir, out_dir)
         total_done   += done
         total_errors += errors
         elapsed = time.time() - t0
@@ -172,7 +192,7 @@ def main():
         elif idx % 50 == 0:
             print(f"[{idx:4d}/{n}] ... (up to date)")
 
-    print(f"\nFinished.  Masks written: {total_done}   errors: {total_errors}")
+    print(f"\nFinished.  Masks written: {total_done}   errors: {total_errors}   skipped: {skipped}")
 
 
 if __name__ == "__main__":

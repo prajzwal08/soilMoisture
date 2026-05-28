@@ -185,36 +185,6 @@ IMAGE_SIZE  = 224   # pixel dimensions of each input patch
 TOKEN_SIZE  = 16    # each token covers TOKEN_SIZE × TOKEN_SIZE pixels → 14×14 = 196 tokens
 
 
-# ── cloud mask helper ────────────────────────────────────────────────────────
-
-def _compute_token_mask(cm_path: Path | None, arr: np.ndarray) -> torch.Tensor:
-    """
-    Compute per-token validity from a CloudMask TIF or zero-pixel fallback.
-
-    cm_path : path to CloudMask/YYYYMMDD.tif (uint8, 7-class SEnSeIv2 output)
-    arr     : (C, H, W) float32 raw pixel array (before normalization)
-
-    Returns (196,) bool tensor: True = token valid (patch has <1% invalid pixels).
-    Invalid pixels: classes {3=thin cloud, 4=thick cloud, 5=shadow, 255=nodata}.
-    Fallback (no CloudMask): invalid = all bands zero (swath-edge detection).
-    """
-    if cm_path is not None and cm_path.exists():
-        try:
-            with rasterio.open(cm_path) as src:
-                cm = src.read(1).astype(np.uint8)
-            invalid = np.isin(cm, [3, 4, 5, 255])
-        except (OSError, rasterio.errors.RasterioIOError):
-            invalid = (arr == 0).all(axis=0)
-    else:
-        invalid = (arr == 0).all(axis=0)
-
-    h, w = invalid.shape
-    n_h, n_w = min(h, IMAGE_SIZE) // TOKEN_SIZE, min(w, IMAGE_SIZE) // TOKEN_SIZE
-    inv4d = invalid[:n_h * TOKEN_SIZE, :n_w * TOKEN_SIZE].reshape(n_h, TOKEN_SIZE, n_w, TOKEN_SIZE)
-    patch_frac = inv4d.mean(axis=(1, 3))          # (n_h, n_w)
-    return torch.from_numpy((patch_frac < 0.01).reshape(-1))  # (196,) bool
-
-
 # ── geo helpers ───────────────────────────────────────────────────────────────
 
 def _read_geo(src: rasterio.DatasetReader,
@@ -282,10 +252,8 @@ def _amp_ctx(device: torch.device):
 
 def _save_feats(feats: dict, out_idx: int, src_idx: int,
                 src_paths: list[Path], geos: list[dict | None],
-                out_dir: Path, layers: tuple[str, ...],
-                token_masks: list[torch.Tensor | None] | None = None) -> None:
-    """Save one item's features (and optional token validity mask) to disk.
-    Raises ValueError on non-finite tensors."""
+                out_dir: Path, layers: tuple[str, ...]) -> None:
+    """Save one item's features to disk. Raises ValueError on non-finite tensors."""
     stem = src_paths[src_idx].stem
     for layer in layers:
         t = feats[layer][out_idx]
@@ -296,24 +264,19 @@ def _save_feats(feats: dict, out_idx: int, src_idx: int,
         tmp.rename(out_dir / f"{stem}_{layer}.pt")
     if geos[src_idx] is not None:
         _save_geo(geos[src_idx], out_dir / f"{stem}_geo.json")
-    if token_masks is not None and token_masks[src_idx] is not None:
-        tmp = out_dir / f"{stem}_mask.tmp"
-        torch.save(token_masks[src_idx].cpu(), tmp)
-        tmp.rename(out_dir / f"{stem}_mask.pt")
 
 
-def _run_batch(encoder:      TerraMindEncoder,
-               patches:      list[torch.Tensor | None],
-               geos:         list[dict | None],
-               src_paths:    list[Path],
-               out_dir:      Path,
-               modality:     str,
-               layers:       tuple[str, ...],
-               device:       torch.device,
-               failures:     list[str],
-               perf:         PerfTracker | None = None,
-               dry_run:      bool = False,
-               token_masks:  list[torch.Tensor | None] | None = None) -> int:
+def _run_batch(encoder:   TerraMindEncoder,
+               patches:   list[torch.Tensor | None],
+               geos:      list[dict | None],
+               src_paths: list[Path],
+               out_dir:   Path,
+               modality:  str,
+               layers:    tuple[str, ...],
+               device:    torch.device,
+               failures:  list[str],
+               perf:      PerfTracker | None = None,
+               dry_run:   bool = False) -> int:
     """Forward a batch through TerraMind, save .pt and _geo.json. Returns count saved."""
     valid_i = [i for i, p in enumerate(patches) if p is not None]
     if not valid_i:
@@ -347,8 +310,7 @@ def _run_batch(encoder:      TerraMindEncoder,
         saved = 0
         for out_idx, src_idx in enumerate(valid_i):
             try:
-                _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers,
-                            token_masks=token_masks)
+                _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
                 saved += 1
             except ValueError as exc:
                 print(f"    [warn] {exc}")
@@ -377,8 +339,7 @@ def _run_batch(encoder:      TerraMindEncoder,
         pk1 = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
         t0_sv1 = time.perf_counter()
         try:
-            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers,
-                        token_masks=token_masks)
+            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
             saved += 1
         except ValueError as exc2:
             print(f"    [warn] {exc2}")
@@ -422,8 +383,6 @@ def process_temporal(encoder:     TerraMindEncoder,
     if dry_run:
         pending = pending[:batch_size]
 
-    cm_dir = src_dir.parent / "CloudMask" if modality == "S2L2A" else None
-
     processed = 0
     for start in range(0, len(pending), batch_size):
         batch_files = pending[start : start + batch_size]
@@ -432,19 +391,10 @@ def process_temporal(encoder:     TerraMindEncoder,
         t_load   = time.perf_counter() - t0_load
         patches, geos = zip(*results)
         n_valid  = sum(1 for p in patches if p is not None)
-
-        # Compute per-token validity masks for S2L2A only
-        token_masks = None
-        if cm_dir is not None:
-            token_masks = [
-                _compute_token_mask(cm_dir / f.name, p.numpy()) if p is not None else None
-                for f, p in zip(batch_files, patches)
-            ]
-
         saved = _run_batch(
             encoder, list(patches), list(geos),
             batch_files, out_dir, modality, TEMPORAL_LAYERS, device, failures, perf,
-            dry_run=dry_run, token_masks=token_masks,
+            dry_run=dry_run,
         )
         # patch load time into the last perf record (recorded inside _run_batch as 0)
         if perf is not None and n_valid > 0:
