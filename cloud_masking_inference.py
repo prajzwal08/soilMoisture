@@ -46,7 +46,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -109,6 +109,13 @@ def load_sensei(device: str = "cpu") -> CloudMask:
 
 # ── tile loader (runs in thread pool) ────────────────────────────────────────
 
+# ESA Sentinel-2 processing baseline 4.0 (introduced 2022-01-25) added a
+# +1000 DN radio offset to all bands to allow negative reflectance storage.
+# MPC delivers raw DNs (rescale=False), so we subtract this offset ourselves
+# for post-2022 acquisitions — matching senseiv2/inference.py sentinel2_loader.
+_S2_BASELINE4_DATE = _date(2022, 1, 25)
+
+
 def _load_tile(
     path: Path,
 ) -> tuple[str, np.ndarray, np.ndarray, dict] | tuple[str, None, None, None]:
@@ -117,8 +124,24 @@ def _load_tile(
         with rasterio.open(path) as src:
             arr_int = src.read()
             profile = src.profile
+
+        # Nodata check on raw integers (fill pixels are DN=0 in both baselines)
         nodata_mask = (arr_int == 0).all(axis=0)
-        arr = arr_int.astype(np.float32)
+
+        # Detect baseline >= 4 from filename date (YYYYMMDD.tif).
+        # Fallback: any pixel > 10000 is physically impossible without the offset.
+        stem = path.stem
+        try:
+            tile_date = _date(int(stem[:4]), int(stem[4:6]), int(stem[6:8]))
+            has_offset = tile_date >= _S2_BASELINE4_DATE
+        except ValueError:
+            has_offset = bool(arr_int.max() > 10_000)
+
+        if has_offset:
+            # Subtract offset; clip to 0 to avoid negative reflectance from dark pixels
+            arr = np.clip(arr_int.astype(np.int32) - 1000, 0, None).astype(np.float32)
+        else:
+            arr = arr_int.astype(np.float32)
         del arr_int
         arr /= 10_000.0
         return path.name, arr, nodata_mask, profile
