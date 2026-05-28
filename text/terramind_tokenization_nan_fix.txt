@@ -194,6 +194,63 @@ TIMELINE
 6. Submit full tokenization SLURM array job
 
 
+2026-05-28 UPDATE — PATCH STATISTICS & REVISED PIPELINE
+---------------------------------------------------------
+Empirical analysis of 49,000 patches (250 tiles, 50 stations) showed:
+
+  Patch type           Count    %
+  -------------------  -------  ------
+  Fully clean (0%)     47,066   96.1%
+  <1% invalid            2      0.00%   ← NN-fill candidate (essentially never)
+  1–99% invalid          332     0.7%   ← mark invalid
+  100% invalid         1,600     3.3%   ← mark invalid
+  All invalid          1,932     3.9%
+
+KEY FINDING: NN-fill at the ≤1% threshold is unnecessary for zero/swath-edge pixels.
+Swath edges are hard geometric boundaries. A 16×16 patch that straddles the edge
+picks up at least one full column (16/256 = 6.25%), which is already above the 1%
+threshold. The <1% case is nearly impossible for this data. Only 2 patches out of
+49,000 had 1–2 zero pixels, and those were isolated sensor artefacts.
+
+CONSEQUENCE: Step 3 in the "FINALIZED PIPELINE DESIGN" above (NN-fill before
+TerraMind) is not needed. After z-score normalization, even zero pixels produce
+finite values ((0 - mean)/std ≈ -0.75), so NaN is not a risk. Invalid patches
+(≥1% bad pixels — swath edges or clouds) are simply flagged as invalid tokens
+and masked out during training. No NN-fill step required.
+
+REVISED PIPELINE DESIGN (replaces FINALIZED PIPELINE DESIGN above):
+
+  1. Run SEnSeIv2 cloud masking (CPU SLURM array job) across all 1048 stations.
+     Output: {scratch}/{station}/CloudMask/YYYYMMDD.tif
+
+  2. Run TerraMind tokenization (GPU SLURM array job). For each S2L2A tile:
+       a. Load raw tile + CloudMask TIF if it exists.
+       b. Compute per-token validity mask (196,) bool:
+            invalid pixels = classes {3, 4, 5, 255}
+            token valid (True) if patch invalid fraction < 1%
+          Fallback (no CloudMask): invalid = (arr == 0).all(axis=0)
+       c. No NN-fill. Pass raw (normalized) array directly to TerraMind.
+       d. Save tokens: {stem}_L3/L6/L9/L12.pt  (as before)
+       e. Save validity mask: {stem}_mask.pt (196,) bool → permanent storage
+
+  3. At training time, dataset.py loads {stem}_mask.pt and uses it as the
+     key-padding mask in the temporal transformer attention.
+     Tokens with mask=False (cloud / swath edge) are ignored in loss and attention.
+
+Cloud masking must complete before tokenization so mask.pt files are saved
+correctly. Scratch files (CloudMask TIFs) are not needed after precompute —
+mask.pt files in permanent storage carry all validity information forward.
+
+IMPLEMENTATION STATUS (2026-05-28):
+  STEP 1 — Z-score normalization ✓ (2026-05-27)
+  STEP 2 — cloud_masking_inference.py rewritten ✓ (2026-05-27)
+  STEP 3 — Write slurm/cloud_masking.sh (CPU array, 1 task/station)  ← IN PROGRESS
+  STEP 4 — Update precompute_terramind.py: cloud mask load + save mask.pt
+  STEP 5 — Update dataset.py: load mask.pt instead of reading CloudMask TIF
+  STEP 6 — Write slurm/tokenize.sh (GPU array, 1 task/station)
+  STEP 7 — Submit: cloud masking first, tokenization with SLURM dependency
+
+
 REFERENCES
 ----------
 - TerraMesh paper: arXiv 2504.11172 (IBM/ESA, 2025)

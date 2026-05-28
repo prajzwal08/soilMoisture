@@ -172,7 +172,7 @@ def load_era5_rolling(sat_dir: Path, year: int, target_doy: int):
 
 # ── L12 loaders (replace raw-patch loaders) ──────────────────────────────────
 
-def load_s2_rolling(patch_dir: Path, cloud_mask_dir: Path,
+def load_s2_rolling(patch_dir: Path,
                     year: int, target_doy: int,
                     max_acq: int = MAX_S2):
     """
@@ -182,7 +182,7 @@ def load_s2_rolling(patch_dir: Path, cloud_mask_dir: Path,
         l12        : (max_acq, 196, 768) float16
         doys       : (max_acq,) long
         valid      : (max_acq,) bool
-        token_mask : (max_acq, 14, 14) bool — True = cloud-free token
+        token_mask : (max_acq, 14, 14) bool — True = valid token (<1% invalid pixels)
         rel_pos    : (max_acq,) long
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
@@ -204,12 +204,11 @@ def load_s2_rolling(patch_dir: Path, cloud_mask_dir: Path,
         doys[i]    = acq_doy
         rel_pos[i] = _rel_pos(acq_doy, file_year, target_doy, year)
 
-        cm_path = cloud_mask_dir / f"{tif.stem[:8]}.tif"
-        if cm_path.exists():
-            with rasterio.open(cm_path) as src:
-                cm = src.read(1).astype(np.uint8)
-            cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-            token_mask[i] = torch.from_numpy((cm_4d == 0).all(axis=(1, 3)))
+        mask_path = patch_dir / f"{tif.stem}_mask.pt"
+        if mask_path.exists():
+            token_mask[i] = torch.load(
+                mask_path, weights_only=True, map_location="cpu"
+            ).reshape(14, 14)
 
     valid = doys > 0
     return l12, doys, valid, token_mask, rel_pos
@@ -412,10 +411,9 @@ class SoilMoistureDataset(Dataset):
 
         # ── S2L2A — pre-computed L12 + cloud mask ─────────────────────
         s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = load_s2_rolling(
-            patch_dir      = sat_dir / "S2L2A",
-            cloud_mask_dir = sat_dir / "CloudMask",
-            year           = year,
-            target_doy     = doy,
+            patch_dir  = sat_dir / "S2L2A",
+            year       = year,
+            target_doy = doy,
         )
 
         # ── S1RTC — pre-computed L12 ───────────────────────────────────
