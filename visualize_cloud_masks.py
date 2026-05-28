@@ -41,10 +41,11 @@ DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
 LOGS_DIR    = DATA_DIR / "logs"
 SPLITS      = ["sm_only", "sm_and_flux", "flux_only"]
 
-# ── cloud mask colour scheme (7-class TerraMesh encoding) ─────────────────────
-CM_CLASSES = [0,         1,        2,          3,            4,             5,        255      ]
-CM_COLOURS = ["#4caf50", "#1e88e5", "#b3e5fc",  "#b0bec5",   "#607d8b",    "#37474f", "#111111"]
-CM_LABELS  = ["land",    "water",   "snow/ice", "thin cloud", "thick cloud", "shadow", "nodata" ]
+# ── cloud mask colour scheme (7-class SEnSeIv2 encoding) ──────────────────────
+CM_CLASSES = [0,         1,        2,          3,            4,             5,         255      ]
+CM_COLOURS = ["#33a02c", "#1f78b4", "#a6cee3",  "#ffff99",   "#ff7f00",    "#6a3d9a",  "#111111"]
+CM_LABELS  = ["land",    "water",   "snow/ice", "thin cloud", "thick cloud", "shadow",  "nodata" ]
+#              green       blue      light blue   yellow        orange         purple     black
 CM_CMAP    = ListedColormap(CM_COLOURS)
 CM_NORM    = BoundaryNorm([0, 1, 2, 3, 4, 5, 6, 256], ncolors=7)
 
@@ -192,25 +193,17 @@ def render_station(station_name: str, masks: list[Path], out_dir: Path) -> Path:
         ax_cm = axes[1, col]
         if mask is not None:
             ax_cm.imshow(mask, cmap=CM_CMAP, norm=CM_NORM, interpolation="nearest")
-            total = mask.size
-            lines = []
-            for i, lbl in enumerate(CM_LABELS):
-                pct = 100.0 * (mask == i).sum() / total
-                if pct > 0.5:
-                    lines.append(f"{lbl}: {pct:.0f}%")
-            ax_cm.text(0.02, 0.02, "\n".join(lines),
-                       transform=ax_cm.transAxes, fontsize=5,
-                       color="white", va="bottom",
-                       bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.55))
         else:
             ax_cm.set_facecolor("#1a1a1a")
         ax_cm.axis("off")
 
-    # Legend on the last mask panel
-    patches = [mpatches.Patch(color=c, label=l)
+    # Shared legend below the figure (all 7 classes)
+    patches = [mpatches.Patch(facecolor=c, edgecolor="grey",
+                               linewidth=0.5, label=l)
                for c, l in zip(CM_COLOURS, CM_LABELS)]
-    axes[1, -1].legend(handles=patches, loc="lower right",
-                       fontsize=5.5, framealpha=0.85, ncol=1, borderpad=0.3)
+    fig.legend(handles=patches, loc="lower center", ncol=7,
+               fontsize=7, frameon=True, framealpha=0.9,
+               bbox_to_anchor=(0.5, -0.04))
 
     stem = out_dir / f"cloud_mask_vis_{station_name}"
     fig.savefig(stem.with_suffix(".svg"), format="svg", bbox_inches="tight")
@@ -226,10 +219,16 @@ def main():
     parser = argparse.ArgumentParser(description="Visualise S2L2A + cloud masks by month")
     parser.add_argument("--station",     type=str,  default=None)
     parser.add_argument("--n-stations",  type=int,  default=None)
+    parser.add_argument("--random",      action="store_true",
+                        help="Randomly sample stations instead of taking the first N")
+    parser.add_argument("--seed",        type=int,  default=42)
     parser.add_argument("--data-dir",    type=Path, default=DATA_DIR)
     parser.add_argument("--scratch-dir", type=Path, default=SCRATCH_DIR)
     parser.add_argument("--out-dir",     type=Path, default=LOGS_DIR)
     args = parser.parse_args()
+
+    import random as _random
+    _random.seed(args.seed)
 
     SCRATCH_DIR = args.scratch_dir
 
@@ -246,7 +245,10 @@ def main():
             print(f"Station '{args.station}' has no cloud masks yet.")
             return
     elif args.n_stations:
-        stations = stations[:args.n_stations]
+        if args.random:
+            stations = _random.sample(stations, min(args.n_stations, len(stations)))
+        else:
+            stations = stations[:args.n_stations]
 
     print(f"Rendering {len(stations)} station(s) — one panel per calendar month\n")
     for station_name, masks in stations:
