@@ -93,72 +93,96 @@ def _station_data_dir(station_id: str, data_dir: Path) -> Path | None:
 
 # ── model loader ──────────────────────────────────────────────────────────────
 
-def load_sensei(device: str = "cpu", batch_size: int = 1) -> CloudMask:
+def load_sensei(device: str = "cpu") -> CloudMask:
     cfg_path, wts_path = get_model_files("SEnSeIv2-SegFormerB2-alldata-ambiguous")
     return CloudMask(
         cfg_path, wts_path,
         device=device,
         output_style=None,   # preserve all 7 classes (matches TerraMesh storage)
         categorise=True,
-        batch_size=batch_size,
     )
 
 
 # ── per-station inference ─────────────────────────────────────────────────────
 
 def process_station(model: CloudMask, station_dir: Path,
-                    out_dir: Path) -> tuple[int, int]:
-    """Run SEnSeIv2 on all pending S2L2A tiles. Returns (done, errors)."""
+                    out_dir: Path, batch_size: int) -> tuple[int, int]:
+    """Run SEnSeIv2 on all pending S2L2A tiles. Returns (done, errors).
+
+    Bypasses CloudMask.__call__ (which only handles one image) and calls
+    model.model directly with a (B, C, H, W) tensor so the GPU processes
+    batch_size images per forward pass instead of one at a time.
+    """
     s2_dir = station_dir / "S2L2A"
     if not s2_dir.exists():
         return 0, 0
 
     # Set-based resume check: two readdir ops instead of N individual stat calls
-    all_inputs     = {f.name for f in s2_dir.glob("*.tif")}
-    existing       = {f.name for f in out_dir.glob("*.tif")} if out_dir.exists() else set()
-    pending_names  = sorted(all_inputs - existing)
+    all_inputs    = {f.name for f in s2_dir.glob("*.tif")}
+    existing      = {f.name for f in out_dir.glob("*.tif")} if out_dir.exists() else set()
+    pending_names = sorted(all_inputs - existing)
     if not pending_names:
         return 0, 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    device = next(model.model.parameters()).device
     done = errors = 0
 
-    for name in tqdm(pending_names, desc=station_dir.name, unit="tile", leave=False):
-        tif_path = s2_dir / name
-        out_path = out_dir / name
-        try:
-            with rasterio.open(tif_path) as src:
-                arr_int = src.read()   # raw DN integers
-                profile = src.profile
+    for i in tqdm(range(0, len(pending_names), batch_size),
+                  desc=station_dir.name, unit="batch", leave=False):
+        chunk = pending_names[i : i + batch_size]
 
-            # Check nodata on raw integers before any float arithmetic
-            nodata_mask = (arr_int == 0).all(axis=0)
-            arr = arr_int.astype(np.float32)
-            del arr_int
-            arr /= 10_000.0            # in-place: avoids float64 upcast
-
+        # ── load chunk ────────────────────────────────────────────────────────
+        arrays, nodata_masks, profiles, names = [], [], [], []
+        for name in chunk:
             try:
-                with torch.no_grad():
-                    mask = model(arr, descriptors=S2_L2A_DESCRIPTORS)  # (H, W) uint8
-            except Exception as exc:
-                log.error("[model error] %s: %s", name, exc)
+                with rasterio.open(s2_dir / name) as src:
+                    arr_int = src.read()   # raw DN integers
+                    profile = src.profile
+                nodata_masks.append((arr_int == 0).all(axis=0))
+                arr = arr_int.astype(np.float32)
+                del arr_int
+                arr /= 10_000.0
+                arrays.append(arr)
+                profiles.append(profile)
+                names.append(name)
+            except (OSError, rasterio.errors.RasterioIOError) as exc:
+                log.error("[io error] %s: %s", name, exc)
                 errors += 1
-                continue
 
-            mask = mask.astype(np.uint8)
-            mask[nodata_mask] = 255
+        if not arrays:
+            continue
 
-            out_profile = profile.copy()
-            out_profile.update(count=1, dtype="uint8", nodata=255, compress="deflate")
-            tmp = out_path.with_suffix(".tmp")
-            with rasterio.open(tmp, "w", **out_profile) as dst:
-                dst.write(mask[np.newaxis])
-            tmp.rename(out_path)
-            done += 1
+        # ── batched GPU forward pass ──────────────────────────────────────────
+        try:
+            batch = torch.from_numpy(np.stack(arrays)).to(device)  # (B, C, H, W)
+            desc_batch = [S2_L2A_DESCRIPTORS for _ in range(len(arrays))]
+            with torch.no_grad():
+                preds = model.model(batch, desc_batch)   # (B, num_classes, H, W)
+            preds_np = preds.cpu().numpy()
+        except Exception as exc:
+            log.error("[model error] batch starting %s: %s", names[0], exc)
+            errors += len(arrays)
+            continue
 
-        except (OSError, rasterio.errors.RasterioIOError) as exc:
-            log.error("[io error] %s: %s", name, exc)
-            errors += 1
+        # ── write results ─────────────────────────────────────────────────────
+        for name, pred, nodata_mask, profile in zip(names, preds_np, nodata_masks, profiles):
+            try:
+                mask = model.postprocess(pred)   # (H, W) argmax uint8
+                mask = mask.astype(np.uint8)
+                mask[nodata_mask] = 255
+
+                out_path = out_dir / name
+                out_profile = profile.copy()
+                out_profile.update(count=1, dtype="uint8", nodata=255, compress="deflate")
+                tmp = out_path.with_suffix(".tmp")
+                with rasterio.open(tmp, "w", **out_profile) as dst:
+                    dst.write(mask[np.newaxis])
+                tmp.rename(out_path)
+                done += 1
+            except Exception as exc:
+                log.error("[write error] %s: %s", name, exc)
+                errors += 1
 
     return done, errors
 
@@ -188,7 +212,7 @@ def main():
     log.info("Model      : SEnSeIv2-SegFormerB2-alldata-ambiguous")
 
     log.info("Loading SEnSeIv2...")
-    model = load_sensei(device, batch_size=args.batch_size)
+    model = load_sensei(device)
     log.info("Model loaded.")
 
     if args.station:
@@ -212,7 +236,7 @@ def main():
                 continue
             out_dir = perm_dir / "CloudMask"
             t0 = time.time()
-            done, errors = process_station(model, station_dir, out_dir)
+            done, errors = process_station(model, station_dir, out_dir, args.batch_size)
             total_done   += done
             total_errors += errors
             elapsed = time.time() - t0
