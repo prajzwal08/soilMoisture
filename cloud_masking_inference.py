@@ -308,8 +308,11 @@ def main():
     # After the full run, aggregate with:
     #   python3 -c "import json,pathlib; fs=list(pathlib.Path('data/logs').glob('cloud_mask_stats_*.json')); \
     #     print(sum(json.loads(f.read_text())['masks_written'] for f in fs), 'masks across', len(fs), 'tasks')"
-    job_id  = os.environ.get("SLURM_JOB_ID",        "local")
-    task_id = os.environ.get("SLURM_ARRAY_TASK_ID",  "0")
+    # SLURM_ARRAY_JOB_ID is the same for all tasks in the array (e.g. 23182278).
+    # SLURM_JOB_ID is unique per task — using it would give every JSON a different
+    # prefix, making glob-based aggregation impossible.
+    job_id  = os.environ.get("SLURM_ARRAY_JOB_ID", os.environ.get("SLURM_JOB_ID", "local"))
+    task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
     summary = {
         "job_id":        job_id,
         "task_id":       task_id,
