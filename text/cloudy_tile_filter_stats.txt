@@ -1,0 +1,131 @@
+============================================================
+CLOUDY TILE FILTER STATS
+Generated: 2026-05-29
+Criterion: reject tile if >50% of 196 patches are invalid
+  (patch invalid = any cloud pixel class 3/4/5, or >=1% nodata class 255)
+============================================================
+
+--- OVERALL ---
+Total S2L2A tiles:           413,557
+Tiles to delete:             148,283  (35.9%)
+Tiles remaining:             265,274  (64.1%)
+Stations:                      1,028
+Stations with 0 rejects:           0
+
+--- MASKED FRACTION (rejected tiles only) ---
+Mean:    0.908
+Median:  1.000
+Std:     0.141
+Min:     0.505
+Max:     1.000
+Fully masked (=1.0):         77,287  (52.1%)
+Heavily masked (>=0.75):    123,861  (83.5%)
+Borderline (0.50-0.75):      24,422  (16.5%)
+
+--- REJECTED TILES BY YEAR ---
+  2016: 4,634
+  2017: 9,099
+  2018: 19,283
+  2019: 20,996
+  2020: 20,336
+  2021: 18,735
+  2022: 16,336
+  2023: 15,536
+  2024: 12,632
+  2025: 10,696
+
+--- REJECTED TILES BY SPLIT ---
+  flux_only: 12,004 rejected
+  sm_and_flux: 7,254 rejected
+  sm_only: 129,025 rejected
+
+--- REMAINING TILES PER STATION ---
+Count:   1,028
+Mean:    258.0
+Median:  205.0
+Std:     176.2
+Min:     9
+25th:    131.0
+75th:    333.2
+Max:     836
+Stations <10 tiles:   1
+Stations <20 tiles:   7
+Stations <50 tiles:   34
+Stations <100 tiles:  140
+
+--- TOP 15 MOST AFFECTED STATIONS (most rejected) ---
+  Station                                        Total Rejected Remaining  % Kept
+  ISMN_SNOTEL_BlackhallMtn                         976      596       380   38.9%
+  ISMN_SNOTEL_BerryCreek                          1083      458       625   57.7%
+  ISMN_SNOTEL_ExitGlacier                          898      449       449   50.0%
+  ISMN_SNOTEL_SouthMtn.                           1048      449       599   57.2%
+  ISMN_SNOTEL_RioSantaBarbara                     1082      447       635   58.7%
+  ISMN_SNOTEL_Brighton                             988      445       543   55.0%
+  ISMN_SNOTEL_HorseRidge                           926      440       486   52.5%
+  ISMN_SNOTEL_ImnaviatCreek                        682      430       252   37.0%
+  ISMN_SNOTEL_SantaFe                             1078      429       649   60.2%
+  ISMN_SNOTEL_SaltRiverSummit                      958      428       530   55.3%
+  ISMN_SNOTEL_MonteCristo                          996      423       573   57.5%
+  ISMN_SNOTEL_CaveMountain                        1074      422       652   60.7%
+  ISMN_SNOTEL_LizardHeadPass                      1062      420       642   60.5%
+  AmeriFlux_US-Seg                                 925      418       507   54.8%
+  ISMN_SNOTEL_MosbyMtn.                           1072      418       654   61.0%
+
+--- TOP 15 LEAST AFFECTED STATIONS (fewest rejected) ---
+  Station                                        Total Rejected Remaining  % Kept
+  ISMN_SCAN_ShadowMtns                              27        4        23   85.2%
+  ISMN_SNOTEL_CochetopaPass                         14        5         9   64.3%
+  ISMN_SCAN_Livingston-UWA                          24        6        18   75.0%
+  ISMN_SNOTEL_FortValley                            24        6        18   75.0%
+  ISMN_SCAN_KnoxCity                                55        7        48   87.3%
+  ISMN_SCAN_Lindsay                                 25        7        18   72.0%
+  ISMN_SCAN_Ku-Nesa                                 29        8        21   72.4%
+  ISMN_OZNET_Yamma-Road                             36        9        27   75.0%
+  ISMN_NGARI_ALI02                                  66       10        56   84.8%
+  ISMN_USCRN_Crossville-7-NW                        32       12        20   62.5%
+  ISMN_SCAN_Princeton#1                             57       15        42   73.7%
+  ISMN_SCAN_Shenandoah                              36       15        21   58.3%
+  ISMN_SCAN_NaknekRiver                             30       16        14   46.7%
+  ISMN_USCRN_Edinburg-17-NNE                        31       16        15   48.4%
+  AmeriFlux_US-Jo2                                 191       19       172   90.1%
+
+--- REMAINING TILES PER STATION-YEAR ---
+Total station-year combos: 6,654
+Mean:    39.9
+Median:  36.0
+Std:     23.8
+Min:     0
+25th:    23.0
+75th:    51.0
+Max:     127
+Station-years with 0 remaining:   9
+Station-years with <3 remaining:  75
+Station-years with <5 remaining:  159
+Station-years with <10 remaining: 564
+
+--- REMAINING TILES BY YEAR (across all stations) ---
+  Year    Mean  Median   Min   Max  Stations
+  2016    12.3    10.0     1    53       581
+  2017    21.2    18.0     0    75       719
+  2018    43.3    38.0     1   109       770
+  2019    43.2    38.0     0   111       793
+  2020    46.3    39.0     0   125       813
+  2021    42.5    38.0     0   104       761
+  2022    46.7    41.0     0   114       701
+  2023    45.1    40.0     1   112       596
+  2024    46.3    40.0     1   115       523
+  2025    54.2    50.0     3   127       397
+
+--- STATION-YEARS WITH 0 REMAINING TILES ---
+  Station                                       Year  Total tiles
+  ICOS_GF-Guy                                   2022           10
+  ICOS_RU-Fyo                                   2017            1
+  ISMN_Berlin_PSA17suedpark                     2022            1
+  ISMN_Berlin_PSA18Pfaueninsel                  2022            1
+  ISMN_REMEDHUS_ElCoto                          2021            1
+  ISMN_REMEDHUS_Zamarron                        2021            1
+  ISMN_RSMN_SatuMare                            2019            1
+  ISMN_SCAN_LTSP                                2021            1
+  ISMN_SNOTEL_LongDrawResv                      2020            3
+
+============================================================
