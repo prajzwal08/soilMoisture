@@ -76,15 +76,16 @@ def station_grid(lat: float, lon: float):
     """
     Return:
       epsg        – UTM EPSG code
-      utm_bounds  – (xmin, ymin, xmax, ymax) in UTM metres (exact 264×264 box)
+      utm_bounds  – (xmin, ymin, xmax, ymax) in UTM metres (exact 224×224 box)
       latlon_bbox – {"west":…, "south":…, "east":…, "north":…} for OpenEO
                     (slightly expanded to guarantee full coverage after reprojection)
     """
+    import math
     epsg = get_utm_epsg(lat, lon)
     fwd = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
     inv = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
     cx, cy = fwd.transform(lon, lat)
-    half = (PIXEL_SIZE * RES_M) / 2                       # = 1320 m
+    half = (PIXEL_SIZE * RES_M) / 2                       # = 1120 m
     utm_bounds = (cx - half, cy - half, cx + half, cy + half)
 
     # Expand by 2 pixels on each side for load_collection (WGS84);
@@ -100,6 +101,20 @@ def station_grid(lat: float, lon: float):
         "east":  corners[1][0],
         "north": corners[1][1],
     }
+
+    # Copernicus DEM tiles are organised as 1°×1° files. When the bbox straddles
+    # a 1° boundary CDSE's tile selector uses the bbox centroid, so it only loads
+    # the tile containing the centre and the adjacent tile becomes NaN after
+    # reprojection. Fix: if the bbox crosses any integer lat/lon, add 0.15° extra
+    # buffer on both sides of that axis so both tiles are unambiguously included.
+    DEM_TILE_BUFFER = 0.15
+    if math.floor(latlon_bbox["north"]) > math.floor(latlon_bbox["south"]):
+        latlon_bbox["south"] -= DEM_TILE_BUFFER
+        latlon_bbox["north"] += DEM_TILE_BUFFER
+    if math.floor(latlon_bbox["east"]) > math.floor(latlon_bbox["west"]):
+        latlon_bbox["west"]  -= DEM_TILE_BUFFER
+        latlon_bbox["east"]  += DEM_TILE_BUFFER
+
     return epsg, utm_bounds, latlon_bbox
 
 
