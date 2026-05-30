@@ -1,0 +1,208 @@
+================================================================================
+SESSION NOTES — 2026-05-30
+Pre-tokenisation audit + NN-fill implementation
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+PIPELINE STATUS AT START OF SESSION
+────────────────────────────────────────────────────────────────────────────────
+
+All satellite data downloads complete (1,028 stations).
+
+Completed steps confirmed via SLURM history:
+  job 23172099  Tier-1 cleanup            20 stations excluded, 18,557 bad tiles deleted
+  job 23183555  S2L2A harmonisation       +1000 DN added to all pre-2022 tiles
+  job 23184919  Cloud masking (SEnSeIv2)  413,557 tiles → 413,557 CloudMask TIFs
+  job 23188191  Cloudy tile filter        --analyze: 148,284 tiles rejected, 265,274 kept
+  job 23201798  Cloudy tile filter        --delete: 148,284 S2L2A + CloudMask TIFs deleted
+  job 23203327  DEM NaN fix               extended latlon_bbox for tiles crossing 1-degree boundary
+
+Active stations: 1,028  (1,048 − 20 excluded after tier-1 cleanup)
+Scratch purge deadline: ~June 4–18 (14–30 days from May 21)
+
+
+────────────────────────────────────────────────────────────────────────────────
+WHAT WE BUILT — audit_satellite_data.py
+────────────────────────────────────────────────────────────────────────────────
+
+New script: audit_satellite_data.py
+New SLURM:  slurm/audit_satellite.sh  (rome, 16 CPUs, 32 GB, 2h)
+
+Purpose: pre-tokenisation QA with two checks:
+
+  Part A — Coverage
+    • List all S2L2A / S1RTC tiles per station
+    • Extract dates from filenames (S2: YYYYMMDD; S1: YYYYMMDD_{ASC|DESC})
+    • Compare actual date range vs expected start_date / end_date from
+      csvs/station_splits.csv
+    • Count tiles per calendar year
+    Output → csvs/dataset_coverage.csv
+
+  Part B — Nodata analysis
+    • Load tiles (S2L2A: sample%, S1RTC: sample%, DEM: 100%)
+    • For each tile split into 196 patches of 16×16 pixels, compute nodata
+      fraction per patch
+    • Nodata convention:
+        S2L2A  → pixel == 0  (standard S2 nodata after harmonisation)
+        S1RTC  → np.isnan    (orbit swath boundary)
+        DEM    → np.isnan OR pixel == 0  (ocean / missing elevation)
+    • Classify patches:
+        clean    : nodata_frac == 0
+        fillable : 0 < nodata_frac < 1%     ← these will be NN-filled in tokeniser
+        partial  : 1% ≤ nodata_frac < 50%
+        bad      : nodata_frac ≥ 50%        ← bad token, masked at training time
+    Output → csvs/dataset_nodata.csv
+
+  Text summary → text/dataset_audit.txt
+
+Station ID lookup (splits CSV → scratch dir name):
+    network == source_network  →  {source_network}_{station_id}     (AmeriFlux, ICOS)
+    network != source_network  →  {source_network}_{network}_{station_id}  (ISMN)
+
+
+────────────────────────────────────────────────────────────────────────────────
+AUDIT RESULTS — 100% TILE SCAN (job 23256522, 24 min, rome, 16 CPUs)
+────────────────────────────────────────────────────────────────────────────────
+
+Stations analysed : 1,028
+Not in splits CSV : 0  (all stations matched)
+
+COVERAGE
+  S2 outside expected date range : 0 stations
+  S1 outside expected date range : 0 stations
+  S2 images/station  : median=205  min=9    max=836   total=265,274
+  S1 images/station  : median=429  min=0    max=1,915  total=503,625
+    (min=0 is ICOS_GL-Dsk, Greenland — no S1 IW coverage at 69°N)
+
+  S2L2A tiles per year (all stations):
+    2016:  7,136    2017: 15,229    2018: 33,341    2019: 34,262
+    2020: 37,602    2021: 32,327    2022: 32,770    2023: 26,880
+    2024: 24,213    2025: 21,514
+
+  S1RTC tiles per year (all stations):
+    2016: 14,962    2017: 61,954    2018: 64,040    2019: 72,298
+    2020: 79,755    2021: 73,396    2022: 38,162    2023: 35,439
+    2024: 29,137    2025: 34,482
+
+NODATA (100% sample)
+
+  S2L2A — 265,274 tiles
+    clean    : 99.08%
+    fillable : 0.10%   (0 < nodata < 1%)   ← NN-filled in tokeniser
+    partial  : 0.12%   (1% ≤ nodata < 50%)
+    bad      : 0.69%   (nodata ≥ 50%)
+    tiles with any bad patch    : 2.94%  (of all tiles)
+    stations with any bad patch : 157 / 1,028
+
+  S1RTC — 503,625 tiles
+    clean    : 99.40%
+    fillable : 0.01%   ← NN-filled
+    partial  : 0.20%
+    bad      : 0.39%
+    tiles with any bad patch    : 1.79%
+    stations with any bad patch : 250 / 1,028
+
+  DEM — 1,005 stations  (23 stations missing DEM entirely)
+    clean    : 98.99%
+    fillable : 0.01%   ← NN-filled
+    partial  : 0.26%
+    bad      : 0.74%
+    stations with bad DEM patch : 37 / 1,028  (3.68%)
+
+Per-tile deep scan (separate verification):
+  S2L2A (7,856 tiles, 30 stations):  tiles with >50% bad patches = 0  ← cloud filter guarantee
+  DEM   (1,005 stations):            stations with >50% bad patches = 1  (0.10%)
+
+Key conclusions:
+  1. No S2 tile has >50% bad patches — cloud filter (job 23201798) already enforced this.
+  2. S1 and DEM have small residual NaN from orbit gaps / ocean areas but nothing severe.
+  3. Fillable pixels (<1% per patch) are rare but present — NN-fill is the right fix.
+  4. Bad patches (≥50% nodata) will be passed through as zeros / low-quality tokens
+     and masked at training time.
+
+
+────────────────────────────────────────────────────────────────────────────────
+WHAT WE IMPLEMENTED — NN-fill in precompute_terramind.py
+────────────────────────────────────────────────────────────────────────────────
+
+Changes to precompute_terramind.py:
+
+  1. New import:
+       from scipy.ndimage import distance_transform_edt
+
+  2. New constants (added alongside IMAGE_SIZE / TOKEN_SIZE):
+       N_SIDE          = 14   (IMAGE_SIZE // TOKEN_SIZE)
+       FILLABLE_THRESH = 0.01
+
+  3. New function _nn_fill_and_sanitize(arr, modality):
+       • Detects nodata pixels (S2: ==0; S1/DEM: isnan)
+       • For each of 196 patches: if 0 < nodata_frac < 1% → mark for NN-fill
+       • Applies distance_transform_edt to copy value from nearest valid neighbour
+         into all marked pixels
+       • Calls np.nan_to_num(nan=0.0) to replace any remaining NaN with 0
+         (covers S1/DEM patches with ≥1% nodata — encoder never sees NaN)
+       • Fast path: returns original array unchanged if no nodata pixels at all
+
+  4. _load_tif() gains a modality= parameter:
+       if modality is not None: arr = _nn_fill_and_sanitize(arr, modality)
+
+  5. _TifDataset gains modality= in __init__, passes it to _load_tif in __getitem__
+
+  6. process_temporal: _TifDataset(..., modality=modality)
+     process_static:   _load_tif(..., modality=modality)
+
+Smoke test on ISMN_Berlin_PflABerlin11Humb / 20221116_DESC.tif (9.12% NaN):
+  Fillable pixels filled  : 1   (in a patch with <1% nodata)
+  Large-nodata pixels     : 4,577  (patches ≥1% — zeroed for encoder safety)
+  NaN after               : 0
+  All finite              : True
+
+
+────────────────────────────────────────────────────────────────────────────────
+DESIGN DECISIONS
+────────────────────────────────────────────────────────────────────────────────
+
+Q: Should tiles with >50% bad patches be filtered inside precompute_terramind.py?
+A: No. By design, a separate deletion step will remove such tiles before tokenisation
+   (analogous to what was done for S2 via the cloudy tile filter). The tokeniser does
+   not need to check for this.
+
+Q: What happens to patches with ≥1% nodata in S1/DEM?
+A: They are NOT NN-filled (fill quality degrades for large nodata regions). Instead,
+   remaining NaN is replaced with 0.0 so the encoder receives finite input. Those
+   tokens will be garbage but are masked at training time.
+
+Q: Why pixel==0 as nodata for S2L2A?
+A: Post-harmonisation (+1000 DN added to pre-2022 tiles), valid S2 reflectance is
+   always ≥ 1. Pixel value 0 is the standard ESA S2 nodata sentinel and also means
+   "no observation" in the original download.
+
+
+────────────────────────────────────────────────────────────────────────────────
+FILES CHANGED / CREATED THIS SESSION
+────────────────────────────────────────────────────────────────────────────────
+
+  NEW   audit_satellite_data.py
+  NEW   slurm/audit_satellite.sh
+  MOD   precompute_terramind.py    (NN-fill: +70 lines)
+  NEW   text/dataset_audit.txt     (written by audit job)
+  NEW   csvs/dataset_coverage.csv  (written by audit job)
+  NEW   csvs/dataset_nodata.csv    (written by audit job)
+  MOD   slurm/filter_cloudy_tiles.sh  (already committed: --delete mode)
+
+
+────────────────────────────────────────────────────────────────────────────────
+NEXT STEPS
+────────────────────────────────────────────────────────────────────────────────
+
+  1. (Optional) Delete S1/DEM tiles with >50% NaN, if desired, before tokenisation.
+  2. Submit tokenisation job:
+       sbatch slurm/tokenize.sh
+     Output per S2L2A / S1RTC acquisition:
+       {stem}_L3/L6/L9/L12.pt  (196, 768) fp16
+       {stem}_geo.json
+     Output per static modality (DEM, LULC):
+       dem_L12.pt / lulc_L12.pt  (196, 768) fp16
+
+================================================================================

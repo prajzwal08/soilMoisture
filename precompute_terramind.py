@@ -56,6 +56,7 @@ import numpy as np
 import rasterio
 import rasterio.errors
 from affine import Affine
+from scipy.ndimage import distance_transform_edt
 import torch
 import torch.nn as nn
 import torch.utils.data
@@ -187,8 +188,10 @@ DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
 BATCH_SIZE  = 8
 
 TEMPORAL_LAYERS = ("L12", "L9", "L6", "L3")
-IMAGE_SIZE  = 224   # pixel dimensions of each input patch
-TOKEN_SIZE  = 16    # each token covers TOKEN_SIZE × TOKEN_SIZE pixels → 14×14 = 196 tokens
+IMAGE_SIZE      = 224   # pixel dimensions of each input patch
+TOKEN_SIZE      = 16    # each token covers TOKEN_SIZE × TOKEN_SIZE pixels → 14×14 = 196 tokens
+N_SIDE          = IMAGE_SIZE // TOKEN_SIZE   # 14
+FILLABLE_THRESH = 0.01  # patches with < 1% nodata pixels are NN-filled; ≥ 1% are left as-is
 
 
 # ── geo helpers ───────────────────────────────────────────────────────────────
@@ -215,7 +218,8 @@ def _save_geo(geo: dict, path: Path) -> None:
 
 def _load_tif(path: Path,
               band_indices: list[int] | None = None,
-              do_crop: bool = False) -> tuple[torch.Tensor | None, dict | None]:
+              do_crop: bool = False,
+              modality: str | None = None) -> tuple[torch.Tensor | None, dict | None]:
     """Load .tif → (C, H, W) float32 tensor + geo dict. Returns (None, None) on I/O failure."""
     try:
         with rasterio.open(path) as src:
@@ -245,7 +249,58 @@ def _load_tif(path: Path,
     if band_indices is not None:
         arr = arr[band_indices]
 
+    if modality is not None:
+        arr = _nn_fill_and_sanitize(arr, modality)
+
     return torch.from_numpy(arr), geo
+
+
+def _nn_fill_and_sanitize(arr: np.ndarray, modality: str) -> np.ndarray:
+    """NN-fill nodata pixels in patches with < 1% nodata; replace remaining NaN with 0.
+
+    Per-patch rule (16×16 = 256 pixels):
+      0 < nodata_frac < FILLABLE_THRESH  → NN-fill those pixels from nearest valid neighbour
+      nodata_frac >= FILLABLE_THRESH     → leave as-is (bad token, masked at training time)
+
+    After patching, any remaining NaN is replaced with 0 so the encoder never receives
+    non-finite input (applies to S1RTC / DEM patches with ≥ 1% nodata).
+
+    Nodata convention:
+      S2L2A        → pixel == 0  (standard S2 nodata; valid reflectance ≥ 1 post-harmonisation)
+      S1RTC / DEM  → np.isnan   (float NaN from orbit gaps / missing elevation)
+    """
+    if modality == "S2L2A":
+        nodata_2d = (arr == 0).any(axis=0)          # (H, W)
+    else:
+        nodata_2d = np.isnan(arr).any(axis=0)
+
+    if not nodata_2d.any():
+        return arr  # fast path: no nodata
+
+    out = arr.copy()
+
+    # Identify which nodata pixels belong to fillable patches (0 < frac < 1%)
+    fill_2d = np.zeros(nodata_2d.shape, dtype=bool)  # (H, W)
+    for i in range(N_SIDE):
+        for j in range(N_SIDE):
+            rs, re = i * TOKEN_SIZE, (i + 1) * TOKEN_SIZE
+            cs, ce = j * TOKEN_SIZE, (j + 1) * TOKEN_SIZE
+            patch  = nodata_2d[rs:re, cs:ce]
+            frac   = patch.sum() / (TOKEN_SIZE * TOKEN_SIZE)
+            if 0 < frac < FILLABLE_THRESH:
+                fill_2d[rs:re, cs:ce] = patch
+
+    if fill_2d.any():
+        # For each nodata pixel in fill_2d, copy value from nearest valid neighbour
+        _, nn_idx = distance_transform_edt(nodata_2d, return_indices=True)
+        for c in range(out.shape[0]):
+            out[c][fill_2d] = out[c][nn_idx[0][fill_2d], nn_idx[1][fill_2d]]
+
+    # Sanitize remaining NaN → 0 (S1/DEM patches with ≥ 1% nodata)
+    if modality != "S2L2A":
+        np.nan_to_num(out, nan=0.0, copy=False)
+
+    return out
 
 
 # ── async data loading ────────────────────────────────────────────────────────
@@ -255,16 +310,19 @@ class _TifDataset(torch.utils.data.Dataset):
 
     def __init__(self, paths: list[Path],
                  band_indices: list[int] | None,
-                 do_crop: bool):
+                 do_crop: bool,
+                 modality: str | None = None):
         self.paths        = paths
         self.band_indices = band_indices
         self.do_crop      = do_crop
+        self.modality     = modality
 
     def __len__(self) -> int:
         return len(self.paths)
 
     def __getitem__(self, idx: int):
-        tensor, geo = _load_tif(self.paths[idx], self.band_indices, self.do_crop)
+        tensor, geo = _load_tif(self.paths[idx], self.band_indices,
+                                self.do_crop, self.modality)
         if tensor is None:
             return torch.empty(0), {}
         return tensor, geo
@@ -421,7 +479,7 @@ def process_temporal(encoder:      TerraMindEncoder,
     if dry_run:
         pending = pending[:batch_size]
 
-    dataset = _TifDataset(pending, band_indices, do_crop)
+    dataset = _TifDataset(pending, band_indices, do_crop, modality=modality)
     loader  = torch.utils.data.DataLoader(
         dataset,
         batch_size        = batch_size,
@@ -469,7 +527,7 @@ def process_static(encoder:  TerraMindEncoder,
     if out_pt.exists() or not src_path.exists():
         return
 
-    patch, geo = _load_tif(src_path, do_crop=do_crop)
+    patch, geo = _load_tif(src_path, do_crop=do_crop, modality=modality)
     if patch is None:
         return
 

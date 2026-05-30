@@ -1,0 +1,63 @@
+============================================================
+SATELLITE DATA AUDIT
+============================================================
+Stations analysed : 1028
+
+── COVERAGE ──────────────────────────────────────────────
+Not in splits CSV     : 0
+S2 outside date range : 0 stations
+S1 outside date range : 0 stations
+S2 images/station     : median=205  min=9  max=836  total=265,274
+S1 images/station     : median=429  min=0  max=1915  total=503,625
+
+  S2L2A tiles per year (all stations):
+    2016: 7,136
+    2017: 15,229
+    2018: 33,341
+    2019: 34,262
+    2020: 37,602
+    2021: 32,327
+    2022: 32,770
+    2023: 26,880
+    2024: 24,213
+    2025: 21,514
+
+  S1RTC tiles per year (all stations):
+    2016: 14,962
+    2017: 61,954
+    2018: 64,040
+    2019: 72,298
+    2020: 79,755
+    2021: 73,396
+    2022: 38,162
+    2023: 35,439
+    2024: 29,137
+    2025: 34,482
+
+── NODATA  (100% tile sample for S2/S1; 100% for DEM) ─────
+
+  S2L2A (265,274 tiles sampled of 265,274 total):
+    clean       : 99.08%
+    fillable    : 0.10%  (0 < nodata < 1%)
+    partial     : 0.12%  (1% ≤ nodata < 50%)
+    bad         : 0.69%  (nodata ≥ 50%)
+    pct tiles with any bad patch        : 2.94%
+    stations with any bad patch : 157/1028
+
+  S1RTC (503,625 tiles sampled of 503,625 total):
+    clean       : 99.40%
+    fillable    : 0.01%  (0 < nodata < 1%)
+    partial     : 0.20%  (1% ≤ nodata < 50%)
+    bad         : 0.39%  (nodata ≥ 50%)
+    pct tiles with any bad patch        : 1.79%
+    stations with any bad patch : 250/1028
+
+  DEM (1,005 tiles sampled of 1,005 total):
+    clean       : 98.99%
+    fillable    : 0.01%  (0 < nodata < 1%)
+    partial     : 0.26%  (1% ≤ nodata < 50%)
+    bad         : 0.74%  (nodata ≥ 50%)
+    pct stations with bad DEM patch     : 3.68%
+    stations with any bad patch : 37/1028
+
+============================================================
