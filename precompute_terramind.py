@@ -193,6 +193,19 @@ TOKEN_SIZE      = 16    # each token covers TOKEN_SIZE × TOKEN_SIZE pixels → 
 N_SIDE          = IMAGE_SIZE // TOKEN_SIZE   # 14
 FILLABLE_THRESH = 0.01  # patches with < 1% nodata pixels are NN-filled; ≥ 1% are left as-is
 
+# ESRI Annual LULC v2 raw values → TerraMind indices (applied after re-download).
+# 0=NoData 1=Water 2=Trees 3=FloodedVeg 4=Crops 5=BuiltArea 6=BareGround 7=Snow/Ice 8=Clouds 9=Rangeland
+_LULC_REMAP = np.array([0, 1, 2, 9, 3, 4, 9, 5, 6, 7, 8, 9], dtype=np.uint8)
+
+
+def _remap_lulc(arr: np.ndarray) -> np.ndarray:
+    """Remap ESRI Annual LULC v2 raw class values to TerraMind indices (uint8)."""
+    raw = np.asarray(arr, dtype=np.int16)
+    out = np.where((raw >= 0) & (raw < len(_LULC_REMAP)),
+                   _LULC_REMAP[np.clip(raw, 0, len(_LULC_REMAP) - 1)],
+                   np.uint8(0))
+    return out.astype(np.uint8)
+
 
 # ── geo helpers ───────────────────────────────────────────────────────────────
 
@@ -249,6 +262,9 @@ def _load_tif(path: Path,
     if band_indices is not None:
         arr = arr[band_indices]
 
+    if modality == "LULC":
+        arr = _remap_lulc(arr).astype(np.float32)
+
     if modality is not None:
         arr = _nn_fill_and_sanitize(arr, modality)
 
@@ -271,6 +287,8 @@ def _nn_fill_and_sanitize(arr: np.ndarray, modality: str) -> np.ndarray:
     """
     if modality == "S2L2A":
         nodata_2d = (arr == 0).any(axis=0)          # (H, W)
+    elif modality == "LULC":
+        nodata_2d = (arr == 0).all(axis=0)          # valid classes ≥ 10; 0 = background
     else:
         nodata_2d = np.isnan(arr).any(axis=0)
 

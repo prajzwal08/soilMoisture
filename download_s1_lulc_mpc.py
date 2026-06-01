@@ -4,7 +4,7 @@ Download S1 RTC and LULC for all stations via Microsoft Planetary Computer (MPC)
 Products per station:
   {station}/S1RTC/YYYYMMDD_ASC.tif      float32, dB [-50,+10], bands: VV VH
   {station}/S1RTC/YYYYMMDD_DESC.tif     float32, dB [-50,+10], bands: VV VH
-  {station}/LULC/YYYY.tif               uint8, class 0-9, nearest 10m
+  {station}/LULC/YYYY.tif               uint8, TerraMind indices 0-9, nearest 10m
   {station}/metadata.json
 
 Sources:
@@ -41,6 +41,28 @@ import stackstac
 import xarray as xr
 from pyproj import Transformer
 from rasterio.enums import Resampling
+
+# ============================================================
+# LULC CLASS REMAPPING
+# ============================================================
+
+# ESRI Annual LULC v2 (io-lulc-annual-v02) raw values → TerraMind indices (0-9).
+# TerraMind order: 0=NoData 1=Water 2=Trees 3=FloodedVeg 4=Crops
+#                  5=BuiltArea 6=BareGround 7=Snow/Ice 8=Clouds 9=Rangeland
+# ESRI v2 has no class 3 (Grass) or 6 (Scrub/Shrub) — those v1 classes map to Rangeland.
+# Any raw value > 11 is treated as NoData (index 0).
+_LULC_REMAP = np.array([0, 1, 2, 9, 3, 4, 9, 5, 6, 7, 8, 9], dtype=np.uint8)
+#               raw:   0  1  2  3  4  5  6  7  8  9 10 11
+
+
+def _remap_lulc(arr: np.ndarray) -> np.ndarray:
+    """Remap ESRI Annual LULC v2 raw class values to TerraMind indices (uint8)."""
+    raw = np.asarray(arr, dtype=np.int16)
+    out = np.where((raw >= 0) & (raw < len(_LULC_REMAP)),
+                   _LULC_REMAP[np.clip(raw, 0, len(_LULC_REMAP) - 1)],
+                   np.uint8(0))
+    return out.astype(np.uint8)
+
 
 # ============================================================
 # CONFIGURATION
@@ -379,7 +401,7 @@ def download_lulc(
         if da.ndim == 2:
             da = da.expand_dims("band")
         da = center_crop(da)
-        da.values = np.clip(da.values, 0, 9).astype(np.uint8)
+        da.values = _remap_lulc(da.values)
         tmp = fpath.with_suffix(".tmp")
         try:
             save_geotiff(da, tmp, "uint8", epsg)
