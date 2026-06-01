@@ -1,0 +1,82 @@
+============================================================
+MODALITY BAND / CLASS REFERENCE
+============================================================
+
+── S2L2A  (Sentinel-2 Level-2A)  ────────────────────────
+  Bands     : 12  (all except B10 Cirrus, not in L2A)
+  Shape     : (12, 224, 224) float32
+  Nodata    : pixel == 0  (valid reflectance ≥ 1 post-harmonisation)
+  Crop      : centre-crop to 224×224
+  Norm      : (DN - mean) / std  (TerraMind pretraining stats)
+
+  Index  Band   Description              λ (nm)
+  -----  -----  -----------------------  ------
+    0    B01    Coastal aerosol           443
+    1    B02    Blue                      490
+    2    B03    Green                     560
+    3    B04    Red                       665
+    4    B05    Red Edge 1                705
+    5    B06    Red Edge 2                740
+    6    B07    Red Edge 3                783
+    7    B08    NIR (broad)               842
+    8    B8A    NIR (narrow)              865
+    9    B11    SWIR 1                   1610
+   10    B12    SWIR 2                   2190
+   11    B09    Water vapour              945
+
+── S1RTC  (Sentinel-1 RTC backscatter)  ─────────────────
+  Bands     : 2
+  Shape     : (2, 224, 224) float32
+  Nodata    : NaN  (orbit swath boundaries)
+  Crop      : none (already 224×224)
+  Norm      : (dB - mean) / std  (TerraMind pretraining stats)
+
+  Index  Band   Description
+  -----  -----  ------------------------------------------
+    0    VH     Cross-polarisation backscatter  dB [-50,+10]
+    1    VV     Co-polarisation backscatter     dB [-50,+10]
+
+── DEM  (Digital Elevation Model)  ──────────────────────
+  Bands     : 1
+  Shape     : (1, 224, 224) float32
+  Nodata    : NaN or 0  (ocean / missing elevation)
+  Crop      : centre-crop to 224×224
+  Norm      : (m - mean) / std  (TerraMind pretraining stats)
+
+  Index  Band        Description
+  -----  ----------  ------------------------------------------
+    0    Elevation   Metres above sea level
+
+── LULC  (ESRI Annual Land Use Land Cover v2)  ──────────
+  Source    : Microsoft Planetary Computer  io-lulc-annual-v02
+  Bands     : 1 raw (uint8) → 10-channel one-hot inside TerraMind
+  Shape     : (1, 224, 224) uint8 stored; TerraMind receives (B,1,H,W)
+              and auto-encodes to (B,10,H,W) via F.one_hot(num_classes=10)
+  Nodata    : index 0  (background / outside footprint)
+  Crop      : none (already 224×224)
+  Norm      : none (categorical)
+
+  TerraMind  ESRI v2     Class
+  Index      Raw value
+  ---------  ----------  ------------------------------------------
+    0          0         No Data  (nodata / outside footprint)
+    1          1         Water
+    2          2         Trees
+    3          4         Flooded Vegetation
+    4          5         Crops
+    5          7         Built Area
+    6          8         Bare Ground
+    7          9         Snow / Ice
+    8         10         Clouds
+    9         11         Rangeland
+               3*        → remapped to 9  (Grass, ESRI v1 only)
+               6*        → remapped to 9  (Scrub/Shrub, ESRI v1 only)
+
+  * Classes 3 and 6 do not exist in ESRI Annual LULC v2 but may appear
+    in rare edge tiles; both are remapped to Rangeland (index 9).
+
+  Remap lookup (index = ESRI raw value):
+    _LULC_REMAP = [0, 1, 2, 9, 3, 4, 9, 5, 6, 7, 8, 9]
+    #  raw:        0  1  2  3  4  5  6  7  8  9 10 11
+
+============================================================
