@@ -367,7 +367,7 @@ class AsyncSaver:
     """
 
     def __init__(self) -> None:
-        self._q: queue.Queue = queue.Queue()
+        self._q: queue.Queue = queue.Queue(maxsize=2000)
         self._error: BaseException | None = None
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
