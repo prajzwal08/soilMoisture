@@ -10,7 +10,7 @@
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/dem_fix_%j.err
 
 source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
-conda activate sensei
+conda activate soilmoisture
 
 echo "Job     : $SLURM_JOB_ID"
 echo "Node    : $SLURMD_NODENAME"

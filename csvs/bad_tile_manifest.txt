@@ -1,0 +1,6 @@
+/gpfs/scratch1/shared/pkhanal/satellite/ISMN_SNOTEL_ArapahoRidge/S2L2A/20210715.tif
+/gpfs/scratch1/shared/pkhanal/satellite/ISMN_SNOTEL_BerryCreek/S2L2A/20220130.tif
+/gpfs/scratch1/shared/pkhanal/satellite/ISMN_SNOTEL_CaveMountain/S2L2A/20220130.tif
+/gpfs/scratch1/shared/pkhanal/satellite/ISMN_SNOTEL_DryLake/S2L2A/20210715.tif
+/gpfs/scratch1/shared/pkhanal/satellite/ISMN_SNOTEL_Kalamazoo/S2L2A/20220130.tif
+/gpfs/scratch1/shared/pkhanal/satellite/ISMN_USCRN_Bodega-6-WSW/DEM/dem.tif

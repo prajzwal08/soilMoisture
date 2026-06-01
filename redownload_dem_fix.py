@@ -248,7 +248,7 @@ def main():
     )
     log = logging.getLogger(__name__)
 
-    stations = pd.read_csv(DATA_ROOT / "station_splits.csv").reset_index(drop=True)
+    stations = pd.read_csv(Path("csvs/station_splits.csv")).reset_index(drop=True)
 
     def station_folder(st):
         if st.source_network != st.network:
