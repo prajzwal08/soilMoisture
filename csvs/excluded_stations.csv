@@ -17,3 +17,20 @@ ISMN_TERENO_Wildenrath,2,Fewer than 3 years of satellite (S2/S1) coverage
 ISMN_TWENTE_ITCSM-02b,2,Fewer than 3 years of satellite (S2/S1) coverage
 ISMN_USCRN_Edinburg-17-NNE,2,Fewer than 3 years of satellite (S2/S1) coverage
 ICOS_GL-Dsk,4,No Sentinel-1 IW coverage at 69°N (Greenland); 0 S1RTC scenes across all years
+AmeriFlux_US-GL1,3.6,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); station located on Lake Superior — no soil data
+ISMN_NGARI_SQ02,5,SoilGrids soil_patch_ok=False (soil_nan_pct=0.95); high-altitude Tibetan Plateau (4300m) with sparse SoilGrids coverage
+ISMN_NGARI_SQ03,5,SoilGrids soil_patch_ok=False (soil_nan_pct=0.94); high-altitude Tibetan Plateau (4285m) with sparse SoilGrids coverage
+ISMN_NGARI_SQ07,5,SoilGrids soil_patch_ok=False (soil_nan_pct=0.60); high-altitude Tibetan Plateau (4277m) with sparse SoilGrids coverage
+ISMN_NGARI_SQ14,5,SoilGrids soil_patch_ok=False (soil_nan_pct=0.75); high-altitude Tibetan Plateau (4359m) with sparse SoilGrids coverage
+ISMN_NGARI_SQ17,3.1,SoilGrids soil_patch_ok=False (soil_nan_pct=0.68); high-altitude Tibetan Plateau (4563m) with sparse SoilGrids coverage
+ISMN_SCAN_FordDryLake,5.7,SoilGrids soil_patch_ok=False (soil_nan_pct=0.91); hyper-arid Sonoran Desert (BWh) with minimal SoilGrids coverage
+ISMN_SCAN_Kainaliu,6.5,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
+ISMN_SCAN_KemoleGulch,7.0,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
+ISMN_SCAN_Kukuihaele,5.1,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
+ISMN_SCAN_ManaHouse,5.0,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
+ISMN_SCAN_SandHollow,7.6,SoilGrids soil_patch_ok=False (soil_nan_pct=0.70); arid Utah (BSk) with poor SoilGrids coverage
+ISMN_SCAN_SilverSword,4.3,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
+ISMN_SCAN_Spooky,11.7,SoilGrids soil_patch_ok=False (soil_nan_pct=0.98); arid Utah canyon (BWk) with minimal SoilGrids coverage
+ISMN_SCAN_WaimeaPlain,7.0,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
+ISMN_SNOTEL_AtigunPass,12.0,SoilGrids soil_patch_ok=False (soil_nan_pct=0.99); Arctic Alaska (68°N Dfc) permafrost with minimal SoilGrids coverage
+ISMN_USCRN_Bodega-6-WSW,4.0,SoilGrids soil_patch_ok=False (soil_nan_pct=0.58); also has bad DEM tile; insufficient SoilGrids coverage

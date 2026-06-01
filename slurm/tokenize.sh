@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=tokenize
-#SBATCH --array=0-100
+#SBATCH --array=0-99
 #SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

@@ -68,7 +68,7 @@ def _nodata_mask(arr: np.ndarray, modality: str) -> np.ndarray:
     elif modality == "S1RTC":
         return np.isnan(arr).any(axis=0)
     elif modality == "DEM":
-        return (np.isnan(arr) | (arr == 0)).any(axis=0)
+        return np.isnan(arr).any(axis=0)
     else:  # LULC
         return (arr == 0).all(axis=0)
 

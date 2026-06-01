@@ -1,7 +1,7 @@
 ================================================================
 FINAL PRE-TOKENISATION QA REPORT
 ================================================================
-  Stations checked : 1
+  Stations checked : 993
 
   CHECK 1 — Year coverage (≥3 years with ≥1 S1 or S2 tile)
     Failing : 0
@@ -11,7 +11,7 @@ FINAL PRE-TOKENISATION QA REPORT
     Total bad tiles         : 0
 
   CHECK 3 — Satellite modality completeness
-    Stations missing ≥1 modality : 1
+    Stations missing ≥1 modality : 0
 
   CHECK 4 — Soil completeness
     Failing (missing file or soil_patch_ok=False) : 0
@@ -20,8 +20,5 @@ FINAL PRE-TOKENISATION QA REPORT
     Stations with 0 ERA5 files  : 0
     Stations with partial gaps  : 0
 
-  OVERALL PASS : 0 / 1
+  OVERALL PASS : 993 / 993
 ================================================================
-
-CHECK 3 — Stations missing modalities (1):
-  ISMN_ARM_Anthony  [LULC]
