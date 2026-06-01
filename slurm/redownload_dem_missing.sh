@@ -1,12 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=redownload_lulc
+#SBATCH --job-name=dem_missing
 #SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=2
 #SBATCH --time=04:00:00
-#SBATCH --output=logs/redownload_lulc_%j.out
+#SBATCH --mem=4G
+#SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/dem_missing_%j.out
+#SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/dem_missing_%j.err
 
 source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
 conda activate soilmoisture
@@ -17,7 +18,7 @@ echo "Started : $(date)"
 echo ""
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
-python download_s1_lulc_mpc.py
+python redownload_dem_missing.py
 
 echo ""
 echo "Finished : $(date)"
