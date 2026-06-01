@@ -46,7 +46,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import sys
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -356,6 +358,53 @@ def _collate_tif(batch: list) -> tuple[list, list]:
 
 # ── batch runner ──────────────────────────────────────────────────────────────
 
+class AsyncSaver:
+    """Background thread that drains (tensor, tmp_path, final_path) save jobs.
+
+    submit() returns immediately after queuing; flush() blocks until all queued
+    saves have landed on disk. Decouples GPU encoding from GPFS writes so the
+    GPU can start the next batch while the previous batch is still being written.
+    """
+
+    def __init__(self) -> None:
+        self._q: queue.Queue = queue.Queue()
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def _worker(self) -> None:
+        while True:
+            item = self._q.get()
+            if item is None:
+                self._q.task_done()
+                break
+            tensor, tmp, final = item
+            try:
+                torch.save(tensor, tmp)
+                tmp.rename(final)
+            except Exception as exc:
+                if self._error is None:
+                    self._error = exc
+            finally:
+                self._q.task_done()
+
+    def submit(self, tensor: torch.Tensor, tmp: Path, final: Path) -> None:
+        """Non-blocking enqueue. tensor must already be on CPU."""
+        if self._error is not None:
+            raise self._error
+        self._q.put((tensor, tmp, final))
+
+    def flush(self) -> None:
+        """Block until all pending saves complete, then re-raise any worker error."""
+        self._q.join()
+        if self._error is not None:
+            raise self._error
+
+    def shutdown(self) -> None:
+        self._q.put(None)
+        self._thread.join()
+
+
 def _amp_ctx(device: torch.device):
     """AMP context: fp16 autocast on CUDA, no-op on CPU."""
     return torch.autocast(device_type=device.type, dtype=torch.float16,
@@ -364,16 +413,26 @@ def _amp_ctx(device: torch.device):
 
 def _save_feats(feats: dict, out_idx: int, src_idx: int,
                 src_paths: list[Path], geos: list[dict | None],
-                out_dir: Path, layers: tuple[str, ...]) -> None:
-    """Save one item's features to disk. Raises ValueError on non-finite tensors."""
+                out_dir: Path, layers: tuple[str, ...],
+                saver: AsyncSaver | None = None) -> None:
+    """Save one item's features to disk. Raises ValueError on non-finite tensors.
+
+    If saver is provided, torch.save() is offloaded to the background thread
+    and this function returns immediately after queueing all layers.
+    """
     stem = src_paths[src_idx].stem
     for layer in layers:
         t = feats[layer][out_idx]
         if not torch.isfinite(t).all():
             raise ValueError(f"non-finite values in {layer} for {stem}")
-        tmp = out_dir / f"{stem}_{layer}.tmp"
-        torch.save(t.half().cpu(), tmp)
-        tmp.rename(out_dir / f"{stem}_{layer}.pt")
+        t_cpu = t.half().cpu()
+        tmp   = out_dir / f"{stem}_{layer}.tmp"
+        final = out_dir / f"{stem}_{layer}.pt"
+        if saver is not None:
+            saver.submit(t_cpu, tmp, final)
+        else:
+            torch.save(t_cpu, tmp)
+            tmp.rename(final)
     if geos[src_idx] is not None:
         _save_geo(geos[src_idx], out_dir / f"{stem}_geo.json")
 
@@ -388,7 +447,8 @@ def _run_batch(encoder:   TerraMindEncoder,
                device:    torch.device,
                failures:  list[str],
                perf:      PerfTracker | None = None,
-               dry_run:   bool = False) -> int:
+               dry_run:   bool = False,
+               saver:     AsyncSaver | None = None) -> int:
     """Forward a batch through TerraMind, save .pt and _geo.json. Returns count saved."""
     valid_i = [i for i, p in enumerate(patches) if p is not None]
     if not valid_i:
@@ -422,7 +482,7 @@ def _run_batch(encoder:   TerraMindEncoder,
         saved = 0
         for out_idx, src_idx in enumerate(valid_i):
             try:
-                _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers)
+                _save_feats(feats, out_idx, src_idx, src_paths, geos, out_dir, layers, saver)
                 saved += 1
             except ValueError as exc:
                 print(f"    [warn] {exc}")
@@ -451,7 +511,7 @@ def _run_batch(encoder:   TerraMindEncoder,
         pk1 = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
         t0_sv1 = time.perf_counter()
         try:
-            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers)
+            _save_feats(sf, 0, src_idx, src_paths, geos, out_dir, layers, saver)
             saved += 1
         except ValueError as exc2:
             print(f"    [warn] {exc2}")
@@ -474,7 +534,8 @@ def process_temporal(encoder:      TerraMindEncoder,
                      failures:     list[str] | None = None,
                      perf:         PerfTracker | None = None,
                      dry_run:      bool = False,
-                     num_workers:  int = 0) -> int:
+                     num_workers:  int = 0,
+                     saver:        AsyncSaver | None = None) -> int:
     """
     Process all .tif files for S2L2A or S1RTC.
     Saves L3/L6/L9/L12 + geo.json per acquisition to out_dir.
@@ -518,7 +579,7 @@ def process_temporal(encoder:      TerraMindEncoder,
         saved = _run_batch(
             encoder, patches, geos,
             batch_files, out_dir, modality, TEMPORAL_LAYERS, device, failures, perf,
-            dry_run=dry_run,
+            dry_run=dry_run, saver=saver,
         )
         if perf is not None and n_valid > 0:
             perf.t_load += t_load
@@ -534,7 +595,8 @@ def process_static(encoder:  TerraMindEncoder,
                    out_stem: str,
                    device:   torch.device,
                    do_crop:  bool = False,
-                   failures: list[str] | None = None) -> None:
+                   failures: list[str] | None = None,
+                   saver:    AsyncSaver | None = None) -> None:
     """
     Process a single static .tif (DEM or LULC). Saves L12 + geo.json only.
     Skip connections (L3/L6/L9) are not needed for static modalities.
@@ -559,9 +621,13 @@ def process_static(encoder:  TerraMindEncoder,
         return
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    tmp = out_dir / f"{out_stem}_L12.tmp"
-    torch.save(t.half().cpu(), tmp)
-    tmp.rename(out_pt)
+    t_cpu = t.half().cpu()
+    tmp   = out_dir / f"{out_stem}_L12.tmp"
+    if saver is not None:
+        saver.submit(t_cpu, tmp, out_pt)
+    else:
+        torch.save(t_cpu, tmp)
+        tmp.rename(out_pt)
 
     if geo is not None:
         _save_geo(geo, out_dir / f"{out_stem}_geo.json")
@@ -664,6 +730,8 @@ def main():
     perf_s2 = PerfTracker(device) if trial else None
     perf_s1 = PerfTracker(device) if trial else None
 
+    saver = AsyncSaver() if not dry_run else None
+
     for idx, src_station in enumerate(station_dirs, 1):
         t0          = time.time()
         sid         = src_station.name
@@ -686,6 +754,7 @@ def main():
             perf         = perf_s2,
             dry_run      = dry_run,
             num_workers  = args.num_workers,
+            saver        = saver,
         )
         s1_new = process_temporal(
             encoder,
@@ -699,6 +768,7 @@ def main():
             perf        = perf_s1,
             dry_run     = dry_run,
             num_workers = args.num_workers,
+            saver       = saver,
         )
         if not dry_run:
             process_static(
@@ -710,6 +780,7 @@ def main():
                 device   = device,
                 do_crop  = True,
                 failures = failures,
+                saver    = saver,
             )
             lulc_tif = _latest_lulc_tif(src_station / "LULC")
             if lulc_tif:
@@ -722,7 +793,9 @@ def main():
                     device   = device,
                     do_crop  = False,
                     failures = failures,
+                    saver    = saver,
                 )
+            saver.flush()  # ensure all writes land before moving to next station
 
         total_s2 += s2_new
         total_s1 += s1_new
@@ -745,6 +818,9 @@ def main():
             total_vram = torch.cuda.get_device_properties(device).total_memory / 1e9
             print(f"\nGPU total VRAM : {total_vram:.1f} GB")
         print("="*60)
+
+    if saver is not None:
+        saver.shutdown()
 
     print(f"\nDone.  New acquisitions → S2: {total_s2},  S1: {total_s1}")
     if skipped:
