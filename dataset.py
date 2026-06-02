@@ -4,20 +4,19 @@ SoilMoistureDataset
 Loads pre-computed TerraMind features, ERA5-Land meteo, and ISMN labels
 for one station × year × day-of-year sample.
 
-Requires precompute_terramind.py to have been run first so that
-  {satellite_dir}/{station}/S2L2A/{YYYYMMDD}_L{3,6,9,12}.pt  and
-  {satellite_dir}/{station}/S1RTC/{stem}_L{3,6,9,12}.pt
-exist. The raw .tif files are no longer read at training time.
+Directory layout (consolidated format):
+  {data_dir}/{sm_only|sm_and_flux|flux_only}/{station}/
+      S2L2A/   {station}_L{3,6,9,12}_{start}_{end}.pt   dict{tokens[N,196,768], dates, layer, geo}
+      S1RTC/   {station}_{ASC|DESC}_L{3,6,9,12}_{start}_{end}.pt
+      DEM/     dem_L12.pt                                plain tensor [196,768] fp16
+      LULC/    lulc_L12.pt                               plain tensor [196,768] fp16
+      CloudMask/ {station}_{start}_{end}.pt              dict{masks[N,H,W] uint8, dates, geo}
+      ERA5Land/  meteo_{start}_{end}.nc
+      SIF/       sif_{start}_{end}.nc
+      TWSA/      twsa_{start}_{end}.nc
+      labels.nc
 
-Directory layout:
-  {satellite_dir}/{network}_{station}/
-      S2L2A/   YYYYMMDD_L{3,6,9,12}.pt  (196×768 fp16 per layer)
-      S1RTC/   {stem}_L{3,6,9,12}.pt    (196×768 fp16 per layer)
-      DEM/     dem_pyramid.pt            (4×768 fp32)
-      CloudMask/ YYYYMMDD.tif                    (cloud labels)
-      ERA5Land/  meteo_YYYY.nc
-
-ISMN label files: {ismn_dir}/{network}_{station}_{start}_{end}.nc
+See data_structure.txt for full schema.
 """
 
 import json
@@ -62,16 +61,6 @@ def center_crop(arr: np.ndarray, size: int = 224) -> np.ndarray:
     return arr[:, top:top + size, left:left + size]
 
 
-def date_to_doy(stem: str, year: int):
-    """Parse YYYYMMDD (possibly followed by _ASC etc.) → day-of-year, or None."""
-    date_str = stem[:8]
-    try:
-        dt = datetime.strptime(date_str, "%Y%m%d")
-        return dt.timetuple().tm_yday if dt.year == year else None
-    except ValueError:
-        return None
-
-
 def _rel_pos(acq_doy: int, acq_year: int, target_doy: int, target_year: int) -> int:
     """0-indexed position in the 365-day rolling window (0=oldest, 364=today)."""
     if acq_year == target_year:
@@ -80,26 +69,32 @@ def _rel_pos(acq_doy: int, acq_year: int, target_doy: int, target_year: int) -> 
         return acq_doy - target_doy - 1
 
 
-def _files_in_window(patch_dir: Path, year: int, target_doy: int) -> list[Path]:
+def _in_window(date_str: str, year: int, target_doy: int) -> bool:
+    """True if date_str (YYYYMMDD) falls in the 365-day window ending at (year, target_doy)."""
+    try:
+        dt  = datetime.strptime(date_str[:8], "%Y%m%d")
+        doy = dt.timetuple().tm_yday
+        return (dt.year == year and doy <= target_doy) or \
+               (dt.year == year - 1 and doy > target_doy)
+    except ValueError:
+        return False
+
+
+def _load_pt(path: Path) -> dict:
+    """Load a consolidated .pt dict, using mmap when available (PyTorch ≥ 2.1)."""
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True, mmap=True)
+    except TypeError:
+        return torch.load(path, map_location="cpu", weights_only=True)
+
+
+def _year_range_from_stem(stem: str) -> tuple[int, int]:
+    """Parse start/end year from a consolidated filename stem.
+    e.g. 'ISMN_X_L12_20160120_20241215' → (2016, 2024)
+         'meteo_20140101_20241231'        → (2014, 2024)
     """
-    Return sorted .tif files in the 365-day rolling window ending at target_doy.
-    Chronological order (prev-year first, then curr-year); last entry = most recent.
-    """
-    if not patch_dir.exists():
-        return []
-    prev = sorted(
-        f for f in patch_dir.glob("*.tif")
-        if f.stem[:4] == str(year - 1)
-        and date_to_doy(f.stem, year - 1) is not None
-        and date_to_doy(f.stem, year - 1) > target_doy
-    )
-    curr = sorted(
-        f for f in patch_dir.glob("*.tif")
-        if f.stem[:4] == str(year)
-        and date_to_doy(f.stem, year) is not None
-        and date_to_doy(f.stem, year) <= target_doy
-    )
-    return prev + curr
+    parts = stem.split("_")
+    return int(parts[-2][:4]), int(parts[-1][:4])
 
 
 # ── Soil patch helpers ───────────────────────────────────────────────────────
@@ -145,29 +140,31 @@ def load_era5_rolling(sat_dir: Path, year: int, target_doy: int):
         era5 : (365, 19) float32
         doys : (365,) long — actual calendar DoY of each token
     """
-    n_curr = target_doy
-    n_prev = 365 - target_doy
+    from datetime import timedelta
+    era5_dir = sat_dir / "ERA5Land"
+    nc_files = sorted(era5_dir.glob("meteo_*_*.nc")) if era5_dir.exists() else []
+    if not nc_files:
+        era5 = np.zeros((365, len(ERA5_VARS)), dtype=np.float32)
+        doys = np.zeros(365, dtype=np.int64)
+        return torch.from_numpy(era5), torch.from_numpy(doys)
 
-    curr_file = sat_dir / "ERA5Land" / f"meteo_{year}.nc"
-    ds_curr   = xr.open_dataset(curr_file)
-    era5_curr = np.stack([ds_curr[v].values[:n_curr] for v in ERA5_VARS], axis=-1).astype(np.float32)
-    doys_curr = np.arange(1, n_curr + 1, dtype=np.int64)
+    ds = xr.open_dataset(nc_files[0])
 
-    if n_prev == 0:
-        return torch.from_numpy(era5_curr), torch.from_numpy(doys_curr)
+    target_date = datetime(year, 1, 1) + timedelta(days=target_doy - 1)
+    window_start = datetime(year - 1, 1, 1) + timedelta(days=target_doy)
+    ds_win = ds.sel(time=slice(str(window_start.date()), str(target_date.date())))
 
-    prev_file = sat_dir / "ERA5Land" / f"meteo_{year - 1}.nc"
-    if prev_file.exists():
-        ds_prev   = xr.open_dataset(prev_file)
-        era5_prev = np.stack([ds_prev[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
-        era5_prev = era5_prev[-n_prev:]
-    else:
-        era5_prev = np.zeros((n_prev, len(ERA5_VARS)), dtype=np.float32)
-    doys_prev = np.arange(365 - n_prev + 1, 366, dtype=np.int64)
+    era5 = np.stack([ds_win[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
+    doys = np.array([pd.Timestamp(t).day_of_year for t in ds_win.time.values], dtype=np.int64)
 
-    era5 = np.concatenate([era5_prev, era5_curr], axis=0)
-    doys = np.concatenate([doys_prev, doys_curr], axis=0)
-    return torch.from_numpy(era5), torch.from_numpy(doys)
+    # Pad to exactly 365 rows (window start may be missing if data starts later)
+    n = 365
+    out_era5 = np.zeros((n, len(ERA5_VARS)), dtype=np.float32)
+    out_doys = np.zeros(n, dtype=np.int64)
+    l = min(len(doys), n)
+    out_era5[-l:] = era5[-l:]
+    out_doys[-l:]  = doys[-l:]
+    return torch.from_numpy(out_era5), torch.from_numpy(out_doys)
 
 
 # ── L12 loaders (replace raw-patch loaders) ──────────────────────────────────
@@ -190,35 +187,48 @@ def load_s2_rolling(patch_dir: Path, cloud_mask_dir: Path,
     token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)
     rel_pos    = torch.zeros(max_acq, dtype=torch.long)
 
-    all_tifs = _files_in_window(patch_dir, year, target_doy)
+    pt_files = sorted(patch_dir.glob("*_L12_*.pt")) if patch_dir.exists() else []
+    if not pt_files:
+        return l12, doys, doys > 0, token_mask, rel_pos
 
-    for i, tif in enumerate(all_tifs[:max_acq]):
-        l12_path = patch_dir / f"{tif.stem}_L12.pt"
-        if not l12_path.exists():
-            continue   # precompute not yet run for this acquisition → skip
+    data       = _load_pt(pt_files[0])
+    tokens_all = data["tokens"]      # [N, 196, 768]
+    all_dates  = data["dates"]
 
-        file_year = int(tif.stem[:4])
-        acq_doy   = date_to_doy(tif.stem, file_year)
+    # Filter to rolling window, keep most recent max_acq
+    win_idx = [i for i, d in enumerate(all_dates) if _in_window(d, year, target_doy)]
+    win_idx = win_idx[-max_acq:]
 
-        l12[i]     = torch.load(l12_path, weights_only=True, map_location="cpu")
-        doys[i]    = acq_doy
-        rel_pos[i] = _rel_pos(acq_doy, file_year, target_doy, year)
+    # Cloud mask lookup (stacked .pt)
+    cm_masks    = None
+    cm_date_idx: dict[str, int] = {}
+    cm_files = sorted(cloud_mask_dir.glob("*_*.pt")) if cloud_mask_dir.exists() else []
+    if cm_files:
+        cm_data     = _load_pt(cm_files[0])
+        cm_masks    = cm_data["masks"]
+        cm_date_idx = {d: i for i, d in enumerate(cm_data["dates"])}
 
-        cm_path = cloud_mask_dir / f"{tif.stem}.tif"
-        if cm_path.exists():
-            with rasterio.open(cm_path) as src:
-                cm = src.read(1).astype(np.uint8)
+    for out_i, src_i in enumerate(win_idx):
+        date_str = all_dates[src_i]
+        dt       = datetime.strptime(date_str[:8], "%Y%m%d")
+        acq_doy  = dt.timetuple().tm_yday
+
+        l12[out_i]     = tokens_all[src_i]
+        doys[out_i]    = acq_doy
+        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+
+        if cm_masks is not None and date_str in cm_date_idx:
+            cm    = cm_masks[cm_date_idx[date_str]].numpy()
             cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-            token_mask[i] = torch.from_numpy((cm_4d == 0).all(axis=(1, 3)))
+            token_mask[out_i] = torch.from_numpy((cm_4d == 0).all(axis=(1, 3)))
 
-    valid = doys > 0
-    return l12, doys, valid, token_mask, rel_pos
+    return l12, doys, doys > 0, token_mask, rel_pos
 
 
 def load_s1_rolling(patch_dir: Path, year: int, target_doy: int,
                     max_acq: int = MAX_S1):
     """
-    Load pre-computed S1 L12 features within the 365-day rolling window.
+    Load pre-computed S1 L12 features (ASC + DESC merged) within the 365-day window.
 
     Returns:
         l12     : (max_acq, 196, 768) float16
@@ -230,22 +240,31 @@ def load_s1_rolling(patch_dir: Path, year: int, target_doy: int,
     doys    = torch.zeros(max_acq, dtype=torch.long)
     rel_pos = torch.zeros(max_acq, dtype=torch.long)
 
-    all_tifs = _files_in_window(patch_dir, year, target_doy)
-
-    for i, tif in enumerate(all_tifs[:max_acq]):
-        l12_path = patch_dir / f"{tif.stem}_L12.pt"
-        if not l12_path.exists():
+    # Merge ASC and DESC into a single date-sorted list
+    entries: list[tuple[str, torch.Tensor, int]] = []
+    for orbit in ("ASC", "DESC"):
+        pt_files = sorted(patch_dir.glob(f"*_{orbit}_L12_*.pt")) if patch_dir.exists() else []
+        if not pt_files:
             continue
+        data = _load_pt(pt_files[0])
+        for i, d in enumerate(data["dates"]):
+            if _in_window(d, year, target_doy):
+                entries.append((d, data["tokens"], i))
 
-        file_year = int(tif.stem[:4])
-        acq_doy   = date_to_doy(tif.stem, file_year)
+    if not entries:
+        return l12, doys, doys > 0, rel_pos
 
-        l12[i]     = torch.load(l12_path, weights_only=True, map_location="cpu")
-        doys[i]    = acq_doy
-        rel_pos[i] = _rel_pos(acq_doy, file_year, target_doy, year)
+    entries.sort(key=lambda x: x[0])
+    entries = entries[-max_acq:]
 
-    valid = doys > 0
-    return l12, doys, valid, rel_pos
+    for out_i, (date_str, tokens_all, src_i) in enumerate(entries):
+        dt      = datetime.strptime(date_str[:8], "%Y%m%d")
+        acq_doy = dt.timetuple().tm_yday
+        l12[out_i]     = tokens_all[src_i]
+        doys[out_i]    = acq_doy
+        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+
+    return l12, doys, doys > 0, rel_pos
 
 
 # ── Skip-connection feature loader ───────────────────────────────────────────
@@ -259,36 +278,54 @@ def load_recent_skip_features(sat_dir: Path, year: int, target_doy: int):
         skip_l3, skip_l6, skip_l9 : each (196, 768) float16 — zeros if unavailable
         recent_is_s1               : bool
     """
-    s2_files = _files_in_window(sat_dir / "S2L2A", year, target_doy)
-    s1_files = _files_in_window(sat_dir / "S1RTC", year, target_doy)
+    zeros = torch.zeros(196, 768, dtype=torch.float16)
 
-    # Determine which modality is more recent
-    recent_is_s1 = False
-    if s2_files and s1_files:
-        s2_tif  = s2_files[-1]
-        s1_tif  = s1_files[-1]
-        s2_year = int(s2_tif.stem[:4])
-        s1_year = int(s1_tif.stem[:4])
-        s2_rel  = _rel_pos(date_to_doy(s2_tif.stem, s2_year), s2_year, target_doy, year)
-        s1_rel  = _rel_pos(date_to_doy(s1_tif.stem, s1_year), s1_year, target_doy, year)
-        recent_is_s1 = s1_rel > s2_rel
-    elif s1_files:
-        recent_is_s1 = True
+    def _most_recent_in_window(mod_dir: Path, glob_pattern: str) -> str | None:
+        """Return the most recent date string in the rolling window, or None."""
+        pts = sorted(mod_dir.glob(glob_pattern)) if mod_dir.exists() else []
+        if not pts:
+            return None
+        data = _load_pt(pts[0])
+        for d in reversed(data["dates"]):   # already sorted ascending → reverse = newest first
+            if _in_window(d, year, target_doy):
+                return d
+        return None
 
-    zeros         = torch.zeros(196, 768, dtype=torch.float16)
-    recent_files  = s1_files if recent_is_s1 else s2_files
-    if not recent_files:
-        return zeros, zeros.clone(), zeros.clone(), recent_is_s1
+    s2_dir = sat_dir / "S2L2A"
+    s1_dir = sat_dir / "S1RTC"
 
-    tif       = recent_files[-1]
-    patch_dir = sat_dir / ("S1RTC" if recent_is_s1 else "S2L2A")
+    s2_date  = _most_recent_in_window(s2_dir, "*_L12_*.pt")
+    s1_date  = None
+    s1_orbit = None
+    for orbit in ("ASC", "DESC"):
+        d = _most_recent_in_window(s1_dir, f"*_{orbit}_L12_*.pt")
+        if d is not None and (s1_date is None or d > s1_date):
+            s1_date, s1_orbit = d, orbit
+
+    recent_is_s1 = bool(s1_date and (not s2_date or s1_date > s2_date))
+    recent_date  = s1_date if recent_is_s1 else s2_date
+    if recent_date is None:
+        return zeros, zeros.clone(), zeros.clone(), False
+
+    # Load L3/L6/L9 for that acquisition
     skips = []
     for layer in ("L3", "L6", "L9"):
-        pt = patch_dir / f"{tif.stem}_{layer}.pt"
-        skips.append(
-            torch.load(pt, weights_only=True, map_location="cpu")
-            if pt.exists() else zeros.clone()
-        )
+        if recent_is_s1:
+            pts = sorted(s1_dir.glob(f"*_{s1_orbit}_{layer}_*.pt"))
+        else:
+            pts = sorted(s2_dir.glob(f"*_{layer}_*.pt"))
+
+        if not pts:
+            skips.append(zeros.clone())
+            continue
+
+        data = _load_pt(pts[0])
+        if recent_date in data["dates"]:
+            idx = data["dates"].index(recent_date)
+            skips.append(data["tokens"][idx])
+        else:
+            skips.append(zeros.clone())
+
     return skips[0], skips[1], skips[2], recent_is_s1
 
 
@@ -364,13 +401,21 @@ class SoilMoistureDataset(Dataset):
 
             ds_label = xr.open_dataset(label_file)
 
-            for year in self.years:
-                era5_file = sat_dir / "ERA5Land" / f"meteo_{year}.nc"
-                if not era5_file.exists():
-                    continue
+            # Parse year coverage from consolidated filenames (fast — no file open)
+            era5_files = sorted((sat_dir / "ERA5Land").glob("meteo_*_*.nc")) \
+                         if (sat_dir / "ERA5Land").exists() else []
+            era5_years = (_year_range_from_stem(era5_files[0].stem)
+                          if era5_files else None)
 
-                s2_files = list((sat_dir / "S2L2A").glob("*.tif")) if (sat_dir / "S2L2A").exists() else []
-                if not any(f.stem[:4] == str(year) for f in s2_files):
+            s2_pt_files = sorted((sat_dir / "S2L2A").glob("*_L12_*.pt")) \
+                          if (sat_dir / "S2L2A").exists() else []
+            s2_years = (_year_range_from_stem(s2_pt_files[0].stem)
+                        if s2_pt_files else None)
+
+            for year in self.years:
+                if era5_years is None or not (era5_years[0] <= year <= era5_years[1]):
+                    continue
+                if s2_years is None or not (s2_years[0] <= year <= s2_years[1]):
                     continue
 
                 year_mask = ds_label["date_time"].dt.year.values == year
