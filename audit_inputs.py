@@ -56,18 +56,23 @@ def _dates_from_stem(stem: str) -> tuple[datetime | None, datetime | None]:
 
 
 def _nc_time_range(path: Path) -> tuple[datetime | None, datetime | None]:
-    """Read first/last time value from a NetCDF file (minimal I/O)."""
+    """Read first/last time value from a NetCDF file (minimal I/O).
+    Tries 'time' and 'date_time' dimension names (labels.nc uses 'date_time')."""
     try:
         import xarray as xr
         try:
             ds = xr.open_dataset(path, engine="netcdf4", use_cftime=False)
         except Exception:
             ds = xr.open_dataset(path, engine="netcdf4")
-        t = ds["time"].values
+        for dim in ("time", "date_time"):
+            if dim in ds:
+                t = ds[dim].values
+                ds.close()
+                t0 = pd.Timestamp(t[0]).to_pydatetime().replace(tzinfo=None)
+                t1 = pd.Timestamp(t[-1]).to_pydatetime().replace(tzinfo=None)
+                return t0, t1
         ds.close()
-        t0 = pd.Timestamp(t[0]).to_pydatetime().replace(tzinfo=None)
-        t1 = pd.Timestamp(t[-1]).to_pydatetime().replace(tzinfo=None)
-        return t0, t1
+        return None, None
     except Exception:
         return None, None
 
