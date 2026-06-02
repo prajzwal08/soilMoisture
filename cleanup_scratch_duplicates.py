@@ -16,8 +16,9 @@ import argparse
 import shutil
 from pathlib import Path
 
-SCRATCH = Path("/gpfs/scratch1/shared/pkhanal/satellite")
-LOG_FILE = Path("/gpfs/work3/0/prjs1968/soilMoisture/text/logs.txt")
+SCRATCH      = Path("/gpfs/scratch1/shared/pkhanal/satellite")
+LOG_FILE     = Path("/gpfs/work3/0/prjs1968/soilMoisture/text/logs.txt")
+CSV_EXCLUDED = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/excluded_stations.csv")
 
 
 def is_duplicate(name: str) -> tuple[bool, str]:
@@ -50,6 +51,9 @@ def verify_safe(dupe_dir: Path, twin_dir: Path | None) -> bool:
 
 
 def main(execute: bool):
+    import pandas as pd
+    excluded = set(pd.read_csv(CSV_EXCLUDED)["station"])
+
     dupes = []
     risky = []
 
@@ -60,7 +64,10 @@ def main(execute: bool):
         if not ok:
             continue
         twin = SCRATCH / correct_name
-        if verify_safe(d, twin if twin.exists() else None):
+        # If the correct name is an excluded station and has no twin, still safe to delete
+        if not twin.exists() and correct_name in excluded:
+            dupes.append(d)
+        elif verify_safe(d, twin if twin.exists() else None):
             dupes.append(d)
         else:
             risky.append((d, correct_name))
@@ -78,7 +85,10 @@ def main(execute: bool):
     for d in dupes:
         print(f"  {'DELETE' if execute else 'would delete'}: {d.name}")
         if execute:
-            shutil.rmtree(d)
+            try:
+                shutil.rmtree(d)
+            except FileNotFoundError:
+                pass
 
     remaining = len(list(SCRATCH.iterdir())) if execute else "N/A (dry run)"
     print()
