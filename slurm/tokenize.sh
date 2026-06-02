@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=tokenize
-#SBATCH --array=0-99
+#SBATCH --array=0-35
 #SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
-#SBATCH --time=02:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=32G
 #SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/tokenize_%A_%a.out
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/tokenize_%A_%a.err
@@ -26,20 +26,19 @@ echo "GPU       : $(nvidia-smi --query-gpu=name,memory.total --format=csv,nohead
 echo "Started   : $(date)"
 echo ""
 
-# ── tokenization (10 stations per array task) ─────────────────────────────────
-# GPU is I/O-bound (~80% time saving .pt files, only 3% SM util measured).
-# Grouping 10 stations amortises torch.compile warmup and reduces job overhead
-# by 10x. Tasks 0-99 handle 10 stations each; task 100 handles the last 10
-# (indices 1000-1009), giving 1010 stations total.
+# ── tokenization (10 stations per array task, driven from station_splits.csv) ─
+# Previous runs sorted scratch dirs (1858 total, 860 duplicates) causing 353
+# active stations to fall past index 999 and never be processed.
+# Now we drive explicitly from station_splits.csv, filtering to untokenized only.
 START=$(( SLURM_ARRAY_TASK_ID * 10 ))
 END=$(( START + 10 ))
 
 $PYTHON precompute_terramind.py \
-    --batch-size  8       \
-    --num-workers 3       \
-    --compile             \
-    --start-idx $START    \
-    --end-idx   $END
+    --batch-size       8    \
+    --num-workers      3    \
+    --compile               \
+    --csv-start-idx  $START \
+    --csv-end-idx    $END
 
 echo ""
 echo "Finished  : $(date)"

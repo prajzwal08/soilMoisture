@@ -659,10 +659,14 @@ def main():
     parser.add_argument("--batch-size",  type=int,  default=BATCH_SIZE)
     parser.add_argument("--station",     type=str,  default=None,
                         help="Process a single station by name (for testing)")
-    parser.add_argument("--start-idx",   type=int,  default=0,
-                        help="First station index, inclusive (for SLURM array slicing)")
-    parser.add_argument("--end-idx",     type=int,  default=None,
-                        help="Last station index, exclusive (for SLURM array slicing)")
+    parser.add_argument("--start-idx",     type=int,  default=0,
+                        help="First station index into sorted scratch dirs (legacy)")
+    parser.add_argument("--end-idx",       type=int,  default=None,
+                        help="Last station index into sorted scratch dirs (legacy)")
+    parser.add_argument("--csv-start-idx", type=int,  default=None,
+                        help="First index into untokenized stations from station_splits.csv")
+    parser.add_argument("--csv-end-idx",   type=int,  default=None,
+                        help="Last index (exclusive) into untokenized stations from station_splits.csv")
     parser.add_argument("--trial",       type=int,  default=None, metavar="N",
                         help="Trial mode: process only first N stations and print detailed "
                              "timing + GPU memory breakdown (default: off)")
@@ -713,6 +717,27 @@ def main():
 
     if args.station:
         station_dirs = [args.scratch_dir / args.station]
+    elif args.csv_start_idx is not None or args.csv_end_idx is not None:
+        # Drive from station_splits.csv, filtered to only untokenized stations.
+        # Avoids the scratch-sort-order bug where duplicate dirs push real stations past index 999.
+        import pandas as pd
+        df = pd.read_csv(Path(__file__).parent / "csvs" / "station_splits.csv")
+        def _folder(row):
+            if row["source_network"] == "ISMN":
+                return f"ISMN_{row['network']}_{row['station_id']}"
+            return f"{row['source_network']}_{row['station_id']}"
+        untokenized = []
+        for _, row in df.iterrows():
+            sid = _folder(row)
+            out = _station_data_dir(sid, args.data_dir)
+            if out is None:
+                continue
+            s2dir = out / "S2L2A"
+            if not s2dir.exists() or not list(s2dir.glob("*_L12_*.pt")):
+                untokenized.append(args.scratch_dir / sid)
+        start = args.csv_start_idx or 0
+        end   = args.csv_end_idx
+        station_dirs = untokenized[start:end]
     else:
         station_dirs = sorted(d for d in args.scratch_dir.iterdir() if d.is_dir())
         station_dirs = station_dirs[args.start_idx : args.end_idx]

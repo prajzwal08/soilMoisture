@@ -1,0 +1,25 @@
+
+=== 2026-06-02 ===
+Investigation:
+- Audited tokenized .pt files: 993 active stations; 337 clean, 188 with both old+new format, 468 missing tokens
+- Root cause: scratch had 860 duplicate dirs (doubled prefix e.g. ISMN_SNOTEL_ISMN_SNOTEL_*) inflating list to 1858; job ran indices 0-999 wasting 360 slots on garbage, leaving 353 active stations unreached
+- All 860 duplicates verified safe to delete (0 cases where duplicate has unique data)
+- station_splits.csv (csvs/): 993 active stations; excluded_stations.csv: 35 excluded stations (still in active dirs)
+- dataset.py was updated to expect consolidated format; confirmed consolidated .pt files are dicts with {tokens[N,196,768], dates[N], layer, geo}
+- All geo.json files per station are identical (same CRS/transform/bounds for every acquisition)
+
+Decisions:
+- Keep consolidated format (all dates per station in one file); mmap=True handles memory efficiently
+- Move 35 excluded stations to excluded_stations/ folder, leave contents untouched
+- Cleanup: rename one geo.json per station to {station}_geo.json, delete rest + old per-date .pt files
+
+Scripts created:
+- cleanup_scratch_duplicates.py  — deletes 860 duplicate scratch dirs (dry-run by default)
+- cleanup_tokens.py              — moves excluded stations + cleans old .pt/geo.json (dry-run by default)
+- precompute_terramind.py        — added --csv-start-idx/--csv-end-idx to drive from station_splits.csv
+- slurm/tokenize.sh              — updated: --array=0-35, --time=08:00:00, uses --csv-start-idx/end-idx
+
+Next steps:
+1. Run: python cleanup_scratch_duplicates.py --execute
+2. Submit: sbatch slurm/tokenize.sh   (re-tokenizes 353 missing stations)
+3. After tokenization completes: python cleanup_tokens.py --execute
