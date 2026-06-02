@@ -1,0 +1,132 @@
+audit_inputs.py — Plan
+======================
+Written: 2026-06-02
+
+Goal
+----
+Final pre-training data audit across all 993 active stations in
+csvs/station_splits.csv (excludes the 35 stations in excluded_stations.csv).
+
+For each station, verify that all required inputs exist AND that their
+date coverage aligns with the station's start_date/end_date.
+
+
+Station directory layout
+------------------------
+Base root: /gpfs/work3/0/prjs1968/data/{sm_only|sm_and_flux|flux_only}/{station}/
+
+  S2L2A/    {station}_L{3,6,9,12}_{start}_{end}.pt   — TerraMind S2 tokens
+  S1RTC/    {station}_{ASC|DESC}_L{3,6,9,12}_{start}_{end}.pt  — TerraMind S1 tokens
+  DEM/      dem_L12.pt                                — static
+  LULC/     lulc_L12.pt                              — static
+  ERA5Land/ meteo_{start}_{end}.nc
+  soil/     soil_patch.tif                            — static
+  TWSA/     twsa_{start}_{end}.nc
+  SIF/      sif_{start}_{end}.nc
+  CloudMask/{station}_{start}_{end}.pt
+  labels.nc
+
+Known state going in:
+  - S2L2A: 0 missing (all 993 stations have consolidated tokens)
+  - S1RTC: 26 missing (SNOTEL/SCAN/RSMN stations with no S1 coverage — expected)
+
+
+Checks per station
+------------------
+
+1. EXISTENCE checks (boolean: present / missing)
+   - S2L2A : S2L2A/{station}_L12_*.pt  (L12 as proxy; all 4 layers present if consolidation ran)
+   - S1RTC : S1RTC/{station}_*_L12_*.pt (at least one orbit: ASC or DESC)
+   - DEM   : DEM/dem_L12.pt
+   - LULC  : LULC/lulc_L12.pt
+   - ERA5  : ERA5Land/meteo_*.nc
+   - soil  : soil/soil_patch.tif
+   - TWSA  : TWSA/twsa_*.nc
+   - SIF   : SIF/sif_*.nc
+   - mask  : CloudMask/*.pt
+   - labels: labels.nc
+
+2. DATE ALIGNMENT checks
+   (splits_start, splits_end come from station_splits.csv for each station)
+
+   a. labels vs splits
+      - Open labels.nc, read time[[0,-1]] with xarray
+      - Pass: |label_start - splits_start| <= 30 days
+              |label_end   - splits_end|   <= 30 days
+      - Flag: LABEL_START_MISMATCH / LABEL_END_MISMATCH
+
+   b. ERA5 covers label period
+      - Parse dates from filename: meteo_{S}_{E}.nc
+      - Pass: era5_start <= label_start  AND  era5_end >= label_end
+      - Flag: ERA5_UNDERCOVERS  (ERA5 does not fully span label period)
+
+   c. TWSA overlaps label period
+      - Parse dates from filename: twsa_{S}_{E}.nc
+      - Pass: twsa_end >= splits_start  AND  twsa_start <= splits_end
+      - Flag: TWSA_NO_OVERLAP
+
+   d. SIF overlaps label period
+      - Parse dates from filename: sif_{S}_{E}.nc
+      - Pass: sif_end >= splits_start  AND  sif_start <= splits_end
+      - Flag: SIF_NO_OVERLAP
+
+   e. S2 token range overlaps label period
+      - Parse dates from filename: {station}_L12_{S}_{E}.pt
+      - Pass: s2_end >= splits_start  AND  s2_start <= splits_end
+      - Flag: S2_NO_OVERLAP  (should not happen given cleanup passed)
+
+   f. S1 token range overlaps label period (only if S1 exists)
+      - Parse dates from filename: {station}_{orbit}_L12_{S}_{E}.pt
+      - Pass: s1_end >= splits_start  AND  s1_start <= splits_end
+      - Flag: S1_NO_OVERLAP
+
+   g. CloudMask range matches S2 range (±60 days)
+      - Parse dates from CloudMask filename
+      - Pass: |cm_start - s2_start| <= 60 days  AND  |cm_end - s2_end| <= 60 days
+      - Flag: CLOUDMASK_RANGE_MISMATCH
+
+
+Output
+------
+
+1. csvs/audit_inputs.csv  (one row per station)
+   Columns:
+     station, category, splits_start, splits_end
+     has_S2, has_S1, has_DEM, has_LULC, has_ERA5, has_soil, has_TWSA, has_SIF,
+     has_CloudMask, has_labels
+     s2_start, s2_end
+     s1_start, s1_end        (empty if S1 missing)
+     era5_start, era5_end
+     label_start, label_end
+     twsa_start, twsa_end
+     sif_start, sif_end
+     cloudmask_start, cloudmask_end
+     era5_covers_labels      (bool)
+     labels_match_splits     (bool)
+     twsa_has_overlap        (bool)
+     sif_has_overlap         (bool)
+     flags                   (comma-separated list of flag strings, empty if OK)
+     status                  (OK / MISSING / DATE_MISMATCH / MISSING+DATE_MISMATCH)
+
+2. text/audit_inputs_summary.txt  (printed to stdout and written to file)
+   - Total stations audited
+   - Fully OK (status == OK)
+   - Missing by modality (count + station list)
+   - Date mismatch breakdown by flag type
+   - Stations needing attention (status != OK), sorted by severity
+
+
+Implementation notes
+--------------------
+- Date parsing from filenames for ERA5, TWSA, SIF, .pt bundles (fast, no I/O)
+- xarray open only for labels.nc (time coord only, not full data load)
+- Parallelised with multiprocessing.Pool(8) — same pattern as consolidate/cleanup
+- Tolerance: ±30 days for label vs splits; 0 tolerance for ERA5 coverage;
+  ±60 days for CloudMask vs S2 (cloud mask was derived from S2 but may differ slightly)
+- Always full re-run (read-only audit, fast, no resume needed)
+
+
+Script location
+---------------
+  /gpfs/work3/0/prjs1968/soilMoisture/audit_inputs.py
+  SLURM job: slurm/audit_inputs.sh  (rome partition, 8 CPUs, ~5 min expected)

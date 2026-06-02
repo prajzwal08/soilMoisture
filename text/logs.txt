@@ -94,3 +94,95 @@ Session summary (afternoon):
 - Submitted cleanup job 23375693 (slurm/cleanup_tokens.sh, 8 workers) — ran but deleted 0 files
   (cleanup ran before consolidate finished; need to re-run cleanup after consolidate completes)
 - Next session: check consolidate 23375692 done → sbatch slurm/cleanup_tokens.sh → audit all 993 stations
+
+=== 2026-06-02 ===
+- consolidate_tokens.py --execute --workers 8: saved 3104 bundle files
+  skipped (already existed): 0
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute --workers 8
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 191424 old geo.json files
+  - Deleted 765696 old per-date .pt files
+  - Missing S2 consolidated: 0
+  - Missing S1 consolidated: 26
+
+=== 2026-06-02 ===
+Session summary (evening):
+- Cleanup job 23379718 confirmed complete via sacct: 191424 geo.json + 765696 old per-date .pt files deleted
+  - S2L2A missing: 0 (all 993 stations fully consolidated)
+  - S1RTC missing: 26 stations (SNOTEL/SCAN/RSMN networks)
+
+Root cause of missing S1RTC tokens identified:
+- precompute_terramind.py CSV filter only checked S2L2A completion; 26 stations already had S2 done
+  from an earlier run so were skipped entirely — S1RTC was never tokenized for them
+- Raw S1RTC TIFs confirmed present in scratch (83–1198 TIFs per station)
+
+Fix: added --s1-only flag to precompute_terramind.py
+- New CSV filter branch: finds stations where S1RTC scratch TIFs exist but consolidated tokens are missing
+- Per-station loop skips S2L2A / DEM / LULC entirely when --s1-only is set
+- Trial summary and final print updated for S1-only mode
+- Dry-run confirmed: exactly 26 stations found, S2=0 for all, S1 TIFs loading correctly
+- Submitted tokenize_s1only job 23380906 (gpu_a100, 4h, slurm/tokenize_s1only.sh) — PENDING
+
+CLAUDE.md updated to reflect full pipeline state as of 2026-06:
+- Project overview: dual-pipeline (ISMN preprocessing + ML training)
+- Added: Tokenization Pipeline section (precompute → consolidate → cleanup, token storage layout)
+- Added: Model Training Pipeline section (model.py, dataset.py, train.py)
+- Added: SLURM patterns section
+- Updated: Data Paths, Running the Scripts, Key Dependencies
+- Marked DownloadSentinel1.py as legacy
+
+audit_inputs.py written (ready to run after S1 tokenization completes):
+- 993 stations audited in parallel with multiprocessing.Pool(8)
+- Checks: S2L2A, S1RTC, DEM, LULC, ERA5Land, soil, TWSA, SIF, CloudMask, labels existence
+- Date alignment: labels vs splits, ERA5 covers labels, TWSA/SIF/S2/S1 overlaps, CloudMask matches S2
+- Outputs: csvs/audit_inputs.csv + text/audit_inputs_summary.txt
+- SLURM script: slurm/audit_inputs.sh (rome partition, 8 CPUs, 30 min)
+- Audit plan written to text/audit_inputs_plan.txt
+
+Next steps:
+1. Wait for job 23380906 (tokenize_s1only) to complete
+2. sbatch slurm/consolidate_tokens.sh
+3. sbatch slurm/cleanup_tokens.sh
+4. sbatch slurm/audit_inputs.sh
+5. Review text/audit_inputs_summary.txt — fix any issues found before training
+
+=== 2026-06-02 ===
+Session summary (late afternoon/evening) — satellite TIF-to-Zarr migration:
+
+Storage audit (before migration):
+- Scratch (/gpfs/scratch1/shared/pkhanal/satellite/): 411 GB, 998 stations, ~765k TIF files
+- Project quota: 5 TB total, 826 GB used → 4.2 TB free; scratch purge policy 14-30 days (TIFs from 2026-05-26 at risk)
+
+Design decisions:
+- Zarr v2 format with Blosc+zstd-3 compression; S1RTC cast to float16 (~87 GB saving, negligible precision loss)
+- zarr==2.18.7 + numcodecs installed in terramind conda env
+- Resume-safe via .complete sentinel file per station store
+- Zarr structure per station: s2/ (N,12,224,224 int16), s1_asc/ + s1_desc/ (N,2,224,224 float16), dem/ (1,224,224 float32), lulc/ (N_years,224,224 uint8); dates stored as |S8 arrays; station metadata in root .zattrs
+
+Scripts created:
+- convert_satellite_to_zarr.py  — multiprocessing.Pool(4); reads TIFs from scratch, writes Zarr to /gpfs/work3/0/prjs1968/satellite_zarr/; --execute flag (dry-run default)
+- verify_zarr.py                — 16-worker verification; checks .complete sentinel + tile count match + spot-reads; outputs csvs/zarr_verification.csv
+- slurm/migrate_to_zarr.sh     — 100-task array, rome partition, 5 CPUs, 4 workers, 2h; email on FAIL only
+- slurm/verify_zarr.sh         — single job, 16 CPUs, 30 min
+
+Jobs completed:
+- Migration job 23382749 (100-task array): all 100 tasks COMPLETED, 0 errors
+- Verification job 23383413: 998/998 stores passed, 0 failures
+- Final Zarr store size: 247 GB (down from 411 GB — 40% reduction)
+- Scratch TIFs left in place (will be purged automatically by system within policy window)
+
+Validation:
+- Dry-run validated on 3 stations before submission
+- Test execution on AmeriFlux_CA-Cbo confirmed correct shapes and 112 MB store vs 204 MB TIFs
+
+Status of pending job:
+- S1-only tokenization job 23380906 still PENDING on gpu_a100 (waiting for resources since earlier submission)
+
+Next steps:
+1. Wait for job 23380906 (tokenize_s1only) to complete
+2. sbatch slurm/consolidate_tokens.sh  (for the 26 S1-only stations)
+3. sbatch slurm/cleanup_tokens.sh
+4. sbatch slurm/audit_inputs.sh        (runs audit_inputs.py across all 993 stations)
+5. Review text/audit_inputs_summary.txt before training

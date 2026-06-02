@@ -680,6 +680,10 @@ def main():
                         help="Wrap backbone with torch.compile(mode='reduce-overhead') for "
                              "kernel fusion. Adds ~60s warmup on first batch; speeds up all "
                              "subsequent batches by ~10-30%.")
+    parser.add_argument("--s1-only",    action="store_true",
+                        help="Process S1RTC only — skip S2L2A, DEM, LULC. "
+                             "CSV filter targets stations missing S1RTC consolidated files. "
+                             "Use to fix stations where S2 was tokenised but S1 was skipped.")
     args = parser.parse_args()
 
     # Speed up rasterio on GPFS: disable per-file directory scans and enable read cache
@@ -706,6 +710,8 @@ def main():
     print(f"Compile     : {args.compile}")
     if dry_run:
         print("Mode        : DRY-RUN (load + shape check only, no inference)")
+    elif args.s1_only:
+        print("Mode        : S1-ONLY (skip S2L2A / DEM / LULC)")
     elif trial:
         print(f"Trial mode  : first {trial} stations — detailed timing enabled")
     print()
@@ -718,7 +724,7 @@ def main():
     if args.station:
         station_dirs = [args.scratch_dir / args.station]
     elif args.csv_start_idx is not None or args.csv_end_idx is not None:
-        # Drive from station_splits.csv, filtered to only untokenized stations.
+        # Drive from station_splits.csv, filtered to only stations needing work.
         # Avoids the scratch-sort-order bug where duplicate dirs push real stations past index 999.
         import pandas as pd
         df = pd.read_csv(Path(__file__).parent / "csvs" / "station_splits.csv")
@@ -732,9 +738,18 @@ def main():
             out = _station_data_dir(sid, args.data_dir)
             if out is None:
                 continue
-            s2dir = out / "S2L2A"
-            if not s2dir.exists() or not list(s2dir.glob("*_L12_*.pt")):
-                untokenized.append(args.scratch_dir / sid)
+            if args.s1_only:
+                # Target stations where S1RTC scratch TIFs exist but consolidated tokens are missing
+                src_s1 = args.scratch_dir / sid / "S1RTC"
+                if not src_s1.exists() or not list(src_s1.glob("*.tif")):
+                    continue
+                s1dir = out / "S1RTC"
+                if not s1dir.exists() or not list(s1dir.glob("*_L12_*.pt")):
+                    untokenized.append(args.scratch_dir / sid)
+            else:
+                s2dir = out / "S2L2A"
+                if not s2dir.exists() or not list(s2dir.glob("*_L12_*.pt")):
+                    untokenized.append(args.scratch_dir / sid)
         start = args.csv_start_idx or 0
         end   = args.csv_end_idx
         station_dirs = untokenized[start:end]
@@ -766,21 +781,23 @@ def main():
             skipped.append(sid)
             continue
 
-        s2_new = process_temporal(
-            encoder,
-            src_dir      = src_station / "S2L2A",
-            out_dir      = out_station / "S2L2A",
-            modality     = "S2L2A",
-            device       = device,
-            batch_size   = args.batch_size,
-            band_indices = S2_BAND_INDICES,
-            do_crop      = True,
-            failures     = failures,
-            perf         = perf_s2,
-            dry_run      = dry_run,
-            num_workers  = args.num_workers,
-            saver        = saver,
-        )
+        s2_new = 0
+        if not args.s1_only:
+            s2_new = process_temporal(
+                encoder,
+                src_dir      = src_station / "S2L2A",
+                out_dir      = out_station / "S2L2A",
+                modality     = "S2L2A",
+                device       = device,
+                batch_size   = args.batch_size,
+                band_indices = S2_BAND_INDICES,
+                do_crop      = True,
+                failures     = failures,
+                perf         = perf_s2,
+                dry_run      = dry_run,
+                num_workers  = args.num_workers,
+                saver        = saver,
+            )
         s1_new = process_temporal(
             encoder,
             src_dir     = src_station / "S1RTC",
@@ -796,30 +813,31 @@ def main():
             saver       = saver,
         )
         if not dry_run:
-            process_static(
-                encoder,
-                src_path = src_station / "DEM" / "dem.tif",
-                out_dir  = out_station / "DEM",
-                modality = "DEM",
-                out_stem = "dem",
-                device   = device,
-                do_crop  = True,
-                failures = failures,
-                saver    = saver,
-            )
-            lulc_tif = _latest_lulc_tif(src_station / "LULC")
-            if lulc_tif:
+            if not args.s1_only:
                 process_static(
                     encoder,
-                    src_path = lulc_tif,
-                    out_dir  = out_station / "LULC",
-                    modality = "LULC",
-                    out_stem = "lulc",
+                    src_path = src_station / "DEM" / "dem.tif",
+                    out_dir  = out_station / "DEM",
+                    modality = "DEM",
+                    out_stem = "dem",
                     device   = device,
-                    do_crop  = False,
+                    do_crop  = True,
                     failures = failures,
                     saver    = saver,
                 )
+                lulc_tif = _latest_lulc_tif(src_station / "LULC")
+                if lulc_tif:
+                    process_static(
+                        encoder,
+                        src_path = lulc_tif,
+                        out_dir  = out_station / "LULC",
+                        modality = "LULC",
+                        out_stem = "lulc",
+                        device   = device,
+                        do_crop  = False,
+                        failures = failures,
+                        saver    = saver,
+                    )
             saver.flush()  # ensure all writes land before moving to next station
 
         total_s2 += s2_new
@@ -835,8 +853,9 @@ def main():
         print("\n" + "="*60)
         print("TRIAL SUMMARY")
         print("="*60)
-        print(f"\nS2L2A (batch_size={args.batch_size}):")
-        print(perf_s2.report())
+        if not args.s1_only:
+            print(f"\nS2L2A (batch_size={args.batch_size}):")
+            print(perf_s2.report())
         print(f"\nS1RTC (batch_size={args.batch_size}):")
         print(perf_s1.report())
         if device.type == "cuda":
@@ -847,7 +866,10 @@ def main():
     if saver is not None:
         saver.shutdown()
 
-    print(f"\nDone.  New acquisitions → S2: {total_s2},  S1: {total_s1}")
+    if args.s1_only:
+        print(f"\nDone.  New S1RTC acquisitions: {total_s1}")
+    else:
+        print(f"\nDone.  New acquisitions → S2: {total_s2},  S1: {total_s1}")
     if skipped:
         tail = f" … and {len(skipped) - 10} more" if len(skipped) > 10 else ""
         print(f"Skipped {len(skipped)} stations (no data dir): {', '.join(skipped[:10])}{tail}")
