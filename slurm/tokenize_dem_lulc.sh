@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=tokenize_s1only
+#SBATCH --job-name=tokenize_dem_lulc
 #SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --mem=32G
-#SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/tokenize_s1only_%j.out
-#SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/tokenize_s1only_%j.err
+#SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/tokenize_dem_lulc_%j.out
+#SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/tokenize_dem_lulc_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
@@ -33,7 +33,7 @@ $PYTHON precompute_terramind.py \
     --batch-size      8  \
     --num-workers     3  \
     --compile             \
-    --s1-only             \
+    --dem-lulc-only       \
     --csv-start-idx   0
 
 kill $MONITOR_PID 2>/dev/null

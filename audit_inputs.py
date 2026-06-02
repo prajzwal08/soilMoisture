@@ -215,10 +215,13 @@ def audit_station(args: tuple) -> dict:
         if not (s1_end >= splits_start and s1_start <= splits_end):
             flags.append("S1_NO_OVERLAP")
 
-    # g. CloudMask range matches S2 range (±60 days)
+    # g. CloudMask must cover S2 token range (cm_start <= s2_start, cm_end >= s2_end)
+    # Allow ±60 days tolerance at start; cloud mask end must be >= s2_end - 60 days.
+    # Cloud mask having MORE coverage than S2 tokens is fine (harmless extra data).
     if has_CloudMask and has_S2 and cm_start and cm_end and s2_start and s2_end:
-        if (abs((cm_start - s2_start).days) > CLOUDMASK_TOL_DAYS or
-                abs((cm_end - s2_end).days) > CLOUDMASK_TOL_DAYS):
+        start_gap = (cm_start - s2_start).days   # positive = cm starts after s2
+        end_gap   = (s2_end - cm_end).days        # positive = cm ends before s2
+        if start_gap > CLOUDMASK_TOL_DAYS or end_gap > CLOUDMASK_TOL_DAYS:
             flags.append("CLOUDMASK_RANGE_MISMATCH")
 
     # ── 3. Missing modalities → prepend flags ─────────────────────────────────

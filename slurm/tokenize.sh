@@ -13,7 +13,6 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
-# ── env ───────────────────────────────────────────────────────────────────────
 source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
 conda activate terramind
 PYTHON=$(which python)
@@ -21,17 +20,16 @@ export PROJ_LIB=/gpfs/home5/pkhanal/miniforge3/envs/terramind/share/proj
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
-# ── diagnostics ───────────────────────────────────────────────────────────────
 echo "Job       : $SLURM_JOB_ID  array task: $SLURM_ARRAY_TASK_ID"
 echo "Node      : $SLURMD_NODENAME"
 echo "GPU       : $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null)"
 echo "Started   : $(date)"
 echo ""
 
-# ── tokenization (10 stations per array task, driven from station_splits.csv) ─
-# Previous runs sorted scratch dirs (1858 total, 860 duplicates) causing 353
-# active stations to fall past index 999 and never be processed.
-# Now we drive explicitly from station_splits.csv, filtering to untokenized only.
+MEMLOG=$(mktemp)
+( while true; do nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null >> "$MEMLOG"; sleep 10; done ) &
+MONITOR_PID=$!
+
 START=$(( SLURM_ARRAY_TASK_ID * 10 ))
 END=$(( START + 10 ))
 
@@ -42,5 +40,9 @@ $PYTHON precompute_terramind.py \
     --csv-start-idx  $START \
     --csv-end-idx    $END
 
+kill $MONITOR_PID 2>/dev/null
+PEAK=$(sort -n "$MEMLOG" 2>/dev/null | tail -1)
+echo "Peak GPU memory : ${PEAK:-n/a}"
+rm -f "$MEMLOG"
 echo ""
 echo "Finished  : $(date)"

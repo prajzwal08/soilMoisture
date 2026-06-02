@@ -186,3 +186,60 @@ Next steps:
 3. sbatch slurm/cleanup_tokens.sh
 4. sbatch slurm/audit_inputs.sh        (runs audit_inputs.py across all 993 stations)
 5. Review text/audit_inputs_summary.txt before training
+
+=== 2026-06-02 ===
+- consolidate_tokens.py --execute --workers 8: saved 208 bundle files
+  skipped (already existed): 0
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute --workers 8
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 13635 old geo.json files
+  - Deleted 54540 old per-date .pt files
+  - Missing S2 consolidated: 0
+  - Missing S1 consolidated: 0
+
+=== 2026-06-02 ===
+Session summary (late evening) — audit, DEM+LULC fix, and pipeline completion:
+
+Audit run 1 (job 23385155): 832/993 stations OK
+- 62 stations missing DEM+LULC tokens
+- 121 stations flagged CLOUDMASK_RANGE_MISMATCH
+- 10 stations flagged SIF_NO_OVERLAP
+
+Root cause of missing DEM+LULC (62 stations):
+- These stations had S2L2A tokenized in an earlier run before dem.tif + LULC TIFs existed in scratch
+- CSV filter in precompute_terramind.py only checked S2L2A completion, so stations were never revisited
+- Fix: added --dem-lulc-only flag to precompute_terramind.py (same pattern as --s1-only)
+  - CSV filter targets stations where dem.tif exists in scratch but dem_L12.pt is missing
+  - Dry-run confirmed exactly 62 stations
+  - Job 23385360 (H100, 2h): finished in 85 seconds; peak GPU memory 2,771 MiB
+- New SLURM script: slurm/tokenize_dem_lulc.sh
+
+Audit run 2 (job 23385413): 863/993 OK — DEM+LULC all clear
+
+CLOUDMASK_RANGE_MISMATCH was a false alarm:
+- Audit check was symmetric (±60 days) but cloud mask having MORE coverage than S2 tokens is harmless
+- Fixed audit_inputs.py: only flag when cloud mask UNDER-covers S2 token range
+  (cm_start > s2_start+60d OR cm_end < s2_end-60d)
+- Audit run 3 (job 23385496): 983/993 OK — all 121 cloud mask flags cleared
+
+Final audit result: 983/993 stations fully OK (99.0%)
+- All 10 modalities present and date-aligned for 983 stations
+- 10 stations with SIF_NO_OVERLAP: label period ends before May 2018 (TROPOMI launch date)
+  — SIF simply did not exist yet; handle in dataset.py with zero/NaN fill for missing SIF
+
+GPU SLURM scripts updated — all 7 scripts now include peak GPU memory tracker:
+- Samples every 10 seconds during job, prints peak at end
+- Scripts: tokenize.sh, tokenize_s1only.sh, tokenize_trial.sh, trial_tokenize.sh,
+  cloud_masking.sh, test_cloud_masking.sh, profile_cloud_masking.sh
+
+Consolidate + cleanup confirmed complete (from earlier runs):
+- consolidate job 23385153: saved 208 new S1RTC bundle files
+- cleanup job 23385154: deleted 54,540 old per-date .pt + 13,635 geo.json files
+- S2L2A missing: 0 / S1RTC missing: 0
+
+Next steps:
+1. 983 stations ready for training
+2. Handle SIF_NO_OVERLAP in dataset.py: treat SIF as optional modality (zero/NaN fill when absent)
+3. Begin model training pipeline

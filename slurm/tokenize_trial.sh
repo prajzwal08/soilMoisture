@@ -9,6 +9,8 @@
 #SBATCH --mem=32G
 #SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/tokenize_trial_%j.out
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/tokenize_trial_%j.err
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
 source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
 conda activate terramind
@@ -23,6 +25,10 @@ echo "GPU    : $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 
 echo "Started: $(date)"
 echo ""
 
+MEMLOG=$(mktemp)
+( while true; do nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null >> "$MEMLOG"; sleep 10; done ) &
+MONITOR_PID=$!
+
 for BS in 8 16 32 64; do
     echo "========================================"
     echo "TRIAL — batch-size $BS  (5 stations, --compile)"
@@ -36,4 +42,9 @@ for BS in 8 16 32 64; do
     echo ""
 done
 
+kill $MONITOR_PID 2>/dev/null
+PEAK=$(sort -n "$MEMLOG" 2>/dev/null | tail -1)
+echo "Peak GPU memory : ${PEAK:-n/a}"
+rm -f "$MEMLOG"
+echo ""
 echo "Finished: $(date)"

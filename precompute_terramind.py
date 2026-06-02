@@ -680,10 +680,15 @@ def main():
                         help="Wrap backbone with torch.compile(mode='reduce-overhead') for "
                              "kernel fusion. Adds ~60s warmup on first batch; speeds up all "
                              "subsequent batches by ~10-30%.")
-    parser.add_argument("--s1-only",    action="store_true",
+    parser.add_argument("--s1-only",       action="store_true",
                         help="Process S1RTC only — skip S2L2A, DEM, LULC. "
                              "CSV filter targets stations missing S1RTC consolidated files. "
                              "Use to fix stations where S2 was tokenised but S1 was skipped.")
+    parser.add_argument("--dem-lulc-only", action="store_true",
+                        help="Process DEM + LULC static tokens only — skip S2L2A and S1RTC. "
+                             "CSV filter targets stations where dem_L12.pt is missing but "
+                             "dem.tif exists in scratch. Use to fix stations tokenised before "
+                             "DEM/LULC TIFs were downloaded.")
     args = parser.parse_args()
 
     # Speed up rasterio on GPFS: disable per-file directory scans and enable read cache
@@ -712,6 +717,8 @@ def main():
         print("Mode        : DRY-RUN (load + shape check only, no inference)")
     elif args.s1_only:
         print("Mode        : S1-ONLY (skip S2L2A / DEM / LULC)")
+    elif args.dem_lulc_only:
+        print("Mode        : DEM-LULC-ONLY (skip S2L2A / S1RTC)")
     elif trial:
         print(f"Trial mode  : first {trial} stations — detailed timing enabled")
     print()
@@ -745,6 +752,14 @@ def main():
                     continue
                 s1dir = out / "S1RTC"
                 if not s1dir.exists() or not list(s1dir.glob("*_L12_*.pt")):
+                    untokenized.append(args.scratch_dir / sid)
+            elif args.dem_lulc_only:
+                # Target stations where dem.tif exists in scratch but dem_L12.pt is missing
+                src_dem = args.scratch_dir / sid / "DEM" / "dem.tif"
+                if not src_dem.exists():
+                    continue
+                dem_pt = out / "DEM" / "dem_L12.pt"
+                if not dem_pt.exists():
                     untokenized.append(args.scratch_dir / sid)
             else:
                 s2dir = out / "S2L2A"
@@ -782,7 +797,7 @@ def main():
             continue
 
         s2_new = 0
-        if not args.s1_only:
+        if not args.s1_only and not args.dem_lulc_only:
             s2_new = process_temporal(
                 encoder,
                 src_dir      = src_station / "S2L2A",
@@ -798,20 +813,22 @@ def main():
                 num_workers  = args.num_workers,
                 saver        = saver,
             )
-        s1_new = process_temporal(
-            encoder,
-            src_dir     = src_station / "S1RTC",
-            out_dir     = out_station / "S1RTC",
-            modality    = "S1RTC",
-            device      = device,
-            batch_size  = args.batch_size,
-            do_crop     = False,
-            failures    = failures,
-            perf        = perf_s1,
-            dry_run     = dry_run,
-            num_workers = args.num_workers,
-            saver       = saver,
-        )
+        s1_new = 0
+        if not args.dem_lulc_only:
+            s1_new = process_temporal(
+                encoder,
+                src_dir     = src_station / "S1RTC",
+                out_dir     = out_station / "S1RTC",
+                modality    = "S1RTC",
+                device      = device,
+                batch_size  = args.batch_size,
+                do_crop     = False,
+                failures    = failures,
+                perf        = perf_s1,
+                dry_run     = dry_run,
+                num_workers = args.num_workers,
+                saver       = saver,
+            )
         if not dry_run:
             if not args.s1_only:
                 process_static(
@@ -840,11 +857,12 @@ def main():
                     )
             saver.flush()  # ensure all writes land before moving to next station
 
+        elapsed = time.time() - t0
         total_s2 += s2_new
         total_s1 += s1_new
-
-        elapsed = time.time() - t0
-        if s2_new or s1_new:
+        if args.dem_lulc_only:
+            print(f"[{idx:4d}/{n}] {sid}  DEM+LULC done  ({elapsed:.1f}s)", flush=True)
+        elif s2_new or s1_new:
             print(f"[{idx:4d}/{n}] {sid}  S2={s2_new}  S1={s1_new}  ({elapsed:.1f}s)")
         elif idx % 50 == 0:
             print(f"[{idx:4d}/{n}] ... (up to date)")
@@ -868,6 +886,8 @@ def main():
 
     if args.s1_only:
         print(f"\nDone.  New S1RTC acquisitions: {total_s1}")
+    elif args.dem_lulc_only:
+        print(f"\nDone.  DEM+LULC tokens written for {n - len(skipped)} stations")
     else:
         print(f"\nDone.  New acquisitions → S2: {total_s2},  S1: {total_s1}")
     if skipped:
