@@ -53,28 +53,42 @@ def has_consolidated(subdir: Path) -> bool:
 
 
 def cleanup_subdir(subdir: Path, station: str, execute: bool) -> dict:
-    """Clean geo.jsons and old .pt files in one modality dir. Returns counts."""
+    """Clean geo.jsons and old .pt files in one modality dir. Returns counts.
+
+    Old .pt files are only deleted when a consolidated bundle already exists —
+    never delete per-date tokens before they have been consolidated.
+    """
     counts = {"geo_kept": 0, "geo_deleted": 0, "pt_deleted": 0}
     if not subdir.exists():
         return counts
 
     old_geos = sorted(f for f in subdir.glob("*.json") if is_old_format(f))
     old_pts  = sorted(f for f in subdir.glob("*.pt")   if is_old_format(f))
+    consol_exists = has_consolidated(subdir)
+
+    if not consol_exists:
+        # Skip deletion — no consolidated bundle exists yet
+        return counts
+
+    # Delete old .pt files first (frees quota before any new file is created)
+    for pt in old_pts:
+        if execute:
+            pt.unlink()
+        counts["pt_deleted"] += 1
 
     if old_geos:
         target = subdir / f"{station}_geo.json"
         if execute:
             if not target.exists():
-                shutil.copy2(old_geos[0], target)
-            for g in old_geos:
-                g.unlink()
+                # rename avoids creating a new inode (safe even near quota)
+                old_geos[0].rename(target)
+                for g in old_geos[1:]:
+                    g.unlink()
+            else:
+                for g in old_geos:
+                    g.unlink()
         counts["geo_kept"]    = 1
         counts["geo_deleted"] = len(old_geos)
-
-    for pt in old_pts:
-        if execute:
-            pt.unlink()
-        counts["pt_deleted"] += 1
 
     return counts
 

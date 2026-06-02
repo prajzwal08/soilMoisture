@@ -23,3 +23,15 @@ Next steps:
 1. Run: python cleanup_scratch_duplicates.py --execute
 2. Submit: sbatch slurm/tokenize.sh   (re-tokenizes 353 missing stations)
 3. After tokenization completes: python cleanup_tokens.py --execute
+
+=== 2026-06-02 ===
+- cleanup_scratch_duplicates.py: deleted 395 duplicate scratch dirs
+- Scratch now has 998 dirs
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 135348 old geo.json files
+  - Deleted 524632 old per-date .pt files
+  - Missing S2 consolidated: 468
+  - Missing S1 consolidated: 480

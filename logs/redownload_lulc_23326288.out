@@ -1,0 +1,10 @@
+Job     : 23326288
+Node    : tcn198
+Started : Mon Jun  1 04:43:22 CEST 2026
+
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_s1_lulc_mpc.py", line 36, in <module>
+    import pandas as pd
+ModuleNotFoundError: No module named 'pandas'
+
+Finished : Mon Jun  1 04:43:23 CEST 2026
