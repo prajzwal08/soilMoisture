@@ -77,3 +77,20 @@ Session summary:
 - Submitted tokenize array job 23374435 (--array=0-26, 27 tasks x 10 stations, gpu_a100)
   - precompute_terramind.py auto-filters to untokenized stations via consolidated *_L12_*.pt check
 - Next: after tokenize completes → run consolidate_tokens.py --execute → cleanup_tokens.py --execute
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute --workers 8
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 0 old geo.json files
+  - Deleted 0 old per-date .pt files
+  - Missing S2 consolidated: 261
+  - Missing S1 consolidated: 287
+
+=== 2026-06-02 ===
+Session summary (afternoon):
+- Tokenize array job 23374435 (--array=0-26) completed successfully — all 27 tasks, no errors
+  - 261 missing stations tokenized across 27 GPU tasks (~15 min/task on A100)
+- Submitted consolidate job 23375692 (slurm/consolidate_tokens.sh, 8 workers) — running
+- Submitted cleanup job 23375693 (slurm/cleanup_tokens.sh, 8 workers) — ran but deleted 0 files
+  (cleanup ran before consolidate finished; need to re-run cleanup after consolidate completes)
+- Next session: check consolidate 23375692 done → sbatch slurm/cleanup_tokens.sh → audit all 993 stations
