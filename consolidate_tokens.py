@@ -18,6 +18,7 @@ Resume-safe: skips groups where the consolidated file already exists.
 Usage:
     python consolidate_tokens.py                    # dry run, all stations
     python consolidate_tokens.py --execute          # run all stations
+    python consolidate_tokens.py --execute --workers 8
     python consolidate_tokens.py --execute --start-idx 0 --end-idx 50
 """
 
@@ -25,6 +26,7 @@ import argparse
 import json
 import re
 from datetime import date
+from multiprocessing import Pool
 from pathlib import Path
 
 import torch
@@ -50,19 +52,16 @@ def find_station_dir(station: str) -> Path | None:
 
 
 def parse_s2_stem(stem: str) -> str | None:
-    """YYYYMMDD_L12 → date string YYYYMMDD, or None."""
     m = re.match(r'^(\d{8})_L\d+$', stem)
     return m.group(1) if m else None
 
 
 def parse_s1_stem(stem: str) -> tuple[str, str] | None:
-    """YYYYMMDD_ASC_L12 → (date, orbit), or None."""
     m = re.match(r'^(\d{8})_(ASC|DESC)_L\d+$', stem)
     return (m.group(1), m.group(2)) if m else None
 
 
 def load_geo(subdir: Path) -> dict | None:
-    """Load the first available _geo.json from the directory."""
     for f in subdir.glob("*_geo.json"):
         try:
             return json.loads(f.read_text())
@@ -72,13 +71,11 @@ def load_geo(subdir: Path) -> dict | None:
 
 
 def consolidate_s2(subdir: Path, station: str, execute: bool) -> dict:
-    """Consolidate S2L2A per-date .pt files into one bundle per layer."""
     counts = {"consolidated": 0, "skipped": 0, "no_files": 0}
     if not subdir.exists():
         return counts
 
-    # Gather all old-format per-date files (stem starts with 8 digits)
-    per_date: dict[str, list[Path]] = {}  # date → list of layer files
+    per_date: dict[str, list[Path]] = {}
     for pt in subdir.glob("*.pt"):
         date_str = parse_s2_stem(pt.stem)
         if date_str:
@@ -100,7 +97,6 @@ def consolidate_s2(subdir: Path, station: str, execute: bool) -> dict:
             counts["skipped"] += 1
             continue
 
-        # Collect tensors for this layer across all dates
         tensors, valid_dates = [], []
         for d in dates_sorted:
             pt = subdir / f"{d}_{layer}.pt"
@@ -111,17 +107,17 @@ def consolidate_s2(subdir: Path, station: str, execute: bool) -> dict:
                 tensors.append(t)
                 valid_dates.append(d)
             except Exception as e:
-                print(f"    WARN: failed to load {pt.name}: {e}")
+                print(f"    WARN: failed to load {pt.name}: {e}", flush=True)
 
         if not tensors:
             counts["no_files"] += 1
             continue
 
-        stacked = torch.stack(tensors)  # [N, 196, 768]
+        stacked = torch.stack(tensors)
         bundle = {"tokens": stacked, "dates": valid_dates, "layer": layer, "geo": geo}
 
         print(f"  {'SAVE' if execute else 'would save'} {subdir.parent.name}/S2L2A/{out_name}"
-              f"  [{len(valid_dates)} dates, {stacked.shape}]")
+              f"  [{len(valid_dates)} dates, {stacked.shape}]", flush=True)
 
         if execute:
             tmp = out_path.with_suffix(".tmp")
@@ -133,13 +129,11 @@ def consolidate_s2(subdir: Path, station: str, execute: bool) -> dict:
 
 
 def consolidate_s1(subdir: Path, station: str, execute: bool) -> dict:
-    """Consolidate S1RTC per-date .pt files into one bundle per layer per orbit."""
     counts = {"consolidated": 0, "skipped": 0, "no_files": 0}
     if not subdir.exists():
         return counts
 
-    # Gather per-date files grouped by orbit
-    by_orbit: dict[str, dict[str, list]] = {}  # orbit → date → [layer files]
+    by_orbit: dict[str, dict[str, list]] = {}
     for pt in subdir.glob("*.pt"):
         parsed = parse_s1_stem(pt.stem)
         if parsed:
@@ -174,7 +168,7 @@ def consolidate_s1(subdir: Path, station: str, execute: bool) -> dict:
                     tensors.append(t)
                     valid_dates.append(d)
                 except Exception as e:
-                    print(f"    WARN: failed to load {pt.name}: {e}")
+                    print(f"    WARN: failed to load {pt.name}: {e}", flush=True)
 
             if not tensors:
                 counts["no_files"] += 1
@@ -184,7 +178,7 @@ def consolidate_s1(subdir: Path, station: str, execute: bool) -> dict:
             bundle = {"tokens": stacked, "dates": valid_dates, "layer": layer, "geo": geo}
 
             print(f"  {'SAVE' if execute else 'would save'} {subdir.parent.name}/S1RTC/{out_name}"
-                  f"  [{len(valid_dates)} dates, {stacked.shape}]")
+                  f"  [{len(valid_dates)} dates, {stacked.shape}]", flush=True)
 
             if execute:
                 tmp = out_path.with_suffix(".tmp")
@@ -195,36 +189,48 @@ def consolidate_s1(subdir: Path, station: str, execute: bool) -> dict:
     return counts
 
 
-def main(execute: bool, start_idx: int, end_idx: int | None):
+def _worker(args: tuple) -> tuple[str, dict, dict]:
+    """Process one station; returns (station, s2_counts, s1_counts)."""
+    station, execute = args
+    sdir = find_station_dir(station)
+    if sdir is None:
+        return station, {"consolidated": 0, "skipped": 0, "no_files": 0}, {"consolidated": 0, "skipped": 0, "no_files": 0}
+
+    s2_old = list((sdir / "S2L2A").glob("[0-9]*_L12.pt")) if (sdir / "S2L2A").exists() else []
+    s1_old = list((sdir / "S1RTC").glob("[0-9]*_L12.pt")) if (sdir / "S1RTC").exists() else []
+
+    if not s2_old and not s1_old:
+        return station, {"consolidated": 0, "skipped": 0, "no_files": 0}, {"consolidated": 0, "skipped": 0, "no_files": 0}
+
+    print(f"  {station}  (S2: {len(s2_old)} dates, S1: {len(s1_old)} dates)", flush=True)
+
+    c_s2 = consolidate_s2(sdir / "S2L2A", station, execute)
+    c_s1 = consolidate_s1(sdir / "S1RTC", station, execute)
+    return station, c_s2, c_s1
+
+
+def main(execute: bool, start_idx: int, end_idx: int | None, workers: int):
     import pandas as pd
     df = pd.read_csv(CSV_ACTIVE)
     stations = [folder_name(row) for _, row in df.iterrows()]
     stations = stations[start_idx:end_idx]
 
     total_consolidated = total_skipped = total_no_files = 0
+    done = 0
 
-    for i, station in enumerate(stations, 1):
-        sdir = find_station_dir(station)
-        if sdir is None:
-            print(f"[{i}/{len(stations)}] {station}  SKIP — no data dir")
-            continue
+    args_list = [(s, execute) for s in stations]
 
-        # Check if there are any old-format files to consolidate
-        s2_old = list((sdir / "S2L2A").glob("[0-9]*_L12.pt")) if (sdir / "S2L2A").exists() else []
-        s1_old = list((sdir / "S1RTC").glob("[0-9]*_L12.pt")) if (sdir / "S1RTC").exists() else []
+    print(f"Processing {len(stations)} stations with {workers} workers...", flush=True)
 
-        if not s2_old and not s1_old:
-            continue  # nothing to consolidate
-
-        print(f"[{i}/{len(stations)}] {station}  (S2: {len(s2_old)} dates, S1: {len(s1_old)} dates)")
-
-        c_s2 = consolidate_s2(sdir / "S2L2A", station, execute)
-        c_s1 = consolidate_s1(sdir / "S1RTC", station, execute)
-
-        for c in (c_s2, c_s1):
-            total_consolidated += c["consolidated"]
-            total_skipped      += c["skipped"]
-            total_no_files     += c["no_files"]
+    with Pool(workers) as pool:
+        for station, c_s2, c_s1 in pool.imap_unordered(_worker, args_list, chunksize=1):
+            done += 1
+            for c in (c_s2, c_s1):
+                total_consolidated += c["consolidated"]
+                total_skipped      += c["skipped"]
+                total_no_files     += c["no_files"]
+            if (done % 20) == 0 or done == len(stations):
+                print(f"[{done}/{len(stations)}] consolidated={total_consolidated} skipped={total_skipped}", flush=True)
 
     print(f"\n{'Saved' if execute else 'Would save'}: {total_consolidated} bundle files")
     print(f"Already existed (skipped): {total_skipped}")
@@ -234,7 +240,7 @@ def main(execute: bool, start_idx: int, end_idx: int | None):
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_FILE, "a") as f:
             f.write(f"\n=== {date.today()} ===\n")
-            f.write(f"- consolidate_tokens.py --execute: saved {total_consolidated} bundle files\n")
+            f.write(f"- consolidate_tokens.py --execute --workers {workers}: saved {total_consolidated} bundle files\n")
             f.write(f"  skipped (already existed): {total_skipped}\n")
         print(f"\nLogged to {LOG_FILE}")
     else:
@@ -244,7 +250,8 @@ def main(execute: bool, start_idx: int, end_idx: int | None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute",    action="store_true")
+    parser.add_argument("--workers",    type=int, default=8)
     parser.add_argument("--start-idx", type=int, default=0)
     parser.add_argument("--end-idx",   type=int, default=None)
     args = parser.parse_args()
-    main(execute=args.execute, start_idx=args.start_idx, end_idx=args.end_idx)
+    main(execute=args.execute, start_idx=args.start_idx, end_idx=args.end_idx, workers=args.workers)

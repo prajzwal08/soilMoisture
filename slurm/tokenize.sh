@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=tokenize
-#SBATCH --array=0-35
+#SBATCH --array=0-26
 #SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -10,6 +10,8 @@
 #SBATCH --mem=32G
 #SBATCH --output=/gpfs/work3/0/prjs1968/data/logs/tokenize_%A_%a.out
 #SBATCH --error=/gpfs/work3/0/prjs1968/data/logs/tokenize_%A_%a.err
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
 # ── env ───────────────────────────────────────────────────────────────────────
 source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh

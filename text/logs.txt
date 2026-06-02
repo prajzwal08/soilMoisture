@@ -35,3 +35,45 @@ Next steps:
   - Deleted 524632 old per-date .pt files
   - Missing S2 consolidated: 468
   - Missing S1 consolidated: 480
+
+=== 2026-06-02 ===
+- consolidate_tokens.py --execute --workers 8: saved 75 bundle files
+  skipped (already existed): 2293
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute --workers 8
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 77358 old geo.json files
+  - Deleted 291635 old per-date .pt files
+  - Missing S2 consolidated: 261
+  - Missing S1 consolidated: 287
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 38859 old geo.json files
+  - Deleted 138902 old per-date .pt files
+  - Missing S2 consolidated: 261
+  - Missing S1 consolidated: 287
+
+=== 2026-06-02 ===
+- cleanup_tokens.py --execute
+  - Moved 0 excluded stations to excluded_stations/
+  - Deleted 52843 old geo.json files
+  - Deleted 192845 old per-date .pt files
+  - Missing S2 consolidated: 261
+  - Missing S1 consolidated: 287
+
+=== 2026-06-02 ===
+Session summary:
+- Root cause of slow/incomplete tokenization: inode quota exhausted mid-run; single-threaded
+  consolidate/cleanup scripts made recovery slow (2+ hours for one sequential job)
+- Fix: parallelised consolidate_tokens.py and cleanup_tokens.py with multiprocessing.Pool(8)
+  - consolidate_tokens.py: saved 75 new bundle files, completed in <2 min (was 2+ hrs)
+  - cleanup_tokens.py: deleted 291635 per-date .pt + 77358 geo.json files, completed in ~90 sec
+  - Both scripts now accept --workers N and use imap_unordered for parallel station processing
+- Added slurm/consolidate_tokens.sh and slurm/cleanup_tokens.sh (8 CPUs, email notifications)
+- csvs/missing_stations.csv: 261 stations never tokenized (S2L2A dir missing entirely)
+- Submitted tokenize array job 23374435 (--array=0-26, 27 tasks x 10 stations, gpu_a100)
+  - precompute_terramind.py auto-filters to untokenized stations via consolidated *_L12_*.pt check
+- Next: after tokenize completes → run consolidate_tokens.py --execute → cleanup_tokens.py --execute
