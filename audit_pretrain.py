@@ -45,7 +45,7 @@ def _first(directory: Path, pattern: str) -> Path | None:
 
 
 def audit_station(row: dict) -> dict:
-    station_id = row["station_id"]
+    station_id = row["station_id_dir"]   # actual directory name
     category   = row["category"]
     base       = DATA_ROOT / category / station_id
 
@@ -254,13 +254,25 @@ def main():
             return "sm_only"
         return "flux_only"
 
-    df["category"]   = df.apply(_category, axis=1)
-    df["station_id"] = "ISMN_" + df["network"] + "_" + df["station_name"]
+    df["category"] = df.apply(_category, axis=1)
+
+    def _station_dir_name(r):
+        # ISMN subnetworks: source_network=ISMN, network=SCAN/AMMA-CATCH/etc.
+        # → ISMN_{network}_{station_id}
+        # ICOS / AmeriFlux: source_network == network
+        # → {source_network}_{station_id}
+        if str(r["source_network"]) != str(r["network"]):
+            return f"{r['source_network']}_{r['network']}_{r['station_id']}"
+        return f"{r['source_network']}_{r['station_id']}"
+
+    df = df.dropna(subset=["source_network", "network", "station_id"])
+    df["station_id_dir"] = df.apply(_station_dir_name, axis=1)
     df = df[df["category"].isin(categories)].reset_index(drop=True)
 
     print(f"Auditing {len(df)} stations (splits={splits}, categories={categories})...")
 
-    rows_input = df[["station_id","split","category"]].to_dict("records")
+    rows_input = df[["station_id_dir","split","category"]].rename(
+        columns={"station_id_dir": "station_id_dir"}).to_dict("records")
 
     with Pool(args.workers) as pool:
         results = pool.map(audit_station, rows_input)

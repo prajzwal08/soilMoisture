@@ -384,6 +384,29 @@ Critical stations: 0
 
 Output: csvs/audit_pretrain.csv, text/audit_pretrain_summary.txt
 
+### audit_pretrain full (job 23424603, H100 gcn126) — 992 OK, 1 WARN, 0 CRITICAL
+Checked all 993 stations across all splits (train/val/oos) and categories
+(sm_only, sm_and_flux, flux_only).
+
+All 10 modalities present for all 993 stations:
+  S2, S1, DEM, LULC, ERA5, soil, TWSA, SIF, CloudMask, labels — 993/993 each
+
+ERA5 all-NaN variables: 0 stations (fix confirmed across all categories)
+
+Cloud mask coverage:
+  993/993 stations have cloud mask
+  1 station with >20% S2 dates missing CM entry:
+    [oos] AmeriFlux_CA-Cbo: 54/261 dates (20.7%) without cloud mask entry
+    → those acquisitions treated as cloud-free by model
+    → OOS only, does not affect train or val
+
+No token shape/NaN issues. No CRITICAL stations.
+Output: csvs/audit_pretrain.csv, text/audit_pretrain_summary.txt
+
+Note: Previous runs failed due to wrong station directory naming for ICOS/AmeriFlux
+stations (were using ISMN_ prefix). Fixed: ICOS/AmeriFlux use {network}_{station_id}
+format, ISMN subnetworks use ISMN_{network}_{station_id} format.
+
 ### check_dataset (job 23423818, H100 gcn132) — PASSED
 Ran DataLoader pipeline on 2000 random samples × train+val splits.
 Checks: tensor shapes, NaN in model inputs, rel_pos bounds [0,364].
@@ -391,6 +414,15 @@ Checks: tensor shapes, NaN in model inputs, rel_pos bounds [0,364].
   train: 2000/2000 checked, 0 errors — PASSED
   val:   2000/2000 checked, 0 errors — PASSED
   OVERALL: All samples PASSED — dataset is clean.
+
+### Training submitted (job 23424347, A100 gcn28)
+sbatch slurm/train.sh --run-name baseline_nll
+  partition=gpu_a100, 120h walltime (~83 epochs), batch=64, NLL loss
+  WandB run: baseline_nll  id=fh6pdasv
+  URL: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/fh6pdasv
+  Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/baseline_nll/
+  LR scheduler: ReduceLROnPlateau (patience=10), early stop patience=20 epochs
+  Expected: ~1.44h/epoch, ~83 epochs in 120h, early stop if converged sooner
 
 ### Conclusion — data is ready for training
 All pre-training checks passed:
