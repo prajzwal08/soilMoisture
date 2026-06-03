@@ -97,6 +97,63 @@ def _year_range_from_stem(stem: str) -> tuple[int, int]:
     return int(parts[-2][:4]), int(parts[-1][:4])
 
 
+def _date_to_int(dt) -> int:
+    """Convert datetime-like to YYYYMMDD int."""
+    return dt.year * 10000 + dt.month * 100 + dt.day
+
+
+def _window_ints(year: int, target_doy: int) -> tuple[int, int]:
+    """Return (start_int, end_int) as YYYYMMDD ints for the 365-day rolling window."""
+    from datetime import timedelta
+    end_dt   = datetime(year, 1, 1) + timedelta(days=target_doy - 1)
+    start_dt = datetime(year - 1, 1, 1) + timedelta(days=target_doy)
+    return _date_to_int(start_dt), _date_to_int(end_dt)
+
+
+# ── Per-station NC pre-loaders (called once in __init__, not in __getitem__) ─
+
+def _load_era5_nc(era5_dir: Path):
+    """Load ERA5Land NC fully into memory. Returns (values (N,19), date_ints (N,), doys (N,)) or None."""
+    nc_files = sorted(era5_dir.glob("meteo_*_*.nc")) if era5_dir.exists() else []
+    if not nc_files:
+        return None
+    ds = xr.open_dataset(nc_files[0])
+    values = np.stack([ds[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
+    times  = pd.DatetimeIndex(ds["time"].values)
+    ds.close()
+    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
+    doys      = np.array([t.day_of_year for t in times], dtype=np.int32)
+    return values, date_ints, doys
+
+
+def _load_sif_nc(sif_dir: Path):
+    """Load SIF NC fully into memory. Returns (values (N,), date_ints (N,), doys (N,)) or None."""
+    nc_files = sorted(sif_dir.glob("sif_*_*.nc")) if sif_dir.exists() else []
+    if not nc_files:
+        return None
+    ds = xr.open_dataset(nc_files[0])
+    times  = pd.to_datetime(ds["time"].values)
+    values = ds["sif"].values.astype(np.float32)
+    ds.close()
+    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
+    doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
+    return values, date_ints, doys
+
+
+def _load_twsa_nc(twsa_dir: Path):
+    """Load TWSA NC fully into memory. Returns (values (N,), date_ints (N,), doys (N,)) or None."""
+    nc_files = sorted(twsa_dir.glob("twsa_*_*.nc")) if twsa_dir.exists() else []
+    if not nc_files:
+        return None
+    ds = xr.open_dataset(nc_files[0])
+    times  = pd.to_datetime(ds["time"].values)
+    values = ds["lwe"].values.astype(np.float32)
+    ds.close()
+    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
+    doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
+    return values, date_ints, doys
+
+
 # ── Soil patch helpers ───────────────────────────────────────────────────────
 
 def fill_soil_nans(patch: np.ndarray) -> np.ndarray:
@@ -130,40 +187,35 @@ def load_soil_patch(path: Path) -> torch.Tensor | None:
     return torch.from_numpy(patch)
 
 
-# ── ERA5 loader ──────────────────────────────────────────────────────────────
+# ── ERA5 rolling slicer (no file I/O — works on pre-loaded numpy arrays) ────
 
-def load_era5_rolling(sat_dir: Path, year: int, target_doy: int):
+def load_era5_rolling(cache_entry, year: int, target_doy: int):
     """
-    Load 365 ERA5 tokens for the rolling window [T-364, T].
+    Slice pre-loaded ERA5 arrays for the 365-day rolling window.
 
+    Args:
+        cache_entry: (values (N,19) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
         era5 : (365, 19) float32
-        doys : (365,) long — actual calendar DoY of each token
+        doys : (365,) long
     """
-    from datetime import timedelta
-    era5_dir = sat_dir / "ERA5Land"
-    nc_files = sorted(era5_dir.glob("meteo_*_*.nc")) if era5_dir.exists() else []
-    if not nc_files:
-        era5 = np.zeros((365, len(ERA5_VARS)), dtype=np.float32)
-        doys = np.zeros(365, dtype=np.int64)
-        return torch.from_numpy(era5), torch.from_numpy(doys)
+    if cache_entry is None:
+        return (torch.zeros(365, len(ERA5_VARS), dtype=torch.float32),
+                torch.zeros(365, dtype=torch.long))
 
-    ds = xr.open_dataset(nc_files[0])
+    values, date_ints, doy_arr = cache_entry
+    start_int, end_int = _window_ints(year, target_doy)
+    mask = (date_ints >= start_int) & (date_ints <= end_int)
 
-    target_date = datetime(year, 1, 1) + timedelta(days=target_doy - 1)
-    window_start = datetime(year - 1, 1, 1) + timedelta(days=target_doy)
-    ds_win = ds.sel(time=slice(str(window_start.date()), str(target_date.date())))
+    era5_win = values[mask]
+    doys_win = doy_arr[mask].astype(np.int64)
 
-    era5 = np.stack([ds_win[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
-    doys = np.array([pd.Timestamp(t).day_of_year for t in ds_win.time.values], dtype=np.int64)
-
-    # Pad to exactly 365 rows (window start may be missing if data starts later)
     n = 365
     out_era5 = np.zeros((n, len(ERA5_VARS)), dtype=np.float32)
     out_doys = np.zeros(n, dtype=np.int64)
-    l = min(len(doys), n)
-    out_era5[-l:] = era5[-l:]
-    out_doys[-l:]  = doys[-l:]
+    l = min(len(doys_win), n)
+    out_era5[-l:] = era5_win[-l:]
+    out_doys[-l:] = doys_win[-l:]
     return torch.from_numpy(out_era5), torch.from_numpy(out_doys)
 
 
@@ -333,16 +385,18 @@ def load_recent_skip_features(sat_dir: Path, year: int, target_doy: int):
     return skips[0], skips[1], skips[2], recent_is_s1
 
 
-# ── SIF loader ───────────────────────────────────────────────────────────────
+# ── SIF rolling slicer (no file I/O) ─────────────────────────────────────────
 
 MAX_SIF  = 50
 MAX_TWSA = 12
 
 
-def load_sif_rolling(sat_dir: Path, year: int, target_doy: int):
+def load_sif_rolling(cache_entry, year: int, target_doy: int):
     """
-    Load TROPOMI SIF values for the 365-day rolling window.
+    Slice pre-loaded SIF arrays for the 365-day rolling window.
 
+    Args:
+        cache_entry: (values (N,) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
         vals  : (MAX_SIF, 1) float32
         doys  : (MAX_SIF,) long
@@ -352,38 +406,35 @@ def load_sif_rolling(sat_dir: Path, year: int, target_doy: int):
     doys  = torch.zeros(MAX_SIF, dtype=torch.long)
     valid = torch.zeros(MAX_SIF, dtype=torch.bool)
 
-    sif_dir  = sat_dir / "SIF"
-    nc_files = sorted(sif_dir.glob("sif_*_*.nc")) if sif_dir.exists() else []
-    if not nc_files:
+    if cache_entry is None:
         return vals, doys, valid
 
-    ds  = xr.open_dataset(nc_files[0])
-    times = pd.to_datetime(ds["time"].values)
-    sif_vals = ds["sif"].values.astype(np.float32)
-    ds.close()
+    values, date_ints, doy_arr = cache_entry
+    start_int, end_int = _window_ints(year, target_doy)
+    mask = (date_ints >= start_int) & (date_ints <= end_int)
 
-    entries = []
-    for i, t in enumerate(times):
-        d = str(t.date()).replace("-", "")
-        if _in_window(d + "T00", year, target_doy):
-            entries.append((t.timetuple().tm_yday, t.year, float(sif_vals[i])))
+    win_vals = values[mask]
+    win_doys = doy_arr[mask]
+    n_win = min(len(win_vals), MAX_SIF)
+    win_vals = win_vals[-n_win:]
+    win_doys = win_doys[-n_win:]
 
-    entries = entries[-MAX_SIF:]
-    for out_i, (acq_doy, acq_year, v) in enumerate(entries):
-        vals[out_i, 0] = v
-        doys[out_i]    = acq_doy
-        valid[out_i]   = True
+    vals[:n_win, 0] = torch.from_numpy(win_vals)
+    doys[:n_win]    = torch.from_numpy(win_doys.astype(np.int64))
+    valid[:n_win]   = True
 
     return vals, doys, valid
 
 
-# ── TWSA loader ──────────────────────────────────────────────────────────────
+# ── TWSA rolling slicer (no file I/O) ────────────────────────────────────────
 
-def load_twsa_rolling(sat_dir: Path, year: int, target_doy: int):
+def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     """
-    Load GRACE TWSA (liquid water equivalent anomaly) for the 365-day window.
+    Slice pre-loaded TWSA arrays for the 365-day rolling window.
     TWSA is monthly; typically ≤ 12 observations per year.
 
+    Args:
+        cache_entry: (values (N,) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
         vals  : (MAX_TWSA, 1) float32
         doys  : (MAX_TWSA,) long
@@ -393,27 +444,22 @@ def load_twsa_rolling(sat_dir: Path, year: int, target_doy: int):
     doys  = torch.zeros(MAX_TWSA, dtype=torch.long)
     valid = torch.zeros(MAX_TWSA, dtype=torch.bool)
 
-    twsa_dir = sat_dir / "TWSA"
-    nc_files = sorted(twsa_dir.glob("twsa_*_*.nc")) if twsa_dir.exists() else []
-    if not nc_files:
+    if cache_entry is None:
         return vals, doys, valid
 
-    ds   = xr.open_dataset(nc_files[0])
-    times = pd.to_datetime(ds["time"].values)
-    lwe   = ds["lwe"].values.astype(np.float32)
-    ds.close()
+    values, date_ints, doy_arr = cache_entry
+    start_int, end_int = _window_ints(year, target_doy)
+    mask = (date_ints >= start_int) & (date_ints <= end_int)
 
-    entries = []
-    for i, t in enumerate(times):
-        d = str(t.date()).replace("-", "")
-        if _in_window(d + "T00", year, target_doy):
-            entries.append((t.timetuple().tm_yday, float(lwe[i])))
+    win_vals = values[mask]
+    win_doys = doy_arr[mask]
+    n_win = min(len(win_vals), MAX_TWSA)
+    win_vals = win_vals[-n_win:]
+    win_doys = win_doys[-n_win:]
 
-    entries = entries[-MAX_TWSA:]
-    for out_i, (acq_doy, v) in enumerate(entries):
-        vals[out_i, 0] = v
-        doys[out_i]    = acq_doy
-        valid[out_i]   = True
+    vals[:n_win, 0] = torch.from_numpy(win_vals)
+    doys[:n_win]    = torch.from_numpy(win_doys.astype(np.int64))
+    valid[:n_win]   = True
 
     return vals, doys, valid
 
@@ -446,10 +492,8 @@ class SoilMoistureDataset(Dataset):
         split_filter:    list | None = None,
         training:        bool        = True,
     ):
-        import random as _random
-        self._rng     = _random.Random()
-        self.training = training
-        self.years    = years or list(range(2016, 2024))
+        self.training  = training
+        self.years     = years or list(range(2016, 2024))
         self.data_root = Path(data_root)
 
         # ERA5 normalisation stats
@@ -472,8 +516,16 @@ class SoilMoistureDataset(Dataset):
         if split_filter is not None:
             splits = splits[splits["split"].isin(split_filter)]
 
-        self.samples   = []
-        self._ds_cache = {}   # label_path → xr.Dataset (opened once per worker)
+        self.samples = []
+
+        # Per-station in-memory caches (numpy arrays, no open file handles).
+        # Populated once in __init__; DataLoader workers inherit via fork (copy-on-write).
+        # ERA5/SIF/TWSA: (values, date_ints, doys) arrays or None
+        # Labels: (sm_np (n_depths, n_days), depths_list, times pd.DatetimeIndex)
+        self._era5_cache  : dict[Path, tuple | None] = {}
+        self._sif_cache   : dict[Path, tuple | None] = {}
+        self._twsa_cache  : dict[Path, tuple | None] = {}
+        self._label_cache : dict[Path, tuple]        = {}
 
         for _, r in splits.iterrows():
             has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
@@ -493,46 +545,57 @@ class SoilMoistureDataset(Dataset):
             if not sat_dir.exists() or not label_file.exists():
                 continue
 
-            # Skip stations with no valid soil patch
             if not bool(r.get("soil_patch_ok", True)):
                 continue
 
-            ds_label = xr.open_dataset(label_file)
+            # Load per-station NC data into memory once (subsequent rows reuse cache)
+            if sat_dir not in self._era5_cache:
+                self._era5_cache[sat_dir] = _load_era5_nc(sat_dir / "ERA5Land")
+                self._sif_cache[sat_dir]  = _load_sif_nc(sat_dir / "SIF")
+                self._twsa_cache[sat_dir] = _load_twsa_nc(sat_dir / "TWSA")
 
-            # Fast year-range check via filename stems (avoids opening ERA5 NetCDF)
-            era5_files = sorted((sat_dir / "ERA5Land").glob("meteo_*_*.nc")) \
-                         if (sat_dir / "ERA5Land").exists() else []
-            era5_years = (_year_range_from_stem(era5_files[0].stem)
-                          if era5_files else None)
+            if label_file not in self._label_cache:
+                ds_label   = xr.open_dataset(label_file)
+                sm_np      = ds_label["soil_moisture"].values.astype(np.float32)
+                depths     = [str(d) for d in ds_label["depth"].values]
+                time_coord = "date_time" if "date_time" in ds_label else "time"
+                times      = pd.DatetimeIndex(ds_label[time_coord].values)
+                ds_label.close()
+                self._label_cache[label_file] = (sm_np, depths, times)
+
+            # Year range check from ERA5 cache (fast, no file I/O)
+            era5_entry = self._era5_cache[sat_dir]
+            if era5_entry is None:
+                continue
+            era5_date_ints = era5_entry[1]
+            era5_start_year = int(era5_date_ints[0]) // 10000
+            era5_end_year   = int(era5_date_ints[-1]) // 10000
 
             s2_pt_files = sorted((sat_dir / "S2L2A").glob("*_L12_*.pt")) \
                           if (sat_dir / "S2L2A").exists() else []
             s2_years = (_year_range_from_stem(s2_pt_files[0].stem)
                         if s2_pt_files else None)
 
+            sm_np, depths, times = self._label_cache[label_file]
+
             for year in self.years:
-                if era5_years is None or not (era5_years[0] <= year <= era5_years[1]):
+                if not (era5_start_year <= year <= era5_end_year):
                     continue
                 if s2_years is None or not (s2_years[0] <= year <= s2_years[1]):
                     continue
 
-                # Use "date_time" or fall back to "time" depending on labels.nc version
-                time_coord = "date_time" if "date_time" in ds_label else "time"
-                year_mask  = ds_label[time_coord].dt.year.values == year
+                year_mask    = times.year == year
                 if not year_mask.any():
                     continue
 
-                sm_vals      = ds_label["soil_moisture"].values   # (n_depths, n_days)
                 year_indices = np.where(year_mask)[0]
-                sm_slice     = sm_vals[:, year_indices]
+                sm_slice     = sm_np[:, year_indices]
                 valid_days   = np.any(~np.isnan(sm_slice), axis=0)
                 if valid_days.sum() < min_obs:
                     continue
 
                 for day_idx in np.where(valid_days)[0]:
-                    t_val = ds_label[time_coord].values[year_indices[day_idx]]
-                    doy   = pd.Timestamp(t_val).day_of_year
-
+                    doy = times[year_indices[day_idx]].day_of_year
                     self.samples.append({
                         "sat_dir"    : sat_dir,
                         "label_file" : label_file,
@@ -542,8 +605,6 @@ class SoilMoistureDataset(Dataset):
                         "soil_path"  : soil_path if soil_path.exists() else None,
                         "station_key": dir_name,
                     })
-
-            ds_label.close()
 
         print(f"Dataset: {len(self.samples)} samples from "
               f"{len(set(s['station_key'] for s in self.samples))} stations")
@@ -594,8 +655,8 @@ class SoilMoistureDataset(Dataset):
         if soil_patch is None:
             soil_patch = torch.zeros(21, 74, 74, dtype=torch.float32)
 
-        # ── ERA5 — rolling 365-day window (raw) ───────────────────────
-        era5, era5_doys = load_era5_rolling(sat_dir, year, doy)
+        # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
+        era5, era5_doys = load_era5_rolling(self._era5_cache.get(sat_dir), year, doy)
 
         # Z-score normalisation: log1p precipitation then standardise all vars
         era5_np = era5.numpy()
@@ -605,30 +666,28 @@ class SoilMoistureDataset(Dataset):
         era5_np = (era5_np - self._era5_means) / (self._era5_stds + 1e-8)
         era5    = torch.from_numpy(era5_np)
 
-        # ── SIF — optional sparse modality ───────────────────────────
-        sif_vals, sif_doys, sif_valid = load_sif_rolling(sat_dir, year, doy)
-        if self.training and self._rng.random() < 0.5:
+        # ── SIF — optional sparse modality, numpy slice from cache ───
+        sif_vals, sif_doys, sif_valid = load_sif_rolling(
+            self._sif_cache.get(sat_dir), year, doy
+        )
+        # Modality dropout: per-sample coin flip using PyTorch RNG (worker-safe)
+        if self.training and torch.rand(1).item() < 0.5:
             sif_valid[:] = False
 
-        # ── TWSA — optional sparse modality ──────────────────────────
-        twsa_vals, twsa_doys, twsa_valid = load_twsa_rolling(sat_dir, year, doy)
-        if self.training and self._rng.random() < 0.5:
+        # ── TWSA — optional sparse modality, numpy slice from cache ──
+        twsa_vals, twsa_doys, twsa_valid = load_twsa_rolling(
+            self._twsa_cache.get(sat_dir), year, doy
+        )
+        if self.training and torch.rand(1).item() < 0.5:
             twsa_valid[:] = False
 
-        # ── ISMN labels ───────────────────────────────────────────────
-        label_file = s["label_file"]
-        if label_file not in self._ds_cache:
-            self._ds_cache[label_file] = xr.open_dataset(label_file)
-        ds_label = self._ds_cache[label_file]
-
-        label          = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
-        depths_in_file = [str(d) for d in ds_label["depth"].values]
-
+        # ── ISMN labels — index pre-loaded numpy array ────────────────
+        sm_np, depths, _ = self._label_cache[s["label_file"]]
+        label = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
         for i, depth_str in enumerate(SM_DEPTHS):
-            if depth_str in depths_in_file:
-                d_idx    = depths_in_file.index(depth_str)
-                val      = float(ds_label["soil_moisture"].values[d_idx, s["time_idx"]])
-                label[i] = val
+            if depth_str in depths:
+                d_idx    = depths.index(depth_str)
+                label[i] = float(sm_np[d_idx, s["time_idx"]])
 
         return {
             # S2 — pre-computed L12 features

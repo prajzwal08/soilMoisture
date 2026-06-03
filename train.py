@@ -72,6 +72,13 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
+def worker_init_fn(worker_id: int):
+    """Seed each DataLoader worker independently so RNG state is not duplicated across workers."""
+    seed = torch.initial_seed() % (2 ** 32)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
 def compute_metrics(preds, targets):
     """
     preds, targets : (N, n_depths) numpy arrays (NaN masked already)
@@ -236,18 +243,22 @@ def main():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size  = CONFIG["batch_size"],
-        shuffle     = True,
-        num_workers = CONFIG["num_workers"],
-        pin_memory  = True,
-        drop_last   = True,
+        batch_size      = CONFIG["batch_size"],
+        shuffle         = True,
+        num_workers     = CONFIG["num_workers"],
+        pin_memory      = True,
+        drop_last       = True,
+        worker_init_fn  = worker_init_fn,
+        persistent_workers = CONFIG["num_workers"] > 0,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size  = CONFIG["batch_size"],
-        shuffle     = False,
-        num_workers = CONFIG["num_workers"],
-        pin_memory  = True,
+        batch_size      = CONFIG["batch_size"],
+        shuffle         = False,
+        num_workers     = CONFIG["num_workers"],
+        pin_memory      = True,
+        worker_init_fn  = worker_init_fn,
+        persistent_workers = CONFIG["num_workers"] > 0,
     )
 
     # ── Model ─────────────────────────────────────────────────────────
