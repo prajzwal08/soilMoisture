@@ -191,8 +191,11 @@ class UNetDecoder(nn.Module):
         raw = self.head(x)                                              # (B, out_ch, 224, 224)
 
         if self.predict_uncertainty:
-            mu      = raw[:, :self.n_depths]                           # (B, n_depths, 224, 224)
-            log_var = raw[:, self.n_depths:]                           # (B, n_depths, 224, 224)
+            mu      = raw[:, :self.n_depths]
+            # Clamp here so gradients flow correctly at all values.
+            # Without this, extreme raw values get clamped only inside the loss,
+            # where PyTorch's clamp has zero gradient outside bounds — dead neurons.
+            log_var = raw[:, self.n_depths:].clamp(-6.0, 6.0)
             return mu, log_var
         return raw, None                                                # None signals no uncertainty
 
