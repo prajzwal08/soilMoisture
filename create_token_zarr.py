@@ -63,25 +63,30 @@ def _date_to_int(t) -> int:
 # ── per-modality writers ──────────────────────────────────────────────────────
 
 def write_tokens(root: zarr.Group, key: str, pt_dir: Path, orbit: str | None = None):
-    """Write one set of token layers (S2 or one S1 orbit) into zarr group."""
-    dates = None
-    for layer in LAYERS:
-        if orbit:
-            pt = _first(pt_dir, f"*_{orbit}_{layer.upper()}_*.pt")
-        else:
-            pt = _first(pt_dir, f"*_{layer.upper()}_*.pt")
-        if pt is None:
-            return False   # missing — skip this modality entirely
-        d = torch.load(pt, map_location="cpu", weights_only=False)
+    """Write one set of token layers (S2 or one S1 orbit) into zarr group.
+
+    Pre-flight checks ALL layers exist before writing anything — prevents partial
+    zarr arrays if one layer file is missing or corrupted.
+    """
+    patterns = [
+        f"*_{orbit}_{l.upper()}_*.pt" if orbit else f"*_{l.upper()}_*.pt"
+        for l in LAYERS
+    ]
+    pt_files = [_first(pt_dir, p) for p in patterns]
+    if any(p is None for p in pt_files):
+        return False   # clean skip — no partial arrays written
+
+    for layer, pt in zip(LAYERS, pt_files):
+        d   = torch.load(pt, map_location="cpu", weights_only=False)
         arr = d["tokens"].numpy()                    # (N, 196, 768) fp16
         root.array(f"{key}/{layer}", arr,
                    chunks=(1, arr.shape[1], arr.shape[2]),
                    dtype=arr.dtype, compressor=COMPRESSOR, overwrite=True)
-        if dates is None:
-            dates = d["dates"]
-    if dates is not None:
-        root.array(f"{key}/dates", np.array(dates, dtype="U8"),
-                   chunks=(len(dates),), overwrite=True)
+
+    # Dates from L12 (all layers share the same dates)
+    d_l12 = torch.load(pt_files[0], map_location="cpu", weights_only=False)
+    root.array(f"{key}/dates", np.array(d_l12["dates"], dtype="U8"),
+               chunks=(len(d_l12["dates"]),), overwrite=True)
     return True
 
 
@@ -109,10 +114,9 @@ def write_era5(root: zarr.Group, era5_dir: Path):
     nc = _first(era5_dir, "meteo_*_*.nc")
     if nc is None:
         return
-    ds    = xr.open_dataset(nc)
-    vals  = np.stack([ds[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
-    times = pd.DatetimeIndex(ds["time"].values)
-    ds.close()
+    with xr.open_dataset(nc) as ds:
+        vals  = np.stack([ds[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
+        times = pd.DatetimeIndex(ds["time"].values)
     date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
     doys      = np.array([t.day_of_year  for t in times], dtype=np.int32)
     root.array("era5/values",    vals,       compressor=COMPRESSOR, overwrite=True)
@@ -124,10 +128,9 @@ def write_sif(root: zarr.Group, sif_dir: Path):
     nc = _first(sif_dir, "sif_*_*.nc")
     if nc is None:
         return
-    ds    = xr.open_dataset(nc)
-    vals  = ds["sif"].values.astype(np.float32)
-    times = pd.to_datetime(ds["time"].values)
-    ds.close()
+    with xr.open_dataset(nc) as ds:
+        vals  = ds["sif"].values.astype(np.float32)
+        times = pd.to_datetime(ds["time"].values)
     date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
     doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
     root.array("sif/values",    vals,      compressor=COMPRESSOR, overwrite=True)
@@ -139,11 +142,10 @@ def write_twsa(root: zarr.Group, twsa_dir: Path):
     nc = _first(twsa_dir, "twsa_*_*.nc")
     if nc is None:
         return
-    ds    = xr.open_dataset(nc)
-    lwe   = ds["lwe"].values.astype(np.float32)
-    unc   = ds["lwe_uncertainty"].values.astype(np.float32) if "lwe_uncertainty" in ds else np.zeros_like(lwe)
-    times = pd.to_datetime(ds["time"].values)
-    ds.close()
+    with xr.open_dataset(nc) as ds:
+        lwe   = ds["lwe"].values.astype(np.float32)
+        unc   = ds["lwe_uncertainty"].values.astype(np.float32) if "lwe_uncertainty" in ds else np.zeros_like(lwe)
+        times = pd.to_datetime(ds["time"].values)
     date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
     doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
     root.array("twsa/lwe",             lwe,       compressor=COMPRESSOR, overwrite=True)
@@ -234,8 +236,11 @@ def main():
 
     def _station_dir(r):
         cat = _category(r)
-        if str(r["source_network"]) != str(r["network"]):
-            sid = f"{r['source_network']}_{r['network']}_{r['station_id']}"
+        # Match dataset.py naming convention exactly:
+        # ISMN subnetworks → ISMN_{network}_{station_name}
+        # ICOS / AmeriFlux → {source_network}_{station_id}
+        if str(r["source_network"]) == "ISMN":
+            sid = f"ISMN_{r['network']}_{r['station_name']}"
         else:
             sid = f"{r['source_network']}_{r['station_id']}"
         return str(DATA_ROOT / cat / sid)

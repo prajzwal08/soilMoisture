@@ -28,8 +28,13 @@ import pandas as pd
 import rasterio
 import torch
 import xarray as xr
+import zarr
 from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
+
+# ── Zarr roots (scratch1 preferred for speed, work3 as fallback) ─────────────
+ZARR_ROOT_FAST = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+ZARR_ROOT_SLOW = Path("/gpfs/work3/0/prjs1968/data/zarr")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -196,6 +201,191 @@ def _load_twsa_nc(twsa_dir: Path):
     date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
     doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
     return values, date_ints, doys
+
+
+# ── Zarr helpers ─────────────────────────────────────────────────────────────
+
+def _open_zarr(station_dir: Path, category: str) -> zarr.Group | None:
+    """
+    Open zarr group for a station. Prefers scratch1 (fast SSD) over work3.
+    Returns None if zarr store is not yet complete.
+    """
+    for root in (ZARR_ROOT_FAST, ZARR_ROOT_SLOW):
+        path = root / category / station_dir.name
+        if (path / ".complete").exists():
+            return zarr.open_group(str(path), mode="r")
+    return None
+
+
+def _load_zarr_era5(zg: zarr.Group):
+    """Load ERA5 from zarr → same tuple format as _load_era5_nc()."""
+    if "era5/values" not in zg:
+        return None
+    return (
+        zg["era5/values"][:],
+        zg["era5/date_ints"][:],
+        zg["era5/doys"][:],
+    )
+
+
+def _load_zarr_sif(zg: zarr.Group):
+    """Load SIF from zarr → same tuple format as _load_sif_nc()."""
+    if "sif/values" not in zg:
+        return None
+    return (
+        zg["sif/values"][:],
+        zg["sif/date_ints"][:],
+        zg["sif/doys"][:],
+    )
+
+
+def _load_zarr_twsa(zg: zarr.Group):
+    """Load TWSA from zarr → same tuple format as _load_twsa_nc()."""
+    if "twsa/lwe" not in zg:
+        return None
+    return (
+        zg["twsa/lwe"][:],
+        zg["twsa/date_ints"][:],
+        zg["twsa/doys"][:],
+    )
+
+
+def _load_zarr_labels(zg: zarr.Group):
+    """Load labels from zarr → same tuple format as label_cache."""
+    if "labels/sm" not in zg:
+        return None
+    sm_np  = zg["labels/sm"][:]                        # (n_depths, n_days) float32
+    depths = [str(d) for d in zg["labels/depths"][:]]
+    dates  = [str(d) for d in zg["labels/dates"][:]]
+    times  = pd.DatetimeIndex([pd.Timestamp(d) for d in dates])
+    return sm_np, depths, times
+
+
+def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
+                          max_acq: int = MAX_S2):
+    """
+    Load S2 L12 tokens and cloud mask from zarr for the 365-day rolling window.
+    Chunk-aligned reads: one zarr chunk = one acquisition = (1, 196, 768).
+    """
+    l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
+    doys       = torch.zeros(max_acq, dtype=torch.long)
+    token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)
+    rel_pos    = torch.zeros(max_acq, dtype=torch.long)
+
+    if "s2/l12" not in zg:
+        return l12, doys, doys > 0, token_mask, rel_pos
+
+    all_dates = [str(d) for d in zg["s2/dates"][:]]
+    ws, td    = _window_datetimes(year, target_doy)
+    win_idx   = [i for i, d in enumerate(all_dates) if _in_window(d, ws, td)]
+    win_idx   = win_idx[-max_acq:]
+
+    cm_date_idx: dict[str, int] = {}
+    has_cm = "cm/masks" in zg and "cm/dates" in zg
+    if has_cm:
+        cm_date_idx = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
+
+    tokens_z = zg["s2/l12"]
+    cm_z     = zg["cm/masks"] if has_cm else None
+
+    for out_i, src_i in enumerate(win_idx):
+        date_str = all_dates[src_i]
+        dt       = datetime.strptime(date_str[:8], "%Y%m%d")
+        acq_doy  = dt.timetuple().tm_yday
+
+        l12[out_i]     = torch.from_numpy(tokens_z[src_i])   # one chunk read
+        doys[out_i]    = acq_doy
+        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+
+        if date_str in cm_date_idx:
+            cm    = cm_z[cm_date_idx[date_str]]               # one chunk read
+            cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
+            bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
+            token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
+
+    return l12, doys, doys > 0, token_mask, rel_pos
+
+
+def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
+                          max_acq: int = MAX_S1):
+    """Load S1 L12 tokens (ASC + DESC merged) from zarr."""
+    l12     = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
+    doys    = torch.zeros(max_acq, dtype=torch.long)
+    rel_pos = torch.zeros(max_acq, dtype=torch.long)
+
+    ws, td  = _window_datetimes(year, target_doy)
+    entries: list[tuple[str, zarr.Array, int]] = []
+
+    for orbit_key in ("s1_asc", "s1_desc"):
+        if f"{orbit_key}/l12" not in zg:
+            continue
+        orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
+        tokens_z    = zg[f"{orbit_key}/l12"]
+        for i, d in enumerate(orbit_dates):
+            if _in_window(d, ws, td):
+                entries.append((d, tokens_z, i))
+
+    if not entries:
+        return l12, doys, doys > 0, rel_pos
+
+    entries.sort(key=lambda x: x[0])
+    entries = entries[-max_acq:]
+
+    for out_i, (date_str, tokens_z, src_i) in enumerate(entries):
+        dt      = datetime.strptime(date_str[:8], "%Y%m%d")
+        acq_doy = dt.timetuple().tm_yday
+        l12[out_i]     = torch.from_numpy(tokens_z[src_i])   # one chunk read
+        doys[out_i]    = acq_doy
+        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+
+    return l12, doys, doys > 0, rel_pos
+
+
+def load_recent_skip_features_zarr(zg: zarr.Group, year: int, target_doy: int):
+    """Load L3/L6/L9 skip features for the most-recent acquisition from zarr."""
+    zeros  = torch.zeros(196, 768, dtype=torch.float16)
+    ws, td = _window_datetimes(year, target_doy)
+
+    def _most_recent_zarr(orbit_key: str) -> str | None:
+        dates_key = f"{orbit_key}/dates"
+        if dates_key not in zg:
+            return None
+        for d in reversed([str(x) for x in zg[dates_key][:]]):
+            if _in_window(d, ws, td):
+                return d
+        return None
+
+    s2_date  = _most_recent_zarr("s2")
+    s1_date, s1_orbit_key = None, None
+    for ok in ("s1_asc", "s1_desc"):
+        d = _most_recent_zarr(ok)
+        if d is not None and (s1_date is None or d > s1_date):
+            s1_date, s1_orbit_key = d, ok
+
+    recent_is_s1 = bool(s1_date and (not s2_date or s1_date > s2_date))
+    recent_date  = s1_date if recent_is_s1 else s2_date
+    if recent_date is None:
+        return zeros, zeros.clone(), zeros.clone(), False
+
+    orbit_key = s1_orbit_key if recent_is_s1 else "s2"
+    skips = []
+    for layer in ("l3", "l6", "l9"):
+        arr_key = f"{orbit_key}/{layer}"
+        dates_key = f"{orbit_key}/dates"
+        if arr_key not in zg:
+            skips.append(zeros.clone())
+            continue
+        date_list = [str(d) for d in zg[dates_key][:]]
+        if recent_date in date_list:
+            idx = date_list.index(recent_date)
+            if idx < zg[arr_key].shape[0]:
+                skips.append(torch.from_numpy(zg[arr_key][idx]))
+            else:
+                skips.append(zeros.clone())
+        else:
+            skips.append(zeros.clone())
+
+    return skips[0], skips[1], skips[2], recent_is_s1
 
 
 # ── Soil patch helpers ───────────────────────────────────────────────────────
@@ -564,9 +754,10 @@ class SoilMoistureDataset(Dataset):
 
         # Per-station in-memory caches (numpy arrays, no open file handles).
         # Populated once in __init__; DataLoader workers inherit via fork (copy-on-write).
-        # ERA5/SIF/TWSA: (values, date_ints, doys) arrays or None
-        # Labels: (sm_np (n_depths, n_days), depths_list, times pd.DatetimeIndex)
-        # pt_paths: dict of pre-resolved .pt file paths — eliminates all glob() from __getitem__
+        # _zarr_groups: sat_dir → open zarr.Group (or None if zarr not available)
+        # ERA5/SIF/TWSA/label caches: same format as before, populated from zarr or .nc
+        # _pt_paths: .pt fallback for stations without zarr
+        self._zarr_groups : dict[Path, zarr.Group | None] = {}
         self._era5_cache  : dict[Path, tuple | None] = {}
         self._sif_cache   : dict[Path, tuple | None] = {}
         self._twsa_cache  : dict[Path, tuple | None] = {}
@@ -595,20 +786,33 @@ class SoilMoistureDataset(Dataset):
                 continue
 
             # Load per-station data into memory once (subsequent rows reuse caches)
-            if sat_dir not in self._pt_paths:
-                self._pt_paths[sat_dir]    = _resolve_pt_paths(sat_dir)
-                self._era5_cache[sat_dir]  = _load_era5_nc(sat_dir / "ERA5Land")
-                self._sif_cache[sat_dir]   = _load_sif_nc(sat_dir / "SIF")
-                self._twsa_cache[sat_dir]  = _load_twsa_nc(sat_dir / "TWSA")
-
-            if label_file not in self._label_cache:
-                ds_label   = xr.open_dataset(label_file)
-                sm_np      = ds_label["soil_moisture"].values.astype(np.float32)
-                depths     = [str(d) for d in ds_label["depth"].values]
-                time_coord = "date_time" if "date_time" in ds_label else "time"
-                times      = pd.DatetimeIndex(ds_label[time_coord].values)
-                ds_label.close()
-                self._label_cache[label_file] = (sm_np, depths, times)
+            if sat_dir not in self._zarr_groups:
+                zg = _open_zarr(sat_dir, cat)
+                self._zarr_groups[sat_dir] = zg
+                if zg is not None:
+                    # Zarr path: load all tabular modalities from zarr
+                    self._era5_cache[sat_dir]  = _load_zarr_era5(zg)
+                    self._sif_cache[sat_dir]   = _load_zarr_sif(zg)
+                    self._twsa_cache[sat_dir]  = _load_zarr_twsa(zg)
+                    self._pt_paths[sat_dir]    = {}   # not used when zarr available
+                    if label_file not in self._label_cache:
+                        lc = _load_zarr_labels(zg)
+                        if lc is not None:
+                            self._label_cache[label_file] = lc
+                else:
+                    # Fallback: original .pt + .nc files
+                    self._pt_paths[sat_dir]    = _resolve_pt_paths(sat_dir)
+                    self._era5_cache[sat_dir]  = _load_era5_nc(sat_dir / "ERA5Land")
+                    self._sif_cache[sat_dir]   = _load_sif_nc(sat_dir / "SIF")
+                    self._twsa_cache[sat_dir]  = _load_twsa_nc(sat_dir / "TWSA")
+                    if label_file not in self._label_cache:
+                        ds_label   = xr.open_dataset(label_file)
+                        sm_np      = ds_label["soil_moisture"].values.astype(np.float32)
+                        depths     = [str(d) for d in ds_label["depth"].values]
+                        time_coord = "date_time" if "date_time" in ds_label else "time"
+                        times      = pd.DatetimeIndex(ds_label[time_coord].values)
+                        ds_label.close()
+                        self._label_cache[label_file] = (sm_np, depths, times)
 
             # ERA5 year range from cache (fast int arithmetic — no file I/O)
             era5_entry = self._era5_cache[sat_dir]
@@ -617,9 +821,16 @@ class SoilMoistureDataset(Dataset):
             era5_start_year = int(era5_entry[1][0])  // 10000
             era5_end_year   = int(era5_entry[1][-1]) // 10000
 
-            # S2 year range from pre-resolved path stem (no glob)
-            s2_l12_pt = self._pt_paths[sat_dir].get("s2_l12")
-            s2_years  = _year_range_from_stem(s2_l12_pt.stem) if s2_l12_pt else None
+            # S2 year range: from zarr dates or .pt path stem
+            zg = self._zarr_groups.get(sat_dir)
+            if zg is not None:
+                if "s2/dates" not in zg:
+                    continue
+                s2_dates_zarr = [str(d) for d in zg["s2/dates"][:]]
+                s2_years = (int(s2_dates_zarr[0][:4]), int(s2_dates_zarr[-1][:4]))
+            else:
+                s2_l12_pt = self._pt_paths[sat_dir].get("s2_l12")
+                s2_years  = _year_range_from_stem(s2_l12_pt.stem) if s2_l12_pt else None
 
             sm_np, depths, times = self._label_cache[label_file]
 
@@ -662,35 +873,41 @@ class SoilMoistureDataset(Dataset):
         sat_dir = s["sat_dir"]
         year    = s["year"]
         doy     = s["doy"]
-        paths   = self._pt_paths[sat_dir]
+        zg      = self._zarr_groups.get(sat_dir)   # zarr group or None
 
-        # ── S2L2A — pre-computed L12 + cloud mask ─────────────────────
-        s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = load_s2_rolling(
-            l12_pt     = paths.get("s2_l12"),
-            cm_pt      = paths.get("cm"),
-            year       = year,
-            target_doy = doy,
-        )
+        if zg is not None:
+            # ── Zarr path (fast: chunk-aligned reads from SSD GPFS) ───
+            s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = \
+                load_s2_rolling_zarr(zg, year, doy)
 
-        # ── S1RTC — pre-computed L12 ───────────────────────────────────
-        s1_l12, s1_doys, s1_valid, s1_rel_pos = load_s1_rolling(
-            asc_l12_pt  = paths.get("s1_asc_l12"),
-            desc_l12_pt = paths.get("s1_desc_l12"),
-            year        = year,
-            target_doy  = doy,
-        )
+            s1_l12, s1_doys, s1_valid, s1_rel_pos = \
+                load_s1_rolling_zarr(zg, year, doy)
 
-        # ── DEM / LULC L12 (pre-computed, static) ─────────────────────
-        dem_l12 = (torch.load(paths["dem_l12"], weights_only=True, map_location="cpu")
-                   if paths.get("dem_l12") else torch.zeros(196, 768, dtype=torch.float16))
+            dem_l12  = (torch.from_numpy(zg["dem"][:])
+                        if "dem" in zg else torch.zeros(196, 768, dtype=torch.float16))
+            lulc_l12 = (torch.from_numpy(zg["lulc"][:])
+                        if "lulc" in zg else torch.zeros(196, 768, dtype=torch.float16))
 
-        lulc_l12 = (torch.load(paths["lulc_l12"], weights_only=True, map_location="cpu")
-                    if paths.get("lulc_l12") else torch.zeros(196, 768, dtype=torch.float16))
+            skip_l3, skip_l6, skip_l9, recent_is_s1 = \
+                load_recent_skip_features_zarr(zg, year, doy)
 
-        # ── Skip connection features (precomputed L3/L6/L9) ──────────
-        skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(
-            paths, year, doy
-        )
+        else:
+            # ── Fallback: original .pt files ──────────────────────────
+            paths = self._pt_paths[sat_dir]
+
+            s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = load_s2_rolling(
+                l12_pt=paths.get("s2_l12"), cm_pt=paths.get("cm"),
+                year=year, target_doy=doy,
+            )
+            s1_l12, s1_doys, s1_valid, s1_rel_pos = load_s1_rolling(
+                asc_l12_pt=paths.get("s1_asc_l12"), desc_l12_pt=paths.get("s1_desc_l12"),
+                year=year, target_doy=doy,
+            )
+            dem_l12  = (torch.load(paths["dem_l12"],  weights_only=True, map_location="cpu")
+                        if paths.get("dem_l12")  else torch.zeros(196, 768, dtype=torch.float16))
+            lulc_l12 = (torch.load(paths["lulc_l12"], weights_only=True, map_location="cpu")
+                        if paths.get("lulc_l12") else torch.zeros(196, 768, dtype=torch.float16))
+            skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(paths, year, doy)
 
         # ── Soil patch (static, NaN-filled) ──────────────────────────
         soil_patch = load_soil_patch(s["soil_path"]) if s["soil_path"] else None
