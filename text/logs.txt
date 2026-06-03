@@ -250,3 +250,71 @@ Session close:
 - Final confirmed state: all 10 modalities present for all 993 stations, nothing missing
 - Pushed to GitHub (commit 92be4e0)
 - Tomorrow: exploratory analysis of stations + training plan (hyperparameters, architecture, loss, evaluation)
+
+=== 2026-06-03 ===
+Session: Full training pipeline implementation, bug fixes, and first training job submission.
+
+## Pipeline implementation (dataset.py, model.py, train.py)
+- dataset.py: complete refactor — split-based station loading, ERA5/SIF/TWSA/label numpy
+  caches loaded in __init__ (no xarray in __getitem__), _resolve_pt_paths() pre-resolves
+  all .pt file paths to eliminate GPFS glob() calls in hot loop
+- model.py: added hist_modality_emb, era5_modality_emb, sif_modality_emb, twsa_modality_emb,
+  sif_mlp, twsa_mlp; predict_uncertainty flag; UNetDecoder returns (mu, log_var) tuple
+- train.py: AdamW with weight-decay separation, ReduceLROnPlateau (patience=10, factor=0.5),
+  early stopping (patience=20), W&B logging, argparse CLI, checkpoint resume, batch_size=64
+- compute_era5_stats.py: Welford online mean/std over all sm_only train stations
+  → csvs/era5_stats.json (587 stations, 1.78M station-days, log1p for tp_sum)
+- slurm/train.sh: A100, 48h, 8 CPUs, 64GB RAM
+- demo_plot.py: loads best.pt, plots predicted vs observed SM + ±1σ band + spatial map
+
+## Bugs fixed (in order found)
+1. SM_DEPTHS: was ["0-10","10-20","20-40","40-100"] (4 depths) → fixed to ["0-10","10-30","30-100"] (3)
+2. Cloud mask: was (cm==0).all() treating water/snow as invalid → fixed to bad_frac<=0.01
+   for classes {3,4,5,255} (thin cloud, thick cloud, shadow, nodata)
+3. Missing modality embeddings: ERA5, S2-hist, S1-hist tokens had no type embeddings —
+   transformer couldn't distinguish them → added hist_modality_emb, era5_modality_emb
+4. RNG duplication across DataLoader workers: self._rng.Random() duplicated on fork →
+   replaced with torch.rand(1).item() + worker_init_fn seeding
+5. xarray in __getitem__: ERA5/SIF/TWSA/labels opened per sample → moved to __init__ numpy caches
+6. Label xr.Dataset cache: open file handles across fork → numpy arrays, close immediately
+7. _in_window leap year bug: DOY comparison included 366 days for leap-year boundaries →
+   replaced with _window_datetimes() using timedelta(364) arithmetic
+8. _window_ints leap year bug: same root cause → now delegates to _window_datetimes()
+9. S1 glob() in __getitem__: GPFS metadata query per sample → _resolve_pt_paths() in __init__
+10. log_var clamping: clamp only in loss function created dead neurons (zero gradient outside
+    [-6,6]) → moved clamp to UNetDecoder.forward before returning
+11. _rel_pos leap year overflow: DOY formula could return values outside [0,364], crashing
+    nn.Embedding(365) → replaced with 364-(target_dt-acq_dt).days datetime subtraction
+12. ERA5 padding mask: slot-index compared with calendar DOY → model was blind to recent
+    weather (target_doy=100 masked 265 most-recent ERA5 slots including target day itself) →
+    fixed to era5_pad = (era5_doys == 0), masking only zero-padded slots
+13. Spatial anchor selection: _get_target_spatial_tokens used DOY.max() to find most-recent
+    acquisition — breaks at year boundary (Dec DOY~350 > Jun DOY~180 even if Jun is newer) →
+    replaced with rel_pos.max() which is monotonically increasing within rolling window
+14. Unused target_doy: removed from dataset batch dict after ERA5 masking fix
+
+## GPU benchmarks (smoke tests)
+- Smoke test job 23418260: 2 epochs, 3 stations, batch=4 — PASSED
+  train_loss=-1.71→-2.49, val 0-10cm ubRMSE=0.093 after epoch 1
+- Throughput test job 23419099: batch=32, 10 steps, A100-SXM4-40GB
+  285ms/step, 3.5 steps/sec, peak VRAM 19.6/42.4 GB → bumped batch_size to 64
+
+## Training submitted
+- wandb installed in terramind env, logged in as prajzwal08-university-of-twente
+- Job 23419498: sbatch slurm/train.sh --run-name baseline_nll
+  batch=64, NLL loss, 48h, A100, resume-safe
+  Expected ~1.45h/epoch, ~33 epochs within 48h wall time
+
+## Files modified/created
+dataset.py, model.py, train.py, slurm/train.sh, compute_era5_stats.py (existing),
+csvs/era5_stats.json (existing), demo_plot.py (new), text/training_plan.md (ablation section)
+
+## Notes for architecture.md
+Current implementation diverges from architecture.md on several points:
+- Uses spatial pyramid pooling (not Latent Cross-Attention bottleneck)
+- 3 depth bins (not 4)
+- log1p + z-score ERA5 norm (not Yeo-Johnson)
+- ~1035 tokens in sequence (not 680-730)
+- No staleness gate implemented yet
+- ERA5 future masking: right-aligned array with era5_doys==0 mask (not calendar masking)
+architecture.md update deferred to after Phase 1 training completes.
