@@ -514,10 +514,6 @@ class SoilMoistureModel(nn.Module):
         ]):
             MAX_ACQ = pyr.shape[1]
 
-            flat_doys = doys.reshape(-1)
-            pe_flat   = sinusoidal_pe(flat_doys, self.d_model)
-            pe        = pe_flat.reshape(B, MAX_ACQ, 1, self.d_model)
-
             rp_flat   = rel_pos.reshape(-1).clamp(0, 364)
             rp_flat   = self.rel_pos_emb(rp_flat)
             rp        = rp_flat.reshape(B, MAX_ACQ, 1, self.d_model)
@@ -527,7 +523,9 @@ class SoilMoistureModel(nn.Module):
                 torch.tensor(hist_idx, dtype=torch.long, device=device)
             )                                                          # (768,)
 
-            sat_tok   = pyr + pe + rp + scale_e.unsqueeze(0).unsqueeze(0) + hist_mod
+            # Satellite history uses only relative position (staleness) — no absolute DOY.
+            # ERA5 is the seasonal anchor; satellite tokens only need to know how old they are.
+            sat_tok   = pyr + rp + scale_e.unsqueeze(0).unsqueeze(0) + hist_mod
             sat_tok   = sat_tok.reshape(B, MAX_ACQ * 4, self.d_model)
 
             pad_acq   = ~valid
