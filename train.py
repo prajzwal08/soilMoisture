@@ -40,7 +40,7 @@ CONFIG = {
     "seed"           : 42,
 
     # Training
-    "batch_size"    : 32,
+    "batch_size"    : 64,
     "num_workers"   : 8,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
