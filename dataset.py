@@ -220,14 +220,11 @@ def load_s2_rolling(patch_dir: Path, cloud_mask_dir: Path,
         if cm_masks is not None and date_str in cm_date_idx:
             cm    = cm_masks[cm_date_idx[date_str]].numpy()           # (224, 224) uint8
             cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-            # Classes: 0=land, 1=water, 2=snow/ice → valid clear surfaces
-            #          3=thin cloud, 4=thick cloud, 5=shadow → invalid
-            #          255=nodata/swath-edge → invalid if ≥1% of token pixels
-            has_cloud   = np.isin(cm_4d, [3, 4, 5]).any(axis=(1, 3))      # (14, 14)
-            nodata_frac = (cm_4d == 255).mean(axis=(1, 3))                 # (14, 14)
-            token_mask[out_i] = torch.from_numpy(
-                (~has_cloud) & (nodata_frac < 0.01)
-            )
+            # Valid classes: 0=land, 1=water, 2=snow/ice
+            # Invalid classes: 3=thin cloud, 4=thick cloud, 5=shadow, 255=nodata
+            # A token is valid if ≤1% of its 256 pixels are in the invalid classes
+            bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))   # (14, 14)
+            token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
 
     return l12, doys, doys > 0, token_mask, rel_pos
 
