@@ -248,7 +248,7 @@ class SoilMoistureModel(nn.Module):
 
     def __init__(
         self,
-        n_depths: int = 4,
+        n_depths: int = 3,
         d_model:  int = 768,
         n_heads:  int = 12,
         n_layers: int = 6,
@@ -266,8 +266,24 @@ class SoilMoistureModel(nn.Module):
             nn.Linear(256, d_model),
         )
 
-        # Learned modality embedding for soil tokens (index 9 per architecture.md)
+        # SIF and TWSA MLP encoders (scalar → token)
+        self.sif_mlp  = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Linear(256, d_model))
+        self.twsa_mlp = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Linear(256, d_model))
+
+        # ── Modality type embeddings ───────────────────────────────────
+        # Soil tokens
         self.soil_modality_emb = nn.Embedding(1, d_model)
+        # Static (DEM=0, LULC=1)
+        self.static_modality_emb = nn.Embedding(2, d_model)
+        # Target-day spatial (S2=0, S1=1)
+        self.spatial_modality_emb = nn.Embedding(2, d_model)
+        # Satellite history (S2hist=0, S1hist=1) — distinguishes S2 from S1 in sequence
+        self.hist_modality_emb = nn.Embedding(2, d_model)
+        # ERA5 temporal tokens
+        self.era5_modality_emb = nn.Embedding(1, d_model)
+        # Optional sparse modalities
+        self.sif_modality_emb  = nn.Embedding(1, d_model)
+        self.twsa_modality_emb = nn.Embedding(1, d_model)
 
         # Learned scale embedding: 4 pyramid levels
         self.scale_emb = nn.Embedding(4, d_model)
@@ -281,13 +297,9 @@ class SoilMoistureModel(nn.Module):
         self.dem_pyramid_attn  = nn.Linear(d_model, 1)
         self.lulc_pyramid_attn = nn.Linear(d_model, 1)
 
-        # Static modality embedding: 0 = DEM, 1 = LULC
-        self.static_modality_emb = nn.Embedding(2, d_model)
-
-        # Target-day spatial tokens: 2D spatial PE + modality embedding
-        self.spatial_row_emb      = nn.Embedding(14, d_model)
-        self.spatial_col_emb      = nn.Embedding(14, d_model)
-        self.spatial_modality_emb = nn.Embedding(2, d_model)  # 0=S2, 1=S1
+        # Target-day spatial tokens: 2D spatial PE
+        self.spatial_row_emb = nn.Embedding(14, d_model)
+        self.spatial_col_emb = nn.Embedding(14, d_model)
 
         # ── Temporal transformer ──────────────────────────────────────
         enc_layer = nn.TransformerEncoderLayer(
@@ -464,11 +476,11 @@ class SoilMoistureModel(nn.Module):
         tokens.append(spatial_tokens)                                  # (B, 196, 768)
         is_pad.append(torch.zeros(B, 196, device=device, dtype=torch.bool))
 
-        # ── Satellite tokens ───────────────────────────────────────────
-        for pyr, doys, valid, rel_pos in [
+        # ── Satellite history tokens (S2 then S1) ─────────────────────
+        for hist_idx, (pyr, doys, valid, rel_pos) in enumerate([
             (s2_pyr, s2_doys, s2_valid, batch["s2_rel_pos"]),
             (s1_pyr, s1_doys, s1_valid, batch["s1_rel_pos"]),
-        ]:
+        ]):
             MAX_ACQ = pyr.shape[1]
 
             flat_doys = doys.reshape(-1)
@@ -479,7 +491,12 @@ class SoilMoistureModel(nn.Module):
             rp_flat   = self.rel_pos_emb(rp_flat)
             rp        = rp_flat.reshape(B, MAX_ACQ, 1, self.d_model)
 
-            sat_tok   = pyr + pe + rp + scale_e.unsqueeze(0).unsqueeze(0)
+            # Modality type embedding distinguishes S2 history from S1 history
+            hist_mod  = self.hist_modality_emb(
+                torch.tensor(hist_idx, dtype=torch.long, device=device)
+            )                                                          # (768,)
+
+            sat_tok   = pyr + pe + rp + scale_e.unsqueeze(0).unsqueeze(0) + hist_mod
             sat_tok   = sat_tok.reshape(B, MAX_ACQ * 4, self.d_model)
 
             pad_acq   = ~valid
@@ -489,8 +506,8 @@ class SoilMoistureModel(nn.Module):
             is_pad.append(pad_tok)
 
         # ── ERA5 tokens ────────────────────────────────────────────────
-        era5_raw  = batch["era5"]
-        era5_tok  = self.era5_mlp(era5_raw)
+        era5_raw = batch["era5"]
+        era5_tok = self.era5_mlp(era5_raw)
 
         era5_doys = batch["era5_doys"]
         flat_doys = era5_doys.reshape(-1)
@@ -499,7 +516,11 @@ class SoilMoistureModel(nn.Module):
         era5_rel  = torch.arange(365, device=device)
         era5_rp   = self.rel_pos_emb(era5_rel).unsqueeze(0)
 
-        era5_tok  = era5_tok + era5_pe + era5_rp
+        era5_mod  = self.era5_modality_emb(
+            torch.zeros(1, dtype=torch.long, device=device)
+        )                                                              # (1, 768)
+
+        era5_tok  = era5_tok + era5_pe + era5_rp + era5_mod
 
         target_doys = batch["target_doy"]
         day_idx     = torch.arange(365, device=device).unsqueeze(0)
@@ -507,6 +528,40 @@ class SoilMoistureModel(nn.Module):
 
         tokens.append(era5_tok)
         is_pad.append(era5_pad)
+
+        # ── SIF tokens (optional sparse) ──────────────────────────────
+        sif_vals  = batch["sif"].to(device)                           # (B, MAX_SIF, 1)
+        sif_doys  = batch["sif_doys"].to(device)                      # (B, MAX_SIF)
+        sif_valid = batch["sif_valid"].to(device)                     # (B, MAX_SIF)
+        if sif_vals.shape[1] > 0:
+            sif_tok  = self.sif_mlp(sif_vals.float())                 # (B, MAX_SIF, 768)
+            sif_pe   = sinusoidal_pe(sif_doys.reshape(-1), self.d_model
+                                     ).reshape(B, -1, self.d_model)
+            sif_rp   = self.rel_pos_emb(sif_doys.reshape(-1).clamp(0, 364)
+                                        ).reshape(B, -1, self.d_model)
+            sif_mod  = self.sif_modality_emb(
+                torch.zeros(1, dtype=torch.long, device=device)
+            )
+            sif_tok  = sif_tok + sif_pe + sif_rp + sif_mod
+            tokens.append(sif_tok)
+            is_pad.append(~sif_valid)
+
+        # ── TWSA tokens (optional sparse) ─────────────────────────────
+        twsa_vals  = batch["twsa"].to(device)                         # (B, MAX_TWSA, 1)
+        twsa_doys  = batch["twsa_doys"].to(device)
+        twsa_valid = batch["twsa_valid"].to(device)
+        if twsa_vals.shape[1] > 0:
+            twsa_tok  = self.twsa_mlp(twsa_vals.float())              # (B, MAX_TWSA, 768)
+            twsa_pe   = sinusoidal_pe(twsa_doys.reshape(-1), self.d_model
+                                      ).reshape(B, -1, self.d_model)
+            twsa_rp   = self.rel_pos_emb(twsa_doys.reshape(-1).clamp(0, 364)
+                                         ).reshape(B, -1, self.d_model)
+            twsa_mod  = self.twsa_modality_emb(
+                torch.zeros(1, dtype=torch.long, device=device)
+            )
+            twsa_tok  = twsa_tok + twsa_pe + twsa_rp + twsa_mod
+            tokens.append(twsa_tok)
+            is_pad.append(~twsa_valid)
 
         seq      = torch.cat(tokens, dim=1)
         key_mask = torch.cat(is_pad,  dim=1)

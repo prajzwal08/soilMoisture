@@ -43,7 +43,7 @@ ERA5_VARS = [
     "tp_sum",
 ]  # 19 features
 
-SM_DEPTHS = ["0-10", "10-20", "20-40", "40-100"]  # n_depths = 4
+SM_DEPTHS = ["0-10", "10-30", "30-100"]  # n_depths = 3
 
 S2_BAND_INDICES = list(range(12))  # all 12 S2L2A bands (no B10)
 
@@ -329,6 +329,91 @@ def load_recent_skip_features(sat_dir: Path, year: int, target_doy: int):
     return skips[0], skips[1], skips[2], recent_is_s1
 
 
+# ── SIF loader ───────────────────────────────────────────────────────────────
+
+MAX_SIF  = 50
+MAX_TWSA = 12
+
+
+def load_sif_rolling(sat_dir: Path, year: int, target_doy: int):
+    """
+    Load TROPOMI SIF values for the 365-day rolling window.
+
+    Returns:
+        vals  : (MAX_SIF, 1) float32
+        doys  : (MAX_SIF,) long
+        valid : (MAX_SIF,) bool
+    """
+    vals  = torch.zeros(MAX_SIF, 1, dtype=torch.float32)
+    doys  = torch.zeros(MAX_SIF, dtype=torch.long)
+    valid = torch.zeros(MAX_SIF, dtype=torch.bool)
+
+    sif_dir  = sat_dir / "SIF"
+    nc_files = sorted(sif_dir.glob("sif_*_*.nc")) if sif_dir.exists() else []
+    if not nc_files:
+        return vals, doys, valid
+
+    ds  = xr.open_dataset(nc_files[0])
+    times = pd.to_datetime(ds["time"].values)
+    sif_vals = ds["sif"].values.astype(np.float32)
+    ds.close()
+
+    entries = []
+    for i, t in enumerate(times):
+        d = str(t.date()).replace("-", "")
+        if _in_window(d + "T00", year, target_doy):
+            entries.append((t.timetuple().tm_yday, t.year, float(sif_vals[i])))
+
+    entries = entries[-MAX_SIF:]
+    for out_i, (acq_doy, acq_year, v) in enumerate(entries):
+        vals[out_i, 0] = v
+        doys[out_i]    = acq_doy
+        valid[out_i]   = True
+
+    return vals, doys, valid
+
+
+# ── TWSA loader ──────────────────────────────────────────────────────────────
+
+def load_twsa_rolling(sat_dir: Path, year: int, target_doy: int):
+    """
+    Load GRACE TWSA (liquid water equivalent anomaly) for the 365-day window.
+    TWSA is monthly; typically ≤ 12 observations per year.
+
+    Returns:
+        vals  : (MAX_TWSA, 1) float32
+        doys  : (MAX_TWSA,) long
+        valid : (MAX_TWSA,) bool
+    """
+    vals  = torch.zeros(MAX_TWSA, 1, dtype=torch.float32)
+    doys  = torch.zeros(MAX_TWSA, dtype=torch.long)
+    valid = torch.zeros(MAX_TWSA, dtype=torch.bool)
+
+    twsa_dir = sat_dir / "TWSA"
+    nc_files = sorted(twsa_dir.glob("twsa_*_*.nc")) if twsa_dir.exists() else []
+    if not nc_files:
+        return vals, doys, valid
+
+    ds   = xr.open_dataset(nc_files[0])
+    times = pd.to_datetime(ds["time"].values)
+    lwe   = ds["lwe"].values.astype(np.float32)
+    ds.close()
+
+    entries = []
+    for i, t in enumerate(times):
+        d = str(t.date()).replace("-", "")
+        if _in_window(d + "T00", year, target_doy):
+            entries.append((t.timetuple().tm_yday, float(lwe[i])))
+
+    entries = entries[-MAX_TWSA:]
+    for out_i, (acq_doy, v) in enumerate(entries):
+        vals[out_i, 0] = v
+        doys[out_i]    = acq_doy
+        valid[out_i]   = True
+
+    return vals, doys, valid
+
+
 # ── Dataset ──────────────────────────────────────────────────────────────────
 
 class SoilMoistureDataset(Dataset):
@@ -336,72 +421,81 @@ class SoilMoistureDataset(Dataset):
     One sample = one (station, year, day-of-year) triple.
 
     Args:
-        metadata_csv   : path to station_metadata.csv
-        satellite_dir  : root of satellite data directories
-        ismn_dir       : root of processed ISMN NetCDF files
-        years          : list of years to include (default 2016–2023)
-        min_obs        : minimum observed SM days in a year to include it
+        splits_csv       : path to station_splits.csv
+        data_root        : root of /gpfs/…/data  (contains sm_only/, sm_and_flux/, flux_only/)
+        era5_stats_path  : path to csvs/era5_stats.json  (from compute_era5_stats.py)
+        years            : list of years to include (default 2016–2023)
+        min_obs          : minimum observed SM days per year to include
+        category_filter  : list of categories to include, e.g. ["sm_only"]  (None = all)
+        split_filter     : list of split values to include, e.g. ["train"]  (None = all)
+        training         : if True, apply SIF/TWSA modality dropout (p=0.5 each)
     """
 
     def __init__(
         self,
-        metadata_csv:   str,
-        satellite_dir:  str,
-        ismn_dir:       str,
+        splits_csv:      str,
+        data_root:       str,
+        era5_stats_path: str,
         years=None,
-        min_obs:        int         = 30,
-        station_filter: list | None = None,
-        soil_data_root: str | None  = None,
+        min_obs:         int        = 30,
+        category_filter: list | None = None,
+        split_filter:    list | None = None,
+        training:        bool        = True,
     ):
-        self.satellite_dir = Path(satellite_dir)
-        self.ismn_dir      = Path(ismn_dir)
-        self.years         = years or list(range(2016, 2024))
+        import random as _random
+        self._rng     = _random.Random()
+        self.training = training
+        self.years    = years or list(range(2016, 2024))
+        self.data_root = Path(data_root)
 
-        # Build soil patch lookup: (network, station_id) → (Path, ok)
-        soil_lookup: dict[tuple, tuple[Path, bool]] = {}
-        if soil_data_root is not None:
-            _soil_root = Path(soil_data_root)
-            _splits    = pd.read_csv(_soil_root / "station_splits.csv")
-            for _, r in _splits.iterrows():
-                has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-                has_fl = str(r.get("has_flux",          "False")).lower() == "true"
-                cat    = ("sm_and_flux" if (has_sm and has_fl)
-                          else ("sm_only" if has_sm else "flux_only"))
-                folder = (f"{r['source_network']}_{r['network']}_{r['station_id']}"
-                          if r["source_network"] != r["network"]
-                          else f"{r['network']}_{r['station_id']}")
-                path   = _soil_root / cat / folder / "soil" / "soil_patch.tif"
-                ok     = bool(r.get("soil_patch_ok", True))
-                soil_lookup[(str(r["network"]), str(r["station_id"]))] = (path, ok)
+        # ERA5 normalisation stats
+        with open(era5_stats_path) as f:
+            era5_stats = json.load(f)
+        self._era5_means      = np.array(era5_stats["means"],  dtype=np.float32)
+        self._era5_stds       = np.array(era5_stats["stds"],   dtype=np.float32)
+        self._era5_log1p_prec = bool(era5_stats.get("log1p_precip", False))
 
-        meta = pd.read_csv(metadata_csv)
-        self.samples     = []
-        self._ds_cache   = {}   # label_file → xr.Dataset (opened once per worker)
+        splits = pd.read_csv(splits_csv)
 
-        for _, row in meta.iterrows():
-            station_key = f"{row['network']}_{row['station']}"
-            if station_filter is not None and station_key not in station_filter:
+        # Category filter using has_soil_moisture / has_flux columns
+        if category_filter is not None:
+            def _cat(r):
+                sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+                fl = str(r.get("has_flux",          "False")).lower() == "true"
+                return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
+            splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
+
+        if split_filter is not None:
+            splits = splits[splits["split"].isin(split_filter)]
+
+        self.samples   = []
+        self._ds_cache = {}   # label_path → xr.Dataset (opened once per worker)
+
+        for _, r in splits.iterrows():
+            has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+            has_fl = str(r.get("has_flux",          "False")).lower() == "true"
+            cat    = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+
+            # Build directory name matching the on-disk convention
+            if str(r["source_network"]) == "ISMN":
+                dir_name = f"ISMN_{r['network']}_{r['station_name']}"
+            else:
+                dir_name = f"{r['source_network']}_{r['station_id']}"
+
+            sat_dir    = self.data_root / cat / dir_name
+            label_file = sat_dir / "labels.nc"
+            soil_path  = sat_dir / "soil" / "soil_patch.tif"
+
+            if not sat_dir.exists() or not label_file.exists():
                 continue
 
-            # Soil patch check — skip the 19 stations with no valid soil data
-            soil_path, soil_ok = soil_lookup.get(
-                (str(row["network"]), str(row["station"])), (None, True)
-            )
-            if not soil_ok:
-                continue
-
-            sat_dir = self.satellite_dir / station_key
-
-            if not sat_dir.exists():
-                continue
-
-            label_file = Path(row["filepath"])
-            if not label_file.exists():
+            # Skip stations with no valid soil patch
+            if not bool(r.get("soil_patch_ok", True)):
                 continue
 
             ds_label = xr.open_dataset(label_file)
 
-            # Parse year coverage from consolidated filenames (fast — no file open)
+            # Fast year-range check via filename stems (avoids opening ERA5 NetCDF)
             era5_files = sorted((sat_dir / "ERA5Land").glob("meteo_*_*.nc")) \
                          if (sat_dir / "ERA5Land").exists() else []
             era5_years = (_year_range_from_stem(era5_files[0].stem)
@@ -418,30 +512,34 @@ class SoilMoistureDataset(Dataset):
                 if s2_years is None or not (s2_years[0] <= year <= s2_years[1]):
                     continue
 
-                year_mask = ds_label["date_time"].dt.year.values == year
+                # Use "date_time" or fall back to "time" depending on labels.nc version
+                time_coord = "date_time" if "date_time" in ds_label else "time"
+                year_mask  = ds_label[time_coord].dt.year.values == year
                 if not year_mask.any():
                     continue
 
-                sm_year     = ds_label["soil_moisture"].values
+                sm_vals      = ds_label["soil_moisture"].values   # (n_depths, n_days)
                 year_indices = np.where(year_mask)[0]
-                sm_slice    = sm_year[:, year_indices]
-                valid_days  = np.any(~np.isnan(sm_slice), axis=0)
+                sm_slice     = sm_vals[:, year_indices]
+                valid_days   = np.any(~np.isnan(sm_slice), axis=0)
                 if valid_days.sum() < min_obs:
                     continue
 
                 for day_idx in np.where(valid_days)[0]:
-                    t_val = ds_label["date_time"].values[year_indices[day_idx]]
+                    t_val = ds_label[time_coord].values[year_indices[day_idx]]
                     doy   = pd.Timestamp(t_val).day_of_year
 
                     self.samples.append({
-                        "station_key" : station_key,
-                        "sat_dir"     : sat_dir,
-                        "label_file"  : label_file,
-                        "year"        : year,
-                        "doy"         : doy,
-                        "time_idx"    : year_indices[day_idx],
-                        "soil_path"   : soil_path,       # Path | None
+                        "sat_dir"    : sat_dir,
+                        "label_file" : label_file,
+                        "year"       : year,
+                        "doy"        : doy,
+                        "time_idx"   : year_indices[day_idx],
+                        "soil_path"  : soil_path if soil_path.exists() else None,
+                        "station_key": dir_name,
                     })
+
+            ds_label.close()
 
         print(f"Dataset: {len(self.samples)} samples from "
               f"{len(set(s['station_key'] for s in self.samples))} stations")
@@ -492,8 +590,26 @@ class SoilMoistureDataset(Dataset):
         if soil_patch is None:
             soil_patch = torch.zeros(21, 74, 74, dtype=torch.float32)
 
-        # ── ERA5 — rolling 365-day window ─────────────────────────────
+        # ── ERA5 — rolling 365-day window (raw) ───────────────────────
         era5, era5_doys = load_era5_rolling(sat_dir, year, doy)
+
+        # Z-score normalisation: log1p precipitation then standardise all vars
+        era5_np = era5.numpy()
+        if self._era5_log1p_prec:
+            prec_idx = ERA5_VARS.index("tp_sum")
+            era5_np[:, prec_idx] = np.log1p(era5_np[:, prec_idx].clip(0))
+        era5_np = (era5_np - self._era5_means) / (self._era5_stds + 1e-8)
+        era5    = torch.from_numpy(era5_np)
+
+        # ── SIF — optional sparse modality ───────────────────────────
+        sif_vals, sif_doys, sif_valid = load_sif_rolling(sat_dir, year, doy)
+        if self.training and self._rng.random() < 0.5:
+            sif_valid[:] = False
+
+        # ── TWSA — optional sparse modality ──────────────────────────
+        twsa_vals, twsa_doys, twsa_valid = load_twsa_rolling(sat_dir, year, doy)
+        if self.training and self._rng.random() < 0.5:
+            twsa_valid[:] = False
 
         # ── ISMN labels ───────────────────────────────────────────────
         label_file = s["label_file"]
@@ -502,7 +618,7 @@ class SoilMoistureDataset(Dataset):
         ds_label = self._ds_cache[label_file]
 
         label          = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
-        depths_in_file = list(ds_label["depth"].values)
+        depths_in_file = [str(d) for d in ds_label["depth"].values]
 
         for i, depth_str in enumerate(SM_DEPTHS):
             if depth_str in depths_in_file:
@@ -537,11 +653,21 @@ class SoilMoistureDataset(Dataset):
             # Soil (static)
             "soil_patch"    : soil_patch,        # (21, 74, 74) fp32 — NaN-free
 
-            # ERA5
+            # ERA5 (z-scored)
             "era5"          : era5,              # (365, 19) fp32
             "era5_doys"     : era5_doys,         # (365,) long
 
+            # SIF (optional, sparse)
+            "sif"           : sif_vals,          # (MAX_SIF, 1) fp32
+            "sif_doys"      : sif_doys,          # (MAX_SIF,) long
+            "sif_valid"     : sif_valid,         # (MAX_SIF,) bool
+
+            # TWSA (optional, sparse)
+            "twsa"          : twsa_vals,         # (MAX_TWSA, 1) fp32
+            "twsa_doys"     : twsa_doys,         # (MAX_TWSA,) long
+            "twsa_valid"    : twsa_valid,        # (MAX_TWSA,) bool
+
             # Labels
-            "label"         : label,             # (4,) — NaN where depth absent
+            "label"         : label,             # (3,) — NaN where depth absent
             "target_doy"    : torch.tensor(doy, dtype=torch.long),
         }

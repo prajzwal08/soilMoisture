@@ -1,19 +1,22 @@
 """
-Training script for SoilMoistureModel.
+Training script for SoilMoistureModel — Phase 1 (sm_only).
 
-Usage (geo conda env):
-    conda run -n geo python train.py
+Usage (terramind conda env):
+    python train.py [--lr LR] [--batch-size N] [--n-layers N] [--run-name NAME]
+                    [--max-stations N]   # smoke-test: limit to N stations
 
-Key paths and splits are configured in the CONFIG dict below.
+Key paths and hyperparameters are in the CONFIG dict below.
+W&B project: soil-moisture-phd
 """
 
+import argparse
 import random
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
@@ -24,33 +27,36 @@ from model import SoilMoistureModel, masked_huber_loss
 
 CONFIG = {
     # Paths
-    "metadata_csv"  : "/home/khanalp/data/soilmoisture/level1/station_metadata.csv",
-    "satellite_dir" : "/home/khanalp/data/satellite",
-    "ismn_dir"      : "/home/khanalp/data/soilmoisture/level1",
-    "checkpoint_dir": "/home/khanalp/data/checkpoints/soilmoisture",
+    "splits_csv"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv",
+    "data_root"     : "/gpfs/work3/0/prjs1968/data",
+    "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json",
+    "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
 
     # Data
-    "years"         : list(range(2016, 2024)),
-    "val_fraction"  : 0.15,       # fraction of stations held out for validation (OOS)
-    "seed"          : 42,
+    "category_filter": ["sm_only"],
+    "years"          : list(range(2016, 2024)),
+    "seed"           : 42,
 
     # Training
     "batch_size"    : 4,
-    "num_workers"   : 4,
+    "num_workers"   : 8,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
     "weight_decay"  : 0.05,
-    "lr_patience"   : 10,         # ReduceLROnPlateau patience
+    "lr_patience"   : 10,
     "lr_factor"     : 0.5,
     "grad_clip"     : 1.0,
     "early_stop_patience": 20,
 
     # Model
-    "freeze_terramind": True,     # set False to fine-tune TerraMind
-    "n_depths"        : 4,
-    "d_model"         : 768,
-    "n_heads"         : 12,
-    "n_layers"        : 6,
+    "n_depths" : 3,
+    "d_model"  : 768,
+    "n_heads"  : 12,
+    "n_layers" : 6,
+
+    # W&B
+    "wandb_project": "soil-moisture-phd",
+    "run_name"     : "baseline_sm_only",
 }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -60,27 +66,6 @@ def set_seed(seed: int):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-
-def train_val_split(dataset: SoilMoistureDataset, val_fraction: float, seed: int):
-    """
-    Out-of-space split: hold out val_fraction of stations for validation.
-    All samples from a given station go entirely to train or val.
-    """
-    all_stations = list({s["station_key"] for s in dataset.samples})
-    rng          = random.Random(seed)
-    rng.shuffle(all_stations)
-
-    n_val      = max(1, int(len(all_stations) * val_fraction))
-    val_stns   = set(all_stations[:n_val])
-    train_stns = set(all_stations[n_val:])
-
-    train_idx = [i for i, s in enumerate(dataset.samples) if s["station_key"] in train_stns]
-    val_idx   = [i for i, s in enumerate(dataset.samples) if s["station_key"] in val_stns]
-
-    print(f"Train: {len(train_stns)} stations, {len(train_idx)} samples")
-    print(f"Val  : {len(val_stns)} stations,   {len(val_idx)} samples")
-    return Subset(dataset, train_idx), Subset(dataset, val_idx)
 
 
 def compute_metrics(preds, targets):
@@ -163,6 +148,21 @@ def evaluate(model, loader, device):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── CLI overrides ─────────────────────────────────────────────────
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lr",           type=float, default=None)
+    parser.add_argument("--batch-size",   type=int,   default=None)
+    parser.add_argument("--n-layers",     type=int,   default=None)
+    parser.add_argument("--run-name",     type=str,   default=None)
+    parser.add_argument("--max-stations", type=int,   default=None,
+                        help="Limit dataset to N stations (smoke-test mode)")
+    args = parser.parse_args()
+
+    if args.lr          is not None: CONFIG["lr"]         = args.lr
+    if args.batch_size  is not None: CONFIG["batch_size"] = args.batch_size
+    if args.n_layers    is not None: CONFIG["n_layers"]   = args.n_layers
+    if args.run_name    is not None: CONFIG["run_name"]   = args.run_name
+
     set_seed(CONFIG["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -170,19 +170,50 @@ def main():
     ckpt_dir = Path(CONFIG["checkpoint_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Dataset ───────────────────────────────────────────────────────
-    print("Building dataset...")
-    dataset = SoilMoistureDataset(
-        metadata_csv  = CONFIG["metadata_csv"],
-        satellite_dir = CONFIG["satellite_dir"],
-        ismn_dir      = CONFIG["ismn_dir"],
-        years         = CONFIG["years"],
-    )
+    # ── W&B ───────────────────────────────────────────────────────────
+    try:
+        import wandb
+        wandb.init(
+            project = CONFIG["wandb_project"],
+            name    = CONFIG["run_name"],
+            config  = {k: v for k, v in CONFIG.items()
+                       if not k.endswith("_dir") and not k.endswith("_csv")
+                       and not k.endswith("_stats") and k != "wandb_project"},
+        )
+        use_wandb = True
+    except Exception as e:
+        print(f"W&B disabled: {e}")
+        use_wandb = False
 
-    train_set, val_set = train_val_split(dataset, CONFIG["val_fraction"], CONFIG["seed"])
+    # ── Datasets (pre-defined splits from station_splits.csv) ─────────
+    print("Building datasets...")
+    common_kwargs = dict(
+        splits_csv       = CONFIG["splits_csv"],
+        data_root        = CONFIG["data_root"],
+        era5_stats_path  = CONFIG["era5_stats"],
+        years            = CONFIG["years"],
+        category_filter  = CONFIG["category_filter"],
+    )
+    train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True)
+    val_dataset   = SoilMoistureDataset(**common_kwargs, split_filter=["val"],   training=False)
+
+    # Smoke-test: limit to first N stations
+    if args.max_stations is not None:
+        def _limit(ds, n):
+            seen = set()
+            idx  = []
+            for i, s in enumerate(ds.samples):
+                seen.add(s["station_key"])
+                if len(seen) > n:
+                    break
+                idx.append(i)
+            from torch.utils.data import Subset
+            return Subset(ds, idx)
+        train_dataset = _limit(train_dataset, args.max_stations)
+        val_dataset   = _limit(val_dataset,   max(1, args.max_stations // 5))
 
     train_loader = DataLoader(
-        train_set,
+        train_dataset,
         batch_size  = CONFIG["batch_size"],
         shuffle     = True,
         num_workers = CONFIG["num_workers"],
@@ -190,7 +221,7 @@ def main():
         drop_last   = True,
     )
     val_loader = DataLoader(
-        val_set,
+        val_dataset,
         batch_size  = CONFIG["batch_size"],
         shuffle     = False,
         num_workers = CONFIG["num_workers"],
@@ -200,18 +231,16 @@ def main():
     # ── Model ─────────────────────────────────────────────────────────
     print("Building model...")
     model = SoilMoistureModel(
-        n_depths         = CONFIG["n_depths"],
-        d_model          = CONFIG["d_model"],
-        n_heads          = CONFIG["n_heads"],
-        n_layers         = CONFIG["n_layers"],
-        freeze_terramind = CONFIG["freeze_terramind"],
+        n_depths = CONFIG["n_depths"],
+        d_model  = CONFIG["d_model"],
+        n_heads  = CONFIG["n_heads"],
+        n_layers = CONFIG["n_layers"],
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Trainable parameters: {n_params:,}")
 
     # ── Optimiser ─────────────────────────────────────────────────────
-    # Do not apply weight decay to bias / LayerNorm parameters
     decay_params    = [p for n, p in model.named_parameters()
                        if p.requires_grad and "bias" not in n and "norm" not in n.lower()]
     no_decay_params = [p for n, p in model.named_parameters()
@@ -239,19 +268,31 @@ def main():
         val_loss, metrics = evaluate(model, val_loader, device)
         scheduler.step(val_loss)
 
-        # Print metrics
         print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
         for depth, m in metrics.items():
             print(f"  {depth:>8s}  MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
                   f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}")
 
+        if use_wandb:
+            log_dict = {
+                "epoch"      : epoch,
+                "train/loss" : train_loss,
+                "val/loss"   : val_loss,
+                "lr"         : optimizer.param_groups[0]["lr"],
+            }
+            for depth, m in metrics.items():
+                log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
+                log_dict[f"val/{depth}/MAE"]    = m["MAE"]
+                log_dict[f"val/{depth}/bias"]   = m["bias"]
+            wandb.log(log_dict)
+
         # Checkpoint
         state = {
-            "epoch"      : epoch,
-            "model"      : model.state_dict(),
-            "optimizer"  : optimizer.state_dict(),
-            "val_loss"   : val_loss,
-            "config"     : CONFIG,
+            "epoch"     : epoch,
+            "model"     : model.state_dict(),
+            "optimizer" : optimizer.state_dict(),
+            "val_loss"  : val_loss,
+            "config"    : CONFIG,
         }
         torch.save(state, ckpt_dir / "last.pt")
 
@@ -259,14 +300,16 @@ def main():
             best_val_loss    = val_loss
             no_improve_count = 0
             torch.save(state, ckpt_dir / "best.pt")
-            print(f"  ✓ New best val_loss={best_val_loss:.4f} — checkpoint saved")
+            print(f"  New best val_loss={best_val_loss:.4f} — checkpoint saved")
         else:
             no_improve_count += 1
             if no_improve_count >= CONFIG["early_stop_patience"]:
-                print(f"\nEarly stopping at epoch {epoch} (no improvement for "
-                      f"{CONFIG['early_stop_patience']} epochs)")
+                print(f"\nEarly stopping at epoch {epoch} "
+                      f"(no improvement for {CONFIG['early_stop_patience']} epochs)")
                 break
 
+    if use_wandb:
+        wandb.finish()
     print(f"\nTraining complete. Best val_loss: {best_val_loss:.4f}")
     print(f"Best checkpoint: {ckpt_dir / 'best.pt'}")
 
