@@ -41,7 +41,7 @@ CONFIG = {
 
     # Training
     "batch_size"    : 64,
-    "num_workers"   : 8,
+    "num_workers"   : 16,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
     "weight_decay"  : 0.05,
