@@ -134,13 +134,16 @@ class UNetDecoder(nn.Module):
 
     def __init__(
         self,
-        in_ch:   int   = 768,
-        skip_ch: int   = 768,
-        dec_ch:  tuple = (512, 256, 128, 64),
-        n_depths: int  = 4,
+        in_ch:               int   = 768,
+        skip_ch:             int   = 768,
+        dec_ch:              tuple = (512, 256, 128, 64),
+        n_depths:            int   = 3,
+        predict_uncertainty: bool  = True,
     ):
         super().__init__()
         c = dec_ch
+        self.n_depths            = n_depths
+        self.predict_uncertainty = predict_uncertainty
 
         self.bottle_proj = nn.Conv2d(in_ch, c[0], 1)
         self.skip_proj   = nn.ModuleList([
@@ -161,7 +164,12 @@ class UNetDecoder(nn.Module):
         self.up4   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.conv4 = _ConvBlock(c[3], c[3])
 
-        self.head  = nn.Conv2d(c[3], n_depths, 1)
+        # When uncertainty=True: output 2×n_depths (mu then log_var per depth).
+        # The log_var bias is initialised to 0 so σ² ≈ 1 at the start of training.
+        out_ch    = 2 * n_depths if predict_uncertainty else n_depths
+        self.head = nn.Conv2d(c[3], out_ch, 1)
+        if predict_uncertainty:
+            nn.init.zeros_(self.head.bias)
 
     def forward(self, bottleneck, skip_L9, skip_L6, skip_L3):
         x   = self.bottle_proj(bottleneck)
@@ -180,7 +188,13 @@ class UNetDecoder(nn.Module):
 
         x = self.up4(x)
         x = self.conv4(x)
-        return self.head(x)                                             # (B, n_depths, 224, 224)
+        raw = self.head(x)                                              # (B, out_ch, 224, 224)
+
+        if self.predict_uncertainty:
+            mu      = raw[:, :self.n_depths]                           # (B, n_depths, 224, 224)
+            log_var = raw[:, self.n_depths:]                           # (B, n_depths, 224, 224)
+            return mu, log_var
+        return raw, None                                                # None signals no uncertainty
 
 
 # ── Soil encoder ─────────────────────────────────────────────────────────────
@@ -248,14 +262,16 @@ class SoilMoistureModel(nn.Module):
 
     def __init__(
         self,
-        n_depths: int = 3,
-        d_model:  int = 768,
-        n_heads:  int = 12,
-        n_layers: int = 6,
+        n_depths:            int  = 3,
+        d_model:             int  = 768,
+        n_heads:             int  = 12,
+        n_layers:            int  = 6,
+        predict_uncertainty: bool = True,
     ):
         super().__init__()
-        self.d_model  = d_model
-        self.n_depths = n_depths
+        self.d_model             = d_model
+        self.n_depths            = n_depths
+        self.predict_uncertainty = predict_uncertainty
 
         # ── Encoders ──────────────────────────────────────────────────
         self.soil_encoder = SoilEncoder(d_model=d_model)
@@ -314,10 +330,11 @@ class SoilMoistureModel(nn.Module):
 
         # ── U-Net decoder ─────────────────────────────────────────────
         self.decoder = UNetDecoder(
-            in_ch    = d_model,
-            skip_ch  = d_model,
-            dec_ch   = (512, 256, 128, 64),
-            n_depths = n_depths,
+            in_ch               = d_model,
+            skip_ch             = d_model,
+            dec_ch              = (512, 256, 128, 64),
+            n_depths            = n_depths,
+            predict_uncertainty = predict_uncertainty,
         )
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -569,9 +586,11 @@ class SoilMoistureModel(nn.Module):
 
     # ── Forward ──────────────────────────────────────────────────────────────
 
-    def forward(self, batch: dict) -> torch.Tensor:
+    def forward(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
-        Returns sm_map : (B, n_depths, 224, 224)
+        Returns (mu, log_var):
+          mu      : (B, n_depths, 224, 224)
+          log_var : (B, n_depths, 224, 224) if predict_uncertainty else None
         """
         B      = batch["era5"].shape[0]
         device = batch["era5"].device
@@ -621,8 +640,8 @@ class SoilMoistureModel(nn.Module):
         bottleneck  = spatial_ctx.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
                                                                        # (B, 768, 14, 14)
 
-        # ── 7. U-Net decoder → SM map ──────────────────────────────────
-        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3)    # (B, n_depths, 224, 224)
+        # ── 7. U-Net decoder → SM map (+ optional log_var) ────────────
+        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3)
 
 
 # ── Loss ─────────────────────────────────────────────────────────────────────
@@ -641,3 +660,32 @@ def masked_huber_loss(
         return pred.sum() * 0.0
 
     return F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
+
+
+def masked_nll_loss(
+    mu:          torch.Tensor,   # (B, n_depths, 224, 224)
+    log_var:     torch.Tensor,   # (B, n_depths, 224, 224)
+    label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
+    station_row: int   = SoilMoistureModel.STATION_ROW,
+    station_col: int   = SoilMoistureModel.STATION_COL,
+    log_var_min: float = -6.0,   # clamp prevents σ² → 0 collapse
+    log_var_max: float =  6.0,   # clamp prevents σ² → ∞ trivial solution
+) -> torch.Tensor:
+    """
+    Gaussian negative log-likelihood at the station pixel.
+    NLL = 0.5 * log(σ²) + 0.5 * (y - μ)² / σ²
+    log_var is clamped to [log_var_min, log_var_max] for numerical stability.
+    """
+    mu_pt  = mu[:, :, station_row, station_col]                        # (B, n_depths)
+    lv_pt  = log_var[:, :, station_row, station_col]                   # (B, n_depths)
+    mask   = ~torch.isnan(label)
+
+    if not mask.any():
+        return mu_pt.sum() * 0.0
+
+    mu_m  = mu_pt[mask]
+    lv_m  = lv_pt[mask].clamp(log_var_min, log_var_max)
+    y_m   = label[mask]
+
+    nll = 0.5 * lv_m + 0.5 * (y_m - mu_m) ** 2 / lv_m.exp()
+    return nll.mean()

@@ -21,7 +21,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss
+from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -49,14 +49,18 @@ CONFIG = {
     "early_stop_patience": 20,
 
     # Model
-    "n_depths" : 3,
-    "d_model"  : 768,
-    "n_heads"  : 12,
-    "n_layers" : 6,
+    "n_depths"           : 3,
+    "d_model"            : 768,
+    "n_heads"            : 12,
+    "n_layers"           : 6,
+    "predict_uncertainty": True,
+
+    # Loss: "nll" (Gaussian NLL, aleatoric uncertainty) or "huber"
+    "loss_fn" : "nll",
 
     # W&B
     "wandb_project": "soil-moisture-phd",
-    "run_name"     : "baseline_sm_only",
+    "run_name"     : "baseline_nll",
 }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -91,17 +95,23 @@ def compute_metrics(preds, targets):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def train_one_epoch(model, loader, optimizer, device, grad_clip):
+def _compute_loss(mu, log_var, label, loss_fn):
+    if loss_fn == "nll":
+        return masked_nll_loss(mu, log_var, label)
+    return masked_huber_loss(mu, label)
+
+
+def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn):
     model.train()
     total_loss = 0.0
     n_batches  = 0
 
     for batch in loader:
-        batch  = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-                  for k, v in batch.items()}
+        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                 for k, v in batch.items()}
 
-        sm_map = model(batch)                    # (B, n_depths, 224, 224)
-        loss   = masked_huber_loss(sm_map, batch["label"])
+        mu, log_var = model(batch)
+        loss = _compute_loss(mu, log_var, batch["label"], loss_fn)
 
         optimizer.zero_grad()
         loss.backward()
@@ -115,34 +125,39 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, loss_fn):
     model.eval()
-    total_loss  = 0.0
-    n_batches   = 0
-    all_preds   = []
-    all_targets = []
+    total_loss   = 0.0
+    n_batches    = 0
+    all_preds    = []
+    all_targets  = []
+    all_sigmas   = []   # mean σ at station pixel per batch (NLL mode only)
 
     SROW = SoilMoistureModel.STATION_ROW
     SCOL = SoilMoistureModel.STATION_COL
 
     for batch in loader:
-        batch  = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-                  for k, v in batch.items()}
+        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                 for k, v in batch.items()}
 
-        sm_map = model(batch)
-        loss   = masked_huber_loss(sm_map, batch["label"])
+        mu, log_var = model(batch)
+        loss = _compute_loss(mu, log_var, batch["label"], loss_fn)
         total_loss += loss.item()
         n_batches  += 1
 
-        pred_at_station = sm_map[:, :, SROW, SCOL].cpu().numpy()  # (B, n_depths)
-        all_preds.append(pred_at_station)
+        all_preds.append(mu[:, :, SROW, SCOL].cpu().numpy())
         all_targets.append(batch["label"].cpu().numpy())
+
+        if log_var is not None:
+            sigma = (0.5 * log_var[:, :, SROW, SCOL]).exp().cpu().numpy()
+            all_sigmas.append(sigma)
 
     preds   = np.concatenate(all_preds,   axis=0)
     targets = np.concatenate(all_targets, axis=0)
     metrics = compute_metrics(preds, targets)
 
-    return total_loss / max(n_batches, 1), metrics
+    mean_sigma = float(np.concatenate(all_sigmas).mean()) if all_sigmas else None
+    return total_loss / max(n_batches, 1), metrics, mean_sigma
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -154,6 +169,8 @@ def main():
     parser.add_argument("--batch-size",   type=int,   default=None)
     parser.add_argument("--n-layers",     type=int,   default=None)
     parser.add_argument("--run-name",     type=str,   default=None)
+    parser.add_argument("--loss-fn",      type=str,   default=None,
+                        choices=["nll", "huber"])
     parser.add_argument("--max-stations", type=int,   default=None,
                         help="Limit dataset to N stations (smoke-test mode)")
     args = parser.parse_args()
@@ -162,6 +179,11 @@ def main():
     if args.batch_size  is not None: CONFIG["batch_size"] = args.batch_size
     if args.n_layers    is not None: CONFIG["n_layers"]   = args.n_layers
     if args.run_name    is not None: CONFIG["run_name"]   = args.run_name
+    if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
+
+    # Sync predict_uncertainty with loss_fn: Huber never needs uncertainty head
+    if CONFIG["loss_fn"] == "huber":
+        CONFIG["predict_uncertainty"] = False
 
     set_seed(CONFIG["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -231,10 +253,11 @@ def main():
     # ── Model ─────────────────────────────────────────────────────────
     print("Building model...")
     model = SoilMoistureModel(
-        n_depths = CONFIG["n_depths"],
-        d_model  = CONFIG["d_model"],
-        n_heads  = CONFIG["n_heads"],
-        n_layers = CONFIG["n_layers"],
+        n_depths            = CONFIG["n_depths"],
+        d_model             = CONFIG["d_model"],
+        n_heads             = CONFIG["n_heads"],
+        n_layers            = CONFIG["n_layers"],
+        predict_uncertainty = CONFIG["predict_uncertainty"],
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -263,9 +286,9 @@ def main():
 
     for epoch in range(1, CONFIG["max_epochs"] + 1):
         train_loss = train_one_epoch(
-            model, train_loader, optimizer, device, CONFIG["grad_clip"]
+            model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"]
         )
-        val_loss, metrics = evaluate(model, val_loader, device)
+        val_loss, metrics, mean_sigma = evaluate(model, val_loader, device, CONFIG["loss_fn"])
         scheduler.step(val_loss)
 
         print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
@@ -284,6 +307,8 @@ def main():
                 log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
                 log_dict[f"val/{depth}/MAE"]    = m["MAE"]
                 log_dict[f"val/{depth}/bias"]   = m["bias"]
+            if mean_sigma is not None:
+                log_dict["val/mean_sigma"] = mean_sigma
             wandb.log(log_dict)
 
         # Checkpoint
