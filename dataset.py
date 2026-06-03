@@ -62,11 +62,13 @@ def center_crop(arr: np.ndarray, size: int = 224) -> np.ndarray:
 
 
 def _rel_pos(acq_doy: int, acq_year: int, target_doy: int, target_year: int) -> int:
-    """0-indexed position in the 365-day rolling window (0=oldest, 364=today)."""
-    if acq_year == target_year:
-        return (365 - target_doy) + (acq_doy - 1)
-    else:
-        return acq_doy - target_doy - 1
+    """
+    0-indexed position in the 365-day rolling window (0=oldest, 364=today).
+    Uses datetime subtraction so leap-year DOY 366 never overflows rel_pos_emb(365).
+    """
+    acq_dt    = datetime(acq_year,    1, 1) + timedelta(days=acq_doy    - 1)
+    target_dt = datetime(target_year, 1, 1) + timedelta(days=target_doy - 1)
+    return 364 - (target_dt - acq_dt).days
 
 
 def _window_datetimes(year: int, target_doy: int) -> tuple[datetime, datetime]:

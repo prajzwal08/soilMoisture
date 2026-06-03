@@ -3,9 +3,11 @@ Training script for SoilMoistureModel — Phase 1 (sm_only).
 
 Usage (terramind conda env):
     python train.py [--lr LR] [--batch-size N] [--n-layers N] [--run-name NAME]
-                    [--max-stations N]   # smoke-test: limit to N stations
+                    [--loss-fn nll|huber] [--max-stations N]
 
-Key paths and hyperparameters are in the CONFIG dict below.
+Resume behaviour: if {checkpoint_dir}/{run_name}/last.pt exists the run
+resumes automatically — no flag needed. Delete last.pt for a fresh start.
+
 W&B project: soil-moisture-phd
 """
 
@@ -14,7 +16,6 @@ import random
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
@@ -30,6 +31,7 @@ CONFIG = {
     "splits_csv"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv",
     "data_root"     : "/gpfs/work3/0/prjs1968/data",
     "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json",
+    # Each run saves checkpoints under {checkpoint_dir}/{run_name}/
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
 
     # Data
@@ -38,7 +40,7 @@ CONFIG = {
     "seed"           : 42,
 
     # Training
-    "batch_size"    : 4,
+    "batch_size"    : 32,
     "num_workers"   : 8,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
@@ -81,8 +83,8 @@ def worker_init_fn(worker_id: int):
 
 def compute_metrics(preds, targets):
     """
-    preds, targets : (N, n_depths) numpy arrays (NaN masked already)
-    Returns dict of MSE, MAE, ubRMSE per depth.
+    preds, targets : (N, n_depths) numpy arrays
+    Returns dict of MSE, MAE, ubRMSE, bias per depth.
     """
     metrics = {}
     for i, depth in enumerate(SM_DEPTHS):
@@ -91,11 +93,11 @@ def compute_metrics(preds, targets):
         mask = ~(np.isnan(p) | np.isnan(t))
         if mask.sum() == 0:
             continue
-        p, t = p[mask], t[mask]
-        mse    = np.mean((p - t) ** 2)
-        mae    = np.mean(np.abs(p - t))
-        bias   = np.mean(p - t)
-        ubrmse = np.sqrt(np.mean(((p - p.mean()) - (t - t.mean())) ** 2))
+        p, t   = p[mask], t[mask]
+        bias   = float(np.mean(p - t))
+        mae    = float(np.mean(np.abs(p - t)))
+        mse    = float(np.mean((p - t) ** 2))
+        ubrmse = float(np.sqrt(np.mean(((p - p.mean()) - (t - t.mean())) ** 2)))
         metrics[depth] = {"MSE": mse, "MAE": mae, "ubRMSE": ubrmse, "bias": bias}
     return metrics
 
@@ -134,11 +136,11 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn):
 @torch.no_grad()
 def evaluate(model, loader, device, loss_fn):
     model.eval()
-    total_loss   = 0.0
-    n_batches    = 0
-    all_preds    = []
-    all_targets  = []
-    all_sigmas   = []   # mean σ at station pixel per batch (NLL mode only)
+    total_loss  = 0.0
+    n_batches   = 0
+    all_preds   = []
+    all_targets = []
+    all_sigmas  = []
 
     SROW = SoilMoistureModel.STATION_ROW
     SCOL = SoilMoistureModel.STATION_COL
@@ -188,7 +190,6 @@ def main():
     if args.run_name    is not None: CONFIG["run_name"]   = args.run_name
     if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
 
-    # Sync predict_uncertainty with loss_fn: Huber never needs uncertainty head
     if CONFIG["loss_fn"] == "huber":
         CONFIG["predict_uncertainty"] = False
 
@@ -196,25 +197,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    ckpt_dir = Path(CONFIG["checkpoint_dir"])
+    # Each run gets its own subdirectory so runs never clobber each other's checkpoints
+    ckpt_dir = Path(CONFIG["checkpoint_dir"]) / CONFIG["run_name"]
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── W&B ───────────────────────────────────────────────────────────
-    try:
-        import wandb
-        wandb.init(
-            project = CONFIG["wandb_project"],
-            name    = CONFIG["run_name"],
-            config  = {k: v for k, v in CONFIG.items()
-                       if not k.endswith("_dir") and not k.endswith("_csv")
-                       and not k.endswith("_stats") and k != "wandb_project"},
-        )
-        use_wandb = True
-    except Exception as e:
-        print(f"W&B disabled: {e}")
-        use_wandb = False
-
-    # ── Datasets (pre-defined splits from station_splits.csv) ─────────
+    # ── Datasets ──────────────────────────────────────────────────────
     print("Building datasets...")
     common_kwargs = dict(
         splits_csv       = CONFIG["splits_csv"],
@@ -226,11 +213,9 @@ def main():
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True)
     val_dataset   = SoilMoistureDataset(**common_kwargs, split_filter=["val"],   training=False)
 
-    # Smoke-test: limit to first N stations
     if args.max_stations is not None:
         def _limit(ds, n):
-            seen = set()
-            idx  = []
+            seen, idx = set(), []
             for i, s in enumerate(ds.samples):
                 seen.add(s["station_key"])
                 if len(seen) > n:
@@ -243,21 +228,21 @@ def main():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size      = CONFIG["batch_size"],
-        shuffle         = True,
-        num_workers     = CONFIG["num_workers"],
-        pin_memory      = True,
-        drop_last       = True,
-        worker_init_fn  = worker_init_fn,
+        batch_size         = CONFIG["batch_size"],
+        shuffle            = True,
+        num_workers        = CONFIG["num_workers"],
+        pin_memory         = True,
+        drop_last          = True,
+        worker_init_fn     = worker_init_fn,
         persistent_workers = CONFIG["num_workers"] > 0,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size      = CONFIG["batch_size"],
-        shuffle         = False,
-        num_workers     = CONFIG["num_workers"],
-        pin_memory      = True,
-        worker_init_fn  = worker_init_fn,
+        batch_size         = CONFIG["batch_size"],
+        shuffle            = False,
+        num_workers        = CONFIG["num_workers"],
+        pin_memory         = True,
+        worker_init_fn     = worker_init_fn,
         persistent_workers = CONFIG["num_workers"] > 0,
     )
 
@@ -291,11 +276,47 @@ def main():
         patience = CONFIG["lr_patience"],
     )
 
-    # ── Training loop ─────────────────────────────────────────────────
+    # ── Resume from checkpoint (automatic if last.pt exists) ──────────
+    start_epoch      = 1
     best_val_loss    = float("inf")
     no_improve_count = 0
+    wandb_run_id     = None
 
-    for epoch in range(1, CONFIG["max_epochs"] + 1):
+    ckpt_last = ckpt_dir / "last.pt"
+    if ckpt_last.exists():
+        print(f"Checkpoint found — resuming from {ckpt_last}")
+        ckpt = torch.load(ckpt_last, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        start_epoch      = ckpt["epoch"] + 1
+        best_val_loss    = ckpt["best_val_loss"]
+        no_improve_count = ckpt["no_improve_count"]
+        wandb_run_id     = ckpt.get("wandb_run_id")
+        print(f"  Resuming from epoch {start_epoch}  "
+              f"best_val_loss={best_val_loss:.4f}  no_improve={no_improve_count}")
+    else:
+        print("No checkpoint found — starting fresh")
+
+    # ── W&B ───────────────────────────────────────────────────────────
+    use_wandb = False
+    try:
+        import wandb
+        wandb.init(
+            project  = CONFIG["wandb_project"],
+            name     = CONFIG["run_name"],
+            id       = wandb_run_id,
+            resume   = "allow",
+            config   = {k: v for k, v in CONFIG.items()
+                        if not k.endswith("_dir") and not k.endswith("_csv")
+                        and not k.endswith("_stats") and k != "wandb_project"},
+        )
+        use_wandb = True
+    except Exception as e:
+        print(f"W&B disabled: {e}")
+
+    # ── Training loop ─────────────────────────────────────────────────
+    for epoch in range(start_epoch, CONFIG["max_epochs"] + 1):
         train_loss = train_one_epoch(
             model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"]
         )
@@ -322,32 +343,39 @@ def main():
                 log_dict["val/mean_sigma"] = mean_sigma
             wandb.log(log_dict)
 
-        # Checkpoint
-        state = {
-            "epoch"     : epoch,
-            "model"     : model.state_dict(),
-            "optimizer" : optimizer.state_dict(),
-            "val_loss"  : val_loss,
-            "config"    : CONFIG,
-        }
-        torch.save(state, ckpt_dir / "last.pt")
-
+        # ── Checkpoint ────────────────────────────────────────────────
         if val_loss < best_val_loss:
             best_val_loss    = val_loss
             no_improve_count = 0
-            torch.save(state, ckpt_dir / "best.pt")
-            print(f"  New best val_loss={best_val_loss:.4f} — checkpoint saved")
         else:
             no_improve_count += 1
-            if no_improve_count >= CONFIG["early_stop_patience"]:
-                print(f"\nEarly stopping at epoch {epoch} "
-                      f"(no improvement for {CONFIG['early_stop_patience']} epochs)")
-                break
+
+        state = {
+            "epoch"           : epoch,
+            "model"           : model.state_dict(),
+            "optimizer"       : optimizer.state_dict(),
+            "scheduler"       : scheduler.state_dict(),
+            "val_loss"        : val_loss,
+            "best_val_loss"   : best_val_loss,
+            "no_improve_count": no_improve_count,
+            "config"          : CONFIG,
+            "wandb_run_id"    : wandb.run.id if use_wandb else None,
+        }
+        torch.save(state, ckpt_last)
+
+        if no_improve_count == 0:
+            torch.save(state, ckpt_dir / "best.pt")
+            print(f"  New best val_loss={best_val_loss:.4f} — checkpoint saved")
+
+        if no_improve_count >= CONFIG["early_stop_patience"]:
+            print(f"\nEarly stopping at epoch {epoch} "
+                  f"(no improvement for {CONFIG['early_stop_patience']} epochs)")
+            break
 
     if use_wandb:
         wandb.finish()
     print(f"\nTraining complete. Best val_loss: {best_val_loss:.4f}")
-    print(f"Best checkpoint: {ckpt_dir / 'best.pt'}")
+    print(f"Checkpoints: {ckpt_dir}")
 
 
 if __name__ == "__main__":
