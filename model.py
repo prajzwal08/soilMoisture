@@ -399,13 +399,15 @@ class SoilMoistureModel(nn.Module):
             spatial_tokens : (B, 196, 768)
             use_s1         : (B,) bool — True where S1 is most recent
         """
-        s2_doys  = batch["s2_doys"].float()
-        s1_doys  = batch["s1_doys"].float()
-        s2_valid = batch["s2_valid"]
-        s1_valid = batch["s1_valid"]
+        # Use rel_pos (0=oldest, 364=today) not DOY — DOY breaks at year boundaries
+        # (e.g. Dec DOY~350 > Jun DOY~180, so DOY wrongly picks a 6-month-old image)
+        s2_rel   = batch["s2_rel_pos"].to(device)
+        s1_rel   = batch["s1_rel_pos"].to(device)
+        s2_valid = batch["s2_valid"].to(device)
+        s1_valid = batch["s1_valid"].to(device)
 
-        s2_latest = (s2_doys * s2_valid.float()).max(dim=1)
-        s1_latest = (s1_doys * s1_valid.float()).max(dim=1)
+        s2_latest = (s2_rel * s2_valid.long()).max(dim=1)
+        s1_latest = (s1_rel * s1_valid.long()).max(dim=1)
         use_s1    = s1_latest.values > s2_latest.values                # (B,) bool
 
         spatial_tokens = torch.zeros(B, 196, self.d_model, device=device)

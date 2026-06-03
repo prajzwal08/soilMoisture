@@ -769,5 +769,4 @@ class SoilMoistureDataset(Dataset):
 
             # Labels
             "label"         : label,             # (3,) — NaN where depth absent
-            "target_doy"    : torch.tensor(doy, dtype=torch.long),
         }
