@@ -417,7 +417,12 @@ def load_recent_skip_features(paths: dict, year: int, target_doy: int):
         data = _load_pt(pt)
         if recent_date in data["dates"]:
             idx = data["dates"].index(recent_date)
-            skips.append(data["tokens"][idx])
+            # Guard: some bundles have dates list longer than tokens tensor
+            # (partial consolidation) — fall back to zeros rather than crash
+            if idx < data["tokens"].shape[0]:
+                skips.append(data["tokens"][idx])
+            else:
+                skips.append(zeros.clone())
         else:
             skips.append(zeros.clone())
 
