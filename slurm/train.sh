@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=sm_train
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=16
 #SBATCH --gpus=1
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --time=120:00:00
 #SBATCH --output=logs/train_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL

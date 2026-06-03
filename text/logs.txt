@@ -415,6 +415,33 @@ Checks: tensor shapes, NaN in model inputs, rel_pos bounds [0,364].
   val:   2000/2000 checked, 0 errors — PASSED
   OVERALL: All samples PASSED — dataset is clean.
 
+### Training — final setup (job 23425638, H100 gcn117)
+After several failed attempts (A100 VRAM risk + CPU RAM OOM), final config:
+  - Partition: gpu_h100 (H100, 100GB VRAM)
+  - RAM: 128GB (was 64GB — OOM killed by Linux OOM killer with 8 workers)
+  - num_workers: 4 (was 8 — halved pinned memory pressure)
+  - cpus-per-task: 16 (was 8)
+  - Walltime: 120h
+
+Timeline of failed attempts:
+  - Job 23424258: A100, 48h — cancelled (walltime too short)
+  - Job 23424347: A100, 120h — cancelled (39.6/40GB VRAM, OOM risk)
+  - Job 23425220: H100, 64GB RAM — OOM killed (CPU RAM, not GPU)
+  - Job 23425465: H100 smoke test, 128GB, 4 workers — PASSED
+  - Job 23425638: H100 gcn117, 128GB, 4 workers — RUNNING ✓
+
+H100 smoke test results (job 23425465):
+  GPU: NVIDIA H100, 100GB VRAM
+  2 epochs, no OOM
+  train_loss=-1.64, val 0-10 ubRMSE=0.098
+
+Training confirmed running (job 23425638):
+  GPU util: 100%, VRAM: 42.8/95.8GB (44.7%), RAM: 66/755GB
+  WandB run: baseline_nll  id=fh6pdasv
+  URL: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/fh6pdasv
+  Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/baseline_nll/
+  ~40-50 min/epoch on H100 (vs 1.44h on A100), ~144 epochs in 120h
+
 ### Training submitted (job 23424347, A100 gcn28)
 sbatch slurm/train.sh --run-name baseline_nll
   partition=gpu_a100, 120h walltime (~83 epochs), batch=64, NLL loss
