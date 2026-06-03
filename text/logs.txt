@@ -446,8 +446,11 @@ Training confirmed running (job 23425638):
   Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/baseline_nll/
   ~36 min/epoch on H100 (vs 1.44h on A100), ~200 epochs possible in 120h
   SBU rate: 192 SBUs/hr; full 120h = ~23,040 SBUs (~2.4% of 950k GPU budget)
-  Epoch 1 expected ~15:25; log stdout buffered (only flushes when epoch ends)
+  Epoch 1 expected ~15:25 initially; actual ~130 min due to GPFS I/O bottleneck
+    (~400ms/step with 4 workers vs 250ms estimated → ~16:37 finish)
+  GPU oscillates 0%↔97%: H100 computes batch in ~75ms, 4 workers take ~400ms to load next
   num_workers=8 + prefetch_factor=4 added to train.py — takes effect on next restart
+  Plan after epoch 1: review loss, cancel job, resubmit with fix (auto-resumes from last.pt)
 
 ### Training submitted (job 23424347, A100 gcn28)
 sbatch slurm/train.sh --run-name baseline_nll
