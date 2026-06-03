@@ -415,6 +415,10 @@ Checks: tensor shapes, NaN in model inputs, rel_pos bounds [0,364].
   val:   2000/2000 checked, 0 errors — PASSED
   OVERALL: All samples PASSED — dataset is clean.
 
+### Code improvements (not yet in running job — take effect on next restart)
+- train.py: num_workers 4 → 8, added prefetch_factor=4 to both DataLoaders
+  Fixes GPU idle gaps on H100 (H100 computes ~100ms/batch, 4 workers load ~150ms)
+
 ### Training — final setup (job 23425638, H100 gcn117)
 After several failed attempts (A100 VRAM risk + CPU RAM OOM), final config:
   - Partition: gpu_h100 (H100, 100GB VRAM)
@@ -436,11 +440,14 @@ H100 smoke test results (job 23425465):
   train_loss=-1.64, val 0-10 ubRMSE=0.098
 
 Training confirmed running (job 23425638):
-  GPU util: 100%, VRAM: 42.8/95.8GB (44.7%), RAM: 66/755GB
-  WandB run: baseline_nll  id=fh6pdasv
-  URL: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/fh6pdasv
+  GPU util: 97%, VRAM: 45.7/100GB (45%), RAM: 67/755GB — healthy, no OOM
+  WandB run: baseline_nll  id=ampjdpsv  (fh6pdasv = crashed A100 attempt)
+  URL: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/ampjdpsv
   Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/baseline_nll/
-  ~40-50 min/epoch on H100 (vs 1.44h on A100), ~144 epochs in 120h
+  ~36 min/epoch on H100 (vs 1.44h on A100), ~200 epochs possible in 120h
+  SBU rate: 192 SBUs/hr; full 120h = ~23,040 SBUs (~2.4% of 950k GPU budget)
+  Epoch 1 expected ~15:25; log stdout buffered (only flushes when epoch ends)
+  num_workers=8 + prefetch_factor=4 added to train.py — takes effect on next restart
 
 ### Training submitted (job 23424347, A100 gcn28)
 sbatch slurm/train.sh --run-name baseline_nll

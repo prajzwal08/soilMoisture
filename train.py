@@ -41,7 +41,7 @@ CONFIG = {
 
     # Training
     "batch_size"    : 64,
-    "num_workers"   : 4,
+    "num_workers"   : 8,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
     "weight_decay"  : 0.05,
@@ -238,6 +238,7 @@ def main():
         drop_last          = True,
         worker_init_fn     = worker_init_fn,
         persistent_workers = CONFIG["num_workers"] > 0,
+        prefetch_factor    = 4 if CONFIG["num_workers"] > 0 else None,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -247,6 +248,7 @@ def main():
         pin_memory         = True,
         worker_init_fn     = worker_init_fn,
         persistent_workers = CONFIG["num_workers"] > 0,
+        prefetch_factor    = 4 if CONFIG["num_workers"] > 0 else None,
     )
 
     # ── Model ─────────────────────────────────────────────────────────
