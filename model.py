@@ -542,9 +542,10 @@ class SoilMoistureModel(nn.Module):
 
         era5_tok  = era5_tok + era5_pe + era5_rp + era5_mod
 
-        target_doys = batch["target_doy"]
-        day_idx     = torch.arange(365, device=device).unsqueeze(0)
-        era5_pad    = day_idx >= target_doys.unsqueeze(1)
+        # ERA5 is right-aligned: slot 364 = target day, earlier slots = past days.
+        # There is no future data in the array — mask only zero-padded slots
+        # (era5_doys == 0 means no data was available for that slot).
+        era5_pad    = (era5_doys == 0).to(device)                      # (B, 365)
 
         tokens.append(era5_tok)
         is_pad.append(era5_pad)
