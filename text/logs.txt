@@ -469,6 +469,34 @@ All pre-training checks passed:
   ✓ No token shape/NaN issues
   ✓ DataLoader pipeline clean across 4000 samples
 
+## 2026-06-03 — Zarr data pipeline decision
+
+### Problem identified
+WandB system metrics confirmed 93.6% GPU idle time with 4 workers (21% with 16 workers).
+Root cause: 7-10 random GPFS file opens per sample across individual .pt files.
+H100 computes a batch in ~75ms, waits ~400ms for GPFS I/O → 21% effective GPU util.
+
+### Decision: everything → zarr
+Single zarr store per station containing ALL modalities:
+  tokens (S2/S1 L3/L6/L9/L12), CloudMask, DEM, LULC, ERA5, SIF, TWSA, labels
+Zarr = single format for training AND publication (open standard, Zenodo-compatible).
+Original .pt + .nc files deleted after zarr is verified.
+
+### Storage architecture
+- work3: zarr stores (permanent, publication-ready)
+  /gpfs/work3/0/prjs1968/data/zarr/{category}/{station}/
+- scratch1: rsynced copy (fast training cache, ~20 min rsync at job start)
+  /gpfs/scratch1/shared/pkhanal/zarr/{category}/{station}/
+
+### Scratch1 cleanup (926GB freed)
+- satellite/ 411GB, token_bundles/ 505GB, token_zarr/ 10GB → all deleted
+
+### Expected improvement
+  GPU util: 21% → 65-75%  |  Epoch time: 110 min → 25-35 min  |  SBUs/epoch: 370 → 85
+  work3 storage: 841GB → ~350GB after deleting originals
+
+### See text/zarr_pipeline_plan.txt for full technical spec
+
 ## Notes for architecture.md
 Current implementation diverges from architecture.md on several points:
 - Uses spatial pyramid pooling (not Latent Cross-Attention bottleneck)

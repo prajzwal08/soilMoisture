@@ -1,0 +1,64 @@
+Zarr Data Pipeline Plan
+=======================
+Date: 2026-06-03
+
+## Problem
+Training on H100 shows only 5-21% GPU utilisation. Root cause: 7-10 random
+GPFS file opens per sample (individual .pt files per layer/modality). H100
+computes a batch in ~75ms but waits 300-450ms for GPFS I/O.
+
+WandB system metrics confirmed: GPU idle 93.6% of the time with 4 workers,
+21.1% with 16 workers. GPFS random I/O is the bottleneck.
+
+## Solution
+Consolidate ALL data modalities into one zarr store per station.
+zarr = single format for training AND publication. Original files deleted
+after zarr is verified.
+
+## Zarr Structure Per Station
+/gpfs/work3/0/prjs1968/data/zarr/{category}/{station}/
+  s2/l12, l9, l6, l3   (N, 196, 768) fp16  chunks=(1,196,768)  zstd-3
+  s2/dates              (N,) str
+  s1_asc/l12...l3, dates  (same pattern)
+  s1_desc/...           (if DESC orbit exists)
+  cm/masks              (N, 224, 224) uint8  chunks=(1,224,224)  zstd-3
+  cm/dates              (N,) str
+  dem                   (196, 768) fp16
+  lulc                  (196, 768) fp16
+  era5/values (N,19), date_ints, doys
+  sif/values, date_ints, doys
+  twsa/lwe, lwe_uncertainty, date_ints, doys
+  labels/sm (n_depths,n_days), qc, depths, dates
+  .complete             (sentinel, written last)
+
+## Storage Strategy
+- work3: zarr stores (permanent, publication-ready)
+- scratch1: rsynced copy of zarr (fast training, ~20 min rsync at job start)
+- After zarr verified: delete ALL original .pt and .nc files (~500GB freed)
+- zarr = single source of truth forever
+
+## Why zarr for publication
+- Open standard (Python, R, Julia, JavaScript all read zarr)
+- Accepted by Zenodo, HuggingFace Datasets, cloud storage (S3, GCS)
+- .pt is PyTorch-specific (pickle) — not suitable for publication
+
+## Expected Training Improvement
+  File opens/batch:  1,024 → 64
+  GPU utilisation:   21%  → 65-75%
+  Epoch time (H100): ~110 min → ~25-35 min
+  SBUs/epoch:        ~370 → ~85
+
+## Execution Order
+1. Clean scratch1 (~926GB freed)
+2. Submit create_token_zarr.sh (rome, 32 workers, ~8-12h, no GPU SBUs)
+3. Update dataset.py to zarr-only path (while job runs)
+4. Verify with check_dataset.py (0 errors required)
+5. Delete original .pt + .nc files
+6. Submit training baseline_nll
+
+## Files Changed
+- create_token_zarr.py   (full rewrite — all modalities)
+- slurm/create_token_zarr.sh
+- dataset.py             (zarr-only, remove all xarray/.pt loading)
+- slurm/train.sh         (rsync + pre-flight check)
+- pack_station_bundles.py  (deleted — not needed)
