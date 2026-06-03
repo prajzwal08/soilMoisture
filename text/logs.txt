@@ -517,9 +517,26 @@ bottleneck tokens. Previously, U-Net decoder had no idea how old the anchor
 satellite image was — now explicitly knows staleness via the same embedding
 used for satellite history tokens.
 
-### Zarr conversion job submitted: 23438765 (rome, 32 workers, 16h)
-Converts all 993 stations. dataset.py zarr path already working (tested on
-27 stations: correct shapes, ERA5, labels, soil_patch all from zarr).
+### Model architecture fixes (model.py, commit 893e2c1)
+1. Removed absolute DOY sinusoidal PE from satellite history tokens
+   sat_tok: pyr + pe + rp → pyr + rp (rel_pos only)
+   Reason: ERA5 is the seasonal anchor; satellites only need staleness signal.
+   ERA5/SIF/TWSA keep both pe+rp (division of labour).
+2. Staleness embedding added to spatial anchor tokens in _get_target_spatial_tokens()
+   U-Net decoder now knows how old the anchor image is via rel_pos_emb(anchor_rel_pos).
+
+### Zarr conversion — final job: 23439114 (rome, 64 workers, 16h, started ~19:05)
+Previous jobs (23437926, 23438505, 23438765, 23439097) cancelled due to iterative
+fixes: pre-flight layer check, station naming fix, soil_patch addition, PE cleanup.
+Final schema verified on 2 stations before submitting full run.
+Converts all 993 stations to /gpfs/work3/0/prjs1968/data/zarr/.
+Expected: ~4-6h with 64 workers on rome.
+
+### Next session checklist
+1. Check zarr job 23439114 (find zarr -name ".complete" | wc -l → target 993)
+2. Submit check_dataset SLURM job to verify zarr reading path
+3. Submit training: sbatch slurm/train.sh --run-name baseline_nll
+4. Once training epoch 1 clean: delete originals (~841GB freed)
 
 ### See text/zarr_pipeline_plan.txt for full technical spec
 

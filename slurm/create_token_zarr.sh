@@ -3,7 +3,7 @@
 #SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=128G
 #SBATCH --time=16:00:00
 #SBATCH --output=logs/create_token_zarr_%j.out
@@ -19,7 +19,7 @@ echo "Node   : $SLURM_NODELIST"
 echo "Output : /gpfs/work3/0/prjs1968/data/zarr/"
 
 conda run -n terramind python create_token_zarr.py \
-    --workers 32 \
+    --workers 64 \
     --execute
 
 echo "Done. Zarr stores created:"
