@@ -96,6 +96,21 @@ SHORT_NAMES       = ["t2m", "d2m", "skt", "u10", "v10", "sp", "tp"]
 MEAN_MIN_MAX_VARS = ["t2m", "d2m", "skt", "u10", "v10", "sp"]
 GEE_SCALE         = 11132   # metres ≈ 0.1°
 
+# ── ERA5 reanalysis (fallback for ocean-masked ERA5-Land pixels) ──────────────
+# Strategy order for coastal/island stations:
+#   1. ERA5-Land point          — default, 0.1° land-only
+#   2. ERA5-Land buffered       — 25 km buffer, mean of nearby valid land pixels
+#   3. ERA5 reanalysis (0.25°)  — global coverage, no land mask
+#   4. Exclude                  — all strategies failed; station flagged for removal
+ERA5_REANALYSIS_COLLECTION = "ECMWF/ERA5/HOURLY"
+ERA5_REANALYSIS_TP_BAND    = "total_precipitation"   # ERA5 uses different band name
+ERA5_BUFFER_M              = 25000   # 25 km buffer radius for strategy 2
+
+STRATEGY_POINT     = "era5land_point"
+STRATEGY_BUFFER    = "era5land_buffer_25km"
+STRATEGY_ERA5      = "era5_reanalysis_0.25deg"
+STRATEGY_EXCLUDE   = "exclude"
+
 # ── GRACE/GRACE-FO TWSA ───────────────────────────────────────────────────────
 GRACE_COLLECTION  = "NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI"
 GRACE_BANDS       = ["lwe_thickness", "uncertainty"]
@@ -107,7 +122,7 @@ GRACE_END_YEAR    = 2024    # GEE collection ends September 2024
 # Mid-month DoY for TWSA positional encoding (architecture.md)
 GRACE_MID_DOY = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
 
-LOG_COLS      = ["station_id", "year", "status", "error_msg", "timestamp"]
+LOG_COLS      = ["station_id", "year", "status", "strategy", "error_msg", "timestamp"]
 TWSA_LOG_COLS = ["station_id", "year", "n_months", "status", "error_msg", "timestamp"]
 
 
@@ -193,6 +208,7 @@ def build_job_list(df: pd.DataFrame) -> list[dict]:
                     "lon": lon,
                     "year": year,
                     "output_path": out,
+                    "strategy": None,   # resolved lazily in process_station_year
                 })
     return jobs
 
@@ -201,65 +217,130 @@ def build_job_list(df: pd.DataFrame) -> list[dict]:
 # GEE FETCH
 # ============================================================
 
-def _fetch_month_gee(lat: float, lon: float, year: int, month: int) -> pd.DataFrame:
-    """
-    Fetch one month of hourly ERA5-Land data at (lat, lon) via GEE getRegion.
+def _getregion_to_df(raw: list, band_names: list, short_names: list) -> pd.DataFrame:
+    """Parse GEE getRegion response into a DataFrame with UTC time index."""
+    if len(raw) <= 1:
+        return pd.DataFrame(columns=["time"] + short_names)
+    header = raw[0]
+    df = pd.DataFrame(raw[1:], columns=header)
+    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
+    df = df.rename(columns=dict(zip(band_names, short_names)))
+    df = df[["time"] + short_names].copy()
+    for col in short_names:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
-    Returns a DataFrame with columns: [time, t2m, d2m, skt, u10, v10, sp, tp]
-    where `time` is a UTC-aware datetime index.
-    """
-    start = f"{year}-{month:02d}-01"
-    # End is first day of next month
-    if month == 12:
-        end = f"{year + 1}-01-01"
-    else:
-        end = f"{year}-{month + 1:02d}-01"
 
-    geometry = ee.Geometry.Point([lon, lat])
+def _all_nan(df: pd.DataFrame) -> bool:
+    """True if every non-time column is entirely NaN."""
+    cols = [c for c in df.columns if c != "time"]
+    return df[cols].isna().all().all() if cols and len(df) > 0 else True
 
-    collection = (
-        ee.ImageCollection(GEE_COLLECTION)
-        .filterDate(start, end)
-        .select(GEE_BANDS)
-    )
 
-    # getRegion returns: [[id, lon, lat, time_ms, band0, band1, ...], ...]
-    # First row is the header.
+def _gee_getregion_with_retry(collection, geometry, scale: int) -> list:
+    """Call getRegion with exponential-backoff retry."""
     last_exc = None
     for attempt, wait in enumerate(GEE_RETRY_WAITS + [None]):
         try:
-            raw = collection.getRegion(geometry, GEE_SCALE).getInfo()
-            break
+            return collection.getRegion(geometry, scale).getInfo()
         except Exception as exc:
             last_exc = exc
             if any(p in str(exc) for p in _GEE_NO_RETRY):
-                raise  # non-recoverable — don't waste retries
+                raise
             if wait is None:
                 raise last_exc
             logging.getLogger(__name__).warning(
-                f"  GEE getInfo failed attempt {attempt + 1} ({exc}), retrying in {wait}s…"
+                f"  GEE retry {attempt + 1} ({exc}), waiting {wait}s…"
             )
             time.sleep(wait)
 
-    if len(raw) <= 1:
-        # No data returned (e.g. collection gap); return empty DataFrame
+
+def detect_strategy(lat: float, lon: float) -> str:
+    """
+    Probe one ERA5-Land image to decide which fetch strategy to use for this station.
+
+    Strategy order:
+      1. era5land_point       — default; point query on ERA5-Land 0.1°
+      2. era5land_buffer_25km — buffer 25 km, mean of nearby valid land pixels
+      3. era5_reanalysis      — full ERA5 0.25°, no land mask
+      4. exclude              — all strategies returned NaN; station must be excluded
+    """
+    log = logging.getLogger(__name__)
+
+    # Use one month of data as probe
+    col_land = (ee.ImageCollection(GEE_COLLECTION)
+                .filterDate("2020-06-01", "2020-07-01")
+                .select(GEE_BANDS))
+
+    # Strategy 1: point
+    raw = _gee_getregion_with_retry(col_land, ee.Geometry.Point([lon, lat]), GEE_SCALE)
+    df  = _getregion_to_df(raw, GEE_BANDS, SHORT_NAMES)
+    if not _all_nan(df):
+        log.info(f"  Strategy for ({lat:.4f},{lon:.4f}): {STRATEGY_POINT}")
+        return STRATEGY_POINT
+
+    # Strategy 2: buffer
+    geom_buf = ee.Geometry.Point([lon, lat]).buffer(ERA5_BUFFER_M)
+    raw = _gee_getregion_with_retry(col_land, geom_buf, GEE_SCALE)
+    df  = _getregion_to_df(raw, GEE_BANDS, SHORT_NAMES)
+    if not _all_nan(df):
+        log.info(f"  Strategy for ({lat:.4f},{lon:.4f}): {STRATEGY_BUFFER}")
+        return STRATEGY_BUFFER
+
+    # Strategy 3: ERA5 reanalysis (different band name for tp)
+    bands_era5 = [b if b != "total_precipitation_hourly" else ERA5_REANALYSIS_TP_BAND
+                  for b in GEE_BANDS]
+    col_era5 = (ee.ImageCollection(ERA5_REANALYSIS_COLLECTION)
+                .filterDate("2020-06-01", "2020-07-01")
+                .select(bands_era5))
+    raw = _gee_getregion_with_retry(col_era5, ee.Geometry.Point([lon, lat]), 27830)
+    df  = _getregion_to_df(raw, bands_era5, SHORT_NAMES)
+    if not _all_nan(df):
+        log.info(f"  Strategy for ({lat:.4f},{lon:.4f}): {STRATEGY_ERA5}")
+        return STRATEGY_ERA5
+
+    log.warning(f"  Strategy for ({lat:.4f},{lon:.4f}): {STRATEGY_EXCLUDE} — all strategies returned NaN")
+    return STRATEGY_EXCLUDE
+
+
+def _fetch_month_gee(lat: float, lon: float, year: int, month: int,
+                     strategy: str = STRATEGY_POINT) -> pd.DataFrame:
+    """
+    Fetch one month of hourly ERA5 data at (lat, lon) using the given strategy.
+
+    Strategies:
+      STRATEGY_POINT    — ERA5-Land, point query (default)
+      STRATEGY_BUFFER   — ERA5-Land, 25 km buffer + mean of valid pixels
+      STRATEGY_ERA5     — ERA5 reanalysis 0.25°, point query
+      STRATEGY_EXCLUDE  — returns empty DataFrame (station should be excluded)
+    """
+    if strategy == STRATEGY_EXCLUDE:
         return pd.DataFrame(columns=["time"] + SHORT_NAMES)
 
-    header = raw[0]  # ['id', 'longitude', 'latitude', 'time', band0, ...]
-    rows   = raw[1:]
+    start = f"{year}-{month:02d}-01"
+    end   = f"{year + 1}-01-01" if month == 12 else f"{year}-{month + 1:02d}-01"
 
-    df = pd.DataFrame(rows, columns=header)
+    if strategy == STRATEGY_ERA5:
+        bands = [b if b != "total_precipitation_hourly" else ERA5_REANALYSIS_TP_BAND
+                 for b in GEE_BANDS]
+        collection = (ee.ImageCollection(ERA5_REANALYSIS_COLLECTION)
+                      .filterDate(start, end)
+                      .select(bands))
+        geometry = ee.Geometry.Point([lon, lat])
+        scale    = 27830   # ≈ 0.25°
+    else:
+        bands      = GEE_BANDS
+        collection = (ee.ImageCollection(GEE_COLLECTION)
+                      .filterDate(start, end)
+                      .select(bands))
+        if strategy == STRATEGY_BUFFER:
+            geometry = ee.Geometry.Point([lon, lat]).buffer(ERA5_BUFFER_M)
+        else:
+            geometry = ee.Geometry.Point([lon, lat])
+        scale = GEE_SCALE
 
-    # `time` column is milliseconds since epoch (UTC)
-    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
-    df = df.rename(columns=dict(zip(GEE_BANDS, SHORT_NAMES)))
-    df = df[["time"] + SHORT_NAMES].copy()
-
-    # Cast band columns to float (GEE may return None for missing pixels)
-    for col in SHORT_NAMES:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
+    raw = _gee_getregion_with_retry(collection, geometry, scale)
+    return _getregion_to_df(raw, bands, SHORT_NAMES)
 
 
 # ============================================================
@@ -285,14 +366,29 @@ def process_station_year(job: dict) -> dict:
         "year":       year,
         "status":     "error",
         "error_msg":  "",
+        "strategy":   STRATEGY_POINT,
         "timestamp":  "",
     }
 
     try:
         _validate_coords(lat, lon, station_id)
+
+        # Detect fetch strategy once per station-year (uses first year only to avoid
+        # repeated probing; strategy is stable across years for a given location)
+        strategy = job.get("strategy")
+        if strategy is None:
+            strategy = detect_strategy(lat, lon)
+        result["strategy"] = strategy
+
+        if strategy == STRATEGY_EXCLUDE:
+            result["status"]    = "exclude"
+            result["error_msg"] = "All ERA5 strategies returned NaN — station at ocean pixel"
+            result["timestamp"] = datetime.now(timezone.utc).isoformat()
+            return result
+
         monthly = []
         for month in range(1, 13):
-            df_m = _fetch_month_gee(lat, lon, year, month)
+            df_m = _fetch_month_gee(lat, lon, year, month, strategy=strategy)
             monthly.append(df_m)
 
         df = pd.concat(monthly, ignore_index=True)
@@ -552,16 +648,81 @@ def _run_jobs(jobs, process_fn, log_file, cols, lock, label):
             _append_csv_row(log_file, row, cols, lock)
 
 
+def consolidate_era5(station_dir: Path):
+    """
+    Merge per-year meteo_{YYYY}.nc files in station_dir/ERA5Land/ into one
+    consolidated meteo_{start}_{end}.nc and delete the per-year files.
+    Overwrites any existing consolidated file.
+    """
+    log = logging.getLogger(__name__)
+    era5_dir   = station_dir / "ERA5Land"
+    per_year   = sorted(era5_dir.glob("meteo_????.nc"))
+    if not per_year:
+        log.warning(f"  consolidate: no per-year files found in {era5_dir}")
+        return
+
+    datasets = [xr.open_dataset(p) for p in per_year]
+    ds_out   = xr.concat(datasets, dim="time")
+    for ds in datasets:
+        ds.close()
+
+    import pandas as _pd
+    times = ds_out["time"].values
+    start = str(_pd.Timestamp(times[0]).date()).replace("-", "")
+    end   = str(_pd.Timestamp(times[-1]).date()).replace("-", "")
+
+    # Remove any old consolidated files
+    for old in era5_dir.glob("meteo_*_*.nc"):
+        old.unlink()
+        log.info(f"  Removed old consolidated file: {old.name}")
+
+    out = era5_dir / f"meteo_{start}_{end}.nc"
+    tmp = out.with_suffix(".tmp.nc")
+    ds_out.to_netcdf(str(tmp))
+    tmp.rename(out)
+    log.info(f"  Consolidated {len(per_year)} years → {out.name}")
+
+    # Clean up per-year files
+    for p in per_year:
+        p.unlink()
+
+
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Download ERA5-Land + TWSA via GEE")
+    parser.add_argument(
+        "--stations", default=None,
+        help="Comma-separated station_ids to process (e.g. ISMN_SCAN_Combate). "
+             "Default: all stations in station_splits.csv."
+    )
+    parser.add_argument(
+        "--consolidate", action="store_true",
+        help="After downloading per-year files, merge them into one consolidated "
+             "meteo_{start}_{end}.nc per station (overwrites existing consolidated file)."
+    )
+    parser.add_argument(
+        "--era5-only", action="store_true",
+        help="Skip TWSA download (ERA5-Land only)."
+    )
+    args = parser.parse_args()
+
     setup_logging()
     log = logging.getLogger(__name__)
 
     ee.Initialize(credentials=_gee_credentials(), project=GEE_PROJECT)
 
-    df   = load_stations()
+    df = load_stations()
     if TEST_MODE:
         df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
         log.info(f"TEST_MODE: running on {len(df)} station(s): {list(df['station_id'])}")
+    elif args.stations:
+        keep = set(s.strip() for s in args.stations.split(","))
+        df   = df[df["station_id"].isin(keep)].reset_index(drop=True)
+        log.info(f"Filtered to {len(df)} station(s): {list(df['station_id'])}")
+        if df.empty:
+            log.error("No matching stations found. Check --stations values.")
+            return
+
     lock = threading.Lock()
 
     # ── ERA5-Land ─────────────────────────────────────────────────────────────
@@ -569,11 +730,31 @@ def main():
     log.info(f"ERA5-Land jobs: {len(era5_jobs)} station-years  (workers={N_WORKERS})")
     _run_jobs(era5_jobs, process_station_year, LOG_FILE, LOG_COLS, lock, "ERA5")
 
+    # Report any stations that need exclusion (all strategies failed)
+    if LOG_FILE.exists():
+        log_df = pd.read_csv(LOG_FILE, on_bad_lines="skip")
+        to_exclude = (log_df[log_df["status"] == "exclude"]["station_id"]
+                      .unique().tolist())
+        if to_exclude:
+            log.warning(
+                f"\n{'='*60}\n"
+                f"STATIONS TO EXCLUDE (all ERA5 strategies returned NaN):\n"
+                + "\n".join(f"  {s}" for s in to_exclude) +
+                f"\nAdd these to csvs/excluded_stations.csv and remove from station_splits.csv\n"
+                f"{'='*60}"
+            )
+
+    if args.consolidate:
+        log.info("Consolidating per-year ERA5 files...")
+        for _, row in df.iterrows():
+            consolidate_era5(Path(row["station_dir"]))
+
     # ── TWSA ──────────────────────────────────────────────────────────────────
-    twsa_jobs = build_twsa_job_list(df)
-    log.info(f"TWSA jobs: {len(twsa_jobs)} station-years  (workers={N_WORKERS})")
-    twsa_lock = threading.Lock()
-    _run_jobs(twsa_jobs, process_twsa_station_year, TWSA_LOG_FILE, TWSA_LOG_COLS, twsa_lock, "TWSA")
+    if not args.era5_only:
+        twsa_jobs = build_twsa_job_list(df)
+        log.info(f"TWSA jobs: {len(twsa_jobs)} station-years  (workers={N_WORKERS})")
+        twsa_lock = threading.Lock()
+        _run_jobs(twsa_jobs, process_twsa_station_year, TWSA_LOG_FILE, TWSA_LOG_COLS, twsa_lock, "TWSA")
 
     log.info("Done.")
 

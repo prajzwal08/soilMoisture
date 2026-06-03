@@ -1,0 +1,30 @@
+Pre-training audit — 661 stations
+============================================================
+  OK        : 661
+  WARN      : 0
+  CRITICAL  : 0
+
+Modality presence:
+  has_S2            : 661/661
+  has_S1            : 661/661
+  has_DEM           : 661/661
+  has_LULC          : 661/661
+  has_ERA5          : 661/661
+  has_soil          : 661/661
+  has_TWSA          : 661/661
+  has_SIF           : 661/661
+  has_CloudMask     : 661/661
+  has_labels        : 661/661
+
+ERA5 all-NaN variables: 0 stations affected
+
+Cloud mask coverage (stations with S2):
+  Have cloud mask   : 661
+  No cloud mask     : 0
+  Mean S2 dates without CM entry : 0.0%
+  Max  S2 dates without CM entry : 0.0%
+  Stations >20% S2 dates missing from CM: 0
+
+Token issues:
+
+CRITICAL stations (0):

@@ -309,6 +309,97 @@ Session: Full training pipeline implementation, bug fixes, and first training jo
 dataset.py, model.py, train.py, slurm/train.sh, compute_era5_stats.py (existing),
 csvs/era5_stats.json (existing), demo_plot.py (new), text/training_plan.md (ablation section)
 
+## 2026-06-03 — Pre-training data validation
+
+### Context
+Previous training jobs (23419417, 23419498, 23419693) all failed or were cancelled.
+Job 23419498 crashed with IndexError in load_recent_skip_features (tokens index out of bounds
+for a bundle where dates list was longer than tokens tensor). Fix already committed (bda3f60).
+Jobs 23419417 and 23419693 were cancelled because they were run interactively (no SLURM),
+hitting the walltime limit.
+
+### Actions
+- Created slurm/check_dataset.sh — runs check_dataset.py via SLURM before training
+- Updated check_dataset.py to check both train and val splits (was train-only)
+- check_dataset.py uses DataLoader with 8 parallel workers (same as training) so it catches
+  any crash that only surfaces under multiprocessing
+- Checks: shape of every __getitem__ key, NaN in model-input tensors, rel_pos in [0,364]
+- Submitted job 23421285 (check_dataset) — awaiting results before submitting training
+
+### Next
+If job 23421285 reports clean → submit sbatch slurm/train.sh --run-name baseline_nll
+
+## 2026-06-03 — ERA5-Land NaN fix for 3 coastal stations
+
+### Root cause
+check_dataset job 23421285 found 26 ERA5 NaN errors across train/val splits.
+All from 3 stations: ISMN_SCAN_Combate (val), ISMN_SNOTEL_PortGraham (train),
+ISMN_USCRN_Cape-Charles-5-ENE (oos).
+Pattern: 18/19 ERA5 variables entirely NaN, only tp_sum valid.
+
+Root cause: these are coastal/island stations whose coordinates fall on ocean pixels
+in the ERA5-Land 0.1° grid. ERA5-Land masks ocean cells. The old CDS download script
+used two separate datasets — Group A (derived-era5-land-daily-statistics) returned
+all-NaN for ocean pixels, while Group B (reanalysis-era5-land-timeseries) happened
+to return valid tp values, creating a mixed result.
+
+### Fix
+Rewrote download_era5land_gee.py with a 3-strategy fallback chain per station:
+  1. ERA5-Land point query (0.1°) — default
+  2. ERA5-Land 25 km buffer + mean of valid nearby land pixels
+  3. ERA5 reanalysis (0.25°, global, no land mask)
+  4. Flag for exclusion if all strategies return NaN
+
+All 3 stations resolved via Strategy 2 (buffer 25km) — nearby land pixels had valid
+data. Strategy 3 was not needed.
+
+Re-downloaded via: download_era5land_gee.py --stations ISMN_SCAN_Combate,
+ISMN_SNOTEL_PortGraham,ISMN_USCRN_Cape-Charles-5-ENE --consolidate --era5-only
+
+Consolidated files overwritten (0 NaN in all variables):
+  sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_20190101_20241231.nc        (2192 days)
+  sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_20140101_20221231.nc   (3287 days)
+  sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_20150101_20211231.nc (2557 days)
+
+### Next
+Re-run check_dataset to confirm clean, then submit training.
+
+## 2026-06-03 — Pre-training comprehensive audit
+
+### audit_pretrain (job 23423819, H100 gcn132) — PASSED
+Checked 661 stations (train + val, sm_only). All 661 OK, zero CRITICAL, zero WARN.
+
+Modality presence (661/661 for all):
+  S2, S1, DEM, LULC, ERA5, soil, TWSA, SIF, CloudMask, labels
+
+ERA5 NaN: 0 stations affected (ERA5 fix for 3 coastal stations confirmed clean)
+
+Cloud mask coverage:
+  661/661 stations have cloud mask
+  0% of S2 token dates missing cloud mask entry (perfect coverage)
+  No acquisitions will be treated as cloud-free due to missing mask
+
+Token issues: none
+Critical stations: 0
+
+Output: csvs/audit_pretrain.csv, text/audit_pretrain_summary.txt
+
+### check_dataset (job 23423818, H100 gcn132) — PASSED
+Ran DataLoader pipeline on 2000 random samples × train+val splits.
+Checks: tensor shapes, NaN in model inputs, rel_pos bounds [0,364].
+
+  train: 2000/2000 checked, 0 errors — PASSED
+  val:   2000/2000 checked, 0 errors — PASSED
+  OVERALL: All samples PASSED — dataset is clean.
+
+### Conclusion — data is ready for training
+All pre-training checks passed:
+  ✓ 661/661 stations have all 10 modalities
+  ✓ ERA5 NaN fixed for 3 coastal stations (buffer strategy)
+  ✓ Cloud mask coverage 100% (every S2 date has mask entry)
+  ✓ No token shape/NaN issues
+  ✓ DataLoader pipeline clean across 4000 samples
+
 ## Notes for architecture.md
 Current implementation diverges from architecture.md on several points:
 - Uses spatial pyramid pooling (not Latent Cross-Attention bottleneck)

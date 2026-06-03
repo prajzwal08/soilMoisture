@@ -43,8 +43,9 @@ import xarray as xr
 # ============================================================
 
 STATION_CSV   = Path("/home/khanalp/data/soilmoisture/level1/station_metadata.csv")
-SATELLITE_DIR = Path("/home/khanalp/data/satellite")
-LOG_FILE      = SATELLITE_DIR / "era5land_log.csv"
+SPLITS_CSV    = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
+SATELLITE_DIR = Path("/gpfs/scratch1/shared/pkhanal/era5_staging")
+LOG_FILE      = Path("/gpfs/work3/0/prjs1968/soilMoisture/logs/era5land_download.log")
 
 # Concurrent CDS requests (CDS allows ~20 per user; 10 is conservative)
 N_WORKERS = 10
@@ -83,15 +84,17 @@ _VARNAME_A = {
 # LOGGING
 # ============================================================
 
-def setup_logging():
-    SATELLITE_DIR.mkdir(parents=True, exist_ok=True)
+def setup_logging(staging_dir: Path = None):
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if staging_dir:
+        staging_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(SATELLITE_DIR / "era5land_download.log"),
+            logging.FileHandler(LOG_FILE),
         ],
     )
 
@@ -102,17 +105,25 @@ def setup_logging():
 
 def load_stations() -> pd.DataFrame:
     """
-    Return rows from station_metadata.csv whose {network}_{station} folder
-    already exists in SATELLITE_DIR. Provides lat, lon, start_date, end_date.
+    Return station rows with station_id, latitude, longitude, start_date, end_date.
+
+    Tries STATION_CSV first; falls back to SPLITS_CSV (station_splits.csv) when
+    STATION_CSV no longer exists.
     """
-    df = pd.read_csv(STATION_CSV)
-    df = df[df["status"] == "saved"].copy()
-    df["station_id"] = df["network"] + "_" + df["station"]
-
-    existing = {p.name for p in SATELLITE_DIR.iterdir() if p.is_dir()}
-    df = df[df["station_id"].isin(existing)].reset_index(drop=True)
-
-    logging.getLogger(__name__).info(f"Stations with satellite data: {len(df)}")
+    log = logging.getLogger(__name__)
+    if STATION_CSV.exists():
+        df = pd.read_csv(STATION_CSV)
+        df = df[df["status"] == "saved"].copy()
+        df["station_id"] = df["network"] + "_" + df["station"]
+        existing = {p.name for p in SATELLITE_DIR.iterdir() if p.is_dir()}
+        df = df[df["station_id"].isin(existing)].reset_index(drop=True)
+        log.info(f"Stations with satellite data: {len(df)}")
+    else:
+        log.warning(f"{STATION_CSV} not found — loading from {SPLITS_CSV}")
+        df = pd.read_csv(SPLITS_CSV)
+        df["station_id"] = df["network"] + "_" + df["station_name"]
+        df = df[["station_id", "latitude", "longitude", "start_date", "end_date"]].copy()
+        log.info(f"Stations from splits CSV: {len(df)}")
     return df
 
 
@@ -120,11 +131,12 @@ def load_stations() -> pd.DataFrame:
 # JOB LIST
 # ============================================================
 
-def build_job_list(df: pd.DataFrame) -> list[dict]:
+def build_job_list(df: pd.DataFrame, staging_dir: Path = None) -> list[dict]:
     """
     One job = one (station, year). Both Group A and B are handled inside the job.
     Skip if output meteo_{year}.nc already exists.
     """
+    base = staging_dir or SATELLITE_DIR
     jobs = []
     for _, row in df.iterrows():
         station_id = row["station_id"]
@@ -140,7 +152,8 @@ def build_job_list(df: pd.DataFrame) -> list[dict]:
             )
             continue
 
-        era5_dir = SATELLITE_DIR / station_id / "ERA5Land"
+        era5_dir = base / station_id / "ERA5Land"
+        era5_dir.mkdir(parents=True, exist_ok=True)
 
         for year in range(start_year, end_year + 1):
             out = era5_dir / f"meteo_{year}.nc"
@@ -181,6 +194,57 @@ def _download_to_tmp(client: cdsapi.Client, dataset: str, request: dict) -> str:
         os.unlink(tmp)
         return extracted
     return tmp
+
+
+def _group_a_all_nan(ds_parts: list) -> bool:
+    """Return True if every Group A variable across all stat parts is entirely NaN."""
+    import numpy as np
+    for ds in ds_parts:
+        for v in ds.data_vars:
+            if not np.isnan(ds[v].values).all():
+                return False
+    return True
+
+
+def _download_group_a_hourly(client: cdsapi.Client, area: list, year: int,
+                              tmps: list) -> list:
+    """
+    Fallback for Group A: download reanalysis-era5-land (hourly) and aggregate
+    to daily mean/min/max ourselves.  Returns a list with one xr.Dataset
+    (same structure as ds_parts from the primary path).
+    """
+    log = logging.getLogger(__name__)
+    log.warning(f"    Group A fallback: using reanalysis-era5-land hourly for {year}")
+    monthly = []
+    for month in range(1, 13):
+        req = {
+            "variable": VARS_A,
+            "year":  str(year),
+            "month": f"{month:02d}",
+            "day":   [f"{d:02d}" for d in range(1, 32)],
+            "time":  [f"{h:02d}:00" for h in range(24)],
+            "area":  area,
+            "data_format":     "netcdf",
+            "download_format": "unarchived",
+        }
+        tmp = _download_to_tmp(client, "reanalysis-era5-land", req)
+        tmps.append(tmp)
+        monthly.append(xr.open_dataset(tmp))
+
+    ds_hourly = xr.concat(monthly, dim="time")
+    for ds_m in monthly:
+        ds_m.close()
+
+    parts = {}
+    for long_name, short in _VARNAME_A.items():
+        v = short if short in ds_hourly else long_name
+        daily = ds_hourly[v].resample(time="1D")
+        parts[f"{short}_mean"] = daily.mean()
+        parts[f"{short}_min"]  = daily.min()
+        parts[f"{short}_max"]  = daily.max()
+
+    ds_hourly.close()
+    return [xr.Dataset(parts)]
 
 
 # ============================================================
@@ -248,6 +312,13 @@ def process_station_year(job: dict) -> dict:
 
             keep = [v for v in ds_a.data_vars if any(v.endswith(f"_{s}") for s in ("mean", "min", "max"))]
             ds_parts.append(ds_a[keep])
+
+        # If derived-daily-statistics returned all-NaN, fall back to hourly reanalysis
+        if _group_a_all_nan(ds_parts):
+            for ds in ds_parts:
+                try: ds.close()
+                except Exception: pass
+            ds_parts = _download_group_a_hourly(client, area, year, tmps)
 
         # ---- Group B: one request per month (hourly SSRD / STRD / TP) --------
         monthly_b = []
@@ -353,15 +424,104 @@ def append_log(log_df: pd.DataFrame, row: dict, lock: threading.Lock):
 
 
 # ============================================================
+# CONSOLIDATION (for --fix-consolidated-dir)
+# ============================================================
+
+def consolidate_station(station_id: str, gpfs_dir: Path, staging_dir: Path = None):
+    """
+    Concatenate per-year meteo_{YYYY}.nc files from staging_dir into one
+    consolidated meteo_{start}_{end}.nc, then overwrite the existing file
+    in gpfs_dir/  (which is the path dataset.py reads at training time).
+    """
+    log = logging.getLogger(__name__)
+    era5_scratch = (staging_dir or SATELLITE_DIR) / station_id / "ERA5Land"
+    per_year = sorted(era5_scratch.glob("meteo_????.nc"))
+    if not per_year:
+        log.warning(f"  {station_id}: no per-year files found in {era5_scratch}")
+        return
+
+    datasets = [xr.open_dataset(p) for p in per_year]
+    ds_concat = xr.concat(datasets, dim="time")
+    for ds in datasets:
+        ds.close()
+
+    times = ds_concat["time"].values
+    start = str(pd.Timestamp(times[0]).date()).replace("-", "")
+    end   = str(pd.Timestamp(times[-1]).date()).replace("-", "")
+
+    # Remove any existing consolidated files in the target directory
+    for old in sorted(gpfs_dir.glob("meteo_*_*.nc")):
+        old.unlink()
+        log.info(f"  Removed old consolidated file: {old.name}")
+
+    out = gpfs_dir / f"meteo_{start}_{end}.nc"
+    tmp = out.with_suffix(".tmp.nc")
+    ds_concat.to_netcdf(str(tmp))
+    tmp.rename(out)
+    log.info(f"  Consolidated → {out}")
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 def main():
-    setup_logging()
+    import argparse
+    parser = argparse.ArgumentParser(description="Download ERA5-Land for ISMN stations")
+    parser.add_argument(
+        "--stations", default=None,
+        help="Comma-separated station_ids to process (e.g. SCAN_Combate,SNOTEL_PortGraham). "
+             "Default: all stations in station_metadata.csv."
+    )
+    parser.add_argument(
+        "--fix-consolidated-dir", default=None,
+        help="Root of the gpfs data dir (e.g. /gpfs/work3/0/prjs1968/data). "
+             "If set, after downloading per-year files, concatenate them and overwrite "
+             "the consolidated meteo_{start}_{end}.nc in the correct sm_only/ subdir."
+    )
+    parser.add_argument(
+        "--staging-dir", default=None,
+        help="Directory for staging per-year downloads. Defaults to SATELLITE_DIR "
+             "(/home/khanalp/data/satellite). Override when that path is unavailable."
+    )
+    args = parser.parse_args()
+
+    staging_dir = Path(args.staging_dir) if args.staging_dir else SATELLITE_DIR
+    setup_logging(staging_dir)
     log = logging.getLogger(__name__)
 
-    df     = load_stations()
-    jobs   = build_job_list(df)
+    df = load_stations()
+
+    if args.stations:
+        keep = set(s.strip() for s in args.stations.split(","))
+        df = df[df["station_id"].isin(keep)].reset_index(drop=True)
+        log.info(f"Filtered to {len(df)} station(s): {list(df['station_id'])}")
+        if df.empty:
+            log.error("No matching stations found. Check --stations values.")
+            return
+
+    # For --fix-consolidated-dir: force re-download of all years (ignore existing per-year files)
+    jobs = build_job_list(df, staging_dir=staging_dir)
+    if args.fix_consolidated_dir:
+        extra = []
+        for _, row in df.iterrows():
+            station_id = row["station_id"]
+            lat, lon   = float(row["latitude"]), float(row["longitude"])
+            start_year = int(str(row["start_date"])[:4])
+            end_year   = int(str(row["end_date"])[:4])
+            era5_dir   = staging_dir / station_id / "ERA5Land"
+            for year in range(start_year, end_year + 1):
+                out = era5_dir / f"meteo_{year}.nc"
+                already_queued = any(
+                    j["station_id"] == station_id and j["year"] == year for j in jobs
+                )
+                if not already_queued:
+                    if out.exists():
+                        out.unlink()
+                    extra.append({"station_id": station_id, "lat": lat, "lon": lon,
+                                  "year": year, "output_path": out})
+        jobs.extend(extra)
+
     log_df = load_log()
     lock   = threading.Lock()
     done   = [0]
@@ -385,6 +545,19 @@ def main():
                 f"{row['year']}  status={row['status']}"
             )
             append_log(log_df, row, lock)
+
+    # Consolidate per-year files into the gpfs training path if requested
+    if args.fix_consolidated_dir:
+        gpfs_root = Path(args.fix_consolidated_dir)
+        for station_id in df["station_id"]:
+            # Find the category directory (sm_only / sm_and_flux)
+            for cat in ("sm_only", "sm_and_flux"):
+                gpfs_era5 = gpfs_root / cat / f"ISMN_{station_id}" / "ERA5Land"
+                if gpfs_era5.exists():
+                    consolidate_station(station_id, gpfs_era5, staging_dir=staging_dir)
+                    break
+            else:
+                log.warning(f"  {station_id}: no ERA5Land dir found under {gpfs_root}")
 
     log.info("Done.")
 
