@@ -182,6 +182,8 @@ def main():
                         choices=["nll", "huber"])
     parser.add_argument("--max-stations", type=int,   default=None,
                         help="Limit dataset to N stations (smoke-test mode)")
+    parser.add_argument("--max-epochs",   type=int,   default=None,
+                        help="Override max_epochs (smoke-test mode)")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
@@ -189,6 +191,7 @@ def main():
     if args.n_layers    is not None: CONFIG["n_layers"]   = args.n_layers
     if args.run_name    is not None: CONFIG["run_name"]   = args.run_name
     if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
+    if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
 
     if CONFIG["loss_fn"] == "huber":
         CONFIG["predict_uncertainty"] = False
