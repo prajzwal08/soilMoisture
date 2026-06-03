@@ -439,6 +439,15 @@ class SoilMoistureModel(nn.Module):
         mod_emb        = self.spatial_modality_emb(use_s1.long())      # (B, 768)
         spatial_tokens = spatial_tokens + mod_emb.unsqueeze(1)
 
+        # Staleness embedding: tells the U-Net decoder how old the anchor image is.
+        # Without this the decoder is blind to whether the spatial texture is
+        # from yesterday or 6 months ago — critical when ERA5 shows rain since capture.
+        anchor_rel_pos = torch.where(use_s1,
+                                     s1_latest.values,
+                                     s2_latest.values).clamp(0, 364)   # (B,)
+        staleness_emb  = self.rel_pos_emb(anchor_rel_pos)              # (B, 768)
+        spatial_tokens = spatial_tokens + staleness_emb.unsqueeze(1)
+
         return spatial_tokens, use_s1
 
     def _get_skip_connections(self, batch: dict, B: int,

@@ -87,6 +87,8 @@ def write_tokens(root: zarr.Group, key: str, pt_dir: Path, orbit: str | None = N
     d_l12 = torch.load(pt_files[0], map_location="cpu", weights_only=False)
     root.array(f"{key}/dates", np.array(d_l12["dates"], dtype="U8"),
                chunks=(len(d_l12["dates"]),), overwrite=True)
+    if orbit:
+        root[key].attrs["orbit"] = orbit
     return True
 
 
@@ -103,11 +105,24 @@ def write_cloud_mask(root: zarr.Group, cm_dir: Path):
                chunks=(len(d["dates"]),), overwrite=True)
 
 
-def write_static(root: zarr.Group, dem_pt: Path, lulc_pt: Path):
+def write_static(root: zarr.Group, station_dir: Path):
+    """Write DEM, LULC, and soil patch (all static, one value per station)."""
+    dem_pt  = station_dir / "DEM"  / "dem_L12.pt"
+    lulc_pt = station_dir / "LULC" / "lulc_L12.pt"
     for name, path in [("dem", dem_pt), ("lulc", lulc_pt)]:
         if path.exists():
             t = torch.load(path, map_location="cpu", weights_only=True)
             root.array(name, t.numpy(), compressor=COMPRESSOR, overwrite=True)
+
+    soil_path = station_dir / "soil" / "soil_patch.tif"
+    if soil_path.exists():
+        import rasterio
+        with rasterio.open(soil_path) as src:
+            patch   = src.read().astype(np.float32)   # (21, 74, 74)
+            nodata  = src.nodata
+        if nodata is not None:
+            patch[patch == nodata] = np.nan
+        root.array("soil", patch, compressor=COMPRESSOR, overwrite=True)
 
 
 def write_era5(root: zarr.Group, era5_dir: Path):
@@ -200,8 +215,7 @@ def convert_station(args: tuple) -> str:
         write_tokens(root, "s1_asc",   station_dir / "S1RTC", orbit="ASC")
         write_tokens(root, "s1_desc",  station_dir / "S1RTC", orbit="DESC")
         write_cloud_mask(root, station_dir / "CloudMask")
-        write_static(root, station_dir / "DEM" / "dem_L12.pt",
-                          station_dir / "LULC" / "lulc_L12.pt")
+        write_static(root, station_dir)
 
         # Tabular / label modalities
         write_era5(root,   station_dir / "ERA5Land")

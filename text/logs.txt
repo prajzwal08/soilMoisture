@@ -495,6 +495,32 @@ Original .pt + .nc files deleted after zarr is verified.
   GPU util: 21% → 65-75%  |  Epoch time: 110 min → 25-35 min  |  SBUs/epoch: 370 → 85
   work3 storage: 841GB → ~350GB after deleting originals
 
+### Zarr schema (complete package — replaces ALL original files)
+Each station zarr store contains:
+  s2/{l12,l9,l6,l3,dates}        S2L2A tokens (N,196,768) fp16
+  s1_asc/{l12,l9,l6,l3,dates}   S1RTC ASC tokens + orbit attr
+  s1_desc/{...}                   S1RTC DESC tokens (if exists)
+  cm/{masks,dates}                CloudMask (N,224,224) uint8
+  dem, lulc                       Static (196,768) fp16
+  soil                            Soil patch (21,74,74) float32
+  era5/{values,date_ints,doys}    ERA5-Land daily (N,19)
+  sif/{values,date_ints,doys}     SIF sparse
+  twsa/{lwe,lwe_uncertainty,...}  TWSA monthly
+  labels/{sm,qc,depths,dates}     ISMN soil moisture labels
+  .complete                       Sentinel (written last)
+All modalities verified present. zarr = publication-ready (Zenodo/HuggingFace).
+After check_dataset passes: delete all .pt, .nc, .tif originals.
+
+### Architecture fix: staleness embedding for spatial anchor tokens (model.py)
+_get_target_spatial_tokens() now adds rel_pos_emb(anchor_rel_pos) to the 196
+bottleneck tokens. Previously, U-Net decoder had no idea how old the anchor
+satellite image was — now explicitly knows staleness via the same embedding
+used for satellite history tokens.
+
+### Zarr conversion job submitted: 23438765 (rome, 32 workers, 16h)
+Converts all 993 stations. dataset.py zarr path already working (tested on
+27 stations: correct shapes, ERA5, labels, soil_patch all from zarr).
+
 ### See text/zarr_pipeline_plan.txt for full technical spec
 
 ## Notes for architecture.md

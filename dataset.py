@@ -910,7 +910,12 @@ class SoilMoistureDataset(Dataset):
             skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(paths, year, doy)
 
         # ── Soil patch (static, NaN-filled) ──────────────────────────
-        soil_patch = load_soil_patch(s["soil_path"]) if s["soil_path"] else None
+        if zg is not None and "soil" in zg:
+            arr = zg["soil"][:]                                # (21, 74, 74) float32
+            arr = fill_soil_nans(arr)
+            soil_patch = torch.from_numpy(arr)
+        else:
+            soil_patch = load_soil_patch(s["soil_path"]) if s["soil_path"] else None
         if soil_patch is None:
             soil_patch = torch.zeros(21, 74, 74, dtype=torch.float32)
 
