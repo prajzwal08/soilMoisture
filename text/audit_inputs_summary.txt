@@ -1,0 +1,42 @@
+=================================================================
+AUDIT INPUTS SUMMARY
+=================================================================
+Total stations audited : 993
+Fully OK               : 983  (99.0%)
+Needs attention        : 10
+
+Missing by modality:
+  S2          : 0 missing  ✓
+  S1          : 0 missing  ✓
+  DEM         : 0 missing  ✓
+  LULC        : 0 missing  ✓
+  ERA5        : 0 missing  ✓
+  soil        : 0 missing  ✓
+  TWSA        : 0 missing  ✓
+  SIF         : 0 missing  ✓
+  CloudMask   : 0 missing  ✓
+  labels      : 0 missing  ✓
+
+Date alignment issues:
+  SIF_NO_OVERLAP                : 10 stations
+    - ISMN_COSMOS_KLEE
+    - ISMN_LAB-net_OromoCalibrationSite
+    - ISMN_NGARI_ALI02
+    - ISMN_SCAN_MaricaoForest
+    - ISMN_SCAN_Princeton#1
+    ... and 5 more
+
+Stations needing attention (10):
+  [DATE_MISMATCH] ISMN_COSMOS_KLEE  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_LAB-net_OromoCalibrationSite  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_NGARI_ALI02  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_SCAN_MaricaoForest  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_SCAN_Princeton#1  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_SCAN_Shenandoah  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_SNOTEL_LongValley  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_USCRN_Cortez-8-SE  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_USCRN_Crossville-7-NW  →  SIF_NO_OVERLAP
+  [DATE_MISMATCH] ISMN_USCRN_Durham-2-N  →  SIF_NO_OVERLAP
+
+Full results: /gpfs/work3/0/prjs1968/soilMoisture/csvs/audit_inputs.csv
+=================================================================

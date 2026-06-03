@@ -243,3 +243,10 @@ Next steps:
 1. 983 stations ready for training
 2. Handle SIF_NO_OVERLAP in dataset.py: treat SIF as optional modality (zero/NaN fill when absent)
 3. Begin model training pipeline
+
+=== 2026-06-02 ===
+Session close:
+- audit_inputs.py: fixed label time dimension bug (labels.nc uses 'date_time' not 'time'); label dates now correct for all 993 stations
+- Final confirmed state: all 10 modalities present for all 993 stations, nothing missing
+- Pushed to GitHub (commit 92be4e0)
+- Tomorrow: exploratory analysis of stations + training plan (hyperparameters, architecture, loss, evaluation)
