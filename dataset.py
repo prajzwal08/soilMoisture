@@ -32,9 +32,7 @@ import zarr
 from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 
-# ── Zarr roots (scratch1 preferred for speed, work3 as fallback) ─────────────
-ZARR_ROOT_FAST = Path("/gpfs/scratch1/shared/pkhanal/zarr")
-ZARR_ROOT_SLOW = Path("/gpfs/work3/0/prjs1968/data/zarr")
+ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -207,14 +205,17 @@ def _load_twsa_nc(twsa_dir: Path):
 
 def _open_zarr(station_dir: Path, category: str) -> zarr.Group | None:
     """
-    Open zarr group for a station. Prefers scratch1 (fast SSD) over work3.
+    Open zarr group for a station from scratch SSD.
+    Uses consolidated metadata when available (single .zmetadata read at open).
     Returns None if zarr store is not yet complete.
     """
-    for root in (ZARR_ROOT_FAST, ZARR_ROOT_SLOW):
-        path = root / category / station_dir.name
-        if (path / ".complete").exists():
-            return zarr.open_group(str(path), mode="r")
-    return None
+    path = ZARR_ROOT / category / station_dir.name
+    if not (path / ".complete").exists():
+        return None
+    try:
+        return zarr.open_consolidated(str(path), mode="r")
+    except KeyError:
+        return zarr.open_group(str(path), mode="r")
 
 
 def _load_zarr_era5(zg: zarr.Group):
@@ -262,10 +263,12 @@ def _load_zarr_labels(zg: zarr.Group):
 
 
 def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
-                          max_acq: int = MAX_S2):
+                          max_acq: int = MAX_S2,
+                          l12_np: np.ndarray | None = None):
     """
     Load S2 L12 tokens and cloud mask from zarr for the 365-day rolling window.
-    Chunk-aligned reads: one zarr chunk = one acquisition = (1, 196, 768).
+    l12_np: if provided (preloaded into RAM), L12 tokens are served from RAM
+    with zero disk I/O. Otherwise falls back to chunk reads from zarr.
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
@@ -285,7 +288,7 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
     if has_cm:
         cm_date_idx = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
 
-    tokens_z = zg["s2/l12"]
+    tokens_z = l12_np if l12_np is not None else zg["s2/l12"]
     cm_z     = zg["cm/masks"] if has_cm else None
 
     for out_i, src_i in enumerate(win_idx):
@@ -293,7 +296,7 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
         dt       = datetime.strptime(date_str[:8], "%Y%m%d")
         acq_doy  = dt.timetuple().tm_yday
 
-        l12[out_i]     = torch.from_numpy(tokens_z[src_i])   # one chunk read
+        l12[out_i]     = torch.from_numpy(tokens_z[src_i])   # RAM slice or chunk read
         doys[out_i]    = acq_doy
         rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
 
@@ -307,23 +310,30 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
 
 
 def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
-                          max_acq: int = MAX_S1):
-    """Load S1 L12 tokens (ASC + DESC merged) from zarr."""
+                          max_acq: int = MAX_S1,
+                          l12_asc_np: np.ndarray | None = None,
+                          l12_desc_np: np.ndarray | None = None):
+    """Load S1 L12 tokens (ASC + DESC merged) from zarr.
+    l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates chunk reads for L12.
+    """
     l12     = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
     doys    = torch.zeros(max_acq, dtype=torch.long)
     rel_pos = torch.zeros(max_acq, dtype=torch.long)
 
     ws, td  = _window_datetimes(year, target_doy)
-    entries: list[tuple[str, zarr.Array, int]] = []
+    entries: list[tuple[str, object, int]] = []
 
+    l12_np_map = {"s1_asc": l12_asc_np, "s1_desc": l12_desc_np}
     for orbit_key in ("s1_asc", "s1_desc"):
         if f"{orbit_key}/l12" not in zg:
             continue
         orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
-        tokens_z    = zg[f"{orbit_key}/l12"]
+        # Use preloaded numpy array when available (zero disk I/O)
+        tokens_src  = l12_np_map[orbit_key] if l12_np_map[orbit_key] is not None \
+                      else zg[f"{orbit_key}/l12"]
         for i, d in enumerate(orbit_dates):
             if _in_window(d, ws, td):
-                entries.append((d, tokens_z, i))
+                entries.append((d, tokens_src, i))
 
     if not entries:
         return l12, doys, doys > 0, rel_pos
@@ -755,9 +765,13 @@ class SoilMoistureDataset(Dataset):
         # Per-station in-memory caches (numpy arrays, no open file handles).
         # Populated once in __init__; DataLoader workers inherit via fork (copy-on-write).
         # _zarr_groups: sat_dir → open zarr.Group (or None if zarr not available)
+        # _l12_cache:   sat_dir → {"s2": (N,196,768) fp16, "s1_asc": ..., "s1_desc": ...}
+        #               Preloads L12 token arrays into RAM so __getitem__ does 0 disk reads
+        #               for history tokens. CoW fork: one physical copy across all workers.
         # ERA5/SIF/TWSA/label caches: same format as before, populated from zarr or .nc
         # _pt_paths: .pt fallback for stations without zarr
-        self._zarr_groups : dict[Path, zarr.Group | None] = {}
+        self._zarr_groups : dict[Path, zarr.Group | None]       = {}
+        self._l12_cache   : dict[Path, dict[str, np.ndarray]]   = {}
         self._era5_cache  : dict[Path, tuple | None] = {}
         self._sif_cache   : dict[Path, tuple | None] = {}
         self._twsa_cache  : dict[Path, tuple | None] = {}
@@ -779,7 +793,8 @@ class SoilMoistureDataset(Dataset):
             label_file = sat_dir / "labels.nc"
             soil_path  = sat_dir / "soil" / "soil_patch.tif"
 
-            if not sat_dir.exists() or not label_file.exists():
+            zarr_complete = (ZARR_ROOT / cat / dir_name / ".complete").exists()
+            if not zarr_complete and (not sat_dir.exists() or not label_file.exists()):
                 continue
 
             if not bool(r.get("soil_patch_ok", True)):
@@ -795,6 +810,12 @@ class SoilMoistureDataset(Dataset):
                     self._sif_cache[sat_dir]   = _load_zarr_sif(zg)
                     self._twsa_cache[sat_dir]  = _load_zarr_twsa(zg)
                     self._pt_paths[sat_dir]    = {}   # not used when zarr available
+                    # Preload L12 token arrays into RAM (eliminates disk I/O for history tokens)
+                    self._l12_cache[sat_dir] = {
+                        k: zg[f"{k}/l12"][:]
+                        for k in ("s2", "s1_asc", "s1_desc")
+                        if f"{k}/l12" in zg
+                    }
                     if label_file not in self._label_cache:
                         lc = _load_zarr_labels(zg)
                         if lc is not None:
@@ -832,6 +853,8 @@ class SoilMoistureDataset(Dataset):
                 s2_l12_pt = self._pt_paths[sat_dir].get("s2_l12")
                 s2_years  = _year_range_from_stem(s2_l12_pt.stem) if s2_l12_pt else None
 
+            if label_file not in self._label_cache:
+                continue
             sm_np, depths, times = self._label_cache[label_file]
 
             for year in self.years:
@@ -876,12 +899,15 @@ class SoilMoistureDataset(Dataset):
         zg      = self._zarr_groups.get(sat_dir)   # zarr group or None
 
         if zg is not None:
-            # ── Zarr path (fast: chunk-aligned reads from SSD GPFS) ───
+            # ── Zarr path — L12 served from RAM cache (zero disk I/O for history) ──
+            _l12 = self._l12_cache.get(sat_dir, {})
             s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = \
-                load_s2_rolling_zarr(zg, year, doy)
+                load_s2_rolling_zarr(zg, year, doy, l12_np=_l12.get("s2"))
 
             s1_l12, s1_doys, s1_valid, s1_rel_pos = \
-                load_s1_rolling_zarr(zg, year, doy)
+                load_s1_rolling_zarr(zg, year, doy,
+                                     l12_asc_np=_l12.get("s1_asc"),
+                                     l12_desc_np=_l12.get("s1_desc"))
 
             dem_l12  = (torch.from_numpy(zg["dem"][:])
                         if "dem" in zg else torch.zeros(196, 768, dtype=torch.float16))
