@@ -1,3 +1,7 @@
+Job ID : 23628017
+Node   : tcn378
+Auditing 993 stations with 64 workers...
+
 Comprehensive zarr audit — 993 stations
 ============================================================
   OK        : 993
@@ -40,3 +44,7 @@ SIF/TWSA (informational only):
 CRITICAL stations (0):
 
 WARN stations (0):
+
+Detailed results → /gpfs/work3/0/prjs1968/soilMoisture/csvs/audit_zarr_complete.csv
+Summary          → /gpfs/work3/0/prjs1968/soilMoisture/text/audit_zarr_complete_summary.txt
+Done.

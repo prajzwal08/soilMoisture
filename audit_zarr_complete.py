@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import datetime
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -35,6 +36,12 @@ LAYERS = ["l12", "l9", "l6", "l3"]
 
 CM_COVERAGE_THRESHOLD = 95.0  # pct
 
+# A "missing" satellite year at the very start/end of a station's record is
+# only a real gap if the record actually overlaps that year by more than a
+# few days — otherwise it's just a 1-4 day sliver where a Sentinel pass was
+# never going to land (S2 ~5-day, S1 ~6-12 day revisit).
+MIN_YEAR_OVERLAP_DAYS = 7
+
 
 def _has_token_group(zg, key: str) -> bool:
     return all(f"{key}/{l}" in zg for l in LAYERS) and f"{key}/dates" in zg
@@ -50,6 +57,25 @@ def _years_from_date_ints(date_ints: np.ndarray) -> set:
 
 def _missing_years(years_present: set, start_year: int, end_year: int) -> str:
     missing = [y for y in range(start_year, end_year + 1) if y not in years_present]
+    return ",".join(str(y) for y in missing)
+
+
+def _date_from_int(d: int) -> datetime.date:
+    return datetime.date(d // 10000, (d // 100) % 100, d % 100)
+
+
+def _year_overlap_days(year: int, start_date: int, end_date: int) -> int:
+    lo = max(datetime.date(year, 1, 1), _date_from_int(start_date))
+    hi = min(datetime.date(year, 12, 31), _date_from_int(end_date))
+    return (hi - lo).days + 1 if hi >= lo else 0
+
+
+def _missing_years_min_overlap(years_present: set, start_year: int, end_year: int,
+                                start_date: int, end_date: int, min_days: int) -> str:
+    missing = [
+        y for y in range(start_year, end_year + 1)
+        if y not in years_present and _year_overlap_days(y, start_date, end_date) >= min_days
+    ]
     return ",".join(str(y) for y in missing)
 
 
@@ -73,7 +99,7 @@ def audit_station(row: dict) -> dict:
         "has_labels_sm": False, "has_labels_le": False,
         "n_s2_dates": 0, "n_cm_dates": 0, "n_s2_missing_cm": 0, "cm_coverage_pct": 0.0,
         "s2_missing_years": "", "s1_asc_missing_years": "", "s1_desc_missing_years": "",
-        "cm_missing_years": "", "era5_missing_years": "",
+        "cm_missing_years": "", "satellite_missing_years": "", "era5_missing_years": "",
         "labels_sm_missing_years": "", "labels_le_missing_years": "",
         "sif_missing_years": "", "twsa_missing_years": "",
         "status": "OK", "flags": "",
@@ -156,25 +182,41 @@ def audit_station(row: dict) -> dict:
         years = _years_from_date_ints(dates_arr) if is_int else _years_from_date_strs(dates_arr)
         return _missing_years(years, start_year, end_year)
 
+    s2_years = _years_from_date_strs(s2_dates) if result["has_s2"] else set()
+    s1_asc_years = _years_from_date_strs(zg["s1_asc/dates"][:]) if result["has_s1_asc"] else set()
+    s1_desc_years = _years_from_date_strs(zg["s1_desc/dates"][:]) if result["has_s1_desc"] else set()
+
     if result["has_s2"]:
-        result["s2_missing_years"] = _check_years("s2", s2_dates)
+        result["s2_missing_years"] = _missing_years(s2_years, start_year, end_year)
         if result["s2_missing_years"]:
-            flags.append(f"s2_missing_years({result['s2_missing_years']})")
+            flags.append(f"INFO_s2_missing_years({result['s2_missing_years']})")
 
     if result["has_s1_asc"]:
-        result["s1_asc_missing_years"] = _check_years("s1_asc", zg["s1_asc/dates"][:])
+        result["s1_asc_missing_years"] = _missing_years(s1_asc_years, start_year, end_year)
         if result["s1_asc_missing_years"]:
-            flags.append(f"s1_asc_missing_years({result['s1_asc_missing_years']})")
+            flags.append(f"INFO_s1_asc_missing_years({result['s1_asc_missing_years']})")
 
     if result["has_s1_desc"]:
-        result["s1_desc_missing_years"] = _check_years("s1_desc", zg["s1_desc/dates"][:])
+        result["s1_desc_missing_years"] = _missing_years(s1_desc_years, start_year, end_year)
         if result["s1_desc_missing_years"]:
-            flags.append(f"s1_desc_missing_years({result['s1_desc_missing_years']})")
+            flags.append(f"INFO_s1_desc_missing_years({result['s1_desc_missing_years']})")
 
     if result["has_cm"]:
         result["cm_missing_years"] = _check_years("cm", cm_dates)
         if result["cm_missing_years"]:
-            flags.append(f"cm_missing_years({result['cm_missing_years']})")
+            flags.append(f"INFO_cm_missing_years({result['cm_missing_years']})")
+
+    # A year only counts as missing if NONE of s2/s1_asc/s1_desc cover it —
+    # at least one satellite modality per year is sufficient for training —
+    # and the station's record overlaps that year by more than a few days
+    # (see MIN_YEAR_OVERLAP_DAYS).
+    satellite_years = s2_years | s1_asc_years | s1_desc_years
+    result["satellite_missing_years"] = _missing_years_min_overlap(
+        satellite_years, start_year, end_year,
+        int(row["start_date"]), int(row["end_date"]), MIN_YEAR_OVERLAP_DAYS,
+    )
+    if result["satellite_missing_years"]:
+        flags.append(f"satellite_missing_years({result['satellite_missing_years']})")
 
     if result["has_era5"]:
         result["era5_missing_years"] = _check_years("era5", zg["era5/date_ints"][:], is_int=True)
@@ -281,9 +323,17 @@ def main():
 
     # Per-year gaps (required modalities)
     lines.append("Stations with missing-year gaps (required modalities):")
-    for col in ["s2_missing_years", "s1_asc_missing_years", "s1_desc_missing_years",
-                "cm_missing_years", "era5_missing_years",
+    for col in ["satellite_missing_years", "era5_missing_years",
                 "labels_sm_missing_years", "labels_le_missing_years"]:
+        n = (out_df[col] != "").sum()
+        if n:
+            lines.append(f"  {col:<24}: {n} stations")
+    lines.append("")
+
+    # Per-modality satellite gaps (informational only — a year is only a real
+    # gap if NONE of s2/s1_asc/s1_desc cover it; see satellite_missing_years)
+    lines.append("Per-modality satellite gaps (informational only):")
+    for col in ["s2_missing_years", "s1_asc_missing_years", "s1_desc_missing_years", "cm_missing_years"]:
         n = (out_df[col] != "").sum()
         if n:
             lines.append(f"  {col:<24}: {n} stations")

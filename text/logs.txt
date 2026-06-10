@@ -549,3 +549,357 @@ Current implementation diverges from architecture.md on several points:
 - No staleness gate implemented yet
 - ERA5 future masking: right-aligned array with era5_doys==0 mask (not calendar masking)
 architecture.md update deferred to after Phase 1 training completes.
+
+=== 2026-06-04 ===
+
+### Problem identified: zarr inode/quota crisis
+- Job 23439114 (creating zarr stores on work3) hit Errno 122 (disk quota exceeded) at 163/993 stations
+- Root cause: chunks=(1, 196, 768) — one chunk file per satellite acquisition per layer
+- Station ISMN_RSMN_Bacles: 7,589 inodes (373 S2 + 686 S1_asc + 677 S1_desc acquisitions × 4 layers each)
+- At this rate: ~7.5M inodes for 993 stations — well beyond project quota
+- Secondary problem: dataset.py was reading from wrong path (token_zarr/ instead of zarr/)
+  and old scratch data at /gpfs/scratch1/shared/pkhanal/token_zarr/ used T=1 chunks (also wrong)
+
+### Decisions: rechunk strategy
+- S2/S1 token arrays: chunks=(32, 196, 768) → 9.6 MB/chunk uncompressed; reduces 60 reads/window to 2
+- Cloud masks: chunks=(128, 224, 224) → 6.4 MB/chunk (GPFS 10-100 MB target)
+- Tabular (ERA5, SIF, TWSA, labels): full array = 1 chunk (tiny, preloaded to RAM)
+- Expected: ~341 inodes/station (13× reduction for worst-case stations)
+- Output path corrected: /gpfs/scratch1/shared/pkhanal/zarr/ (matches dataset.py ZARR_ROOT_FAST)
+- Per-station single zarr store retained (modality split saves only ~22 inodes; chunk files dominate)
+
+### L12 RAM cache design (dataset.py)
+- Preload S2/S1 L12 arrays into RAM at __init__: ~51 GB for 584 train stations, shared CoW across 16 workers
+- Reduces disk reads per training sample from ~103 to 3 (only L3/L6/L9 skip features read from disk)
+
+### write_labels fix (create_token_zarr.py)
+- Old code looked for labels.nc inside satellite token dirs — only 204 of 890 SM stations had it
+- Fix: read from /projects/prjs1968/raw_soil_moisture/{network}_{station_name}_*.nc
+  and clip to station's start_date/end_date from station_splits.csv
+- Non-ISMN (AmeriFlux/ICOS) stations: empty labels arrays (no raw SM file)
+
+### Depth coverage analysis (842 active SM stations)
+- L1 (0-10cm): 842 stations, 6,904 station-years
+- L2 (10-30cm): 656 stations, 5,534 station-years
+- L3 (30-100cm): 534 stations, 4,564 station-years
+- All 3 layers: 501 stations (59%); surface only: 153 (18%); L1+L2: 155 (18%); L1+L3: 33 (4%)
+
+### Files modified
+- create_token_zarr.py: ZARR_ROOT → /gpfs/scratch1/shared/pkhanal/zarr/, T_TOKENS=32, T_CM=128,
+  write_labels() rewritten to read from RAW_SM_DIR, zarr.consolidate_metadata() added,
+  convert_station() extended with raw_sm_key/start_date/end_date args, default workers=64
+- dataset.py: _open_zarr() uses zarr.open_consolidated(); added _l12_cache dict populated at __init__;
+  load_s2_rolling_zarr()/load_s1_rolling_zarr() accept optional l12_np arrays for zero-disk reads;
+  __getitem__ passes _l12_cache to rolling loaders
+- slurm/create_token_zarr.sh: output path updated to scratch
+
+### Pending (NOT yet done — requires user action)
+1. Delete old T=1 scratch data: rm -rf /gpfs/scratch1/shared/pkhanal/token_zarr
+   /gpfs/scratch1/shared/pkhanal/token_zarr_test  (496 GB — needs confirmation)
+2. Submit: sbatch slurm/create_token_zarr.sh
+3. After all 993 .complete files confirmed: delete work3/data/zarr/ and .pt bundles in projects/prjs1968/data/
+
+### Next session
+- Confirm scratch deletion, then submit zarr job
+- Verify depth coverage in new zarr matches raw_soil_moisture counts (842 SM stations)
+- Start training once zarr complete
+
+### See /projects/prjs1968/soilMoisture/zarr_redesign_plan.md for full technical plan
+
+=== 2026-06-04 ===
+
+### Problem identified: zarr inode/quota crisis
+- Job 23439114 (creating zarr stores on work3) hit Errno 122 (disk quota exceeded) at 163/993 stations
+- Root cause: chunks=(1, 196, 768) -- one chunk file per satellite acquisition per layer
+- Station ISMN_RSMN_Bacles: 7,589 inodes (373 S2 + 686 S1_asc + 677 S1_desc acquisitions x 4 layers each)
+- At this rate: ~7.5M inodes for 993 stations -- well beyond project quota
+- Secondary problem: dataset.py was reading from wrong path (token_zarr/ instead of zarr/)
+  and old scratch data at /gpfs/scratch1/shared/pkhanal/token_zarr/ used T=1 chunks (also wrong)
+
+### Decisions: rechunk strategy
+- S2/S1 token arrays: chunks=(32, 196, 768) -> 9.6 MB/chunk uncompressed; reduces 60 reads/window to 2
+- Cloud masks: chunks=(128, 224, 224) -> 6.4 MB/chunk (GPFS 10-100 MB target)
+- Tabular (ERA5, SIF, TWSA, labels): full array = 1 chunk (tiny, preloaded to RAM)
+- Expected: ~341 inodes/station (13x reduction for worst-case stations)
+- Output path corrected: /gpfs/scratch1/shared/pkhanal/zarr/ (matches dataset.py ZARR_ROOT_FAST)
+- Per-station single zarr store retained (modality split saves only ~22 inodes; chunk files dominate)
+
+### L12 RAM cache design (dataset.py)
+- Preload S2/S1 L12 arrays into RAM at __init__: ~51 GB for 584 train stations, shared CoW across 16 workers
+- Reduces disk reads per training sample from ~103 to 3 (only L3/L6/L9 skip features read from disk)
+
+### write_labels fix (create_token_zarr.py)
+- Old code looked for labels.nc inside satellite token dirs -- only 204 of 890 SM stations had it
+- Fix: read from /projects/prjs1968/raw_soil_moisture/{network}_{station_name}_*.nc
+  and clip to station's start_date/end_date from station_splits.csv
+- Non-ISMN (AmeriFlux/ICOS) stations: empty labels arrays (no raw SM file)
+
+### Depth coverage analysis (842 active SM stations)
+- L1 (0-10cm): 842 stations, 6,904 station-years
+- L2 (10-30cm): 656 stations, 5,534 station-years
+- L3 (30-100cm): 534 stations, 4,564 station-years
+- All 3 layers: 501 stations (59%); surface only: 153 (18%); L1+L2: 155 (18%); L1+L3: 33 (4%)
+
+### Files modified
+- create_token_zarr.py: ZARR_ROOT -> /gpfs/scratch1/shared/pkhanal/zarr/, T_TOKENS=32, T_CM=128,
+  write_labels() rewritten to read from RAW_SM_DIR, zarr.consolidate_metadata() added,
+  convert_station() extended with raw_sm_key/start_date/end_date args, default workers=64
+- dataset.py: _open_zarr() uses zarr.open_consolidated(); added _l12_cache dict populated at __init__;
+  load_s2_rolling_zarr()/load_s1_rolling_zarr() accept optional l12_np arrays for zero-disk reads;
+  __getitem__ passes _l12_cache to rolling loaders
+- slurm/create_token_zarr.sh: output path updated to scratch
+
+### Pending (NOT yet done -- requires user action)
+1. Delete old T=1 scratch data: rm -rf /gpfs/scratch1/shared/pkhanal/token_zarr
+   /gpfs/scratch1/shared/pkhanal/token_zarr_test  (496 GB -- needs confirmation)
+2. Submit: sbatch slurm/create_token_zarr.sh
+3. After all 993 .complete files confirmed: delete work3/data/zarr/ and .pt bundles in projects/prjs1968/data/
+
+### Next session
+- Confirm scratch deletion, then submit zarr job
+- Verify depth coverage in new zarr matches raw_soil_moisture counts (842 SM stations)
+- Start training once zarr complete
+
+### See /gpfs/scratch1/shared/pkhanal/zarr_redesign_plan.md for full technical plan
+  (to be moved to /projects/prjs1968/soilMoisture/zarr_redesign_plan.md once quota freed)
+
+=== 2026-06-05 ===
+
+### Zarr token creation and modality fill jobs
+
+Job 23491215 (sm_token_zarr, rome, 64 workers): COMPLETED 12:52–13:13
+- Created token zarr stores for all 993 stations at /gpfs/scratch1/shared/pkhanal/zarr/
+- .complete markers written at end of each station
+
+Job 23492636 (tok_sat_zarr array, 30 tasks): all COMPLETED 13:47–14:05
+- Satellite modality fill (tokenized S2/S1/DEM/LULC written into zarr stores)
+
+Job 23493481 (retok_fix): COMPLETED 14:14–14:46
+- Re-tokenization fix job
+
+Job 23493847 (cm_sat_zarr array, 30 tasks): all FAILED (quick failures ~14:27–14:29)
+- Cloud mask writing to zarr failed for all 30 tasks
+- Root cause not yet diagnosed; to investigate next session
+
+Job 23493869 (sif_299): CANCELLED
+- SIF download for 299 stations was cancelled; needs resubmit
+
+Job 23493870 (soil_299): COMPLETED
+- Soil data download/write for 299 stations completed successfully
+
+Job 23493868 (era5_299): RUNNING as of end of session (started 14:24)
+- ERA5-Land download for 299 stations; ~1619/2155 station-years processed by session end
+- Expected to complete overnight
+
+### Zarr audit (job 23495956 + 23495985, ~15:40 snapshot)
+
+Audit output: /gpfs/scratch1/shared/pkhanal/audit_zarr_summary.txt
+
+Summary (993 total stations):
+- Fully OK: 646 (65.1%)
+- .complete markers at audit time: 680; grew to 929 by end of session as era5_299 continued
+- Modality gaps:
+  - CM missing: 304 (cloud mask zarr write failed for all these stations)
+  - ERA5 missing: 302 (era5_299 still running during audit)
+  - SIF missing: 301 (sif_299 was cancelled)
+  - TWSA missing: 300
+  - labels missing: 303
+- CM_MISSING_DATES: 302 stations (cloud mask does not cover all S2 dates in zarr)
+- NO_ZARR (no store at all): 14 stations
+- DEM missing: 1
+- LULC missing: 0
+
+### .complete breakdown by category (end of session)
+- sm_only: 813 / 841
+- sm_and_flux: 13 / 48
+- flux_only: 103 / 103
+
+### Next session checklist
+1. Diagnose cm_sat_zarr failure (all 30 tasks failed quickly ~14:27-14:29) — check logs/
+2. Re-run cm_sat_zarr array after fix
+3. Resubmit sif_299 job (SIF download for 299 stations)
+4. Wait for era5_299 to finish, then re-run zarr audit
+5. Investigate 14 NO_ZARR stations and 1 missing DEM station
+6. Push code changes to GitHub (not done this session)
+7. Once all modalities complete and audit passes: submit check_dataset.py, then training
+
+=== 2026-06-09 ===
+
+### Context
+Continued fixing zarr pipeline. Goal: fix all Group A/B/C/D stations so training can begin.
+Re-audit identified: OK=818, A=24, B=83, C=62, D=4, unresolved=2.
+
+### Group classifications
+- Group A (24): .complete exists in zarr but s2 tokens missing — had .pt bundles in /projects/prjs1968/data/
+- Group B (83/87): satellite_zarr exists but no .complete, no s2 tokens — needs TerraMind + CloudSEN12
+- Group C (62/61): s2 tokens in zarr but no .complete, no cloud masks — needs CloudSEN12 + tabular fill
+- Group D (4): ICOS sm_and_flux stations with .complete but missing labels — fixed with fix_group_d_labels.py
+
+### dataset.py training blocker fixed
+Line 796 previously skipped all zarr-only stations (checked sat_dir.exists() against data_root, only 169 stations).
+Fixed: zarr_complete check — skip only if neither zarr .complete nor sat_dir+label_file present.
+Added guard at line 856 for _label_cache miss on zarr-only stations.
+
+### Bugs fixed
+
+1. create_token_zarr.py write_labels(): added guard for flux_only stations (no soil_moisture variable)
+   — Group A job 23596836 failed 22/24 stations with "No variable named 'soil_moisture'"
+
+2. create_token_zarr.py write_flux_labels(): fallback to LEVEL1_DIR/category/dir_name.nc
+   when station_dir/labels.nc does not exist (flux_only stations use level1_organised)
+
+3. LE_F_MDS_QC dtype: was stored as uint8 (truncating float values like 0.958 → 0);
+   fixed to float32 in both create_token_zarr.py and retokenize_satellite_zarr.py
+   — LE_F_MDS_QC is a daily gap fraction in [0,1], not an integer flag
+
+4. retokenize_satellite_zarr.py: full rewrite with lazy imports so script loads in both
+   terramind (TerraMind tokens) and sensei (CloudSEN12) conda envs without import errors
+   — original failed immediately with "No module named 'senseiv2'" in terramind env
+
+5. sensei conda env: installed zarr==2.18.7, numcodecs, pandas, rasterio, xarray, dask
+   (all missing; xarray 2026.4.0 requires dask for open_mfdataset)
+
+6. All SLURM scripts: added conda run --no-capture-output to enable live log streaming
+   (without it, conda run buffers all output until process exits — logs appear empty)
+
+### Labels source
+Authoritative: /projects/prjs1968/level1_organised/{category}/{station}.nc
+  - sm_only: (depth, date_time) dim order
+  - sm_and_flux: (date_time, depth) dim order — transpose fix applied
+  - flux_only: only LE_F_MDS + LE_F_MDS_QC (no soil_moisture)
+
+### Two-phase pipeline for Groups B and C
+retokenize_satellite_zarr.py split into two modes:
+  --mode terramind : TerraMind inference → s2/s1/dem/lulc tokens (terramind env)
+  --mode cm-fill   : CloudSEN12 + ERA5/SIF/labels + .complete (sensei env)
+
+### Jobs submitted
+- 23597149 (group_a_zarr, rome, 64 workers): COMPLETED 24/24 OK
+  - All 22 flux_only ICOS/AmeriFlux + 2 ISMN sm_only stations fixed
+- 23597154 (retok_b, gpu_h100, terramind env, --mode terramind): RUNNING ~19/87 done
+- 23597155 (retok_b2, gpu_h100, sensei env, --mode cm-fill): PENDING (depends on 23597154)
+- 23597277 (retok_c, gpu_h100, sensei env, --mode cm-fill): RUNNING ~24/61 done
+
+### Smoke tests run before each job submission
+- AmeriFlux_US-DFC (flux_only): verified le/le_qc shape/dtype/values + .complete written
+- write_labels() guard: verified flux_only returns cleanly, sm_only writes correctly
+- retokenize_satellite_zarr.py dry-run: 87 stations (terramind mode), 84 (cm-fill mode)
+- ISMN_SCAN_JournaganRanch (cm-fill, sensei env): OK-CM cm=0 (masks already present)
+
+### Next steps
+1. Check logs for B Phase 1 (23597154) and C (23597277) when complete
+2. Verify B Phase 2 (23597155) completes cleanly
+3. Confirm total .complete ~ 993
+4. sbatch slurm/train.sh --run-name baseline_nll
+
+=== 2026-06-10 ===
+### cm-trim-and-archive completed (920 stations)
+- Trimmed cm/masks + cm/dates to match s2/dates (extra cm entries beyond s2),
+  archived removed entries to /projects/prjs1968/data/excluded_stations/_cm_extra/
+  (excluding AmeriFlux_CA-Cbo). Job 23620623 completed.
+- Fixed 14 stations with stale .zmetadata (aborted earlier login-node run had
+  written new .zarray shapes but not consolidated metadata) — re-ran
+  zarr.consolidate_metadata() for each.
+- Re-ran audit_zarr_complete.py (job 23620667): OK=304, WARN=689, CRITICAL=0
+  (993/993). cm coverage now 99.98% mean / 79.31% min (only AmeriFlux_CA-Cbo,
+  deferred — opposite-direction issue, cm has fewer dates than s2).
+
+### Documented zarr token storage format
+- text/zarr_token_storage_format.txt — full schema (groups, shapes, dtypes,
+  chunks, compressors, per-category label requirements, worked example
+  ICOS_BE-Vie).
+
+### Training-readiness criterion clarified
+- "≥3 years of data" = ≥3 years with ≥1 S1 OR S2 tile, combined across S1+S2
+  (per final_qa_check.py), not S2-alone.
+- Of 10 stations that looked short on S2-only, 9/10 pass once S1 is included.
+  Only AmeriFlux_US-xUN genuinely has 2 years (2021-2022) combined coverage
+  despite flux labels spanning 2021-2024.
+
+### Generalized tokenization-gap fix (the big task)
+- scan_tokenization_gaps.py (job 23620702): scanned all 993 stations comparing
+  satellite_zarr/{station}.zarr dates vs token zarr dates. Found 36 stations
+  with un-tokenized satellite_zarr dates (17 s2-gap, 18 s1_asc-gap, 17
+  s1_desc-gap). Results: csvs/tokenization_gap_scan.csv.
+- fix_tokenization_gaps.py: two modes
+  - terramind-force (36 stations): re-encode s2/s1_asc/s1_desc from
+    satellite_zarr via _encode_temporal() full overwrite
+  - cm-force (17 stations where s2 changed): regenerate cm/masks+dates
+- Submitted slurm/fix_tokenization_gaps_terramind.sh -> job 23620737
+  (gpu_h100, terramind env). At session end: 19/36 OK-TM, 0 errors, still
+  running.
+
+### Next steps (see memory project_current_state.md)
+1. Confirm job 23620737 finishes 36/36 OK-TM, 0 ERR
+2. sbatch slurm/fix_tokenization_gaps_cm.sh (17 stations, cm-force)
+3. Re-run scan_tokenization_gaps.py to confirm all *_n_extra == 0
+4. Re-run audit_zarr_complete.py to confirm OK count improves
+5. sbatch slurm/check_dataset.sh, then sbatch slurm/train.sh --run-name baseline_nll
+
+=== 2026-06-10 (session 2) ===
+### trim_pre2016.py — removed dead pre-2016 era5/sif/twsa/labels entries
+- No S1/S2/cm imagery exists before 2016-01-01 anywhere (993 stations), so
+  pre-2016 era5/sif/twsa/labels entries can never produce a training sample
+  (dataset.py needs era5 ∩ s2 years). Trimmed era5/date_ints+values+doys,
+  sif/*, twsa/*, labels/dates+sm, labels/dates_flux+le+le_qc for 513 stations
+  (start_date < 20160101). Archived removed slices to
+  /projects/prjs1968/data/excluded_stations/_pre2016/{station}_pre2016.npz
+  (29MB total, 0 errors).
+- station_splits.csv: start_date clamped to max(start_date, 20160101) for 513
+  rows; original preserved in new actual_start_date column. All
+  split-derivation columns (n_years, split, oot_eligible, etc.) left
+  unchanged (still based on actual_start_date).
+- Verified storage headroom first: myquota prjs1968 -> 5.00 TiB limit, 7.33%
+  used (plenty of room for archives).
+
+### audit_zarr_complete.py — combined satellite_missing_years metric
+- New per-station metric: a year only counts as "missing" if NONE of
+  s2/s1_asc/s1_desc cover it (union, not per-modality intersection) — "at
+  least one satellite modality per year is sufficient for training". Old
+  per-modality s2/s1_asc/s1_desc/cm_missing_years demoted to INFO_-prefixed
+  (informational only, don't drive WARN).
+- Added MIN_YEAR_OVERLAP_DAYS=7: a year only counts toward
+  satellite_missing_years if the station's [start_date,end_date] record
+  overlaps that calendar year by >=7 days — suppresses 1-4 day
+  record-boundary false positives (5 stations had zero-revisit slivers, not
+  real gaps; nothing was ever deleted for these).
+- Audit progression this session: 304(prev)->413/580/0 (after pre2016 trim)
+  -> 987/6/0 (after satellite_missing_years union logic, job 23626874) ->
+  992/1/0 (after MIN_YEAR_OVERLAP_DAYS fix, job 23627132). Remaining WARN =
+  AmeriFlux_CA-Cbo CM_COVERAGE_LOW(79.31%) (pre-existing, documented, OOS-only).
+
+### check_satellite_alignment.py — token-vs-raw satellite_zarr alignment audit
+- New diagnostic comparing token zarr date-sets vs raw /projects/prjs1968/satellite_zarr
+  per station for s2/s1_asc/s1_desc, plus cm-vs-s2 within token zarr.
+  s1_asc/s1_desc perfectly aligned everywhere (993/993 have raw). Found 5
+  AmeriFlux-Canada "Group A legacy" stations (CA-Cbo, CA-DB2, CA-DBB, CA-DSM,
+  CA-Mer) where token s2 has MORE dates than raw satellite_zarr (161/110/91/
+  49/121 extra) — raw is always an exact subset of token. Only CA-Cbo had a
+  cm gap (54/261 missing).
+- Root cause: tokens/cm for these 5 were computed earlier
+  (precompute_terramind.py + cloud_masking_inference.py) from raw TIFs in
+  /gpfs/scratch1/shared/pkhanal/satellite/{station}/ (since deleted by
+  cleanup_tokens.py). satellite_zarr is a separate, later raw-pixel store
+  that only re-acquired a subset of the original dates for these 5 stations.
+
+### trim_to_satellite_zarr.py — aligned the 5 stations' s2+cm to satellite_zarr
+- Per project decision: trimmed s2 (dates,l3,l6,l9,l12) down to the date set
+  in satellite_zarr/s2 for each of the 5 stations, then trimmed cm
+  (dates,masks) to the intersection with the new s2 dates. s1_asc/s1_desc
+  untouched (already aligned).
+  - CA-Cbo: s2 261->100, cm 207->100 (cm now == s2 exactly, CM_COVERAGE_LOW
+    fully resolved as a side effect)
+  - CA-DB2: s2 212->102, cm 212->102
+  - CA-DBB: s2 184->93, cm 184->93
+  - CA-DSM: s2 126->77, cm 126->77
+  - CA-Mer: s2 291->170, cm 291->170
+- Archived removed slices to
+  /projects/prjs1968/data/excluded_stations/_satzarr_trim/{station}_satzarr_trim.npz.
+  Spot-checked CA-Cbo and CA-Mer: s2==raw_s2 exactly, cm==s2 exactly.
+- Final audit re-run submitted: job 23628017 (expect OK=993, WARN=0,
+  CRITICAL=0).
+
+### Next steps
+1. Confirm job 23628017 -> OK=993/WARN=0/CRITICAL=0
+2. Final test, move some folders, and prepare for model run
+   (sbatch slurm/check_dataset.sh, then sbatch slurm/train.sh --run-name baseline_nll)
