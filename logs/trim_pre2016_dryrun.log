@@ -1,0 +1,994 @@
+993 stations
+[   1/993] SKIP   ISMN_ARM_Lamont-CF2: no pre-2016 entries
+[   2/993] DRY    ISMN_AMMA-CATCH_Tondikiboro: era5 1826->1096, twsa 37->20, labels 1825->1095
+[   3/993] SKIP   ISMN_ARM_Ashton: no pre-2016 entries
+[   4/993] SKIP   ISMN_ARM_MapleCity: no pre-2016 entries
+[   5/993] DRY    ISMN_AMMA-CATCH_Banizoumbou: era5 1826->1096, twsa 37->20, labels 1825->1095
+[   6/993] SKIP   ISMN_ARM_Byron: no pre-2016 entries
+[   7/993] DRY    ISMN_ARM_Morrison: era5 4018->3653, twsa 98->89, labels 3744->3652
+[   8/993] SKIP   ISMN_ARM_Ringwood: no pre-2016 entries
+[   9/993] SKIP   ISMN_ARM_Marshall: no pre-2016 entries
+[  10/993] SKIP   ISMN_ARM_Newkirk: no pre-2016 entries
+[  11/993] DRY    ISMN_ARM_Anthony: era5 2922->2192, twsa 73->56, labels 2820->2090
+[  12/993] SKIP   ISMN_ARM_Lamont-CF1: no pre-2016 entries
+[  13/993] DRY    ISMN_ARM_Omega: era5 2922->2192, twsa 73->56, labels 2714->1984
+[  14/993] SKIP   ISMN_ARM_Medford: no pre-2016 entries
+[  15/993] SKIP   ISMN_ARM_Pawhuska: no pre-2016 entries
+[  16/993] DRY    ISMN_ARM_Waukomis: era5 4383->3653, twsa 106->89, labels 4382->3652
+[  17/993] SKIP   ISMN_Berlin_PflABerlin11Humb: no pre-2016 entries
+[  18/993] SKIP   ISMN_Berlin_PSA14wiltinger: no pre-2016 entries
+[  19/993] SKIP   ISMN_Berlin_DWDBerlin-Spaeth: no pre-2016 entries
+[  20/993] SKIP   ISMN_ARM_Tryon: no pre-2016 entries
+[  21/993] SKIP   ISMN_Berlin_PSA15bucherchaus: no pre-2016 entries
+[  22/993] SKIP   ISMN_ARM_Tyro: no pre-2016 entries
+[  23/993] SKIP   ISMN_Berlin_DWDBerlinTempel: no pre-2016 entries
+[  24/993] SKIP   ISMN_Berlin_PSA7Ruebezahl: no pre-2016 entries
+[  25/993] SKIP   ISMN_Berlin_PSA16krugwiesen: no pre-2016 entries
+[  26/993] SKIP   ISMN_Berlin_PSA6Plaenterwald: no pre-2016 entries
+[  27/993] SKIP   ISMN_Berlin_PSA1BerlinerStr: no pre-2016 entries
+[  28/993] SKIP   ISMN_Berlin_PSA18Pfaueninsel: no pre-2016 entries
+[  29/993] SKIP   ISMN_Berlin_PSA17suedpark: no pre-2016 entries
+[  30/993] SKIP   ISMN_Berlin_PSA4Heerstrasse: no pre-2016 entries
+[  31/993] SKIP   ISMN_Berlin_PflABerlin12Schi: no pre-2016 entries
+[  32/993] SKIP   ISMN_Berlin_PSA2Tiergarten: no pre-2016 entries
+[  33/993] DRY    ISMN_COSMOS-UK_AliceHolt: era5 2922->2557, twsa 77->68, labels 2858->2557
+[  34/993] DRY    ISMN_COSMOS-UK_BunnyPark: era5 2922->2557, twsa 77->68, labels 2896->2557
+[  35/993] SKIP   ISMN_Berlin_PflABerlin13Marz: no pre-2016 entries
+[  36/993] DRY    ISMN_COSMOS-UK_BickleyHall: era5 2922->2557, twsa 77->68, labels 2895->2557
+[  37/993] DRY    ISMN_COSMOS_KLEE: era5 1826->1096, twsa 37->20, labels 1579->849
+[  38/993] SKIP   ISMN_COSMOS-UK_CwmGarw: no pre-2016 entries
+[  39/993] SKIP   ISMN_COSMOS-UK_Euston: no pre-2016 entries
+[  40/993] DRY    ISMN_COSMOS-UK_Cardington: era5 2922->2557, twsa 77->68, labels 2558->2367
+[  41/993] SKIP   ISMN_COSMOS-UK_Fincham: no pre-2016 entries
+[  42/993] SKIP   ISMN_COSMOS-UK_Elmsett: no pre-2016 entries
+[  43/993] SKIP   ISMN_COSMOS-UK_LullingtonHeath: no pre-2016 entries
+[  44/993] DRY    ISMN_COSMOS-UK_PortonDown: era5 1826->1096, twsa 37->20, labels 1442->1063
+[  45/993] SKIP   ISMN_COSMOS-UK_HartwoodHome: no pre-2016 entries
+[  46/993] DRY    ISMN_COSMOS-UK_Balruddery: era5 1826->1461, twsa 41->32, labels 1466->1125
+[  47/993] SKIP   ISMN_COSMOS-UK_HolmeLacy: no pre-2016 entries
+[  48/993] SKIP   ISMN_COSMOS-UK_SpenFarm: no pre-2016 entries
+[  49/993] SKIP   ISMN_COSMOS-UK_HollinHill: no pre-2016 entries
+[  50/993] SKIP   ISMN_COSMOS-UK_Fivemiletown: no pre-2016 entries
+[  51/993] DRY    ISMN_COSMOS-UK_Morley: era5 3287->2557, twsa 85->68, labels 2926->2329
+[  52/993] DRY    ISMN_COSMOS-UK_ChimneyMeadows: era5 2191->1461, twsa 49->32, labels 2096->1366
+[  53/993] SKIP   ISMN_COSMOS-UK_Loddington: no pre-2016 entries
+[  54/993] SKIP   ISMN_COSMOS-UK_Redhill: no pre-2016 entries
+[  55/993] SKIP   ISMN_COSMOS-UK_Heytesbury: no pre-2016 entries
+[  56/993] SKIP   ISMN_CW3E_BrownsValleySchool: no pre-2016 entries
+[  57/993] SKIP   ISMN_CW3E_FeatherRiverCollege: no pre-2016 entries
+[  58/993] SKIP   ISMN_COSMOS-UK_Rothamsted: no pre-2016 entries
+[  59/993] SKIP   ISMN_COSMOS-UK_Writtle: no pre-2016 entries
+[  60/993] SKIP   ISMN_COSMOS-UK_MoretonMorrell: no pre-2016 entries
+[  61/993] SKIP   ISMN_CW3E_BoyesCreekCanyon: no pre-2016 entries
+[  62/993] SKIP   ISMN_CW3E_YucaipaValley: no pre-2016 entries
+[  63/993] DRY    ISMN_COSMOS-UK_Redmere: era5 1461->1096, twsa 29->20, labels 1317->992
+[  64/993] SKIP   ISMN_CW3E_Deerwood: no pre-2016 entries
+[  65/993] SKIP   ISMN_FLUXNET-AMERIFLUX_BouldinIslandAlfalfa: no pre-2016 entries
+[  66/993] SKIP   ISMN_COSMOS-UK_Cochno: no pre-2016 entries
+[  67/993] DRY    ISMN_COSMOS-UK_Waddesdon: era5 1826->1096, twsa 37->20, labels 1679->949
+[  68/993] SKIP   ISMN_CW3E_NorthCowMountain: no pre-2016 entries
+[  69/993] DRY    ISMN_COSMOS-UK_Sheepdrove: era5 3287->2557, twsa 85->68, labels 3287->2557
+[  70/993] SKIP   ISMN_CW3E_SkylineHarvest: no pre-2016 entries
+[  71/993] DRY    ISMN_FLUXNET-AMERIFLUX_VairaRanch: era5 2557->1827, twsa 61->44, labels 2233->1503
+[  72/993] DRY    ISMN_COSMOS-UK_Stoughton: era5 2557->2192, twsa 65->56, labels 2116->1981
+[  73/993] SKIP   ISMN_FMI_SAA112: no pre-2016 entries
+[  74/993] SKIP   ISMN_CW3E_PotterValleyNorth: no pre-2016 entries
+[  75/993] SKIP   ISMN_FLUXNET-AMERIFLUX_TonziRanch: no pre-2016 entries
+[  76/993] SKIP   ISMN_FMI_SOD071: no pre-2016 entries
+[  77/993] DRY    ISMN_FMI_SOD013: era5 2191->1461, twsa 49->32, labels 2050->1324
+[  78/993] SKIP   ISMN_FMI_SAA120: no pre-2016 entries
+[  79/993] DRY    ISMN_FMI_SOD102: era5 2557->1827, twsa 61->44, labels 2318->1588
+[  80/993] SKIP   ISMN_FMI_SAA111: no pre-2016 entries
+[  81/993] SKIP   ISMN_FMI_SOD073: no pre-2016 entries
+[  82/993] SKIP   ISMN_FMI_SOD072: no pre-2016 entries
+[  83/993] DRY    ISMN_FMI_SOD101: era5 2557->1827, twsa 61->44, labels 2318->1588
+[  84/993] DRY    ISMN_FMI_SOD130: era5 2557->1827, twsa 61->44, labels 2041->1588
+[  85/993] SKIP   ISMN_FMI_SOD083: no pre-2016 entries
+[  86/993] SKIP   ISMN_FMI_SOD012: no pre-2016 entries
+[  87/993] SKIP   ISMN_FMI_SOD081: no pre-2016 entries
+[  88/993] DRY    ISMN_FMI_SOD140: era5 2191->1461, twsa 49->32, labels 1703->1251
+[  89/993] DRY    ISMN_FMI_SOD103: era5 2557->1827, twsa 61->44, labels 2318->1588
+[  90/993] SKIP   ISMN_FR_Aqui_hillan2: no pre-2016 entries
+[  91/993] DRY    ISMN_HOBE_1.07: era5 2191->1461, twsa 49->32, labels 1612->1144
+[  92/993] SKIP   ISMN_FR_Aqui_parcmeteo: no pre-2016 entries
+[  93/993] DRY    ISMN_HOBE_3.06: era5 2191->1461, twsa 49->32, labels 1563->1146
+[  94/993] SKIP   ISMN_FMI_SOD011: no pre-2016 entries
+[  95/993] DRY    ISMN_HOBE_1.05: era5 2191->1461, twsa 49->32, labels 1875->1145
+[  96/993] DRY    ISMN_MOL-RAO_Falkenberg: era5 2557->1827, twsa 61->44, labels 2372->1642
+[  97/993] SKIP   ISMN_LABFLUX_Nivolet: no pre-2016 entries
+[  98/993] DRY    ISMN_NAQU_NQMS: era5 1461->1096, twsa 29->20, labels 1141->929
+[  99/993] DRY    ISMN_NGARI_ALI02: era5 1826->1096, twsa 37->20, labels 1315->833
+[ 100/993] SKIP   ISMN_LABFLUX_Bussolenobosco: no pre-2016 entries
+[ 101/993] DRY    ISMN_NGARI_ALI03: era5 1826->1096, twsa 37->20, labels 1446->964
+[ 102/993] SKIP   ISMN_NGARI_SQ21: no pre-2016 entries
+[ 103/993] SKIP   ISMN_NGARI_SQ19: no pre-2016 entries
+[ 104/993] DRY    ISMN_FR_Aqui_fraye: era5 1826->1461, twsa 41->32, labels 1288->1263
+[ 105/993] DRY    ISMN_HOBE_2.11: era5 2191->1461, twsa 49->32, labels 1876->1146
+[ 106/993] DRY    ISMN_LAB-net_OromoCalibrationSite: era5 1826->1096, twsa 37->20, labels 1347->815
+[ 107/993] DRY    ISMN_NAQU_NQNorth: era5 1826->1096, twsa 37->20, labels 1405->930
+[ 108/993] DRY    ISMN_NGARI_ALI01: era5 1826->1096, twsa 37->20, labels 1446->964
+[ 109/993] SKIP   ISMN_REMEDHUS_ConcejodelMonte: no pre-2016 entries
+[ 110/993] DRY    ISMN_HOBE_2.01: era5 2191->1461, twsa 49->32, labels 1876->1146
+[ 111/993] SKIP   ISMN_REMEDHUS_ElCoto: no pre-2016 entries
+[ 112/993] SKIP   ISMN_REMEDHUS_Canizal: no pre-2016 entries
+[ 113/993] SKIP   ISMN_REMEDHUS_ElTomillar: no pre-2016 entries
+[ 114/993] DRY    ISMN_REMEDHUS_CasaPeriles: era5 4018->3288, twsa 106->89, labels 3830->3288
+[ 115/993] DRY    ISMN_REMEDHUS_Guarrati: era5 1461->1096, twsa 29->20, labels 1403->1077
+[ 116/993] SKIP   ISMN_NGARI_SQ20: no pre-2016 entries
+[ 117/993] DRY    ISMN_NAQU_NQKema: era5 1826->1096, twsa 37->20, labels 1405->930
+[ 118/993] SKIP   ISMN_REMEDHUS_Granja-g: no pre-2016 entries
+[ 119/993] DRY    ISMN_REMEDHUS_LasVictorias: era5 3653->3288, twsa 98->89, labels 3417->3288
+[ 120/993] SKIP   ISMN_REMEDHUS_LasBrozas: no pre-2016 entries
+[ 121/993] DRY    ISMN_REMEDHUS_LlanosdelaBoveda: era5 2922->2192, twsa 73->56, labels 2590->1860
+[ 122/993] DRY    ISMN_REMEDHUS_Zamarron: era5 2922->2192, twsa 73->56, labels 2558->1828
+[ 123/993] DRY    ISMN_REMEDHUS_LaCruzdeElias: era5 2557->1827, twsa 61->44, labels 2466->1736
+[ 124/993] SKIP   ISMN_REMEDHUS_LasArenas: no pre-2016 entries
+[ 125/993] DRY    ISMN_REMEDHUS_LasTresRayas: era5 3653->3288, twsa 98->89, labels 3477->3272
+[ 126/993] SKIP   ISMN_ROMPS_GolubinGlacier: no pre-2016 entries
+[ 127/993] DRY    ISMN_ROMPS_AbramovGlacier: era5 2922->2192, twsa 73->56, labels 2904->2174
+[ 128/993] SKIP   ISMN_RSMN_Bacles: no pre-2016 entries
+[ 129/993] DRY    ISMN_REMEDHUS_LasEritas: era5 4018->3288, twsa 106->89, labels 3704->3288
+[ 130/993] DRY    ISMN_ROMPS_Kokomeren: era5 2922->2192, twsa 73->56, labels 2918->2188
+[ 131/993] SKIP   ISMN_RSMN_Cotnari: no pre-2016 entries
+[ 132/993] SKIP   ISMN_RSMN_Darabani: no pre-2016 entries
+[ 133/993] DRY    ISMN_REMEDHUS_Carretoro: era5 2557->1827, twsa 61->44, labels 2537->1807
+[ 134/993] SKIP   ISMN_RSMN_Dumbraveni: no pre-2016 entries
+[ 135/993] DRY    ISMN_ROMPS_Baytik: era5 2557->2192, twsa 65->56, labels 2293->2012
+[ 136/993] DRY    ISMN_ROMPS_Maydantal: era5 4383->3653, twsa 106->89, labels 4111->3652
+[ 137/993] SKIP   ISMN_RSMN_Iasi: no pre-2016 entries
+[ 138/993] DRY    ISMN_REMEDHUS_Paredinas: era5 2557->2192, twsa 65->56, labels 2347->2134
+[ 139/993] SKIP   ISMN_RSMN_Calarasi: no pre-2016 entries
+[ 140/993] SKIP   ISMN_REMEDHUS_LasVacas: no pre-2016 entries
+[ 141/993] SKIP   ISMN_RSMN_Banloc: no pre-2016 entries
+[ 142/993] SKIP   ISMN_RSMN_Barlad: no pre-2016 entries
+[ 143/993] DRY    ISMN_SCAN_Alcalde: era5 1826->1096, twsa 37->20, labels 1607->877
+[ 144/993] SKIP   ISMN_RSMN_SatuMare: no pre-2016 entries
+[ 145/993] SKIP   ISMN_RSMN_RosioriideVede: no pre-2016 entries
+[ 146/993] SKIP   ISMN_RSMN_SannicolauMare: no pre-2016 entries
+[ 147/993] DRY    ISMN_SCAN_AdamsRanch#1: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 148/993] DRY    ISMN_ROMPS_Maidanak: era5 4383->3653, twsa 106->89, labels 4194->3652
+[ 149/993] DRY    ISMN_SCAN_Abrams: era5 3287->2557, twsa 85->68, labels 3094->2364
+[ 150/993] SKIP   ISMN_RSMN_Tecuci: no pre-2016 entries
+[ 151/993] SKIP   ISMN_RSMN_Alexandria: no pre-2016 entries
+[ 152/993] SKIP   ISMN_RSMN_Slatina: no pre-2016 entries
+[ 153/993] SKIP   ISMN_RSMN_Oradea: no pre-2016 entries
+[ 154/993] SKIP   ISMN_SCAN_AllenFarms: no pre-2016 entries
+[ 155/993] SKIP   ISMN_SCAN_AAMU-JTG: no pre-2016 entries
+[ 156/993] DRY    ISMN_SCAN_BlueCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 157/993] DRY    ISMN_SCAN_AlkaliMesa: era5 4383->3653, labels 4173->3652
+[ 158/993] SKIP   ISMN_SCAN_Ames: no pre-2016 entries
+[ 159/993] DRY    ISMN_SCAN_BodieHills: era5 4383->3653, twsa 106->89, labels 4082->3652
+[ 160/993] DRY    ISMN_SCAN_CPER: era5 2557->1827, twsa 61->44, labels 2425->1695
+[ 161/993] SKIP   ISMN_SCAN_Buckhorn: no pre-2016 entries
+[ 162/993] SKIP   ISMN_SCAN_AshValley: no pre-2016 entries
+[ 163/993] DRY    ISMN_SCAN_Charkiln: era5 4383->3653, labels 4202->3652
+[ 164/993] SKIP   ISMN_SCAN_CentraliaLake: no pre-2016 entries
+[ 165/993] SKIP   ISMN_SCAN_CaveValley: no pre-2016 entries
+[ 166/993] DRY    ISMN_SCAN_BuffaloJump: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 167/993] DRY    ISMN_SCAN_CacheJunction: era5 4018->3288, labels 3786->3056
+[ 168/993] SKIP   ISMN_SCAN_Cullman-NAHRC: no pre-2016 entries
+[ 169/993] DRY    ISMN_SCAN_ChickenRidge: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 170/993] SKIP   ISMN_SCAN_Bushland#1: no pre-2016 entries
+[ 171/993] SKIP   ISMN_SCAN_CarverFarm: no pre-2016 entries
+[ 172/993] DRY    ISMN_SCAN_ElsberryPMC: era5 3653->3288, labels 3430->3281
+[ 173/993] DRY    ISMN_SCAN_DoeRidge: era5 4383->3653, labels 4285->3555
+[ 174/993] SKIP   ISMN_SCAN_Crossroads: no pre-2016 entries
+[ 175/993] DRY    ISMN_SCAN_DeepSprings: era5 4383->3653, labels 4382->3652
+[ 176/993] DRY    ISMN_SCAN_Enterprise: era5 4018->3288, labels 3832->3102
+[ 177/993] DRY    ISMN_SCAN_CrescentLake#1: era5 4383->3653, labels 4382->3652
+[ 178/993] SKIP   ISMN_SCAN_EastviewFarm: no pre-2016 entries
+[ 179/993] DRY    ISMN_SCAN_Circleville: era5 3287->2557, twsa 85->68, labels 3244->2514
+[ 180/993] DRY    ISMN_SCAN_ConradAgRc: era5 2557->1827, twsa 61->44, labels 2465->1735
+[ 181/993] DRY    ISMN_SCAN_ErosDataCenter: era5 4383->3653, labels 4382->3652
+[ 182/993] DRY    ISMN_SCAN_Eastland: era5 3287->2557, twsa 85->68, labels 3103->2373
+[ 183/993] DRY    ISMN_SCAN_BraggFarm: era5 2192->1827, twsa 53->44, labels 1803->1600
+[ 184/993] DRY    ISMN_SCAN_Dexter: era5 2192->1827, twsa 53->44, labels 1886->1735
+[ 185/993] DRY    ISMN_SCAN_FortReno#1: era5 3287->2922, labels 2828->2657
+[ 186/993] SKIP   ISMN_SCAN_FrenchGulch: no pre-2016 entries
+[ 187/993] SKIP   ISMN_SCAN_Combate: no pre-2016 entries
+[ 188/993] DRY    ISMN_SCAN_Fortuna: era5 1826->1096, twsa 37->20, labels 1651->921
+[ 189/993] DRY    ISMN_SCAN_Ephraim: era5 3287->2557, labels 3148->2418
+[ 190/993] DRY    ISMN_SCAN_EagleLake: era5 2557->1827, twsa 61->44, labels 2354->1624
+[ 191/993] DRY    ISMN_SCAN_FortAssiniboine#1: era5 2191->1461, twsa 49->32, labels 2105->1375
+[ 192/993] DRY    ISMN_SCAN_GoodwinCkTimber: era5 4383->3653, labels 4130->3652
+[ 193/993] DRY    ISMN_SCAN_GrouseCreek: era5 4383->3653, labels 4382->3652
+[ 194/993] DRY    ISMN_SCAN_Grantsville: era5 2191->1461, labels 2175->1445
+[ 195/993] DRY    ISMN_SCAN_Geneva#1: era5 2191->1461, twsa 49->32, labels 2163->1433
+[ 196/993] DRY    ISMN_SCAN_HalsCanyon: era5 3287->2557, labels 2964->2234
+[ 197/993] DRY    ISMN_SCAN_Goshute: era5 3287->2557, labels 3071->2341
+[ 198/993] SKIP   ISMN_SCAN_Hodges: no pre-2016 entries
+[ 199/993] SKIP   ISMN_SCAN_JohnsonFarm: no pre-2016 entries
+[ 200/993] DRY    ISMN_SCAN_HarmsWay: era5 4018->3653, labels 3906->3652
+[ 201/993] DRY    ISMN_SCAN_GlacialRidge: era5 2922->2192, twsa 73->56, labels 2644->1914
+[ 202/993] DRY    ISMN_SCAN_Jordan: era5 4383->3653, labels 4382->3652
+[ 203/993] SKIP   ISMN_SCAN_IsbellFarms: no pre-2016 entries
+[ 204/993] SKIP   ISMN_SCAN_GreenRiver: no pre-2016 entries
+[ 205/993] DRY    ISMN_SCAN_JornadaExpRange: era5 2557->1827, labels 2425->1695
+[ 206/993] SKIP   ISMN_SCAN_HubbardBrook: no pre-2016 entries
+[ 207/993] SKIP   ISMN_SCAN_LTSP: no pre-2016 entries
+[ 208/993] SKIP   ISMN_SCAN_Levelland: no pre-2016 entries
+[ 209/993] SKIP   ISMN_SCAN_EvergladesARS: no pre-2016 entries
+[ 210/993] DRY    ISMN_SCAN_KyleCanyon: era5 4383->3653, labels 4382->3652
+[ 211/993] DRY    ISMN_SCAN_Holden: era5 4383->3653, labels 4382->3652
+[ 212/993] SKIP   ISMN_SCAN_KoptisFarms: no pre-2016 entries
+[ 213/993] DRY    ISMN_SCAN_JournaganRanch: era5 2557->1827, labels 2277->1547
+[ 214/993] DRY    ISMN_SCAN_LosLunasPMC: era5 3652->2922, labels 3334->2604
+[ 215/993] DRY    ISMN_SCAN_LovelockNNR: era5 2557->1827, labels 2452->1722
+[ 216/993] SKIP   ISMN_SCAN_LyeBrook: no pre-2016 entries
+[ 217/993] DRY    ISMN_SCAN_MahantangoCk: era5 1826->1096, labels 1733->1003
+[ 218/993] SKIP   ISMN_SCAN_Manderfield: no pre-2016 entries
+[ 219/993] DRY    ISMN_SCAN_Mandan#1: era5 4018->3653, labels 3875->3652
+[ 220/993] DRY    ISMN_SCAN_MammothCave: era5 2557->1827, twsa 61->44, labels 2405->1675
+[ 221/993] DRY    ISMN_SCAN_KnoxCity: era5 1826->1096, twsa 37->20, labels 1375->911
+[ 222/993] DRY    ISMN_SCAN_Moccasin: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 223/993] DRY    ISMN_SCAN_LovellSummit: era5 4383->3653, labels 4382->3652
+[ 224/993] DRY    ISMN_SCAN_Lind#1: era5 4383->3653, labels 4382->3652
+[ 225/993] DRY    ISMN_SCAN_Lehman: era5 2557->1827, twsa 61->44, labels 2336->1707
+[ 226/993] SKIP   ISMN_SCAN_MorrisFarms: no pre-2016 entries
+[ 227/993] DRY    ISMN_SCAN_Morgan: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 228/993] SKIP   ISMN_SCAN_Mayday: no pre-2016 entries
+[ 229/993] DRY    ISMN_SCAN_LittleRiver: era5 2922->2192, labels 2660->1930
+[ 230/993] SKIP   ISMN_SCAN_Mason#1: no pre-2016 entries
+[ 231/993] DRY    ISMN_SCAN_LittleRedFox: era5 4383->3653, labels 4382->3652
+[ 232/993] DRY    ISMN_SCAN_Nephi: era5 4383->3653, labels 4098->3368
+[ 233/993] SKIP   ISMN_SCAN_MtVernon: no pre-2016 entries
+[ 234/993] SKIP   ISMN_SCAN_MarbleCreek: no pre-2016 entries
+[ 235/993] DRY    ISMN_SCAN_MonoclineRidge: era5 2922->2192, labels 2560->2132
+[ 236/993] SKIP   ISMN_SCAN_Nunn#1: no pre-2016 entries
+[ 237/993] DRY    ISMN_SCAN_MaricaoForest: era5 1826->1096, twsa 37->20, labels 1534->804
+[ 238/993] SKIP   ISMN_SCAN_Nacogdoches: no pre-2016 entries
+[ 239/993] DRY    ISMN_SCAN_Onward: era5 4018->3653, twsa 98->89, labels 3756->3652
+[ 240/993] DRY    ISMN_SCAN_MountainHome: era5 4018->3288, twsa 106->89, labels 3979->3249
+[ 241/993] DRY    ISMN_SCAN_NorthIssaquena: era5 2557->2192, labels 2054->1950
+[ 242/993] DRY    ISMN_SCAN_Panguitch: era5 3287->2557, twsa 85->68, labels 3071->2341
+[ 243/993] SKIP   ISMN_SCAN_Perthshire: no pre-2016 entries
+[ 244/993] DRY    ISMN_SCAN_MccrackenMesa: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 245/993] DRY    ISMN_SCAN_PerdidoRivFarms: era5 2557->1827, twsa 61->44, labels 2357->1627
+[ 246/993] DRY    ISMN_SCAN_McAllisterFarm: era5 4018->3653, twsa 98->89, labels 3944->3652
+[ 247/993] DRY    ISMN_SCAN_NPiedmontArec: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 248/993] DRY    ISMN_SCAN_Phillipsburg: era5 4383->3653, labels 4382->3652
+[ 249/993] SKIP   ISMN_SCAN_ReynoldsHomestead: no pre-2016 entries
+[ 250/993] DRY    ISMN_SCAN_ParkValley: era5 3287->2557, twsa 85->68, labels 3120->2390
+[ 251/993] SKIP   ISMN_SCAN_PowellGardens: no pre-2016 entries
+[ 252/993] SKIP   ISMN_SCAN_PineNut: no pre-2016 entries
+[ 253/993] SKIP   ISMN_SCAN_PeeDee: no pre-2016 entries
+[ 254/993] SKIP   ISMN_SCAN_ReeseCenter: no pre-2016 entries
+[ 255/993] SKIP   ISMN_SCAN_OrchardRangeSite: no pre-2016 entries
+[ 256/993] SKIP   ISMN_SCAN_RockSpringsPa: no pre-2016 entries
+[ 257/993] DRY    ISMN_SCAN_Princeton#1: era5 1826->1096, twsa 37->20, labels 1453->813
+[ 258/993] DRY    ISMN_SCAN_Price: era5 4383->3653, twsa 106->89, labels 4363->3633
+[ 259/993] DRY    ISMN_SCAN_Milford: era5 4383->3653, twsa 106->89, labels 4268->3538
+[ 260/993] DRY    ISMN_SCAN_PowderMill: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 261/993] DRY    ISMN_SCAN_PrairieView#1: era5 2922->2557, twsa 77->68, labels 2490->2317
+[ 262/993] DRY    ISMN_SCAN_RogersFarm#1: era5 2922->2192, twsa 73->56, labels 2578->1848
+[ 263/993] SKIP   ISMN_SCAN_Sevilleta: no pre-2016 entries
+[ 264/993] SKIP   ISMN_SCAN_Spickard: no pre-2016 entries
+[ 265/993] DRY    ISMN_SCAN_SanAngelo: era5 3287->2557, twsa 85->68, labels 2738->2275
+[ 266/993] DRY    ISMN_SCAN_SilverCity: era5 2922->2192, twsa 73->56, labels 2763->2033
+[ 267/993] SKIP   ISMN_SCAN_Scott: no pre-2016 entries
+[ 268/993] DRY    ISMN_SCAN_Stephenville: era5 2557->1827, twsa 61->44, labels 2080->1614
+[ 269/993] DRY    ISMN_SCAN_Shenandoah: era5 1826->1096, labels 1570->840
+[ 270/993] SKIP   ISMN_SCAN_SinkinForest: no pre-2016 entries
+[ 271/993] SKIP   ISMN_SCAN_Selma: no pre-2016 entries
+[ 272/993] DRY    ISMN_SCAN_ShagbarkHills: era5 2557->1827, twsa 61->44, labels 2284->1554
+[ 273/993] DRY    ISMN_SCAN_SunleafNursery: era5 2557->1827, twsa 61->44, labels 2363->1633
+[ 274/993] SKIP   ISMN_SCAN_StanleyFarm: no pre-2016 entries
+[ 275/993] DRY    ISMN_SCAN_SandyRidge: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 276/993] DRY    ISMN_SCAN_SellersLake#1: era5 3287->2557, twsa 85->68, labels 2977->2247
+[ 277/993] DRY    ISMN_SCAN_RiverRoadFarms: era5 2191->1461, twsa 49->32, labels 1807->1335
+[ 278/993] SKIP   ISMN_SCAN_Sidney: no pre-2016 entries
+[ 279/993] SKIP   ISMN_SCAN_Torrington#1: no pre-2016 entries
+[ 280/993] DRY    ISMN_SCAN_TroughSprings: era5 1826->1096, twsa 37->20, labels 1677->947
+[ 281/993] SKIP   ISMN_SCAN_TncFortBayou: no pre-2016 entries
+[ 282/993] DRY    ISMN_SCAN_Starkville: era5 2557->1827, twsa 61->44, labels 2465->1735
+[ 283/993] DRY    ISMN_SCAN_TableMountain: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 284/993] DRY    ISMN_SCAN_Stubblefield: era5 2191->1461, twsa 49->32, labels 1661->1235
+[ 285/993] SKIP   ISMN_SCAN_UapbCampus-PB: no pre-2016 entries
+[ 286/993] DRY    ISMN_SCAN_TidewaterArec: era5 2191->1461, twsa 49->32, labels 1825->1266
+[ 287/993] DRY    ISMN_SCAN_TuleValley: era5 3652->2922, twsa 97->80, labels 3623->2893
+[ 288/993] DRY    ISMN_SCAN_SplitMountain: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 289/993] SKIP   ISMN_SCAN_UapbPointRemove: no pre-2016 entries
+[ 290/993] SKIP   ISMN_SCAN_UapbDewitt: no pre-2016 entries
+[ 291/993] DRY    ISMN_SCAN_UWPlatteville: era5 3652->2922, twsa 97->80, labels 3585->2855
+[ 292/993] DRY    ISMN_SCAN_Violett: era5 2922->2192, twsa 73->56, labels 2571->1841
+[ 293/993] SKIP   ISMN_SCAN_TwinPinesConservationArea: no pre-2016 entries
+[ 294/993] DRY    ISMN_SCAN_Uvalde: era5 2557->1827, twsa 61->44, labels 2068->1606
+[ 295/993] DRY    ISMN_SCAN_Vernon: era5 2557->2192, twsa 65->56, labels 2116->1946
+[ 296/993] SKIP   ISMN_SCAN_Uapb-Earle: no pre-2016 entries
+[ 297/993] DRY    ISMN_SCAN_Wabeno#1: era5 3287->2557, twsa 85->68, labels 2923->2193
+[ 298/993] SKIP   ISMN_SCAN_Vallecitos: no pre-2016 entries
+[ 299/993] DRY    ISMN_SCAN_Tunica: era5 2192->1827, twsa 53->44, labels 1710->1611
+[ 300/993] DRY    ISMN_SCAN_SudduthFarms: era5 3653->3288, twsa 98->89, labels 3422->3205
+[ 301/993] SKIP   ISMN_SCAN_Watkinsville#1: no pre-2016 entries
+[ 302/993] DRY    ISMN_SCAN_WestSummit: era5 3652->2922, twsa 97->80, labels 3437->2707
+[ 303/993] SKIP   ISMN_SMOSMANIA_Barnas: no pre-2016 entries
+[ 304/993] DRY    ISMN_SCAN_Vermillion: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 305/993] DRY    ISMN_SCAN_WalnutGulch#1: era5 3653->3288, twsa 98->89, labels 3256->3094
+[ 306/993] DRY    ISMN_SD_DEM_Demokeya: era5 2557->1827, twsa 61->44, labels 2347->1777
+[ 307/993] SKIP   ISMN_SCAN_WillowWells: no pre-2016 entries
+[ 308/993] DRY    ISMN_SCAN_YoumansFarm: era5 3287->2557, twsa 85->68, labels 3058->2497
+[ 309/993] SKIP   ISMN_SMOSMANIA_Berzeme: no pre-2016 entries
+[ 310/993] SKIP   ISMN_SCAN_Wakulla#1: no pre-2016 entries
+[ 311/993] SKIP   ISMN_SMOSMANIA_LaGrandCombe: no pre-2016 entries
+[ 312/993] DRY    ISMN_SMOSMANIA_CabrieresdAvignon: era5 3652->2922, twsa 97->80, labels 3467->2737
+[ 313/993] DRY    ISMN_SMOSMANIA_Lahas: era5 3652->2922, twsa 97->80, labels 3414->2684
+[ 314/993] SKIP   ISMN_SMOSMANIA_CreondArmagnac: no pre-2016 entries
+[ 315/993] SKIP   ISMN_SMOSMANIA_Condom: no pre-2016 entries
+[ 316/993] SKIP   ISMN_SMOSMANIA_Mazan-Abbaye: no pre-2016 entries
+[ 317/993] DRY    ISMN_SCAN_Wtars: era5 1826->1096, labels 1630->900
+[ 318/993] SKIP   ISMN_SMOSMANIA_Mejannes-le-Clap: no pre-2016 entries
+[ 319/993] SKIP   ISMN_SMOSMANIA_LezignanCorbieres: no pre-2016 entries
+[ 320/993] DRY    ISMN_SMOSMANIA_Montaut: era5 4018->3288, twsa 106->89, labels 4018->3288
+[ 321/993] DRY    ISMN_SMOSMANIA_Mouthoumet: era5 4018->3288, twsa 106->89, labels 4018->3288
+[ 322/993] SKIP   ISMN_SNOTEL_Aniak: no pre-2016 entries
+[ 323/993] SKIP   ISMN_SMOSMANIA_Pezenas: no pre-2016 entries
+[ 324/993] DRY    ISMN_SNOTEL_AguaCanyon: era5 2557->1827, twsa 61->44, labels 2465->1735
+[ 325/993] SKIP   ISMN_SMOSMANIA_Sabres: no pre-2016 entries
+[ 326/993] DRY    ISMN_SMOSMANIA_Savenes: era5 2557->1827, twsa 61->44, labels 1936->1540
+[ 327/993] DRY    ISMN_SNOTEL_AtlantaSummit: era5 4018->3288, labels 3849->3119
+[ 328/993] SKIP   ISMN_SMOSMANIA_Narbonne: no pre-2016 entries
+[ 329/993] DRY    ISMN_SNOTEL_BakerButteSmt: era5 3652->2922, twsa 97->80, labels 3317->2744
+[ 330/993] SKIP   ISMN_SNOTEL_Atwater: no pre-2016 entries
+[ 331/993] SKIP   ISMN_SNOTEL_AmericanCreek: no pre-2016 entries
+[ 332/993] SKIP   ISMN_SMOSMANIA_SaintFelixdeLauragais: no pre-2016 entries
+[ 333/993] DRY    ISMN_SNOTEL_AnchorRiverDivide: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 334/993] SKIP   ISMN_SNOTEL_ArapahoRidge: no pre-2016 entries
+[ 335/993] DRY    ISMN_SMOSMANIA_Villevielle: era5 3652->2922, twsa 97->80, labels 3467->2737
+[ 336/993] SKIP   ISMN_SNOTEL_BearCanyon: no pre-2016 entries
+[ 337/993] SKIP   ISMN_SMOSMANIA_Urgons: no pre-2016 entries
+[ 338/993] DRY    ISMN_SMOSMANIA_PeyrusseGrande: era5 4018->3288, twsa 106->89, labels 4018->3288
+[ 339/993] DRY    ISMN_SNOTEL_BearRiverRS: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 340/993] SKIP   ISMN_SNOTEL_BearCreek: no pre-2016 entries
+[ 341/993] DRY    ISMN_SMOSMANIA_Prades-le-Lez: era5 1826->1096, twsa 37->20, labels 1799->1069
+[ 342/993] DRY    ISMN_SNOTEL_BarM: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 343/993] SKIP   ISMN_SNOTEL_BakerButte: no pre-2016 entries
+[ 344/993] DRY    ISMN_SNOTEL_BigCreekSum: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 345/993] DRY    ISMN_SNOTEL_BannerSummit: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 346/993] DRY    ISMN_SNOTEL_BigSandyOpening: era5 2922->2192, labels 2780->2050
+[ 347/993] DRY    ISMN_SNOTEL_BigBend: era5 4383->3653, labels 4382->3652
+[ 348/993] SKIP   ISMN_SNOTEL_BerthoudSummit: no pre-2016 entries
+[ 349/993] DRY    ISMN_SNOTEL_BlackhallMtn: era5 4383->3653, labels 4382->3652
+[ 350/993] DRY    ISMN_SNOTEL_BenLomondTrail: era5 2557->1827, twsa 61->44, labels 2407->1677
+[ 351/993] SKIP   ISMN_SNOTEL_BlazedAlder: no pre-2016 entries
+[ 352/993] DRY    ISMN_SNOTEL_BlacksForkJct: era5 4383->3653, labels 4382->3652
+[ 353/993] DRY    ISMN_SNOTEL_BirdCreek: era5 2557->1827, labels 2536->1806
+[ 354/993] DRY    ISMN_SNOTEL_BlackFlat-U.M.Ck: era5 4383->3653, labels 4382->3652
+[ 355/993] DRY    ISMN_SNOTEL_BeaverDivide: era5 4383->3653, twsa 106->89, labels 4135->3652
+[ 356/993] DRY    ISMN_SNOTEL_BenLomondPeak: era5 2557->1827, twsa 61->44, labels 2332->1602
+[ 357/993] DRY    ISMN_SNOTEL_BigFlat: era5 4383->3653, labels 4382->3652
+[ 358/993] DRY    ISMN_SNOTEL_BerryCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 359/993] DRY    ISMN_SNOTEL_BrianHead: era5 4383->3653, labels 4382->3652
+[ 360/993] DRY    ISMN_SNOTEL_BevansCabin: era5 3287->2557, twsa 85->68, labels 3194->2464
+[ 361/993] DRY    ISMN_SNOTEL_BeaverDams: era5 4383->3653, twsa 106->89, labels 4109->3652
+[ 362/993] DRY    ISMN_SNOTEL_BigMeadow: era5 4383->3653, labels 4050->3320
+[ 363/993] SKIP   ISMN_SNOTEL_BobsHollow: no pre-2016 entries
+[ 364/993] DRY    ISMN_SNOTEL_BostetterR.S.: era5 4018->3653, labels 3799->3652
+[ 365/993] DRY    ISMN_SNOTEL_BogusBasin: era5 4383->3653, labels 4382->3652
+[ 366/993] DRY    ISMN_SNOTEL_BristleconeTrail: era5 4383->3653, labels 4382->3652
+[ 367/993] DRY    ISMN_SNOTEL_BlueLakes: era5 4383->3653, labels 4382->3652
+[ 368/993] DRY    ISMN_SNOTEL_Brighton: era5 4018->3653, twsa 98->89, labels 3817->3652
+[ 369/993] DRY    ISMN_SNOTEL_BrownDuck: era5 2557->1827, labels 2187->1721
+[ 370/993] SKIP   ISMN_SNOTEL_Bourne: no pre-2016 entries
+[ 371/993] SKIP   ISMN_SNOTEL_BrownTop: no pre-2016 entries
+[ 372/993] SKIP   ISMN_SNOTEL_BrooklynLake: no pre-2016 entries
+[ 373/993] SKIP   ISMN_SNOTEL_BoxCreek: no pre-2016 entries
+[ 374/993] DRY    ISMN_SNOTEL_BuckskinLower: era5 4383->3653, labels 4168->3438
+[ 375/993] SKIP   ISMN_SNOTEL_Butte: no pre-2016 entries
+[ 376/993] SKIP   ISMN_SNOTEL_BurroMountain: no pre-2016 entries
+[ 377/993] DRY    ISMN_SNOTEL_BuckFlat: era5 4383->3653, labels 4382->3652
+[ 378/993] DRY    ISMN_SNOTEL_BugLake: era5 4383->3653, labels 4382->3652
+[ 379/993] DRY    ISMN_SNOTEL_BuckskinJoe: era5 2922->2192, labels 2828->2098
+[ 380/993] DRY    ISMN_SNOTEL_BuckPasture: era5 4383->3653, labels 4247->3517
+[ 381/993] SKIP   ISMN_SNOTEL_Buckinghorse: no pre-2016 entries
+[ 382/993] SKIP   ISMN_SNOTEL_BurtsMillerRanch: no pre-2016 entries
+[ 383/993] DRY    ISMN_SNOTEL_CarsonPass: era5 3652->2922, twsa 97->80, labels 3559->2829
+[ 384/993] SKIP   ISMN_SNOTEL_BurntMountain: no pre-2016 entries
+[ 385/993] SKIP   ISMN_SNOTEL_Baldy: no pre-2016 entries
+[ 386/993] DRY    ISMN_SNOTEL_CascadeMountain: era5 2922->2192, labels 2602->1872
+[ 387/993] DRY    ISMN_SNOTEL_ChocolateGulch: era5 2557->1827, twsa 61->44, labels 2392->1662
+[ 388/993] DRY    ISMN_SNOTEL_Cascade#2: era5 2922->2192, labels 2722->1992
+[ 389/993] DRY    ISMN_SNOTEL_CinnabarPark: era5 2557->1827, labels 2469->1739
+[ 390/993] DRY    ISMN_SNOTEL_ClaytonSprings: era5 3287->2557, labels 2943->2487
+[ 391/993] DRY    ISMN_SNOTEL_Chepeta: era5 4383->3653, labels 4382->3652
+[ 392/993] SKIP   ISMN_SNOTEL_ClackamasLake: no pre-2016 entries
+[ 393/993] SKIP   ISMN_SNOTEL_Chisana: no pre-2016 entries
+[ 394/993] SKIP   ISMN_SNOTEL_CampJackson: no pre-2016 entries
+[ 395/993] DRY    ISMN_SNOTEL_BuckboardFlat: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 396/993] SKIP   ISMN_SNOTEL_CastleValley: no pre-2016 entries
+[ 397/993] DRY    ISMN_SNOTEL_ClearCreek#1: era5 4383->3653, labels 4143->3652
+[ 398/993] DRY    ISMN_SNOTEL_Chalender: era5 3652->2922, labels 3454->2724
+[ 399/993] DRY    ISMN_SNOTEL_ChalkCreek#1: era5 4383->3653, labels 4382->3652
+[ 400/993] DRY    ISMN_SNOTEL_CrabCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 401/993] DRY    ISMN_SNOTEL_BoxSprings: era5 2557->1827, twsa 61->44, labels 2298->1568
+[ 402/993] DRY    ISMN_SNOTEL_Coldfoot: era5 4383->3653, labels 4382->3652
+[ 403/993] SKIP   ISMN_SNOTEL_CorralCanyon: no pre-2016 entries
+[ 404/993] DRY    ISMN_SNOTEL_ClearCreek#2: era5 4383->3653, labels 4382->3652
+[ 405/993] SKIP   ISMN_SNOTEL_CouchSummit: no pre-2016 entries
+[ 406/993] DRY    ISMN_SNOTEL_ChalkCreek#2: era5 3652->2922, labels 3414->2684
+[ 407/993] DRY    ISMN_SNOTEL_CraterMeadows: era5 1826->1096, twsa 37->20, labels 1586->856
+[ 408/993] DRY    ISMN_SNOTEL_CurrantCreek: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 409/993] DRY    ISMN_SNOTEL_CssLab: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 410/993] DRY    ISMN_SNOTEL_CaveMountain: era5 4383->3653, labels 4382->3652
+[ 411/993] SKIP   ISMN_SNOTEL_Culebra#2: no pre-2016 entries
+[ 412/993] DRY    ISMN_SNOTEL_DonkeyReservoir: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 413/993] DRY    ISMN_SNOTEL_DillsCamp: era5 4018->3653, twsa 98->89, labels 3779->3652
+[ 414/993] DRY    ISMN_SNOTEL_DorseyBasin: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 415/993] DRY    ISMN_SNOTEL_DisasterPeak: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 416/993] DRY    ISMN_SNOTEL_EFBlacksForkGS: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 417/993] DRY    ISMN_SNOTEL_DryBreadPond: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 418/993] DRY    ISMN_SNOTEL_DryFork: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 419/993] SKIP   ISMN_SNOTEL_DryLake: no pre-2016 entries
+[ 420/993] DRY    ISMN_SNOTEL_Daniels-Strawberry: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 421/993] SKIP   ISMN_SNOTEL_EagleSummit: no pre-2016 entries
+[ 422/993] SKIP   ISMN_SNOTEL_CrowCreek: no pre-2016 entries
+[ 423/993] DRY    ISMN_SNOTEL_DryCreek: era5 3287->2557, twsa 85->68, labels 3185->2455
+[ 424/993] DRY    ISMN_SNOTEL_ElkCabin: era5 2192->1827, twsa 53->44, labels 1899->1806
+[ 425/993] DRY    ISMN_SNOTEL_EastWillowCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 426/993] SKIP   ISMN_SNOTEL_EchoPeak: no pre-2016 entries
+[ 427/993] DRY    ISMN_SNOTEL_DrawCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 428/993] DRY    ISMN_SNOTEL_Farmington: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 429/993] DRY    ISMN_SNOTEL_ExitGlacier: era5 4018->3653, twsa 98->89, labels 3737->3652
+[ 430/993] DRY    ISMN_SNOTEL_EastRimDivide: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 431/993] SKIP   ISMN_SNOTEL_Fifteenmile: no pre-2016 entries
+[ 432/993] DRY    ISMN_SNOTEL_FarmingtonLower: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 433/993] SKIP   ISMN_SNOTEL_FallenLeaf: no pre-2016 entries
+[ 434/993] SKIP   ISMN_SNOTEL_FieldingLake: no pre-2016 entries
+[ 435/993] DRY    ISMN_SNOTEL_FranklinBasin: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 436/993] DRY    ISMN_SNOTEL_FarnsworthLake: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 437/993] SKIP   ISMN_SNOTEL_FredonyerPeak: no pre-2016 entries
+[ 438/993] DRY    ISMN_SNOTEL_FivePointsLake: era5 3287->2557, twsa 85->68, labels 3091->2361
+[ 439/993] DRY    ISMN_SNOTEL_EbbettsPass: era5 3287->2557, twsa 85->68, labels 3149->2419
+[ 440/993] DRY    ISMN_SNOTEL_FryCanyon: era5 4383->3653, twsa 106->89, labels 4101->3652
+[ 441/993] SKIP   ISMN_SNOTEL_GalenaAK: no pre-2016 entries
+[ 442/993] DRY    ISMN_SNOTEL_GBRCHQ: era5 4383->3653, twsa 106->89, labels 4164->3652
+[ 443/993] DRY    ISMN_SNOTEL_FishLakeUtah: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 444/993] SKIP   ISMN_SNOTEL_GallegosPeak: no pre-2016 entries
+[ 445/993] DRY    ISMN_SNOTEL_GBRCMeadows: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 446/993] SKIP   ISMN_SNOTEL_GoldBasin: no pre-2016 entries
+[ 447/993] DRY    ISMN_SNOTEL_FremontPass: era5 4383->3653, twsa 106->89, labels 4175->3445
+[ 448/993] DRY    ISMN_SNOTEL_FawnCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 449/993] DRY    ISMN_SNOTEL_GardenCitySummit: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 450/993] DRY    ISMN_SNOTEL_ForestdaleCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 451/993] SKIP   ISMN_SNOTEL_GaritaPeak: no pre-2016 entries
+[ 452/993] DRY    ISMN_SNOTEL_GalenaSummit: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 453/993] DRY    ISMN_SNOTEL_Giveout: era5 1826->1096, twsa 37->20, labels 1634->904
+[ 454/993] DRY    ISMN_SNOTEL_GraniteCrk: era5 2557->1827, twsa 61->44, labels 2317->1587
+[ 455/993] DRY    ISMN_SNOTEL_GardnerPeak: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 456/993] DRY    ISMN_SNOTEL_GobblersKnob: era5 3287->2557, twsa 85->68, labels 3073->2343
+[ 457/993] DRY    ISMN_SNOTEL_GeorgeCreek: era5 3287->2557, twsa 85->68, labels 3128->2398
+[ 458/993] DRY    ISMN_SNOTEL_GreenMountain: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 459/993] SKIP   ISMN_SNOTEL_GulkanaRiver: no pre-2016 entries
+[ 460/993] DRY    ISMN_SNOTEL_GooseberryRS: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 461/993] SKIP   ISMN_SNOTEL_GoldAxeCamp: no pre-2016 entries
+[ 462/993] SKIP   ISMN_SNOTEL_HappyJack: no pre-2016 entries
+[ 463/993] DRY    ISMN_SNOTEL_GranitePeak: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 464/993] DRY    ISMN_SNOTEL_Golconda: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 465/993] DRY    ISMN_SNOTEL_GooseberryRSUp: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 466/993] DRY    ISMN_SNOTEL_HeavenlyValley: era5 4383->3653, twsa 106->89, labels 3917->3447
+[ 467/993] SKIP   ISMN_SNOTEL_HarrisFlat: no pre-2016 entries
+[ 468/993] DRY    ISMN_SNOTEL_GrizzlyPeak: era5 2557->2192, twsa 65->56, labels 2177->2015
+[ 469/993] DRY    ISMN_SNOTEL_Hardscrabble: era5 4018->3288, twsa 106->89, labels 3810->3080
+[ 470/993] DRY    ISMN_SNOTEL_GraniteCreek: era5 4018->3653, twsa 98->89, labels 3752->3652
+[ 471/993] DRY    ISMN_SNOTEL_GrandTarghee: era5 4383->3653, twsa 106->89, labels 4110->3641
+[ 472/993] DRY    ISMN_SNOTEL_HaydenFork: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 473/993] DRY    ISMN_SNOTEL_HiltsCreek: era5 2191->1461, twsa 49->32, labels 2049->1319
+[ 474/993] DRY    ISMN_SNOTEL_HagansMeadow: era5 4018->3288, twsa 106->89, labels 3653->2923
+[ 475/993] SKIP   ISMN_SNOTEL_GutzPeak: no pre-2016 entries
+[ 476/993] DRY    ISMN_SNOTEL_HobbleCreek: era5 3287->2557, twsa 85->68, labels 3286->2556
+[ 477/993] SKIP   ISMN_SNOTEL_HighRidge: no pre-2016 entries
+[ 478/993] DRY    ISMN_SNOTEL_Hewinta: era5 4383->3653, twsa 106->89, labels 4312->3582
+[ 479/993] SKIP   ISMN_SNOTEL_HollandMeadows: no pre-2016 entries
+[ 480/993] DRY    ISMN_SNOTEL_HickersonPark: era5 2557->1827, twsa 61->44, labels 2465->1735
+[ 481/993] DRY    ISMN_SNOTEL_Hole-in-Rock: era5 3287->2557, twsa 85->68, labels 3123->2393
+[ 482/993] DRY    ISMN_SNOTEL_ImnaviatCreek: era5 3652->2922, twsa 97->80, labels 3528->2798
+[ 483/993] SKIP   ISMN_SNOTEL_Hole-in-Mountain: no pre-2016 entries
+[ 484/993] DRY    ISMN_SNOTEL_Hopewell: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 485/993] DRY    ISMN_SNOTEL_JacksPeak: era5 3652->2922, twsa 97->80, labels 3542->2812
+[ 486/993] SKIP   ISMN_SNOTEL_JacksonPeak: no pre-2016 entries
+[ 487/993] DRY    ISMN_SNOTEL_HawleyLake: era5 3287->2922, twsa 89->80, labels 2785->2680
+[ 488/993] SKIP   ISMN_SNOTEL_JackWadeJct: no pre-2016 entries
+[ 489/993] SKIP   ISMN_SNOTEL_HighLonesome: no pre-2016 entries
+[ 490/993] DRY    ISMN_SNOTEL_IndependenceCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 491/993] DRY    ISMN_SNOTEL_IndependenceCamp: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 492/993] DRY    ISMN_SNOTEL_HoosierPass: era5 3652->2922, twsa 97->80, labels 3334->2604
+[ 493/993] DRY    ISMN_SNOTEL_HuntingtonHorse: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 494/993] SKIP   ISMN_SNOTEL_JonesPass: no pre-2016 entries
+[ 495/993] SKIP   ISMN_SNOTEL_IslandPark: no pre-2016 entries
+[ 496/993] DRY    ISMN_SNOTEL_HorseMeadow: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 497/993] DRY    ISMN_SNOTEL_HorseRidge: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 498/993] DRY    ISMN_SNOTEL_IndependenceLake: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 499/993] SKIP   ISMN_SNOTEL_KelleyR.S.: no pre-2016 entries
+[ 500/993] DRY    ISMN_SNOTEL_KenaiMoosePens: era5 4383->3653, twsa 106->89, labels 4313->3583
+[ 501/993] DRY    ISMN_SNOTEL_JackCreekUpper: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 502/993] DRY    ISMN_SNOTEL_JonesCorral: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 503/993] DRY    ISMN_SNOTEL_JackwhackerGulch: era5 2922->2192, twsa 73->56, labels 2917->2187
+[ 504/993] DRY    ISMN_SNOTEL_KellyStation: era5 3652->2922, twsa 97->80, labels 3511->2781
+[ 505/993] DRY    ISMN_SNOTEL_Lakefork#1: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 506/993] SKIP   ISMN_SNOTEL_LakeforkBasin: no pre-2016 entries
+[ 507/993] SKIP   ISMN_SNOTEL_KimberlyMine: no pre-2016 entries
+[ 508/993] DRY    ISMN_SNOTEL_KlondikeNarrows: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 509/993] DRY    ISMN_SNOTEL_KilfoilCreek: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 510/993] DRY    ISMN_SNOTEL_KingsCabin: era5 3652->2922, twsa 97->80, labels 3474->2744
+[ 511/993] DRY    ISMN_SNOTEL_Kalamazoo: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 512/993] DRY    ISMN_SNOTEL_LasalMountain: era5 2922->2192, twsa 73->56, labels 2720->1990
+[ 513/993] DRY    ISMN_SNOTEL_LasalMountain-Lower: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 514/993] DRY    ISMN_SNOTEL_LapreleCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 515/993] SKIP   ISMN_SNOTEL_LarsenCreek: no pre-2016 entries
+[ 516/993] DRY    ISMN_SNOTEL_LewisLakeDivide: era5 2922->2192, twsa 73->56, labels 2778->2048
+[ 517/993] SKIP   ISMN_SNOTEL_LamoilleUpper: no pre-2016 entries
+[ 518/993] SKIP   ISMN_SNOTEL_LightningRidge: no pre-2016 entries
+[ 519/993] SKIP   ISMN_SNOTEL_LamanceCreek: no pre-2016 entries
+[ 520/993] SKIP   ISMN_SNOTEL_LeavittLake: no pre-2016 entries
+[ 521/993] DRY    ISMN_SNOTEL_LilyLake: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 522/993] DRY    ISMN_SNOTEL_LeavittMeadows: era5 2922->2192, twsa 73->56, labels 2649->1919
+[ 523/993] DRY    ISMN_SNOTEL_LaurelDraw: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 524/993] SKIP   ISMN_SNOTEL_LilyPond: no pre-2016 entries
+[ 525/993] DRY    ISMN_SNOTEL_LittleBear: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 526/993] DRY    ISMN_SNOTEL_LeeCanyon: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 527/993] DRY    ISMN_SNOTEL_Kolob: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 528/993] DRY    ISMN_SNOTEL_LittleGrassy: era5 4383->3653, twsa 106->89, labels 4131->3652
+[ 529/993] DRY    ISMN_SNOTEL_LongValley: era5 1826->1096, twsa 37->20, labels 1546->816
+[ 530/993] DRY    ISMN_SNOTEL_LittleChenaRidge: era5 2191->1461, twsa 49->32, labels 2112->1382
+[ 531/993] DRY    ISMN_SNOTEL_LizardHeadPass: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 532/993] DRY    ISMN_SNOTEL_LongFlat: era5 2557->1827, twsa 61->44, labels 2046->1589
+[ 533/993] DRY    ISMN_SNOTEL_LittleValley: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 534/993] DRY    ISMN_SNOTEL_LewisPeak: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 535/993] DRY    ISMN_SNOTEL_LoneCone: era5 3287->2557, twsa 85->68, labels 3079->2349
+[ 536/993] DRY    ISMN_SNOTEL_LongValleyJct: era5 4383->3653, twsa 106->89, labels 4118->3652
+[ 537/993] DRY    ISMN_SNOTEL_LobdellLake: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 538/993] DRY    ISMN_SNOTEL_Lamoille#3: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 539/993] SKIP   ISMN_SNOTEL_McGrath: no pre-2016 entries
+[ 540/993] DRY    ISMN_SNOTEL_Lookout: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 541/993] DRY    ISMN_SNOTEL_MagicMountain: era5 2557->1827, twsa 61->44, labels 2427->1697
+[ 542/993] SKIP   ISMN_SNOTEL_LostDog: no pre-2016 entries
+[ 543/993] DRY    ISMN_SNOTEL_LouisMeadow: era5 4018->3288, twsa 106->89, labels 3687->2957
+[ 544/993] SKIP   ISMN_SNOTEL_MicaCreek: no pre-2016 entries
+[ 545/993] DRY    ISMN_SNOTEL_Mammoth-Cottonwood: era5 2922->2192, twsa 73->56, labels 2361->1903
+[ 546/993] DRY    ISMN_SNOTEL_LongDrawResv: era5 2557->1827, twsa 61->44, labels 2203->1473
+[ 547/993] DRY    ISMN_SNOTEL_LittleSnakeRiver: era5 2922->2192, twsa 73->56, labels 2467->1991
+[ 548/993] SKIP   ISMN_SNOTEL_MayCreek: no pre-2016 entries
+[ 549/993] DRY    ISMN_SNOTEL_LostCreekResv: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 550/993] DRY    ISMN_SNOTEL_LonesomeBeaver: era5 4383->3653, twsa 106->89, labels 4094->3652
+[ 551/993] DRY    ISMN_SNOTEL_McneilRiverSGS: era5 2191->1461, twsa 49->32, labels 1948->1218
+[ 552/993] DRY    ISMN_SNOTEL_LookoutPeak: era5 2922->2192, twsa 73->56, labels 2635->1905
+[ 553/993] DRY    ISMN_SNOTEL_MiningFork: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 554/993] SKIP   ISMN_SNOTEL_MerchantValley: no pre-2016 entries
+[ 555/993] SKIP   ISMN_SNOTEL_MooreCreekBridge: no pre-2016 entries
+[ 556/993] DRY    ISMN_SNOTEL_MiddleForkCamp: era5 2922->2192, twsa 73->56, labels 2744->2014
+[ 557/993] DRY    ISMN_SNOTEL_Mill-DNorth: era5 3287->2557, twsa 85->68, labels 3009->2279
+[ 558/993] DRY    ISMN_SNOTEL_MedBow: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 559/993] SKIP   ISMN_SNOTEL_MichiganCreek: no pre-2016 entries
+[ 560/993] DRY    ISMN_SNOTEL_MarletteLake: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 561/993] SKIP   ISMN_SNOTEL_MosesMtn: no pre-2016 entries
+[ 562/993] DRY    ISMN_SNOTEL_MudFlat: era5 1826->1096, twsa 37->20, labels 1588->858
+[ 563/993] DRY    ISMN_SNOTEL_MonumentCreek: era5 2191->1461, twsa 49->32, labels 2112->1382
+[ 564/993] DRY    ISMN_SNOTEL_Mt.Ryan: era5 2191->1461, twsa 49->32, labels 2112->1382
+[ 565/993] DRY    ISMN_SNOTEL_MtBaldy: era5 3652->2922, twsa 97->80, labels 3527->2797
+[ 566/993] SKIP   ISMN_SNOTEL_MosquitoRidge: no pre-2016 entries
+[ 567/993] DRY    ISMN_SNOTEL_MidwayValley: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 568/993] DRY    ISMN_SNOTEL_MoscowMountain: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 569/993] DRY    ISMN_SNOTEL_MormonMountain: era5 3287->2557, twsa 85->68, labels 3203->2473
+[ 570/993] DRY    ISMN_SNOTEL_MormonMtnSummit: era5 4018->3653, twsa 98->89, labels 3601->3368
+[ 571/993] DRY    ISMN_SNOTEL_MonitorPass: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 572/993] SKIP   ISMN_SNOTEL_ParkCone: no pre-2016 entries
+[ 573/993] DRY    ISMN_SNOTEL_MonteCristo: era5 4383->3653, twsa 106->89, labels 4150->3652
+[ 574/993] DRY    ISMN_SNOTEL_NukaGlacier: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 575/993] DRY    ISMN_SNOTEL_MtRoseSkiArea: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 576/993] SKIP   ISMN_SNOTEL_ONeilCreek: no pre-2016 entries
+[ 577/993] DRY    ISMN_SNOTEL_MtPennell: era5 4018->3653, twsa 98->89, labels 3788->3652
+[ 578/993] SKIP   ISMN_SNOTEL_MyrtleCreek: no pre-2016 entries
+[ 579/993] DRY    ISMN_SNOTEL_ParkReservoir: era5 2922->2192, twsa 73->56, labels 2736->2006
+[ 580/993] DRY    ISMN_SNOTEL_PalisadesTahoe: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 581/993] SKIP   ISMN_SNOTEL_PebbleCreek: no pre-2016 entries
+[ 582/993] DRY    ISMN_SNOTEL_Palo: era5 3652->2922, twsa 97->80, labels 3414->2684
+[ 583/993] DRY    ISMN_SNOTEL_NavajoWhiskeyCk: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 584/993] DRY    ISMN_SNOTEL_PhantomValley: era5 3652->2922, twsa 97->80, labels 3645->2915
+[ 585/993] DRY    ISMN_SNOTEL_PanguitchLakeRS: era5 4383->3653, twsa 106->89, labels 4235->3652
+[ 586/993] DRY    ISMN_SNOTEL_PickleKeg: era5 3287->2557, twsa 85->68, labels 2969->2239
+[ 587/993] SKIP   ISMN_SNOTEL_MosbyMtn.: no pre-2016 entries
+[ 588/993] SKIP   ISMN_SNOTEL_ParleysUpper: no pre-2016 entries
+[ 589/993] SKIP   ISMN_SNOTEL_PocketCreek: no pre-2016 entries
+[ 590/993] DRY    ISMN_SNOTEL_OakCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 591/993] SKIP   ISMN_SNOTEL_PowderMountain: no pre-2016 entries
+[ 592/993] DRY    ISMN_SNOTEL_PoleCreekR.S.: era5 2191->1461, twsa 49->32, labels 2023->1293
+[ 593/993] DRY    ISMN_SNOTEL_PortGraham: era5 3287->2557, twsa 85->68, labels 3074->2344
+[ 594/993] DRY    ISMN_SNOTEL_ParleysSummit: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 595/993] DRY    ISMN_SNOTEL_ParrishCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 596/993] DRY    ISMN_SNOTEL_PaysonR.S.: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 597/993] DRY    ISMN_SNOTEL_PierceR.S.: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 598/993] DRY    ISMN_SNOTEL_PorphyryCreek: era5 3287->2557, twsa 85->68, labels 3109->2379
+[ 599/993] DRY    ISMN_SNOTEL_PorterCanyon: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 600/993] SKIP   ISMN_SNOTEL_QuartzPeak: no pre-2016 entries
+[ 601/993] SKIP   ISMN_SNOTEL_QuartzMountain: no pre-2016 entries
+[ 602/993] DRY    ISMN_SNOTEL_PineCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 603/993] DRY    ISMN_SNOTEL_PoleCanyon: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 604/993] SKIP   ISMN_SNOTEL_RainyPass: no pre-2016 entries
+[ 605/993] DRY    ISMN_SNOTEL_PoisonFlat: era5 3287->2557, twsa 85->68, labels 3123->2393
+[ 606/993] SKIP   ISMN_SNOTEL_Quemazon: no pre-2016 entries
+[ 607/993] SKIP   ISMN_SNOTEL_RockwoodGS: no pre-2016 entries
+[ 608/993] SKIP   ISMN_SNOTEL_RockSprings: no pre-2016 entries
+[ 609/993] DRY    ISMN_SNOTEL_SageCreekBasin: era5 2557->1827, twsa 61->44, labels 2323->1593
+[ 610/993] DRY    ISMN_SNOTEL_ReesFlat: era5 4383->3653, twsa 106->89, labels 4341->3611
+[ 611/993] DRY    ISMN_SNOTEL_RockyBasin-Settleme: era5 3287->2557, twsa 85->68, labels 3110->2380
+[ 612/993] DRY    ISMN_SNOTEL_RainbowCanyon: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 613/993] DRY    ISMN_SNOTEL_ReynoldsCreek: era5 2191->1461, twsa 49->32, labels 2064->1334
+[ 614/993] SKIP   ISMN_SNOTEL_SavagePass: no pre-2016 entries
+[ 615/993] SKIP   ISMN_SNOTEL_RioSantaBarbara: no pre-2016 entries
+[ 616/993] DRY    ISMN_SNOTEL_Rubicon#2: era5 4383->3653, twsa 106->89, labels 4144->3652
+[ 617/993] DRY    ISMN_SNOTEL_RoughAndTumble: era5 2922->2192, twsa 73->56, labels 2776->2046
+[ 618/993] SKIP   ISMN_SNOTEL_Sawtooth: no pre-2016 entries
+[ 619/993] DRY    ISMN_SNOTEL_ReddenMineLwr: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 620/993] DRY    ISMN_SNOTEL_RockCreek: era5 4383->3653, twsa 106->89, labels 4072->3342
+[ 621/993] DRY    ISMN_SNOTEL_RaggedMountain: era5 4383->3653, twsa 106->89, labels 4095->3365
+[ 622/993] SKIP   ISMN_SNOTEL_SantaquinMeadows: no pre-2016 entries
+[ 623/993] SKIP   ISMN_SNOTEL_Silvies: no pre-2016 entries
+[ 624/993] DRY    ISMN_SNOTEL_SeventysixCreek: era5 3652->2922, twsa 97->80, labels 3540->2810
+[ 625/993] DRY    ISMN_SNOTEL_SantaFe: era5 4018->3653, twsa 98->89, labels 3947->3652
+[ 626/993] DRY    ISMN_SNOTEL_SeeleyCreek: era5 4383->3653, twsa 106->89, labels 4304->3574
+[ 627/993] SKIP   ISMN_SNOTEL_SenoritaDivide#2: no pre-2016 entries
+[ 628/993] SKIP   ISMN_SNOTEL_ShanghiSummit: no pre-2016 entries
+[ 629/993] DRY    ISMN_SNOTEL_SchofieldPass: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 630/993] DRY    ISMN_SNOTEL_SheepMtn.: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 631/993] SKIP   ISMN_SNOTEL_Slumgullion: no pre-2016 entries
+[ 632/993] DRY    ISMN_SNOTEL_SomsenRanch: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 633/993] DRY    ISMN_SNOTEL_SaltRiverSummit: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 634/993] SKIP   ISMN_SNOTEL_Sherwin: no pre-2016 entries
+[ 635/993] SKIP   ISMN_SNOTEL_SandstoneRS: no pre-2016 entries
+[ 636/993] DRY    ISMN_SNOTEL_SourdoughGulch: era5 4383->3653, twsa 106->89, labels 4192->3462
+[ 637/993] DRY    ISMN_SNOTEL_SnakeRiverStation: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 638/993] SKIP   ISMN_SNOTEL_Shuree: no pre-2016 entries
+[ 639/993] SKIP   ISMN_SNOTEL_Snowbird: no pre-2016 entries
+[ 640/993] DRY    ISMN_SNOTEL_SmithMorehouse: era5 3287->2557, twsa 85->68, labels 3035->2552
+[ 641/993] DRY    ISMN_SNOTEL_Sharkstooth: era5 2557->1827, twsa 61->44, labels 2394->1664
+[ 642/993] SKIP   ISMN_SNOTEL_StateLine: no pre-2016 entries
+[ 643/993] SKIP   ISMN_SNOTEL_SouthBrushCreek: no pre-2016 entries
+[ 644/993] DRY    ISMN_SNOTEL_SpiritLk: era5 4018->3288, twsa 106->89, labels 4012->3282
+[ 645/993] SKIP   ISMN_SNOTEL_SpringCreek: no pre-2016 entries
+[ 646/993] DRY    ISMN_SNOTEL_SprattCreek: era5 2922->2192, twsa 73->56, labels 2753->2023
+[ 647/993] DRY    ISMN_SNOTEL_SteelCreekPark: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 648/993] DRY    ISMN_SNOTEL_SonoraPass: era5 3652->2922, twsa 97->80, labels 3453->2723
+[ 649/993] SKIP   ISMN_SNOTEL_StrawberryDivide: no pre-2016 entries
+[ 650/993] DRY    ISMN_SNOTEL_Sheldon: era5 3652->2922, twsa 97->80, labels 3415->2685
+[ 651/993] DRY    ISMN_SNOTEL_SummitCreek: era5 2922->2192, twsa 73->56, labels 2820->2090
+[ 652/993] DRY    ISMN_SNOTEL_SouthMtn.: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 653/993] DRY    ISMN_SNOTEL_SunflowerFlat: era5 4383->3653, twsa 106->89, labels 4067->3611
+[ 654/993] SKIP   ISMN_SNOTEL_SummitRanch: no pre-2016 entries
+[ 655/993] DRY    ISMN_SNOTEL_SusitnaValleyHigh: era5 4018->3288, twsa 106->89, labels 3592->3045
+[ 656/993] SKIP   ISMN_SNOTEL_Sunset: no pre-2016 entries
+[ 657/993] SKIP   ISMN_SNOTEL_SwedePeak: no pre-2016 entries
+[ 658/993] DRY    ISMN_SNOTEL_SummitMeadow: era5 4383->3653, twsa 106->89, labels 4348->3618
+[ 659/993] SKIP   ISMN_SNOTEL_StillwaterCreek: no pre-2016 entries
+[ 660/993] SKIP   ISMN_SNOTEL_SummitLk: no pre-2016 entries
+[ 661/993] DRY    ISMN_SNOTEL_SuuRanch: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 662/993] SKIP   ISMN_SNOTEL_TempleFork: no pre-2016 entries
+[ 663/993] DRY    ISMN_SNOTEL_ThistleFlat: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 664/993] SKIP   ISMN_SNOTEL_StickneyMill: no pre-2016 entries
+[ 665/993] DRY    ISMN_SNOTEL_ThaynesCanyon: era5 2557->1827, twsa 61->44, labels 2223->1493
+[ 666/993] SKIP   ISMN_SNOTEL_TaosPueblo: no pre-2016 entries
+[ 667/993] SKIP   ISMN_SNOTEL_TaylorCanyon: no pre-2016 entries
+[ 668/993] DRY    ISMN_SNOTEL_TahoeCityCross: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 669/993] SKIP   ISMN_SNOTEL_TelaquanaLake: no pre-2016 entries
+[ 670/993] DRY    ISMN_SNOTEL_ThumbDivide: era5 4018->3653, twsa 98->89, labels 3566->3401
+[ 671/993] SKIP   ISMN_SNOTEL_Tok: no pre-2016 entries
+[ 672/993] DRY    ISMN_SNOTEL_TaosPowderhorn: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 673/993] SKIP   ISMN_SNOTEL_TakkaWiiya: no pre-2016 entries
+[ 674/993] SKIP   ISMN_SNOTEL_Tipton: no pre-2016 entries
+[ 675/993] SKIP   ISMN_SNOTEL_Trough: no pre-2016 entries
+[ 676/993] DRY    ISMN_SNOTEL_Timberline: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 677/993] DRY    ISMN_SNOTEL_UpperJoesValley: era5 2557->1827, twsa 61->44, labels 2356->1626
+[ 678/993] DRY    ISMN_SNOTEL_TonyGroveLake: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 679/993] DRY    ISMN_SNOTEL_TonyGroveRS: era5 2557->1827, twsa 61->44, labels 2346->1616
+[ 680/993] DRY    ISMN_SNOTEL_Touchet: era5 2557->1827, twsa 61->44, labels 2492->1762
+[ 681/993] SKIP   ISMN_SNOTEL_UpperRioGrande: no pre-2016 entries
+[ 682/993] SKIP   ISMN_SNOTEL_TriplePeak: no pre-2016 entries
+[ 683/993] DRY    ISMN_SNOTEL_UpperNomeCreek: era5 2557->1827, twsa 61->44, labels 2518->1788
+[ 684/993] DRY    ISMN_SNOTEL_TresRitos: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 685/993] DRY    ISMN_SNOTEL_TrialLake: era5 3652->2922, twsa 97->80, labels 3318->2588
+[ 686/993] SKIP   ISMN_SNOTEL_TokositnaValley: no pre-2016 entries
+[ 687/993] DRY    ISMN_SNOTEL_UpperTaylor: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 688/993] DRY    ISMN_SNOTEL_TimpanogosDivide: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 689/993] DRY    ISMN_SNOTEL_UpperSanJuan: era5 3652->2922, twsa 97->80, labels 3303->2768
+[ 690/993] DRY    ISMN_SNOTEL_ToeJam: era5 4018->3288, twsa 106->89, labels 3845->3115
+[ 691/993] DRY    ISMN_SNOTEL_TroutCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 692/993] SKIP   ISMN_SNOTEL_UpperTsainaRiver: no pre-2016 entries
+[ 693/993] DRY    ISMN_SNOTEL_VernonCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 694/993] DRY    ISMN_SNOTEL_WardMountain: era5 2922->2192, twsa 73->56, labels 2716->1986
+[ 695/993] DRY    ISMN_SNOTEL_VirginiaLakesRidge: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 696/993] DRY    ISMN_SNOTEL_Truckee#2: era5 4383->3653, twsa 106->89, labels 4098->3368
+[ 697/993] SKIP   ISMN_SNOTEL_WildBasin: no pre-2016 entries
+[ 698/993] SKIP   ISMN_SNOTEL_WesnerSprings: no pre-2016 entries
+[ 699/993] DRY    ISMN_SNOTEL_VacasLocas: era5 3652->2922, twsa 97->80, labels 3481->2751
+[ 700/993] SKIP   ISMN_SNOTEL_WolfCreekPeak: no pre-2016 entries
+[ 701/993] DRY    ISMN_SNOTEL_WebsterFlat: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 702/993] DRY    ISMN_SNOTEL_Widtsoe#3: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 703/993] SKIP   ISMN_SNOTEL_WheelerPeak: no pre-2016 entries
+[ 704/993] DRY    ISMN_SNOTEL_UsuDocDaniel: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 705/993] DRY    ISMN_SNOTEL_WindyPeak: era5 2557->1827, twsa 61->44, labels 2320->1590
+[ 706/993] DRY    ISMN_SNOTEL_WildhorseDivide: era5 2557->1827, twsa 61->44, labels 2190->1676
+[ 707/993] DRY    ISMN_SNOTEL_WrigleyCreek: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 708/993] DRY    ISMN_SNOTEL_WilburBench: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 709/993] SKIP   ISMN_SOILSCAPE_Lucky-Hills-1503: no pre-2016 entries
+[ 710/993] DRY    ISMN_SNOTEL_WilsonCreek: era5 2557->1827, twsa 61->44, labels 2457->1727
+[ 711/993] DRY    ISMN_SNOTEL_WardCreek#3: era5 4383->3653, twsa 106->89, labels 4341->3611
+[ 712/993] DRY    ISMN_SNOTEL_WolfCreekSummit: era5 3287->2557, twsa 85->68, labels 3023->2293
+[ 713/993] DRY    ISMN_TERENO_Schoeneseiffen: era5 2192->1827, twsa 53->44, labels 1736->1544
+[ 714/993] DRY    ISMN_SNOTEL_VacarroSprings: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 715/993] SKIP   ISMN_STEMS_CarpenetopermanentGrassCoverNoTrackposition: no pre-2016 entries
+[ 716/993] DRY    ISMN_SNOTEL_YankeeReservoir: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 717/993] SKIP   ISMN_TWENTE_Hupsel: no pre-2016 entries
+[ 718/993] SKIP   ISMN_TERENO_Gevenich: no pre-2016 entries
+[ 719/993] DRY    ISMN_SNOTEL_WhiteRiver#1: era5 4383->3653, twsa 106->89, labels 4382->3652
+[ 720/993] DRY    ISMN_TERENO_Merzenhausen: era5 2557->1827, twsa 61->44, labels 2016->1543
+[ 721/993] DRY    ISMN_TWENTE_ITCSM-13: era5 2557->1827, twsa 61->44, labels 2373->1826
+[ 722/993] SKIP   ISMN_SOILSCAPE_Lucky-Hills-1506: no pre-2016 entries
+[ 723/993] SKIP   ISMN_STEMS_CarpenetopermanentGrassCoverTrackposition: no pre-2016 entries
+[ 724/993] DRY    ISMN_TERENO_Selhausen: era5 3652->2922, twsa 97->80, labels 3502->2772
+[ 725/993] SKIP   ISMN_TxSON_CR1000-1: no pre-2016 entries
+[ 726/993] DRY    ISMN_TWENTE_ITCSM-08b: era5 2192->1827, twsa 53->44, labels 1910->1826
+[ 727/993] DRY    ISMN_TxSON_CR1000-2: era5 2922->2192, twsa 73->56, labels 2438->1983
+[ 728/993] DRY    ISMN_TWENTE_ITCSM-16b: era5 2191->1461, twsa 49->32, labels 1830->1410
+[ 729/993] SKIP   ISMN_TWENTE_ITCSM-17c: no pre-2016 entries
+[ 730/993] DRY    ISMN_TxSON_CR200-10: era5 2191->1461, twsa 49->32, labels 1877->1420
+[ 731/993] DRY    ISMN_SNOTEL_Zirkel: era5 4018->3653, twsa 98->89, labels 3691->3367
+[ 732/993] DRY    ISMN_TxSON_CR1000-3: era5 3287->2557, twsa 85->68, labels 2918->2503
+[ 733/993] DRY    ISMN_TWENTE_ITCSM-07b: era5 2192->1827, twsa 53->44, labels 1885->1826
+[ 734/993] DRY    ISMN_TWENTE_ITCSM-09: era5 2192->1827, twsa 53->44, labels 1992->1826
+[ 735/993] DRY    ISMN_TxSON_CR1000-5: era5 3287->2557, twsa 85->68, labels 2916->2503
+[ 736/993] DRY    ISMN_TxSON_CR200-1: era5 2922->2192, twsa 73->56, labels 2548->2091
+[ 737/993] SKIP   ISMN_TWENTE_ITCSM-15b: no pre-2016 entries
+[ 738/993] DRY    ISMN_TxSON_CR200-13: era5 3287->2557, twsa 85->68, labels 2951->2503
+[ 739/993] DRY    ISMN_TxSON_CR200-12: era5 3287->2557, twsa 85->68, labels 2959->2503
+[ 740/993] DRY    ISMN_TxSON_CR1000-4: era5 3287->2557, twsa 85->68, labels 2916->2503
+[ 741/993] DRY    ISMN_TxSON_CR200-22: era5 2191->1461, twsa 49->32, labels 1500->1134
+[ 742/993] DRY    ISMN_TxSON_CR1000-6: era5 3287->2557, twsa 85->68, labels 2896->2503
+[ 743/993] DRY    ISMN_TxSON_CR200-16: era5 3287->2557, twsa 85->68, labels 2798->2381
+[ 744/993] DRY    ISMN_TxSON_CR200-19: era5 2922->2192, twsa 73->56, labels 2263->1869
+[ 745/993] DRY    ISMN_TxSON_CR200-18: era5 3287->2557, twsa 85->68, labels 2919->2503
+[ 746/993] DRY    ISMN_TxSON_CR200-2: era5 3287->2557, twsa 85->68, labels 2959->2503
+[ 747/993] DRY    ISMN_TxSON_CR200-25: era5 3287->2557, twsa 85->68, labels 2918->2503
+[ 748/993] SKIP   ISMN_TxSON_CR200-4: no pre-2016 entries
+[ 749/993] DRY    ISMN_TxSON_CR200-11: era5 2191->1461, twsa 49->32, labels 1636->1180
+[ 750/993] DRY    ISMN_TxSON_CR200-26: era5 3287->2557, twsa 85->68, labels 2916->2503
+[ 751/993] DRY    ISMN_TxSON_CR200-14: era5 3287->2557, twsa 85->68, labels 2952->2503
+[ 752/993] DRY    ISMN_TxSON_CR200-29: era5 3287->2557, twsa 85->68, labels 2777->2384
+[ 753/993] DRY    ISMN_TxSON_CR200-7: era5 2191->1461, twsa 49->32, labels 1889->1432
+[ 754/993] DRY    ISMN_TxSON_CR200-23: era5 3287->2557, twsa 85->68, labels 2918->2503
+[ 755/993] DRY    ISMN_TxSON_CR200-21: era5 3287->2557, twsa 85->68, labels 2917->2503
+[ 756/993] DRY    ISMN_TxSON_CR200-8: era5 3287->2557, twsa 85->68, labels 2959->2503
+[ 757/993] DRY    ISMN_TxSON_CR200-15: era5 3287->2557, twsa 85->68, labels 2958->2503
+[ 758/993] DRY    ISMN_TxSON_CR200-24: era5 3287->2557, twsa 85->68, labels 2918->2503
+[ 759/993] DRY    ISMN_TxSON_CR200-3: era5 3287->2557, twsa 85->68, labels 2960->2503
+[ 760/993] DRY    ISMN_TxSON_CR200-17: era5 3287->2557, twsa 85->68, labels 2919->2503
+[ 761/993] DRY    ISMN_TxSON_CR200-5: era5 3287->2557, twsa 85->68, labels 2933->2477
+[ 762/993] DRY    ISMN_TxSON_CR200-28: era5 3287->2557, twsa 85->68, labels 2897->2503
+[ 763/993] DRY    ISMN_TxSON_CR200-6: era5 3287->2557, twsa 85->68, labels 2958->2503
+[ 764/993] DRY    ISMN_TxSON_LCRA-1: era5 3287->2557, twsa 85->68, labels 2925->2498
+[ 765/993] DRY    ISMN_TxSON_CR200-9: era5 3287->2557, twsa 85->68, labels 2960->2503
+[ 766/993] SKIP   ISMN_USCRN_Baker-5-W: no pre-2016 entries
+[ 767/993] DRY    ISMN_TxSON_LCRA-2: era5 3287->2557, twsa 85->68, labels 2925->2498
+[ 768/993] SKIP   ISMN_USCRN_Bronte-11-NNE: no pre-2016 entries
+[ 769/993] DRY    ISMN_USCRN_Asheville-13-S: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 770/993] DRY    ISMN_TxSON_LCRA-7: era5 2922->2557, twsa 77->68, labels 2608->2263
+[ 771/993] SKIP   ISMN_USCRN_Bedford-5-WNW: no pre-2016 entries
+[ 772/993] DRY    ISMN_USCRN_Austin-33-NW: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 773/993] DRY    ISMN_TxSON_LCRA-6: era5 3287->2557, twsa 85->68, labels 2691->2263
+[ 774/993] DRY    ISMN_USCRN_Brunswick-23-S: era5 2191->1461, twsa 49->32, labels 1970->1240
+[ 775/993] DRY    ISMN_TxSON_LCRA-3: era5 3287->2557, twsa 85->68, labels 2926->2498
+[ 776/993] DRY    ISMN_USCRN_Cape-Charles-5-ENE: era5 2557->2192, twsa 65->56, labels 2435->2133
+[ 777/993] DRY    ISMN_USCRN_Charlottesville-2-SSE: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 778/993] DRY    ISMN_USCRN_Chatham-1-SE: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 779/993] DRY    ISMN_TxSON_LCRA-4: era5 3287->2557, twsa 85->68, labels 2925->2498
+[ 780/993] DRY    ISMN_USCRN_Bowling-Green-21-NNE: era5 1826->1461, twsa 41->32, labels 1569->1384
+[ 781/993] SKIP   ISMN_TxSON_LCRA-5: no pre-2016 entries
+[ 782/993] DRY    ISMN_USCRN_Corvallis-10-SSW: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 783/993] SKIP   ISMN_USCRN_Goodwell-2-E: no pre-2016 entries
+[ 784/993] DRY    ISMN_USCRN_Cortez-8-SE: era5 1461->1096, twsa 29->20, labels 1101->746
+[ 785/993] DRY    ISMN_USCRN_Durham-11-W: era5 2922->2192, twsa 73->56, labels 2659->1978
+[ 786/993] DRY    ISMN_USCRN_Batesville-8-WNW: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 787/993] DRY    ISMN_USCRN_Elkins-21-ENE: era5 2557->1827, twsa 61->44, labels 2443->1713
+[ 788/993] DRY    ISMN_USCRN_Durham-2-N: era5 1461->1096, twsa 29->20, labels 1097->765
+[ 789/993] DRY    ISMN_USCRN_Everglades-City-5-NE: era5 2557->1827, twsa 61->44, labels 2274->1544
+[ 790/993] DRY    ISMN_USCRN_Las-Cruces-20-N: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 791/993] DRY    ISMN_USCRN_Lafayette-13-SE: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 792/993] DRY    ISMN_USCRN_Goodwell-2-SE: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 793/993] DRY    ISMN_USCRN_Gadsden-19-N: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 794/993] SKIP   ISMN_USCRN_Joplin-24-N: no pre-2016 entries
+[ 795/993] DRY    ISMN_USCRN_Fallbrook-5-NE: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 796/993] DRY    ISMN_USCRN_Crossville-7-NW: era5 1826->1096, twsa 37->20, labels 1462->732
+[ 797/993] SKIP   ISMN_USCRN_Elgin-5-S: no pre-2016 entries
+[ 798/993] DRY    ISMN_USCRN_McClellanville-7-NE: era5 2557->2192, twsa 65->56, labels 2246->2133
+[ 799/993] DRY    ISMN_USCRN_Salem-10-W: era5 2922->2192, twsa 73->56, labels 2552->1871
+[ 800/993] DRY    ISMN_USCRN_Monroe-26-N: era5 1826->1461, twsa 41->32, labels 1170->1122
+[ 801/993] SKIP   ISMN_USCRN_Muleshoe-19-S: no pre-2016 entries
+[ 802/993] DRY    ISMN_USCRN_Newton-8-W: era5 1826->1096, twsa 37->20, labels 1747->1017
+[ 803/993] DRY    ISMN_USCRN_Los-Alamos-13-W: era5 2557->1827, twsa 61->44, labels 2238->1804
+[ 804/993] DRY    ISMN_USCRN_Mercury-3-SSW: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 805/993] DRY    ISMN_USCRN_Monahans-6-ENE: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 806/993] DRY    ISMN_USCRN_John-Day-35-WNW: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 807/993] DRY    ISMN_USCRN_Socorro-20-N: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 808/993] SKIP   ISMN_USCRN_Santa-Barbara-11-W: no pre-2016 entries
+[ 809/993] DRY    ISMN_USCRN_Stillwater-2-W: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 810/993] SKIP   ISMN_WATERLINE_Nymfaia: no pre-2016 entries
+[ 811/993] SKIP   ISMN_USCRN_Newton-5-ENE: no pre-2016 entries
+[ 812/993] SKIP   ISMN_WATERLINE_Komotini: no pre-2016 entries
+[ 813/993] DRY    ISMN_USCRN_Versailles-3-NNW: era5 2557->2192, twsa 65->56, labels 2450->2147
+[ 814/993] DRY    ISMN_USCRN_Stovepipe-Wells-1-SW: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 815/993] DRY    ISMN_USCRN_Stillwater-5-WNW: era5 2557->1827, twsa 61->44, labels 2535->1805
+[ 816/993] DRY    ISMN_USCRN_Quinault-4-NE: era5 2922->2192, twsa 73->56, labels 2720->1990
+[ 817/993] SKIP   ISMN_XMS-CAT_BordaColl: no pre-2016 entries
+[ 818/993] DRY    ISMN_USCRN_Tucson-11-W: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 819/993] DRY    ISMN_USCRN_Panther-Junction-2-N: era5 2922->2192, twsa 73->56, labels 2863->2133
+[ 820/993] SKIP   ISMN_WATERLINE_Kerasia: no pre-2016 entries
+[ 821/993] SKIP   ISMN_USCRN_Spokane-17-SSW: no pre-2016 entries
+[ 822/993] DRY    ISMN_USCRN_Watkinsville-5-SSE: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 823/993] SKIP   ISMN_XMS-CAT_Llivia: no pre-2016 entries
+[ 824/993] SKIP   ISMN_XMS-CAT_Clarella: no pre-2016 entries
+[ 825/993] SKIP   ISMN_USCRN_Yosemite-Village-12-W: no pre-2016 entries
+[ 826/993] DRY    ISMN_USCRN_Yuma-27-ENE: era5 2922->2192, twsa 73->56, labels 2877->2147
+[ 827/993] SKIP   ISMN_XMS-CAT_ClotdelesPeresII: no pre-2016 entries
+[ 828/993] SKIP   ISMN_XMS-CAT_CamidelsNerets: no pre-2016 entries
+[ 829/993] SKIP   ISMN_XMS-CAT_ElMiracle: no pre-2016 entries
+[ 830/993] SKIP   ISMN_XMS-CAT_LaCultiadAreu: no pre-2016 entries
+[ 831/993] SKIP   ISMN_XMS-CAT_ElBoixer: no pre-2016 entries
+[ 832/993] SKIP   ISMN_XMS-CAT_BatlliudeSort: no pre-2016 entries
+[ 833/993] DRY    ISMN_iRON_BrushCreek: era5 3287->2557, twsa 85->68, labels 2800->2350
+[ 834/993] SKIP   ISMN_iRON_GlenwoodSprings: no pre-2016 entries
+[ 835/993] SKIP   ISMN_XMS-CAT_RiberadeSio: no pre-2016 entries
+[ 836/993] SKIP   ISMN_XMS-CAT_Pessonada: no pre-2016 entries
+[ 837/993] SKIP   ICOS_CH-Oe2: no pre-2016 entries
+[ 838/993] SKIP   ISMN_iRON_NorthstarTransitionZone: no pre-2016 entries
+[ 839/993] DRY    ISMN_iRON_NorthstarAspenGrove: era5 2557->2192, twsa 65->56, labels 2124->2013
+[ 840/993] DRY    ISMN_iRON_SkyMountain: era5 3287->2557, twsa 85->68, labels 3080->2350
+[ 841/993] SKIP   ISMN_XMS-CAT_LosCoscolls: no pre-2016 entries
+[ 842/993] SKIP   ISMN_XMS-CAT_ColldePaller: no pre-2016 entries
+[ 843/993] SKIP   ISMN_XMS-CAT_SerradeCostaAmpla: no pre-2016 entries
+[ 844/993] SKIP   ICOS_ES-Abr: no pre-2016 entries
+[ 845/993] SKIP   ICOS_CH-Cha: no pre-2016 entries
+[ 846/993] SKIP   ICOS_CZ-KrP: no pre-2016 entries
+[ 847/993] SKIP   ICOS_CH-Fru: no pre-2016 entries
+[ 848/993] SKIP   ICOS_ES-Agu: no pre-2016 entries
+[ 849/993] SKIP   ICOS_DE-Kli: no pre-2016 entries
+[ 850/993] SKIP   ICOS_CZ-Stn: no pre-2016 entries
+[ 851/993] SKIP   ICOS_CH-Lae: no pre-2016 entries
+[ 852/993] SKIP   ICOS_FR-Aur: no pre-2016 entries
+[ 853/993] SKIP   ICOS_ES-LM1: no pre-2016 entries
+[ 854/993] SKIP   ICOS_ES-Cnd: no pre-2016 entries
+[ 855/993] SKIP   ICOS_CZ-wet: no pre-2016 entries
+[ 856/993] SKIP   ICOS_ES-LM2: no pre-2016 entries
+[ 857/993] SKIP   ICOS_DE-Obe: no pre-2016 entries
+[ 858/993] SKIP   ICOS_CZ-RAJ: no pre-2016 entries
+[ 859/993] SKIP   ICOS_RU-Fy2: no pre-2016 entries
+[ 860/993] SKIP   ICOS_RU-Fyo: no pre-2016 entries
+[ 861/993] SKIP   ICOS_ES-LMa: no pre-2016 entries
+[ 862/993] SKIP   ICOS_BE-Bra: no pre-2016 entries
+[ 863/993] SKIP   ICOS_IT-BCi: no pre-2016 entries
+[ 864/993] SKIP   ICOS_UK-AMo: no pre-2016 entries
+[ 865/993] SKIP   ICOS_BE-Lon: no pre-2016 entries
+[ 866/993] SKIP   ICOS_CH-Dav: no pre-2016 entries
+[ 867/993] SKIP   ICOS_FR-EM2: no pre-2016 entries
+[ 868/993] SKIP   ICOS_CZ-BK1: no pre-2016 entries
+[ 869/993] SKIP   ICOS_CZ-Lnz: no pre-2016 entries
+[ 870/993] SKIP   ICOS_IL-Yat: no pre-2016 entries
+[ 871/993] SKIP   ICOS_BE-Maa: no pre-2016 entries
+[ 872/993] SKIP   ICOS_DE-RuS: no pre-2016 entries
+[ 873/993] SKIP   ICOS_DE-RuR: no pre-2016 entries
+[ 874/993] SKIP   ICOS_DE-Gri: no pre-2016 entries
+[ 875/993] SKIP   ICOS_DE-RuW: no pre-2016 entries
+[ 876/993] SKIP   ICOS_FR-FBn: no pre-2016 entries
+[ 877/993] SKIP   ICOS_DK-Sor: no pre-2016 entries
+[ 878/993] SKIP   ICOS_DE-HoH: no pre-2016 entries
+[ 879/993] SKIP   ICOS_DE-Har: no pre-2016 entries
+[ 880/993] SKIP   ICOS_FI-Hyy: no pre-2016 entries
+[ 881/993] SKIP   ICOS_FI-Var: no pre-2016 entries
+[ 882/993] SKIP   ICOS_FR-CLt: no pre-2016 entries
+[ 883/993] SKIP   ICOS_IT-Lsn: no pre-2016 entries
+[ 884/993] SKIP   ICOS_BE-Vie: no pre-2016 entries
+[ 885/993] SKIP   ICOS_IT-MBo: no pre-2016 entries
+[ 886/993] SKIP   ICOS_FI-Sii: no pre-2016 entries
+[ 887/993] SKIP   ICOS_DE-Geb: no pre-2016 entries
+[ 888/993] SKIP   ICOS_SE-Deg: no pre-2016 entries
+[ 889/993] SKIP   ICOS_FR-Bil: no pre-2016 entries
+[ 890/993] SKIP   ICOS_FR-Pue: no pre-2016 entries
+[ 891/993] SKIP   ICOS_FR-Gri: no pre-2016 entries
+[ 892/993] SKIP   ICOS_FI-Ken: no pre-2016 entries
+[ 893/993] SKIP   ICOS_GF-Guy: no pre-2016 entries
+[ 894/993] SKIP   ICOS_SE-Nor: no pre-2016 entries
+[ 895/993] SKIP   ICOS_IT-SR2: no pre-2016 entries
+[ 896/993] SKIP   ICOS_FR-Mej: no pre-2016 entries
+[ 897/993] SKIP   ICOS_FR-Hes: no pre-2016 entries
+[ 898/993] SKIP   ICOS_SE-Svb: no pre-2016 entries
+[ 899/993] SKIP   ICOS_IT-Tor: no pre-2016 entries
+[ 900/993] SKIP   ICOS_IT-TrF: no pre-2016 entries
+[ 901/993] SKIP   ICOS_SE-Htm: no pre-2016 entries
+[ 902/993] SKIP   AmeriFlux_CA-DB2: no pre-2016 entries
+[ 903/993] SKIP   AmeriFlux_US-Esm: no pre-2016 entries
+[ 904/993] SKIP   AmeriFlux_US-ALQ: no pre-2016 entries
+[ 905/993] SKIP   AmeriFlux_CA-DSM: no pre-2016 entries
+[ 906/993] SKIP   AmeriFlux_US-EvM: no pre-2016 entries
+[ 907/993] SKIP   AmeriFlux_US-BZo: no pre-2016 entries
+[ 908/993] SKIP   AmeriFlux_US-GLE: no pre-2016 entries
+[ 909/993] SKIP   AmeriFlux_US-HB1: no pre-2016 entries
+[ 910/993] SKIP   ICOS_IT-BFt: no pre-2016 entries
+[ 911/993] SKIP   AmeriFlux_US-Bi1: no pre-2016 entries
+[ 912/993] SKIP   AmeriFlux_US-Bi2: no pre-2016 entries
+[ 913/993] SKIP   AmeriFlux_US-BZB: no pre-2016 entries
+[ 914/993] SKIP   AmeriFlux_CA-Cbo: no pre-2016 entries
+[ 915/993] SKIP   AmeriFlux_CA-Mer: no pre-2016 entries
+[ 916/993] SKIP   AmeriFlux_US-ICs: no pre-2016 entries
+[ 917/993] SKIP   AmeriFlux_US-HB3: no pre-2016 entries
+[ 918/993] SKIP   AmeriFlux_US-ICt: no pre-2016 entries
+[ 919/993] SKIP   AmeriFlux_US-DS2: no pre-2016 entries
+[ 920/993] SKIP   AmeriFlux_US-Dmg: no pre-2016 entries
+[ 921/993] SKIP   AmeriFlux_CA-DBB: no pre-2016 entries
+[ 922/993] SKIP   ICOS_FR-Tou: no pre-2016 entries
+[ 923/993] SKIP   AmeriFlux_US-DFC: no pre-2016 entries
+[ 924/993] SKIP   AmeriFlux_US-Jo2: no pre-2016 entries
+[ 925/993] SKIP   AmeriFlux_US-HB4: no pre-2016 entries
+[ 926/993] SKIP   AmeriFlux_US-Jo1: no pre-2016 entries
+[ 927/993] SKIP   AmeriFlux_US-Hsm: no pre-2016 entries
+[ 928/993] SKIP   AmeriFlux_US-Kon: no pre-2016 entries
+[ 929/993] SKIP   AmeriFlux_US-NC3: no pre-2016 entries
+[ 930/993] SKIP   AmeriFlux_US-Ho2: no pre-2016 entries
+[ 931/993] SKIP   AmeriFlux_US-KFS: no pre-2016 entries
+[ 932/993] SKIP   AmeriFlux_US-Me2: no pre-2016 entries
+[ 933/993] SKIP   AmeriFlux_US-Mo2: no pre-2016 entries
+[ 934/993] SKIP   AmeriFlux_US-MN3: no pre-2016 entries
+[ 935/993] SKIP   AmeriFlux_US-Ho1: no pre-2016 entries
+[ 936/993] SKIP   AmeriFlux_US-RGo: no pre-2016 entries
+[ 937/993] SKIP   AmeriFlux_US-Rms: no pre-2016 entries
+[ 938/993] SKIP   AmeriFlux_US-MMS: no pre-2016 entries
+[ 939/993] SKIP   AmeriFlux_US-Mo1: no pre-2016 entries
+[ 940/993] SKIP   AmeriFlux_US-MtB: no pre-2016 entries
+[ 941/993] SKIP   AmeriFlux_US-Mpj: no pre-2016 entries
+[ 942/993] SKIP   AmeriFlux_US-Ne2: no pre-2016 entries
+[ 943/993] SKIP   AmeriFlux_US-MN2: no pre-2016 entries
+[ 944/993] SKIP   AmeriFlux_US-Rwf: no pre-2016 entries
+[ 945/993] SKIP   AmeriFlux_US-Ne1: no pre-2016 entries
+[ 946/993] SKIP   AmeriFlux_US-Mo3: no pre-2016 entries
+[ 947/993] SKIP   AmeriFlux_US-Ro4: no pre-2016 entries
+[ 948/993] SKIP   AmeriFlux_US-Rls: no pre-2016 entries
+[ 949/993] SKIP   AmeriFlux_US-RGB: no pre-2016 entries
+[ 950/993] SKIP   AmeriFlux_US-Ro5: no pre-2016 entries
+[ 951/993] SKIP   AmeriFlux_US-Ro6: no pre-2016 entries
+[ 952/993] SKIP   AmeriFlux_US-Ses: no pre-2016 entries
+[ 953/993] SKIP   AmeriFlux_US-Vcm: no pre-2016 entries
+[ 954/993] SKIP   AmeriFlux_US-SHC: no pre-2016 entries
+[ 955/993] SKIP   AmeriFlux_US-Rws: no pre-2016 entries
+[ 956/993] SKIP   AmeriFlux_US-ONA: no pre-2016 entries
+[ 957/993] SKIP   AmeriFlux_US-Seg: no pre-2016 entries
+[ 958/993] SKIP   AmeriFlux_US-xCP: no pre-2016 entries
+[ 959/993] SKIP   AmeriFlux_US-KLS: no pre-2016 entries
+[ 960/993] SKIP   AmeriFlux_US-Wjs: no pre-2016 entries
+[ 961/993] SKIP   AmeriFlux_US-UC1: no pre-2016 entries
+[ 962/993] SKIP   AmeriFlux_US-xDJ: no pre-2016 entries
+[ 963/993] SKIP   AmeriFlux_US-xKA: no pre-2016 entries
+[ 964/993] SKIP   AmeriFlux_US-xBR: no pre-2016 entries
+[ 965/993] SKIP   AmeriFlux_US-xCL: no pre-2016 entries
+[ 966/993] SKIP   AmeriFlux_US-Vcp: no pre-2016 entries
+[ 967/993] SKIP   AmeriFlux_US-xSC: no pre-2016 entries
+[ 968/993] SKIP   AmeriFlux_US-xJE: no pre-2016 entries
+[ 969/993] SKIP   AmeriFlux_US-xUN: no pre-2016 entries
+[ 970/993] SKIP   AmeriFlux_US-Tw4: no pre-2016 entries
+[ 971/993] SKIP   AmeriFlux_US-Sne: no pre-2016 entries
+[ 972/993] SKIP   AmeriFlux_US-UMB: no pre-2016 entries
+[ 973/993] SKIP   AmeriFlux_US-xDL: no pre-2016 entries
+[ 974/993] SKIP   AmeriFlux_US-xSE: no pre-2016 entries
+[ 975/993] SKIP   AmeriFlux_CA-TP1: no pre-2016 entries
+[ 976/993] SKIP   AmeriFlux_US-xSJ: no pre-2016 entries
+[ 977/993] SKIP   AmeriFlux_US-xHA: no pre-2016 entries
+[ 978/993] SKIP   AmeriFlux_CA-TPD: no pre-2016 entries
+[ 979/993] SKIP   AmeriFlux_US-ARM: no pre-2016 entries
+[ 980/993] SKIP   AmeriFlux_US-Me6: no pre-2016 entries
+[ 981/993] SKIP   AmeriFlux_CA-TP3: no pre-2016 entries
+[ 982/993] SKIP   AmeriFlux_US-xRM: no pre-2016 entries
+[ 983/993] SKIP   AmeriFlux_US-UMd: no pre-2016 entries
+[ 984/993] SKIP   AmeriFlux_US-xJR: no pre-2016 entries
+[ 985/993] SKIP   AmeriFlux_US-SRG: no pre-2016 entries
+[ 986/993] SKIP   AmeriFlux_US-SRM: no pre-2016 entries
+[ 987/993] SKIP   AmeriFlux_US-xUK: no pre-2016 entries
+[ 988/993] SKIP   AmeriFlux_US-Var: no pre-2016 entries
+[ 989/993] SKIP   AmeriFlux_US-xWD: no pre-2016 entries
+[ 990/993] SKIP   AmeriFlux_US-Ton: no pre-2016 entries
+[ 991/993] SKIP   AmeriFlux_US-xNG: no pre-2016 entries
+[ 992/993] SKIP   AmeriFlux_US-Whs: no pre-2016 entries
+[ 993/993] SKIP   AmeriFlux_US-Wkg: no pre-2016 entries

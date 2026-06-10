@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/pathlib.py", line 1175, in mkdir
+    self._accessor.mkdir(self, mode)
+FileNotFoundError: [Errno 2] No such file or directory: '/home/khanalp/data/satellite'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/pathlib.py", line 1175, in mkdir
+    self._accessor.mkdir(self, mode)
+FileNotFoundError: [Errno 2] No such file or directory: '/home/khanalp/data'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_era5land.py", line 555, in <module>
+    main()
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_era5land.py", line 481, in main
+    setup_logging()
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_era5land.py", line 88, in setup_logging
+    SATELLITE_DIR.mkdir(parents=True, exist_ok=True)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/pathlib.py", line 1179, in mkdir
+    self.parent.mkdir(parents=True, exist_ok=True)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/pathlib.py", line 1179, in mkdir
+    self.parent.mkdir(parents=True, exist_ok=True)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/pathlib.py", line 1175, in mkdir
+    self._accessor.mkdir(self, mode)
+PermissionError: [Errno 13] Permission denied: '/home/khanalp'
+ERROR conda.cli.main_run:execute(148): `conda run python download_era5land.py --stations SCAN_Combate,SNOTEL_PortGraham,USCRN_Cape-Charles-5-ENE --fix-consolidated-dir /gpfs/work3/0/prjs1968/data` failed. (See above for error)

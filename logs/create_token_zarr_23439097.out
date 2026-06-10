@@ -1,0 +1,4 @@
+Job ID : 23439097
+Node   : tcn206
+Output : /gpfs/work3/0/prjs1968/data/zarr/
+[2026-06-03T19:03:45.260] error: *** JOB 23439097 ON tcn206 CANCELLED AT 2026-06-03T19:03:45 DUE to SIGNAL Terminated ***

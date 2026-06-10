@@ -1,0 +1,129 @@
+Zarr Token Storage Format
+==========================
+
+Each station is stored as a zarr v2 group at:
+
+    ZARR_ROOT/{category}/{dir_name}/
+    = /gpfs/scratch1/shared/pkhanal/zarr/{sm_only|sm_and_flux|flux_only}/{station}/
+
+dir_name derivation (matches dataset.py / retokenize_satellite_zarr.py):
+  - ISMN stations -> ISMN_{network}_{station_name}
+  - non-ISMN (AmeriFlux/ICOS/etc) -> {source_network}_{station_id}
+
+category derivation: sm_and_flux / sm_only / flux_only based on
+has_soil_moisture / has_flux flags in csvs/station_splits.csv.
+
+Compression:
+  - Numeric arrays (tokens, masks, era5/sif/twsa values, labels):
+      Blosc(cname='zstd', clevel=3, shuffle=SHUFFLE)
+  - Date-string arrays (<U8 "YYYYMMDD"):
+      Blosc(cname='lz4', clevel=5, shuffle=SHUFFLE)
+
+A top-level `.complete` marker file and `.zmetadata` (consolidated metadata,
+via zarr.consolidate_metadata) exist per station group.
+
+
+Group / Array layout
+---------------------
+
+Static (one entry per station):
+  dem                       (196, 768)            float16   chunks=(196, 768)
+  lulc                      (196, 768)            float16   chunks=(196, 768)
+  soil                      (21, 74, 74)          float32   chunks=(21, 74, 74)
+    - dem/lulc: TerraMind ViT-Base L12 token embeddings (196 patches x 768-dim)
+    - soil: 21-channel soil property raster, 74x74 spatial grid
+
+Sentinel-2 L2A tokens (time series, one entry per acquisition date):
+  s2/l3, s2/l6, s2/l9, s2/l12   (N_s2, 196, 768)   float16   chunks=(32, 196, 768)
+  s2/dates                      (N_s2,)            <U8       chunks=(N_s2,)
+    - l{3,6,9,12}: TerraMind ViT-Base frozen layer outputs
+    - dates: "YYYYMMDD" strings
+
+Sentinel-1 RTC tokens (ascending / descending orbit, same layout as s2):
+  s1_asc/l3, s1_asc/l6, s1_asc/l9, s1_asc/l12   (N_asc, 196, 768)  float16  chunks=(32, 196, 768)
+  s1_asc/dates                                  (N_asc,)           <U8      chunks=(N_asc,)
+  s1_desc/l3, s1_desc/l6, s1_desc/l9, s1_desc/l12  (N_desc, 196, 768) float16 chunks=(32, 196, 768)
+  s1_desc/dates                                 (N_desc,)          <U8      chunks=(N_desc,)
+    - At least one of s1_asc / s1_desc is required; both individually optional.
+
+Cloud masks:
+  cm/masks   (N_cm, 224, 224)   uint8   chunks=(N_cm, 224, 224)
+  cm/dates   (N_cm,)            <U8     chunks=(N_cm,)
+    - Per-pixel cloud mask aligned to s2 acquisition dates.
+    - dataset.py looks up cm by date string (cm_date_idx dict), not by
+      position, so cm/dates need not be positionally aligned with s2/dates.
+    - As of the 2026-06-10 trim, cm/dates == s2/dates (same date set) for
+      992/993 stations. AmeriFlux_CA-Cbo is the one exception (cm is a
+      strict subset of s2, 79.31% coverage - known gap, raw imagery for the
+      missing 54 dates no longer exists on disk).
+
+ERA5-Land (daily meteorological forcing):
+  era5/values      (N_days, 19)   float32   chunks=(N_days, 19)
+  era5/date_ints   (N_days,)      int32     chunks=(N_days,)   - YYYYMMDD as int
+  era5/doys        (N_days,)      int32     chunks=(N_days,)   - day-of-year
+
+SIF (Solar-Induced Fluorescence, optional - 990/993 stations):
+  sif/values      (N_sif,)   float32
+  sif/date_ints   (N_sif,)   int32
+  sif/doys        (N_sif,)   int32
+
+TWSA (Terrestrial Water Storage Anomaly, optional - 845/993 stations):
+  twsa/lwe                (N_twsa,)   float32
+  twsa/lwe_uncertainty    (N_twsa,)   float32
+  twsa/date_ints          (N_twsa,)   int32
+  twsa/doys               (N_twsa,)   int32
+
+Labels:
+  labels/sm           (3, N_lab)   float32   - soil moisture, 3 depth bins
+  labels/qc           (3, N_lab)   uint8     - 0=observed, 1=gap-filled, 2=missing
+  labels/depths       (3,)         <U20      - depth bin names
+  labels/dates        (N_lab,)     <U8
+  labels/le           (N_lab,)     float32   - latent heat flux
+  labels/le_qc        (N_lab,)     uint8
+  labels/dates_flux   (N_lab,)     <U8
+
+  Per-category requirements:
+    sm_only      -> labels/sm required
+    sm_and_flux  -> labels/sm AND labels/le required
+    flux_only    -> labels/le required
+
+
+Example (ICOS_BE-Vie, sm_and_flux, full modality set):
+
+  dem                            shape=(196, 768)           dtype=float16
+  lulc                           shape=(196, 768)           dtype=float16
+  soil                           shape=(21, 74, 74)         dtype=float32
+  cm/dates                       shape=(117,)               dtype=<U8
+  cm/masks                       shape=(117, 224, 224)      dtype=uint8
+  era5/date_ints                 shape=(2557,)              dtype=int32
+  era5/doys                      shape=(2557,)              dtype=int32
+  era5/values                    shape=(2557, 19)           dtype=float32
+  labels/dates                   shape=(2363,)              dtype=<U8
+  labels/dates_flux              shape=(2363,)              dtype=<U8
+  labels/depths                  shape=(3,)                 dtype=<U20
+  labels/le                      shape=(2363,)              dtype=float32
+  labels/le_qc                   shape=(2363,)              dtype=uint8
+  labels/qc                      shape=(3, 2363)            dtype=uint8
+  labels/sm                      shape=(3, 2363)            dtype=float32
+  s1_asc/dates                   shape=(127,)               dtype=<U8
+  s1_asc/l12                     shape=(127, 196, 768)      dtype=float16
+  s1_asc/l3                      shape=(127, 196, 768)      dtype=float16
+  s1_asc/l6                      shape=(127, 196, 768)      dtype=float16
+  s1_asc/l9                      shape=(127, 196, 768)      dtype=float16
+  s1_desc/dates                  shape=(274,)               dtype=<U8
+  s1_desc/l12                    shape=(274, 196, 768)      dtype=float16
+  s1_desc/l3                     shape=(274, 196, 768)      dtype=float16
+  s1_desc/l6                     shape=(274, 196, 768)      dtype=float16
+  s1_desc/l9                     shape=(274, 196, 768)      dtype=float16
+  s2/dates                       shape=(117,)               dtype=<U8
+  s2/l12                         shape=(117, 196, 768)      dtype=float16
+  s2/l3                          shape=(117, 196, 768)      dtype=float16
+  s2/l6                          shape=(117, 196, 768)      dtype=float16
+  s2/l9                          shape=(117, 196, 768)      dtype=float16
+  sif/date_ints                  shape=(1289,)              dtype=int32
+  sif/doys                       shape=(1289,)              dtype=int32
+  sif/values                     shape=(1289,)              dtype=float32
+  twsa/date_ints                 shape=(75,)                dtype=int32
+  twsa/doys                      shape=(75,)                dtype=int32
+  twsa/lwe                       shape=(75,)                dtype=float32
+  twsa/lwe_uncertainty           shape=(75,)                dtype=float32

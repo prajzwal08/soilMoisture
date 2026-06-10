@@ -1,0 +1,47 @@
+Job ID  : 23620115
+Node    : gcn117
+GPU     : NVIDIA H100
+=== Phase 1: TerraMind tokens (terramind env) ===
+2026-06-10 07:26:46,046 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-10 07:26:46,048 - WARNING - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-10 07:26:47,093 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+Stations : 1
+Mode     : terramind
+Execute  : True
+Device   : cuda
+Loading TerraMindEncoder...
+[   1/1] OK-TM  ISMN_SCAN_Phillipsburg  s2=281 s1=629
+
+Total .complete: 991
+2026-06-10 07:32:25,593 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-10 07:32:25,596 - WARNING - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-10 07:32:26,509 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+Stations : 1
+Mode     : terramind
+Execute  : True
+Device   : cuda
+Loading TerraMindEncoder...
+[   1/1] OK-TM  ISMN_SNOTEL_CaveMountain  s2=649 s1=220
+
+Total .complete: 991
+=== Phase 2: CloudSEN12 + tabular fill (sensei env) ===
+Stations : 1
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/1] OK-CM  ISMN_SCAN_Phillipsburg  cm=281  (12s)
+
+Total .complete: 992
+Stations : 1
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/1] OK-CM  ISMN_SNOTEL_CaveMountain  cm=649  (10s)
+
+Total .complete: 993
+Done. Total .complete:
+993

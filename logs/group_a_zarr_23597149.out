@@ -1,0 +1,36 @@
+Job ID : 23597149
+Node   : tcn182
+Stations : 24
+Execute  : True
+Force    : True
+Workers  : 64
+Data root: /projects/prjs1968/data
+Output   : /gpfs/scratch1/shared/pkhanal/zarr
+[   1/24] OK   AmeriFlux_US-DFC (431 MB)
+[   2/24] OK   AmeriFlux_US-xSE (460 MB)
+[   3/24] OK   AmeriFlux_US-ONA (415 MB)
+[   4/24] OK   ISMN_SNOTEL_Aniak (266 MB)
+[   5/24] OK   AmeriFlux_US-xDJ (463 MB)
+[   6/24] OK   AmeriFlux_CA-Mer (572 MB)
+[   7/24] OK   AmeriFlux_US-Ses (677 MB)
+[   8/24] OK   AmeriFlux_CA-Cbo (640 MB)
+[   9/24] OK   AmeriFlux_US-MtB (864 MB)
+[  10/24] OK   AmeriFlux_US-Bi2 (932 MB)
+[  11/24] OK   ICOS_CH-Cha (963 MB)
+[  12/24] OK   ICOS_RU-Fy2 (1127 MB)
+[  13/24] OK   AmeriFlux_US-BZB (968 MB)
+[  14/24] OK   ICOS_CH-Fru (961 MB)
+[  15/24] OK   ISMN_SCAN_Moccasin (961 MB)
+[  16/24] OK   ICOS_FR-Aur (1281 MB)
+[  17/24] OK   ICOS_CZ-KrP (1180 MB)
+[  18/24] OK   AmeriFlux_US-Rwf (1266 MB)
+[  19/24] OK   ICOS_CH-Lae (1211 MB)
+[  20/24] OK   AmeriFlux_US-Seg (1212 MB)
+[  21/24] OK   AmeriFlux_US-Rls (1335 MB)
+[  22/24] OK   AmeriFlux_US-Mpj (1525 MB)
+[  23/24] OK   ICOS_CZ-wet (1575 MB)
+[  24/24] OK   AmeriFlux_US-Rms (1322 MB)
+
+Completed zarr stores: 929 / 24
+Done.
+929

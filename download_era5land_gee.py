@@ -704,7 +704,24 @@ def main():
         "--era5-only", action="store_true",
         help="Skip TWSA download (ERA5-Land only)."
     )
+    parser.add_argument(
+        "--data-root", type=Path, default=None,
+        help="Override DATA_ROOT (default: /gpfs/work3/0/prjs1968/data). "
+             "Use to redirect output to scratch for new stations."
+    )
+    parser.add_argument(
+        "--stations-file", type=Path, default=None,
+        help="File with one station_id per line (alternative to --stations)."
+    )
     args = parser.parse_args()
+
+    # Patch globals so all helpers (_station_dir, LOG_DIR, LOG_FILE) see the new root
+    if args.data_root is not None:
+        global DATA_ROOT, LOG_DIR, LOG_FILE
+        DATA_ROOT = args.data_root
+        LOG_DIR   = DATA_ROOT / "logs"
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        LOG_FILE  = LOG_DIR / "era5land_gee_download.log"
 
     setup_logging()
     log = logging.getLogger(__name__)
@@ -715,6 +732,13 @@ def main():
     if TEST_MODE:
         df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
         log.info(f"TEST_MODE: running on {len(df)} station(s): {list(df['station_id'])}")
+    elif args.stations_file:
+        keep = {l.strip() for l in args.stations_file.read_text().splitlines() if l.strip()}
+        df   = df[df["station_id"].isin(keep)].reset_index(drop=True)
+        log.info(f"Filtered to {len(df)} station(s) from {args.stations_file}")
+        if df.empty:
+            log.error("No matching stations found in --stations-file.")
+            return
     elif args.stations:
         keep = set(s.strip() for s in args.stations.split(","))
         df   = df[df["station_id"].isin(keep)].reset_index(drop=True)

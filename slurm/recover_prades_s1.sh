@@ -1,19 +1,20 @@
 #!/bin/bash
-#SBATCH --job-name=retok_b
+#SBATCH --job-name=recover_prades_s1
 #SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus=1
 #SBATCH --mem=64G
-#SBATCH --time=12:00:00
-#SBATCH --output=/gpfs/work3/0/prjs1968/soilMoisture/logs/retokenize_b_%j.out
+#SBATCH --time=1:00:00
+#SBATCH --output=/gpfs/work3/0/prjs1968/soilMoisture/logs/recover_prades_s1_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
-# Group B Phase 1: 83 stations — run TerraMind to write S2/S1/DEM/LULC tokens.
-# Requires terramind conda env (terratorch). Does NOT call senseiv2.
-# After this job completes, submit retokenize_b2.sh (sensei env) for Phase 2.
+# CRITICAL recovery: ISMN_SMOSMANIA_Prades-le-Lez has MISSING_s1 (both asc &
+# desc) in the token zarr, but satellite_zarr has full s1_asc/s1_desc data
+# (151 dates each, 2016-2018) — Phase 1 (terramind) tokenization for S1 was
+# never written. Run Phase 1 for this station only (terramind env).
 
 set -euo pipefail
 cd /gpfs/work3/0/prjs1968/soilMoisture
@@ -24,9 +25,9 @@ echo "GPU     : $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null 
 
 conda run --no-capture-output -n terramind python retokenize_satellite_zarr.py \
     --mode       terramind \
+    --station    ISMN_SMOSMANIA_Prades-le-Lez \
     --batch-size 8 \
     --device     cuda \
     --execute
 
-echo "Done Phase 1. Stations with s2 tokens:"
-find /gpfs/scratch1/shared/pkhanal/zarr -path "*/s2/l12/.zarray" | wc -l
+echo "Done."

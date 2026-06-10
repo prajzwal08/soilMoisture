@@ -1,0 +1,47 @@
+Job ID  : 23620737
+Node    : gcn134
+GPU     : NVIDIA H100
+2026-06-10 09:20:24,112 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+2026-06-10 09:20:25,037 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+Stations : 36
+Mode     : terramind-force
+Execute  : True
+Device   : cuda
+Loading TerraMindEncoder...
+[  49/993] OK-TM  ISMN_COSMOS-UK_HollinHill  s2=0 s1_asc=254 s1_desc=435
+[  81/993] OK-TM  ISMN_FMI_SOD071  s2=0 s1_asc=633 s1_desc=682
+[ 128/993] OK-TM  ISMN_REMEDHUS_Paredinas  s2=0 s1_asc=648 s1_desc=321
+[ 141/993] OK-TM  ISMN_RSMN_Cotnari  s2=360 s1_asc=0 s1_desc=0
+[ 142/993] OK-TM  ISMN_RSMN_Darabani  s2=348 s1_asc=0 s1_desc=0
+[ 160/993] OK-TM  ISMN_SCAN_BodieHills  s2=0 s1_asc=746 s1_desc=356
+[ 171/993] OK-TM  ISMN_SCAN_ChickenRidge  s2=489 s1_asc=0 s1_desc=0
+[ 198/993] OK-TM  ISMN_SCAN_GreenRiver  s2=0 s1_asc=96 s1_desc=196
+[ 215/993] OK-TM  ISMN_SCAN_Levelland  s2=181 s1_asc=0 s1_desc=0
+[ 224/993] OK-TM  ISMN_SCAN_MammothCave  s2=0 s1_asc=218 s1_desc=0
+[ 228/993] OK-TM  ISMN_SCAN_MaricaoForest  s2=0 s1_asc=39 s1_desc=0
+[ 234/993] OK-TM  ISMN_SCAN_Moccasin  s2=473 s1_asc=0 s1_desc=0
+[ 282/993] OK-TM  ISMN_SCAN_SunleafNursery  s2=131 s1_asc=0 s1_desc=0
+[ 308/993] OK-TM  ISMN_SCAN_YoumansFarm  s2=0 s1_asc=0 s1_desc=6
+[ 315/993] OK-TM  ISMN_SMOSMANIA_LaGrandCombe  s2=214 s1_asc=0 s1_desc=0
+[ 334/993] OK-TM  ISMN_SNOTEL_Aniak  s2=139 s1_asc=0 s1_desc=0
+[ 339/993] OK-TM  ISMN_SNOTEL_BakerButteSmt  s2=586 s1_asc=0 s1_desc=0
+[ 354/993] OK-TM  ISMN_SNOTEL_BigCreekSum  s2=686 s1_asc=0 s1_desc=0
+[ 369/993] OK-TM  ISMN_SNOTEL_BoxSprings  s2=0 s1_asc=83 s1_desc=165
+[ 371/993] OK-TM  ISMN_SNOTEL_Brighton  s2=541 s1_asc=0 s1_desc=0
+[ 378/993] OK-TM  ISMN_SNOTEL_BuckboardFlat  s2=0 s1_asc=143 s1_desc=493
+[ 388/993] OK-TM  ISMN_SNOTEL_CarsonPass  s2=606 s1_asc=0 s1_desc=0
+[ 398/993] OK-TM  ISMN_SNOTEL_ChocolateGulch  s2=131 s1_asc=0 s1_desc=0
+[ 407/993] OK-TM  ISMN_SNOTEL_CrabCreek  s2=235 s1_asc=0 s1_desc=0
+[ 475/993] OK-TM  ISMN_SNOTEL_HeavenlyValley  s2=0 s1_asc=667 s1_desc=638
+[ 690/993] OK-TM  ISMN_SNOTEL_UpperRioGrande  s2=0 s1_asc=299 s1_desc=185
+[ 846/993] OK-TM  ICOS_CH-Oe2  s2=0 s1_asc=454 s1_desc=464
+[ 849/993] OK-TM  ICOS_CZ-Stn  s2=0 s1_asc=477 s1_desc=462
+[ 853/993] OK-TM  ICOS_ES-Abr  s2=307 s1_asc=0 s1_desc=0
+[ 871/993] OK-TM  ICOS_BE-Vie  s2=0 s1_asc=282 s1_desc=585
+[ 885/993] OK-TM  ICOS_FI-Sii  s2=0 s1_asc=588 s1_desc=310
+[ 893/993] OK-TM  ICOS_FR-Tou  s2=0 s1_asc=260 s1_desc=321
+[ 898/993] OK-TM  ICOS_IT-Tor  s2=0 s1_asc=158 s1_desc=323
+[ 947/993] OK-TM  AmeriFlux_US-RGo  s2=345 s1_asc=0 s1_desc=0
+[ 954/993] OK-TM  AmeriFlux_US-Rws  s2=0 s1_asc=329 s1_desc=460
+[ 980/993] OK-TM  AmeriFlux_US-xUN  s2=142 s1_asc=0 s1_desc=0
+Done.

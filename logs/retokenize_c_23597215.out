@@ -1,0 +1,275 @@
+Job ID  : 23597215
+Node    : gcn141
+GPU     : NVIDIA H100
+Stations : 62
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/62] ERR    ISMN_SCAN_JournaganRanch: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   2/62] ERR    ISMN_SCAN_KoptisFarms: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   3/62] ERR    ISMN_SCAN_KyleCanyon: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   4/62] ERR    ISMN_SCAN_Lind#1: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   5/62] ERR    ISMN_SCAN_LittleRedFox: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   6/62] ERR    ISMN_SCAN_LittleRiver: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   7/62] ERR    ISMN_SCAN_LosLunasPMC: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   8/62] ERR    ISMN_SCAN_LovellSummit: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[   9/62] ERR    ISMN_SCAN_LovelockNNR: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[  10/62] ERR    ISMN_SCAN_LyeBrook: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[  11/62] ERR    ISMN_SCAN_MahantangoCk: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[  12/62] ERR    ISMN_SCAN_Mandan#1: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[  13/62] ERR    ISMN_SCAN_Manderfield: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[  14/62] ERR    ISMN_SCAN_MarbleCreek: No module named 'xarray'
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 260, in _merge_nc
+    import xarray as xr
+ModuleNotFoundError: No module named 'xarray'
+
+[  15/62] ERR    ISMN_SCAN_MonoclineRidge: chunk manager 'dask' is not available. Please make sure 'dask' is installed and importable.
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 264, in _merge_nc
+    ds = xr.open_mfdataset(files, combine="by_coords", data_vars="minimal",
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 1638, in open_mfdataset
+    ds = open_(p, **open_kwargs)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 613, in open_dataset
+    ds = _dataset_from_backend_dataset(
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 308, in _dataset_from_backend_dataset
+    ds = _chunk_ds(
+         ^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 232, in _chunk_ds
+    chunkmanager = guess_chunkmanager(chunked_array_type)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/namedarray/parallelcompat.py", line 116, in guess_chunkmanager
+    raise ImportError(
+ImportError: chunk manager 'dask' is not available. Please make sure 'dask' is installed and importable.
+
+[  16/62] ERR    ISMN_SCAN_MtVernon: chunk manager 'dask' is not available. Please make sure 'dask' is installed and importable.
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 264, in _merge_nc
+    ds = xr.open_mfdataset(files, combine="by_coords", data_vars="minimal",
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 1638, in open_mfdataset
+    ds = open_(p, **open_kwargs)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 613, in open_dataset
+    ds = _dataset_from_backend_dataset(
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 308, in _dataset_from_backend_dataset
+    ds = _chunk_ds(
+         ^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 232, in _chunk_ds
+    chunkmanager = guess_chunkmanager(chunked_array_type)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/namedarray/parallelcompat.py", line 116, in guess_chunkmanager
+    raise ImportError(
+ImportError: chunk manager 'dask' is not available. Please make sure 'dask' is installed and importable.
+
+[  17/62] ERR    ISMN_SCAN_Nacogdoches: chunk manager 'dask' is not available. Please make sure 'dask' is installed and importable.
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 443, in process_cm_fill
+    _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 375, in _fill_tabular
+    _write_era5(token_root, era5_dir)
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 276, in _write_era5
+    ds = _merge_nc(era5_dir, "meteo")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 264, in _merge_nc
+    ds = xr.open_mfdataset(files, combine="by_coords", data_vars="minimal",
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 1638, in open_mfdataset
+    ds = open_(p, **open_kwargs)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 613, in open_dataset
+    ds = _dataset_from_backend_dataset(
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 308, in _dataset_from_backend_dataset
+    ds = _chunk_ds(
+         ^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/backends/api.py", line 232, in _chunk_ds
+    chunkmanager = guess_chunkmanager(chunked_array_type)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/sensei/lib/python3.11/site-packages/xarray/namedarray/parallelcompat.py", line 116, in guess_chunkmanager
+    raise ImportError(
+ImportError: chunk manager 'dask' is not available. Please make sure 'dask' is installed and importable.
+
+[2026-06-09T08:43:11.442] error: *** JOB 23597215 ON gcn141 CANCELLED AT 2026-06-09T08:43:11 DUE to SIGNAL Terminated ***

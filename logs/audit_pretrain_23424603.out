@@ -1,0 +1,41 @@
+Job ID: 23424603
+Node:   gcn123
+GPU:    0
+Auditing 993 stations (splits=['train', 'val', 'oos', 'test'], categories=['sm_only', 'sm_and_flux', 'flux_only'])...
+
+Pre-training audit — 993 stations
+============================================================
+  OK        : 992
+  WARN      : 1
+  CRITICAL  : 0
+
+Modality presence:
+  has_S2            : 993/993
+  has_S1            : 993/993
+  has_DEM           : 993/993
+  has_LULC          : 993/993
+  has_ERA5          : 993/993
+  has_soil          : 993/993
+  has_TWSA          : 993/993
+  has_SIF           : 993/993
+  has_CloudMask     : 993/993
+  has_labels        : 993/993
+
+ERA5 all-NaN variables: 0 stations affected
+
+Cloud mask coverage (stations with S2):
+  Have cloud mask   : 993
+  No cloud mask     : 0
+  Mean S2 dates without CM entry : 0.0%
+  Max  S2 dates without CM entry : 20.7%
+  Stations >20% S2 dates missing from CM: 1
+
+Token issues:
+
+CRITICAL stations (0):
+
+Stations with >20% S2 dates missing cloud mask (1):
+  [oos] AmeriFlux_CA-Cbo: 54/261 (20.7%) without CM entry
+
+Detailed results → /gpfs/work3/0/prjs1968/soilMoisture/csvs/audit_pretrain.csv
+Summary          → /gpfs/work3/0/prjs1968/soilMoisture/text/audit_pretrain_summary.txt

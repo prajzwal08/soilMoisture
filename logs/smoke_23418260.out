@@ -1,0 +1,24 @@
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+Device: cuda
+Building datasets...
+Dataset: 1160521 samples from 584 stations
+Dataset: 140152 samples from 74 stations
+Building model...
+Trainable parameters: 48,673,863
+No checkpoint found — starting fresh
+W&B disabled: No module named 'wandb'
+
+Epoch 001  |  train_loss=-1.7055  val_loss=-0.9007
+      0-10  MSE=0.0086  MAE=0.0829  ubRMSE=0.0927  bias=-0.0044
+     10-30  MSE=0.0911  MAE=0.2833  ubRMSE=0.1042  bias=-0.2833
+    30-100  MSE=0.0118  MAE=0.0956  ubRMSE=0.0511  bias=-0.0956
+  New best val_loss=-0.9007 — checkpoint saved
+
+Epoch 002  |  train_loss=-2.4933  val_loss=-0.7986
+      0-10  MSE=0.0092  MAE=0.0836  ubRMSE=0.0946  bias=-0.0172
+     10-30  MSE=0.1298  MAE=0.3477  ubRMSE=0.0942  bias=-0.3477
+    30-100  MSE=0.0068  MAE=0.0597  ubRMSE=0.0565  bias=-0.0597
+
+Training complete. Best val_loss: -0.9007
+Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_test

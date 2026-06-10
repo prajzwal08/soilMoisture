@@ -1,0 +1,101 @@
+Job ID: 23421285
+Node:   gcn23
+GPU:    0
+Building dataset (train)...
+Dataset: 1160521 samples from 584 stations
+Dataset ready: 1160521 samples
+Checking 2000 random samples with 8 DataLoader workers...
+
+  100/2000 checked  errors so far: 0
+  200/2000 checked  errors so far: 0
+  300/2000 checked  errors so far: 0
+  400/2000 checked  errors so far: 0
+  500/2000 checked  errors so far: 0
+  600/2000 checked  errors so far: 0
+  700/2000 checked  errors so far: 1
+  800/2000 checked  errors so far: 1
+  900/2000 checked  errors so far: 1
+  1000/2000 checked  errors so far: 1
+  1100/2000 checked  errors so far: 1
+  1200/2000 checked  errors so far: 1
+  1300/2000 checked  errors so far: 1
+  1400/2000 checked  errors so far: 1
+  1500/2000 checked  errors so far: 1
+  1600/2000 checked  errors so far: 1
+  1700/2000 checked  errors so far: 2
+  1800/2000 checked  errors so far: 2
+  1900/2000 checked  errors so far: 2
+  2000/2000 checked  errors so far: 2
+
+============================================================
+Split           : train
+Samples checked : 2000
+Label all-NaN   : 0  (no SM obs that day — fine)
+Label has obs   : 2000
+Total errors    : 2
+
+ERRORS in train:
+  [845289] era5: contains 6570 NaN values
+  [845778] era5: contains 6570 NaN values
+
+Building dataset (val)...
+Dataset: 140152 samples from 74 stations
+Dataset ready: 140152 samples
+Checking 2000 random samples with 8 DataLoader workers...
+
+  100/2000 checked  errors so far: 1
+  200/2000 checked  errors so far: 2
+  300/2000 checked  errors so far: 4
+  400/2000 checked  errors so far: 6
+  500/2000 checked  errors so far: 7
+  600/2000 checked  errors so far: 8
+  700/2000 checked  errors so far: 10
+  800/2000 checked  errors so far: 11
+  900/2000 checked  errors so far: 11
+  1000/2000 checked  errors so far: 11
+  1100/2000 checked  errors so far: 12
+  1200/2000 checked  errors so far: 14
+  1300/2000 checked  errors so far: 14
+  1400/2000 checked  errors so far: 15
+  1500/2000 checked  errors so far: 16
+  1600/2000 checked  errors so far: 18
+  1700/2000 checked  errors so far: 20
+  1800/2000 checked  errors so far: 21
+  1900/2000 checked  errors so far: 22
+  2000/2000 checked  errors so far: 24
+
+============================================================
+Split           : val
+Samples checked : 2000
+Label all-NaN   : 0  (no SM obs that day — fine)
+Label has obs   : 2000
+Total errors    : 24
+
+ERRORS in val:
+  [25363] era5: contains 6570 NaN values
+  [25261] era5: contains 6570 NaN values
+  [24966] era5: contains 6570 NaN values
+  [25367] era5: contains 6570 NaN values
+  [24930] era5: contains 6570 NaN values
+  [25373] era5: contains 6570 NaN values
+  [25228] era5: contains 6570 NaN values
+  [24743] era5: contains 6570 NaN values
+  [25220] era5: contains 6570 NaN values
+  [24283] era5: contains 5976 NaN values
+  [25270] era5: contains 6570 NaN values
+  [25132] era5: contains 6570 NaN values
+  [24624] era5: contains 6570 NaN values
+  [24301] era5: contains 6300 NaN values
+  [25058] era5: contains 6570 NaN values
+  [25066] era5: contains 6570 NaN values
+  [25057] era5: contains 6570 NaN values
+  [25255] era5: contains 6570 NaN values
+  [24766] era5: contains 6570 NaN values
+  [25226] era5: contains 6570 NaN values
+  [24981] era5: contains 6570 NaN values
+  [24399] era5: contains 6570 NaN values
+  [24696] era5: contains 6570 NaN values
+  [24736] era5: contains 6570 NaN values
+
+============================================================
+OVERALL: 26 errors found across all splits.

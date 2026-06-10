@@ -1,0 +1,4 @@
+Job ID: 23419417
+Node:   gcn71
+GPU:    0
+[2026-06-03T11:24:52.236] error: *** JOB 23419417 ON gcn71 CANCELLED AT 2026-06-03T11:24:52 DUE to SIGNAL Terminated ***

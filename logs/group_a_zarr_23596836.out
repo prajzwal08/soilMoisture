@@ -1,0 +1,36 @@
+Job ID : 23596836
+Node   : tcn250
+Stations : 24
+Execute  : True
+Force    : True
+Workers  : 24
+Data root: /projects/prjs1968/data
+Output   : /gpfs/scratch1/shared/pkhanal/zarr
+[   1/24] ERR  AmeriFlux_US-DFC: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   2/24] ERR  AmeriFlux_US-ONA: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   3/24] ERR  AmeriFlux_US-xDJ: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   4/24] ERR  AmeriFlux_US-xSE: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   5/24] OK   ISMN_SNOTEL_Aniak (266 MB)
+[   6/24] ERR  AmeriFlux_CA-Mer: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   7/24] ERR  AmeriFlux_US-Ses: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   8/24] ERR  AmeriFlux_CA-Cbo: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[   9/24] ERR  AmeriFlux_US-MtB: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  10/24] ERR  ICOS_CH-Lae: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  11/24] ERR  AmeriFlux_US-BZB: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  12/24] ERR  ICOS_CH-Cha: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  13/24] ERR  ICOS_CZ-KrP: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  14/24] ERR  ICOS_RU-Fy2: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  15/24] ERR  AmeriFlux_US-Bi2: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  16/24] ERR  ICOS_CH-Fru: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  17/24] ERR  AmeriFlux_US-Rwf: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  18/24] ERR  AmeriFlux_US-Rls: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  19/24] ERR  AmeriFlux_US-Seg: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  20/24] ERR  ICOS_FR-Aur: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  21/24] OK   ISMN_SCAN_Moccasin (961 MB)
+[  22/24] ERR  AmeriFlux_US-Mpj: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  23/24] ERR  AmeriFlux_US-Rms: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+[  24/24] ERR  ICOS_CZ-wet: "No variable named 'soil_moisture'. Variables on the dataset include ['LE_F_MDS', 'LE_F_MDS_QC', 'date_time']"
+
+Completed zarr stores: 907 / 24
+Done.
+907

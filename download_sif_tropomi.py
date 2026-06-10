@@ -58,7 +58,7 @@ SIF_START_DATE = date(2018, 4, 30)   # first available L2B file
 SEARCH_RADIUS_DEG = 0.05   # ~5.5 km buffer around station for STAC bbox
 EXTRACT_RADIUS_M  = 5000   # 5 km radius for pixel matching
 
-N_WORKERS    = 6    # concurrent day downloads (bandwidth limited ~390 MB/file — keep moderate)
+N_WORKERS    = 12   # concurrent day downloads; 16 CPUs allocated so 12 is safe
 LATENCY_DAYS = 30   # estimated days of latency before files are available
 
 LOG_COLS = ["date", "n_stations_found", "status", "error_msg", "timestamp"]
@@ -188,22 +188,33 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
         sif_v = sif_arr[valid]
         unc_v = unc_arr[valid]
 
-        radius_km = EXTRACT_RADIUS_M / 1000.0
+        radius_km  = EXTRACT_RADIUS_M / 1000.0
+        margin_deg = EXTRACT_RADIUS_M / 111_000.0  # conservative degree buffer (~0.045°)
 
         for row in stations_df.itertuples(index=False):
             sid  = row.station_id
             slat = float(row.latitude)
             slon = float(row.longitude)
 
-            dist = haversine_km(slat, slon, lat_v, lon_v)
+            # Cheap bbox pre-filter before haversine (cuts haversine array size ~1000x)
+            bbox = (
+                (lat_v >= slat - margin_deg) & (lat_v <= slat + margin_deg) &
+                (lon_v >= slon - margin_deg) & (lon_v <= slon + margin_deg)
+            )
+            if not bbox.any():
+                continue
+
+            dist   = haversine_km(slat, slon, lat_v[bbox], lon_v[bbox])
             nearby = dist <= radius_km
 
             if not nearby.any():
                 continue
 
+            sif_bbox = sif_v[bbox]
+            unc_bbox = unc_v[bbox]
             results[sid] = {
-                "sif":             float(np.nanmean(sif_v[nearby])),
-                "sif_uncertainty": float(np.nanmean(unc_v[nearby])),
+                "sif":             float(np.nanmean(sif_bbox[nearby])),
+                "sif_uncertainty": float(np.nanmean(unc_bbox[nearby])),
                 "date":            day,
             }
 
@@ -333,6 +344,20 @@ def save_station_year(station_dir: Path, station_id: str, year: int, obs_list: l
 # ============================================================
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Download TROPOMI SIF")
+    parser.add_argument("--data-root", type=Path, default=None,
+                        help="Override DATA_ROOT (default: /gpfs/work3/0/prjs1968/data).")
+    parser.add_argument("--stations-file", type=Path, default=None,
+                        help="File with one station_id per line to restrict processing.")
+    args = parser.parse_args()
+
+    if args.data_root is not None:
+        global DATA_ROOT, LOG_DIR
+        DATA_ROOT = args.data_root
+        LOG_DIR   = DATA_ROOT / "logs"
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+
     setup_logging()
     log = logging.getLogger(__name__)
 
@@ -340,6 +365,10 @@ def main():
     if TEST_MODE:
         df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
         log.info(f"TEST_MODE: running on {len(df)} station(s), {TEST_DAYS} days only")
+    elif args.stations_file:
+        keep = {l.strip() for l in args.stations_file.read_text().splitlines() if l.strip()}
+        df   = df[df["station_id"].isin(keep)].reset_index(drop=True)
+        log.info(f"Filtered to {len(df)} station(s) from {args.stations_file}")
 
     # Build the overall date range (SIF start → max station end date)
     max_end = date.today() - timedelta(days=LATENCY_DAYS)

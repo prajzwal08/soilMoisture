@@ -1,0 +1,393 @@
+Job ID : 23638239
+Node   : tcn26
+Auditing 993 stations with 64 workers...
+
+Comprehensive dataset audit — 993 stations
+============================================================
+  OK        : 671
+  WARN      : 0
+  CRITICAL  : 322
+
+1. Modality presence:
+  has_s2          : 993/993
+  has_s1_asc      : 990/993
+  has_s1_desc     : 906/993
+  has_cm          : 993/993
+  has_dem         : 993/993
+  has_lulc        : 993/993
+  has_soil        : 993/993
+  has_era5        : 993/993
+  has_sif         : 990/993
+  has_twsa        : 845/993
+  has_labels_sm   : 890/993
+  has_labels_le   : 151/993
+
+2. Cloud mask coverage (stations with S2, n=993):
+  Mean cm coverage : 100.00%
+  Min  cm coverage : 100.00%
+  Stations < 95.0% cm coverage: 0
+
+3. Stations with missing-year gaps (required modalities):
+
+   Per-modality satellite gaps (informational only):
+     s2_missing_years        : 82 stations
+     s1_asc_missing_years    : 278 stations
+     s1_desc_missing_years   : 478 stations
+     cm_missing_years        : 82 stations
+
+   SIF/TWSA (informational only):
+     has_sif  : 990/993
+     has_twsa : 845/993
+     sif_missing_years gaps  : 732 stations
+     twsa_missing_years gaps : 328 stations
+
+4. Token vs raw-image alignment (has_raw_satzarr: 993/993):
+  s2      : token>raw on 0 stations, raw>token (untokenized images) on 0 stations
+  s1_asc  : token>raw on 0 stations, raw>token (untokenized images) on 0 stations
+  s1_desc : token>raw on 0 stations, raw>token (untokenized images) on 0 stations
+  dem     : token without matching raw image: 0 stations
+  lulc    : token without matching raw image: 0 stations
+
+5. Tabular/static NaN sanity (should all be 0):
+  dem_nan         : 0 stations with NaN
+  lulc_nan        : 0 stations with NaN
+  soil_nan        : 322 stations with NaN
+  era5_nan        : 0 stations with NaN
+  sif_nan         : 0 stations with NaN
+  twsa_nan        : 0 stations with NaN
+  labels_sm_nan   : 0 stations with NaN
+  labels_le_nan_frac (informational, flux gaps expected): mean=16.08%, max=52.78%
+
+6. Label continuity (>= 3 yr continuous, ending at end_date):
+  SM: 0/890 stations with < 3 continuous years
+  LE: 0/151 stations with < 3 continuous years
+
+CRITICAL stations (322):
+  [sm_only/train] ISMN_AMMA-CATCH_Tondikiboro: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_ARM_Ashton: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_ARM_MapleCity: SOIL_HAS_NAN
+  [sm_only/train] ISMN_ARM_Morrison: INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_ARM_Tryon: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_ARM_Tyro: INFO_s1_desc_missing_years(2016,2017,2018,2019,2021,2022,2023,2024,2025)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_Berlin_DWDBerlin-Spaeth: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_Berlin_PSA18Pfaueninsel: INFO_s2_missing_years(2022)|INFO_cm_missing_years(2022)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_Berlin_PSA2Tiergarten: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_Berlin_PSA6Plaenterwald: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_Berlin_PSA7Ruebezahl: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_Berlin_PflABerlin11Humb: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_Berlin_PflABerlin12Schi: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_COSMOS-UK_AliceHolt: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_COSMOS-UK_BickleyHall: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_COSMOS-UK_Cochno: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_COSMOS-UK_Redmere: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_CW3E_Deerwood: INFO_sif_missing_years(2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_CW3E_PotterValleyNorth: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_FLUXNET-AMERIFLUX_BouldinIslandAlfalfa: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD011: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD012: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD013: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD081: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD083: INFO_s2_missing_years(2021)|INFO_cm_missing_years(2021)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD101: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD102: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_FMI_SOD103: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_FMI_SOD130: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_HOBE_2.01: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_LABFLUX_Nivolet: INFO_s2_missing_years(2019)|INFO_cm_missing_years(2019)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_NAQU_NQKema: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_NAQU_NQMS: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_NAQU_NQNorth: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_NGARI_ALI01: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_NGARI_ALI02: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_NGARI_ALI03: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_NGARI_SQ19: INFO_s1_asc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_NGARI_SQ20: INFO_s1_asc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_ROMPS_GolubinGlacier: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_ROMPS_Kokomeren: INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_ROMPS_Maydantal: INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_RSMN_Iasi: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_RSMN_Slatina: SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Alcalde: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Ames: INFO_s1_desc_missing_years(2017,2018,2019,2020,2021,2022,2023)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_CacheJunction: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_CarverFarm: INFO_s1_desc_missing_years(2018,2019,2021)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_CaveValley: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_CentraliaLake: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SCAN_CrescentLake#1: INFO_no_twsa|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Cullman-NAHRC: INFO_no_twsa|INFO_s1_desc_missing_years(2018,2019,2021,2022,2023,2024,2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_DeepSprings: INFO_no_twsa|INFO_s2_missing_years(2016,2017,2018,2019)|INFO_cm_missing_years(2016,2017,2018,2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_Dexter: INFO_s1_desc_missing_years(2018,2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_EagleLake: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_ElsberryPMC: INFO_no_twsa|INFO_s1_desc_missing_years(2018,2019,2020,2021,2022,2023,2024)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_ErosDataCenter: INFO_no_twsa|INFO_s2_missing_years(2016,2017,2018)|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_cm_missing_years(2016,2017,2018)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_EvergladesARS: INFO_s1_desc_missing_years(2021,2022)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_GoodwinCkTimber: INFO_no_twsa|INFO_s1_desc_missing_years(2018,2019,2021,2022,2023,2024,2025)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_GreenRiver: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_HarmsWay: INFO_no_twsa|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_JornadaExpRange: INFO_no_twsa|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_LittleRedFox: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_LittleRiver: INFO_no_twsa|INFO_s1_desc_missing_years(2016,2017,2020,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_LyeBrook: INFO_no_twsa|INFO_s1_desc_missing_years(2018,2021)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_MonoclineRidge: INFO_no_twsa|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_Nacogdoches: INFO_no_twsa|INFO_s1_desc_missing_years(2018,2019,2021,2022)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SCAN_PeeDee: INFO_s1_desc_missing_years(2021,2023,2024,2025)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_PerdidoRivFarms: INFO_s1_desc_missing_years(2016,2019,2020)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SCAN_PowderMill: INFO_s2_missing_years(2016,2017,2018,2019)|INFO_s1_desc_missing_years(2016,2017,2020,2021,2022,2023,2024)|INFO_cm_missing_years(2016,2017,2018,2019)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_PowellGardens: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_PrairieView#1: INFO_s2_missing_years(2016,2017)|INFO_cm_missing_years(2016,2017)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Price: INFO_s2_missing_years(2016,2017,2018,2019,2020,2021,2022)|INFO_s1_asc_missing_years(2022,2023,2024,2025)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017,2018,2019,2020,2021,2022)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_RockSpringsPa: INFO_sif_missing_years(2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_SandyRidge: INFO_s1_desc_missing_years(2018,2019,2021,2022,2023,2024,2025)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_SellersLake#1: INFO_s1_desc_missing_years(2021,2022)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Spickard: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_SplitMountain: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_StanleyFarm: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_Starkville: INFO_s1_desc_missing_years(2018,2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Stephenville: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_TidewaterArec: INFO_s1_desc_missing_years(2016,2017,2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_TuleValley: INFO_s1_asc_missing_years(2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Tunica: INFO_s1_desc_missing_years(2018,2019,2020)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SCAN_Uapb-Earle: INFO_s1_desc_missing_years(2016,2018,2019,2021,2022,2023,2024,2025)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_UapbCampus-PB: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Uvalde: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_Vermillion: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SCAN_Watkinsville#1: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SCAN_YoumansFarm: INFO_s1_desc_missing_years(2017,2021,2022)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SMOSMANIA_Lahas: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SMOSMANIA_PeyrusseGrande: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_AguaCanyon: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_AmericanCreek: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Aniak: INFO_s1_asc_missing_years(2022)|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_Atwater: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BannerSummit: INFO_s1_desc_missing_years(2016,2018)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BearCanyon: INFO_s1_desc_missing_years(2020)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BerthoudSummit: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_BigCreekSum: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BigSandyOpening: INFO_no_twsa|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BlueLakes: INFO_no_twsa|INFO_s2_missing_years(2016,2017)|INFO_cm_missing_years(2016,2017)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BobsHollow: INFO_no_twsa|INFO_s2_missing_years(2016,2017)|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_BrianHead: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Brighton: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BrooklynLake: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BrownDuck: INFO_no_twsa|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BrownTop: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BuckFlat: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_BuckPasture: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_BuckskinJoe: INFO_no_twsa|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_BurtsMillerRanch: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Butte: INFO_no_twsa|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_CampJackson: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_CarsonPass: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_CaveMountain: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016,2018,2019,2020)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_ChalkCreek#1: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Chepeta: INFO_no_twsa|INFO_s2_missing_years(2016,2017)|INFO_s1_asc_missing_years(2022,2024)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Chisana: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_ClackamasLake: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Coldfoot: INFO_no_twsa|INFO_s2_missing_years(2016,2017,2018,2019,2020,2021,2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017,2018,2019,2020,2021,2022,2023)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_CorralCanyon: INFO_no_twsa|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_CouchSummit: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_CssLab: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Culebra#2: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_DillsCamp: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_DisasterPeak: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_DonkeyReservoir: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_EagleSummit: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_EbbettsPass: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_EchoPeak: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_ExitGlacier: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_FallenLeaf: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_FarnsworthLake: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_FieldingLake: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Fifteenmile: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_FishLakeUtah: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_FivePointsLake: INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_ForestdaleCreek: INFO_s2_missing_years(2016,2017,2018,2019,2020)|INFO_cm_missing_years(2016,2017,2018,2019,2020)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_FremontPass: INFO_s2_missing_years(2016,2017,2018)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017,2018)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GBRCMeadows: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GalenaAK: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GalenaSummit: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GobblersKnob: INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GoldBasin: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GrandTarghee: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GraniteCrk: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_GranitePeak: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_GrizzlyPeak: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_GulkanaRiver: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_HarrisFlat: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_sif_missing_years(2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_HawleyLake: INFO_s1_asc_missing_years(2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_HaydenFork: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_HiltsCreek: INFO_s1_desc_missing_years(2016,2018,2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_Hole-in-Rock: INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_HoosierPass: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_ImnaviatCreek: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_IndependenceCamp: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_IndependenceLake: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_IslandPark: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_JackCreekUpper: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_JackWadeJct: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_JacksPeak: INFO_s1_asc_missing_years(2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_JackwhackerGulch: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_JonesCorral: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_KellyStation: INFO_s1_asc_missing_years(2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_KenaiMoosePens: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LakeforkBasin: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_Lamoille#3: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_LamoilleUpper: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LeavittLake: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LeavittMeadows: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LilyPond: INFO_sif_missing_years(2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LobdellLake: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LongDrawResv: INFO_s2_missing_years(2020)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2020)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_LongValleyJct: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_MagicMountain: INFO_s1_desc_missing_years(2016,2018,2019,2020)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_MarletteLake: INFO_s2_missing_years(2016,2017,2018,2019,2020,2021)|INFO_cm_missing_years(2016,2017,2018,2019,2020,2021)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_McGrath: INFO_s2_missing_years(2019,2020)|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_cm_missing_years(2019,2020)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_McneilRiverSGS: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_MedBow: INFO_s2_missing_years(2016,2017,2018,2019,2020,2021,2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017,2018,2019,2020,2021,2022,2023)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_MichiganCreek: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_MiningFork: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_MooreCreekBridge: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_MtBaldy: INFO_s1_asc_missing_years(2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_MtRoseSkiArea: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_NavajoWhiskeyCk: INFO_s1_asc_missing_years(2022,2023,2024,2025)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_NukaGlacier: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_PalisadesTahoe: INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_PanguitchLakeRS: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_ParkCone: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_ParkReservoir: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_PaysonR.S.: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_PineCreek: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_PortGraham: INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_RainbowCanyon: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_RainyPass: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_Sawtooth: INFO_s1_asc_missing_years(2022)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SchofieldPass: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SeeleyCreek: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Sheldon: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_SnakeRiverStation: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Snowbird: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SpiritLk: INFO_s1_asc_missing_years(2022,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SpringCreek: INFO_s2_missing_years(2019)|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_cm_missing_years(2019)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_StickneyMill: INFO_s1_desc_missing_years(2016,2018)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SummitCreek: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SummitMeadow: INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_SunflowerFlat: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_SusitnaValleyHigh: INFO_s2_missing_years(2016,2017,2018,2019,2020,2021)|INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017,2018,2019,2020,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_TahoeCityCross: INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_TelaquanaLake: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_ThistleFlat: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_Tipton: INFO_s1_asc_missing_years(2022)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Tok: INFO_s1_asc_missing_years(2022,2023,2024,2025)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_TonyGroveLake: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_TrialLake: INFO_s1_asc_missing_years(2022,2023)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_TriplePeak: INFO_s1_asc_missing_years(2022,2023,2024,2025)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Trough: SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_UpperNomeCreek: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_UpperRioGrande: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_UpperTaylor: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_UpperTsainaRiver: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_VacarroSprings: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_VirginiaLakesRidge: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_WebsterFlat: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_WheelerPeak: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_Widtsoe#3: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_WilburBench: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_SNOTEL_WildBasin: INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_WolfCreekSummit: INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_WrigleyCreek: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_SNOTEL_YankeeReservoir: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_SNOTEL_Zirkel: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_TxSON_CR200-22: INFO_s1_desc_missing_years(2016,2018,2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_TxSON_LCRA-3: INFO_s1_desc_missing_years(2016,2018,2020,2021,2022)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_TxSON_LCRA-4: INFO_s1_desc_missing_years(2016,2018,2020,2021,2022)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_TxSON_LCRA-6: INFO_s1_desc_missing_years(2016,2018,2020,2021,2022)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Brunswick-23-S: INFO_s1_desc_missing_years(2019)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_USCRN_Cape-Charles-5-ENE: INFO_s1_desc_missing_years(2016,2017,2019,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_USCRN_Corvallis-10-SSW: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_USCRN_Durham-2-N: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Everglades-City-5-NE: INFO_s1_desc_missing_years(2020)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Gadsden-19-N: INFO_s1_desc_missing_years(2018,2019,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_John-Day-35-WNW: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Joplin-24-N: INFO_s2_missing_years(2016)|INFO_s1_asc_missing_years(2016)|INFO_s1_desc_missing_years(2016,2017,2018,2019,2021)|INFO_cm_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Las-Cruces-20-N: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_McClellanville-7-NE: INFO_s1_desc_missing_years(2017,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Mercury-3-SSW: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Monahans-6-ENE: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/val] ISMN_USCRN_Muleshoe-19-S: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_USCRN_Newton-5-ENE: INFO_s1_desc_missing_years(2016,2018,2019,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Santa-Barbara-11-W: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Socorro-20-N: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Spokane-17-SSW: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Stillwater-5-WNW: INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Stovepipe-Wells-1-SW: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_USCRN_Versailles-3-NNW: INFO_s1_desc_missing_years(2016,2018,2019,2020,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_USCRN_Watkinsville-5-SSE: INFO_s1_desc_missing_years(2016,2017,2020,2021)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_USCRN_Yuma-27-ENE: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_XMS-CAT_RiberadeSio: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [sm_only/train] ISMN_iRON_GlenwoodSprings: INFO_s2_missing_years(2016,2017)|INFO_s1_asc_missing_years(2022)|INFO_s1_desc_missing_years(2016)|INFO_cm_missing_years(2016,2017)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_iRON_NorthstarAspenGrove: INFO_s1_desc_missing_years(2016)|INFO_sif_missing_years(2016,2017)|SOIL_HAS_NAN
+  [sm_only/oos] ISMN_iRON_NorthstarTransitionZone: INFO_twsa_missing_years(2025)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_CH-Cha: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_CZ-wet: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_DE-Kli: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_ES-Cnd: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_ES-LM1: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_ES-LM2: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] ICOS_ES-LMa: SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_BE-Bra: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_BE-Maa: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_CH-Dav: INFO_no_twsa|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_and_flux/train] ICOS_DE-Har: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_FI-Hyy: INFO_no_twsa|INFO_s1_desc_missing_years(2018,2019)|SOIL_HAS_NAN
+  [sm_and_flux/train] ICOS_FI-Var: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/train] ICOS_FR-CLt: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_FR-Pue: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_FR-Tou: SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_IT-BFt: INFO_no_twsa|SOIL_HAS_NAN
+  [sm_and_flux/train] ICOS_IT-SR2: INFO_no_twsa|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_and_flux/train] ICOS_SE-Htm: INFO_no_twsa|INFO_s2_missing_years(2017,2018)|INFO_cm_missing_years(2017,2018)|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [sm_and_flux/oos] ICOS_SE-Svb: INFO_no_twsa|INFO_s2_missing_years(2017,2018,2019,2020,2021)|INFO_cm_missing_years(2017,2018,2019,2020,2021)|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_CA-DSM: SOIL_HAS_NAN
+  [flux_only/val] AmeriFlux_US-ALQ: INFO_s1_asc_missing_years(2022,2023)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-BZB: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-BZo: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Bi1: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Bi2: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/oos] AmeriFlux_US-DFC: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-DS2: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Dmg: SOIL_HAS_NAN
+  [flux_only/oos] AmeriFlux_US-Esm: INFO_s1_desc_missing_years(2017,2018,2021,2023)|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-EvM: INFO_s1_desc_missing_years(2021,2023)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-GLE: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/val] AmeriFlux_US-HB1: INFO_s1_desc_missing_years(2019,2021)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-HB3: INFO_s1_desc_missing_years(2021)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-HB4: INFO_s1_desc_missing_years(2021,2023,2024)|SOIL_HAS_NAN
+  [flux_only/oos] AmeriFlux_US-Hsm: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Jo1: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Jo2: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/oos] AmeriFlux_US-KFS: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/oos] AmeriFlux_US-KLS: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-MN2: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-MN3: SOIL_HAS_NAN
+  [flux_only/val] AmeriFlux_US-Mo1: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Mo2: SOIL_HAS_NAN
+  [flux_only/val] AmeriFlux_US-Mo3: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/val] AmeriFlux_US-RGo: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Rls: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/val] AmeriFlux_US-Ro4: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Sne: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-Tw4: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-UMB: INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-xDJ: INFO_s2_missing_years(2019)|INFO_cm_missing_years(2019)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-xDL: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-xSE: SOIL_HAS_NAN
+  [flux_only/oos] AmeriFlux_US-xUK: SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-xUN: INFO_s1_asc_missing_years(2022,2023,2024)|SOIL_HAS_NAN
+  [flux_only/train] AmeriFlux_US-xWD: INFO_s1_asc_missing_years(2022,2023,2024)|INFO_s1_desc_missing_years(2019,2020,2021)|SOIL_HAS_NAN
+  [sm_and_flux/train] AmeriFlux_US-UMd: INFO_no_twsa|INFO_sif_missing_years(2017)|SOIL_HAS_NAN
+
+WARN stations (0):
+
+Detailed results → /gpfs/work3/0/prjs1968/soilMoisture/csvs/audit_comprehensive.csv
+Summary          → /gpfs/work3/0/prjs1968/soilMoisture/text/audit_comprehensive_summary.txt
+Done.

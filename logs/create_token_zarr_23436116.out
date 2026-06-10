@@ -1,0 +1,4 @@
+Job ID: 23436116
+Node:   tcn93
+Output: /gpfs/scratch1/shared/pkhanal/token_zarr/
+[2026-06-03T17:46:38.491] error: *** JOB 23436116 ON tcn93 CANCELLED AT 2026-06-03T17:46:38 DUE to SIGNAL Terminated ***

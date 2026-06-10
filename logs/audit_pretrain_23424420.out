@@ -1,0 +1,180 @@
+Job ID: 23424420
+Node:   gcn118
+GPU:    0
+Auditing 983 stations (splits=['train', 'val', 'oos', 'test'], categories=['sm_only', 'sm_and_flux', 'flux_only'])...
+
+Pre-training audit — 983 stations
+============================================================
+  OK        : 842
+  WARN      : 0
+  CRITICAL  : 141
+
+Modality presence:
+  has_S2            : 842/983
+  has_S1            : 842/983
+  has_DEM           : 842/983
+  has_LULC          : 842/983
+  has_ERA5          : 842/983
+  has_soil          : 842/983
+  has_TWSA          : 842/983
+  has_SIF           : 842/983
+  has_CloudMask     : 842/983
+  has_labels        : 842/983
+
+ERA5 all-NaN variables: 0 stations affected
+
+Cloud mask coverage (stations with S2):
+  Have cloud mask   : 842
+  No cloud mask     : 0
+  Mean S2 dates without CM entry : 0.0%
+  Max  S2 dates without CM entry : 0.0%
+  Stations >20% S2 dates missing from CM: 0
+
+Token issues:
+
+CRITICAL stations (141):
+  [train] ISMN_ICOS_Chamau: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Früebüel : STATION_DIR_NOT_FOUND
+  [val] ISMN_ICOS_Laegern: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Oensingen crop: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Trebon: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Klingenberg: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Oberbärenburg: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Las Majadas de Tiétar: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Aurade: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Estrees-Mons A28: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Font-Blanche: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Borgo Cioffi: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Monte Bondone: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Fyodorovskoye: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Auchencorth Moss: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Brasschaat: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Lonzee: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Maasmechelen: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Vielsalm: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Davos: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Bily Kriz forest: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Lanzhot: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Gebesee: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Grillenburg: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Hartheim: STATION_DIR_NOT_FOUND
+  [val] ISMN_ICOS_Hohes Holz: STATION_DIR_NOT_FOUND
+  [val] ISMN_ICOS_Rollesbroich: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Selhausen Juelich: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Wustebach: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Soroe: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Hyytiala: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Kenttarova: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Siikaneva: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Varrio: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Bilos: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Col du Lautaret: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Grignon: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Hesse: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Mejusseaume: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Puechabon: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Toulouse: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Guyaflux: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Bosco Fontana: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Lison: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_San Rossore 2: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Torgnon: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Torgnon-LD: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Degero: STATION_DIR_NOT_FOUND
+  [train] ISMN_ICOS_Hyltemossa: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Norunda: STATION_DIR_NOT_FOUND
+  [oos] ISMN_ICOS_Svartberget: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Ontario - Mixed Deciduous, Borden Forest Site: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Delta Burns Bog 2: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Delta Burns Bog: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Delta Salt Marsh: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Ontario - Eastern Peatland, Mer Bleue: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Allequash Creek Site: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Bonanza Creek Thermokarst Bog: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Bonanza Creek Old Thermokarst Bog: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Bouldin Island Alfalfa: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Bouldin Island corn: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_US Dairy Forage Research Center, Prairie du Sac: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Staten Corn 2: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Dutch Slough Marsh Gilbert Tract: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Everglades (short hydroperiod marsh): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Everglades Saltwater intrusion marsh: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_GLEES: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_North Inlet Crab Haul Creek: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Hobcaw Barony Longleaf Pine Restoration: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Minim Creek Brackish Impoundment: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Howland Forest (main tower): STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Howland Forest (west tower): STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Hill Slough Marsh: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Imnavait Creek Watershed Wet Sedge Tundra: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Imnavait Creek Watershed Tussock Tundra: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Jornada Experimental Range Bajada Site: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Jornada Experimental Range Mixed Shrubland: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Kansas Field Station: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Kansas Land Institute: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Konza Prairie LTER (KNZ): STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Morgan Monroe State Forest: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Morris: Corn-Soybean-Wheat with Cover Crops, Minimal Tillage: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Morris: Corn-Soybean, Conventional Tillage: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Metolius mature ponderosa pine: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_LTAR CMRB Field 1 (CMRB ASP): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_LTAR CMRB Tucker Prairie (CMRB TP): STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_LTAR CMRB Field 3 (CMRB BAU): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Mountainair Pinyon-Juniper Woodland: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Mt Bigelow: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NC_Clearcut#3: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Mead - irrigated continuous maize site: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Mead - irrigated maize-soybean rotation site: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Florida pine flatwoods: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Butte County Rice Farm: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Glenn County Organic Rice Farm: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_RCEW Low Sagebrush: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_RCEW Mountain Big Sagebrush: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Rosemount Prairie: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Rosemount I18_South: STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_Rosemount I18_North: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_RCEW Upper Sheep Prescibed Fire: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Reynolds Creek Wyoming big sagebrush: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Sagehen Creek Field Station: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Sevilleta grassland: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Sevilleta shrubland: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Sherman Island Restored Wetland: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Twitchell East End Wetland: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_LTAR UCB (Upper Chesapeake Bay) EC1: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Univ. of Mich. Biological Station: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Valles Caldera Mixed Conifer: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Valles Caldera Ponderosa Pine: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Willard Juniper Savannah: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Bartlett Experimental Forest (BART): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON LBJ National Grassland (CLBJ): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Central Plains Experimental Range (CPER): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Delta Junction (DEJU): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Dead Lake (DELA): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Harvard Forest (HARV): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Jones Ecological Research Center (JERC): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Jornada LTER (JORN): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Konza Prairie Biological Station - Relocatable (KONA): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Northern Great Plains Research Laboratory (NOGP): STATION_DIR_NOT_FOUND
+  [val] ISMN_AmeriFlux_NEON Rocky Mountain National Park, CASTNET (RMNP): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Smithsonian Conservation Biology Institute (SCBI): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Smithsonian Environmental Research Center (SERC): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON San Joaquin Experimental Range (SJER): STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_NEON The University of Kansas Field Station (UKFS): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON University of Notre Dame Environmental Research Center (UNDE): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_NEON Woodworth (WOOD): STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Ontario - Turkey Point 2002 Plantation White Pine: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Ontario - Turkey Point 1974 Plantation White Pine: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Ontario - Turkey Point Mature Deciduous: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_ARM Southern Great Plains site- Lamont: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Metolius Young Pine Burn: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Santa Rita Grassland: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Santa Rita Mesquite: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Tonzi Ranch: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_UMBS Disturbance: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Vaira Ranch- Ione: STATION_DIR_NOT_FOUND
+  [oos] ISMN_AmeriFlux_Walnut Gulch Lucky Hills Shrub: STATION_DIR_NOT_FOUND
+  [train] ISMN_AmeriFlux_Walnut Gulch Kendall Grasslands: STATION_DIR_NOT_FOUND
+
+
+Detailed results → /gpfs/work3/0/prjs1968/soilMoisture/csvs/audit_pretrain.csv
+Summary          → /gpfs/work3/0/prjs1968/soilMoisture/text/audit_pretrain_summary.txt

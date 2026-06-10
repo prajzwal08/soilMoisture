@@ -1,0 +1,10 @@
+Job ID  : 23596838
+Node    : gcn141
+GPU     : NVIDIA H100
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 38, in <module>
+    from cloud_masking_inference import load_sensei, S2_L2A_DESCRIPTORS
+  File "/gpfs/work3/0/prjs1968/soilMoisture/cloud_masking_inference.py", line 58, in <module>
+    from senseiv2.inference import CloudMask
+ModuleNotFoundError: No module named 'senseiv2'
+ERROR conda.cli.main_run:execute(148): `conda run python retokenize_satellite_zarr.py --mode cm-only --batch-size 16 --device cuda --execute` failed. (See above for error)

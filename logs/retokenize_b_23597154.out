@@ -1,0 +1,103 @@
+Job ID  : 23597154
+Node    : gcn140
+GPU     : NVIDIA H100
+2026-06-09 08:37:25,058 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-09 08:37:25,059 - WARNING - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-09 08:37:26,094 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+Stations : 87
+Mode     : terramind
+Execute  : True
+Device   : cuda
+Loading TerraMindEncoder...
+[   1/87] OK-TM  ISMN_SCAN_AlkaliMesa  s2=416 s1=657
+[   2/87] OK-TM  ISMN_SCAN_CacheJunction  s2=518 s1=212
+[   3/87] OK-TM  ISMN_SCAN_CaveValley  s2=533 s1=308
+[   4/87] OK-TM  ISMN_SCAN_Charkiln  s2=836 s1=513
+[   5/87] OK-TM  ISMN_SCAN_CrescentLake#1  s2=236 s1=477
+[   6/87] OK-TM  ISMN_SCAN_Crossroads  s2=399 s1=245
+[   7/87] OK-TM  ISMN_SCAN_Cullman-NAHRC  s2=226 s1=209
+[   8/87] OK-TM  ISMN_SCAN_DeepSprings  s2=608 s1=1064
+[   9/87] OK-TM  ISMN_SCAN_DoeRidge  s2=432 s1=352
+[  10/87] OK-TM  ISMN_SCAN_EastviewFarm  s2=292 s1=0
+[  11/87] OK-TM  ISMN_SCAN_ElsberryPMC  s2=230 s1=463
+[  12/87] OK-TM  ISMN_SCAN_Enterprise  s2=322 s1=494
+[  13/87] OK-TM  ISMN_SCAN_Ephraim  s2=222 s1=557
+[  14/87] OK-TM  ISMN_SCAN_ErosDataCenter  s2=219 s1=0
+[  15/87] OK-TM  ISMN_SCAN_FortReno#1  s2=90 s1=491
+[  16/87] OK-TM  ISMN_SCAN_FrenchGulch  s2=250 s1=0
+[  17/87] OK-TM  ISMN_SCAN_GoodwinCkTimber  s2=258 s1=526
+[  18/87] OK-TM  ISMN_SCAN_Goshute  s2=202 s1=0
+[  19/87] OK-TM  ISMN_SCAN_Grantsville  s2=205 s1=0
+[  20/87] OK-TM  ISMN_SCAN_GrouseCreek  s2=624 s1=374
+[  21/87] OK-TM  ISMN_SCAN_HalsCanyon  s2=162 s1=361
+[  22/87] OK-TM  ISMN_SCAN_HarmsWay  s2=386 s1=494
+[  23/87] OK-TM  ISMN_SCAN_Hodges  s2=283 s1=0
+[  24/87] OK-TM  ISMN_SCAN_Holden  s2=731 s1=258
+[  25/87] OK-TM  ISMN_SCAN_HubbardBrook  s2=170 s1=694
+[  26/87] OK-TM  ISMN_SCAN_IsbellFarms  s2=202 s1=427
+[  27/87] OK-TM  ISMN_SCAN_JohnsonFarm  s2=471 s1=437
+[  28/87] OK-TM  ISMN_SCAN_Jordan  s2=531 s1=493
+[  29/87] OK-TM  ISMN_SCAN_JornadaExpRange  s2=356 s1=210
+[  30/87] OK-TM  ISMN_SCAN_LTSP  s2=138 s1=87
+[  31/87] OK-TM  ISMN_SCAN_Panguitch  s2=221 s1=292
+[  32/87] OK-TM  ISMN_SCAN_PerdidoRivFarms  s2=170 s1=2
+[  33/87] OK-TM  ISMN_SCAN_Perthshire  s2=140 s1=4
+[  34/87] OK-TM  ISMN_SCAN_Starkville  s2=180 s1=122
+[  35/87] OK-TM  ISMN_SNOTEL_BigBend  s2=306 s1=765
+[  36/87] OK-TM  ISMN_SNOTEL_BigFlat  s2=331 s1=415
+[  37/87] OK-TM  ISMN_SNOTEL_BigMeadow  s2=689 s1=1235
+[  38/87] OK-TM  ISMN_SNOTEL_BigSandyOpening  s2=313 s1=237
+[  39/87] OK-TM  ISMN_SNOTEL_BirdCreek  s2=316 s1=54
+[  40/87] OK-TM  ISMN_SNOTEL_BlackhallMtn  s2=380 s1=750
+[  41/87] OK-TM  ISMN_SNOTEL_BlacksForkJct  s2=279 s1=375
+[  42/87] OK-TM  ISMN_SNOTEL_BlazedAlder  s2=85 s1=288
+[  43/87] OK-TM  ISMN_SNOTEL_BlueLakes  s2=731 s1=1088
+[  44/87] OK-TM  ISMN_SNOTEL_BobsHollow  s2=153 s1=413
+[  45/87] OK-TM  ISMN_SNOTEL_BogusBasin  s2=381 s1=1024
+[  46/87] OK-TM  ISMN_SNOTEL_BostetterR.S.  s2=570 s1=483
+[  47/87] OK-TM  ISMN_SNOTEL_Bourne  s2=306 s1=272
+[  48/87] OK-TM  ISMN_SNOTEL_BoxCreek  s2=162 s1=271
+[  49/87] OK-TM  ISMN_SNOTEL_BrianHead  s2=672 s1=514
+[  50/87] OK-TM  ISMN_SNOTEL_BristleconeTrail  s2=788 s1=513
+[  51/87] OK-TM  ISMN_SNOTEL_BrooklynLake  s2=219 s1=328
+[  52/87] OK-TM  ISMN_SNOTEL_BrownTop  s2=191 s1=333
+[  53/87] OK-TM  ISMN_SNOTEL_BuckFlat  s2=334 s1=790
+[  54/87] OK-TM  ISMN_SNOTEL_BuckPasture  s2=246 s1=354
+[  55/87] OK-TM  ISMN_SNOTEL_Buckinghorse  s2=142 s1=481
+[  56/87] OK-TM  ISMN_SNOTEL_BuckskinJoe  s2=167 s1=259
+[  57/87] OK-TM  ISMN_SNOTEL_BuckskinLower  s2=330 s1=651
+[  58/87] OK-TM  ISMN_SNOTEL_BugLake  s2=605 s1=631
+[  59/87] OK-TM  ISMN_SNOTEL_BurntMountain  s2=214 s1=592
+[  60/87] OK-TM  ISMN_SNOTEL_BurroMountain  s2=385 s1=634
+[  61/87] OK-TM  ISMN_SNOTEL_BurtsMillerRanch  s2=245 s1=480
+[  62/87] OK-TM  ISMN_SNOTEL_Butte  s2=315 s1=691
+[  63/87] OK-TM  ISMN_SNOTEL_CampJackson  s2=313 s1=511
+[  64/87] OK-TM  ISMN_SNOTEL_Cascade#2  s2=294 s1=390
+[  65/87] OK-TM  ISMN_SNOTEL_CascadeMountain  s2=138 s1=419
+[  66/87] OK-TM  ISMN_SNOTEL_CastleValley  s2=593 s1=428
+[  67/87] OK-TM  ISMN_SNOTEL_Chalender  s2=292 s1=486
+[  68/87] OK-TM  ISMN_SNOTEL_ChalkCreek#1  s2=302 s1=513
+[  69/87] OK-TM  ISMN_SNOTEL_ChalkCreek#2  s2=211 s1=464
+[  70/87] OK-TM  ISMN_SNOTEL_Chepeta  s2=509 s1=537
+[  71/87] OK-TM  ISMN_SNOTEL_Chisana  s2=314 s1=698
+[  72/87] OK-TM  ISMN_SNOTEL_CinnabarPark  s2=113 s1=197
+[  73/87] OK-TM  ISMN_SNOTEL_ClackamasLake  s2=147 s1=300
+[  74/87] OK-TM  ISMN_SNOTEL_ClaytonSprings  s2=217 s1=447
+[  75/87] OK-TM  ISMN_SNOTEL_ClearCreek#1  s2=188 s1=768
+[  76/87] OK-TM  ISMN_SNOTEL_ClearCreek#2  s2=188 s1=790
+[  77/87] OK-TM  ISMN_SNOTEL_Coldfoot  s2=50 s1=828
+[  78/87] OK-TM  ISMN_SNOTEL_CorralCanyon  s2=336 s1=701
+[  79/87] OK-TM  ICOS_BE-Lon  s2=226 s1=1124
+[  80/87] OK-TM  ICOS_CH-Dav  s2=239 s1=1476
+[  81/87] OK-TM  ICOS_FI-Ken  s2=258 s1=1914
+[  82/87] OK-TM  ICOS_FR-Bil  s2=180 s1=1130
+[  83/87] OK-TM  ICOS_FR-Gri  s2=133 s1=765
+[  84/87] OK-TM  ICOS_IT-Lsn  s2=393 s1=964
+[  85/87] OK-TM  ICOS_SE-Deg  s2=244 s1=1505
+[  86/87] OK-TM  ICOS_SE-Nor  s2=227 s1=1190
+[  87/87] OK-TM  ICOS_SE-Svb  s2=131 s1=1512
+
+Total .complete: 991
+Done Phase 1. Stations with s2 tokens:
+991

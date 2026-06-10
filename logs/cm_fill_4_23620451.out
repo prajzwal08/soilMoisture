@@ -1,0 +1,40 @@
+Job ID  : 23620451
+Node    : gcn127
+GPU     : NVIDIA H100
+=== ISMN_SCAN_MorrisFarms ===
+Stations : 1
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/1] OK-CM  ISMN_SCAN_MorrisFarms  cm=90  (5s)
+
+Total .complete: 993
+=== ISMN_SCAN_PerdidoRivFarms ===
+Stations : 1
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/1] OK-CM  ISMN_SCAN_PerdidoRivFarms  cm=170  (8s)
+
+Total .complete: 993
+=== ISMN_SCAN_Perthshire ===
+Stations : 1
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/1] OK-CM  ISMN_SCAN_Perthshire  cm=140  (6s)
+
+Total .complete: 993
+=== ISMN_SNOTEL_AnchorRiverDivide ===
+Stations : 1
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[   1/1] OK-CM  ISMN_SNOTEL_AnchorRiverDivide  cm=248  (9s)
+
+Total .complete: 993
+Done.

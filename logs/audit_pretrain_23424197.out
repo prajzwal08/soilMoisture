@@ -1,0 +1,34 @@
+Job ID: 23424197
+Node:   gcn126
+GPU:    0
+multiprocessing.pool.RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/multiprocessing/pool.py", line 125, in worker
+    result = (True, func(*args, **kwds))
+                    ^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/multiprocessing/pool.py", line 48, in mapstar
+    return list(map(*args))
+           ^^^^^^^^^^^^^^^^
+  File "/gpfs/work3/0/prjs1968/soilMoisture/audit_pretrain.py", line 50, in audit_station
+    base       = DATA_ROOT / category / station_id
+                 ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~
+TypeError: unsupported operand type(s) for /: 'PosixPath' and 'float'
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/audit_pretrain.py", line 348, in <module>
+    main()
+  File "/gpfs/work3/0/prjs1968/soilMoisture/audit_pretrain.py", line 266, in main
+    results = pool.map(audit_station, rows_input)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/multiprocessing/pool.py", line 367, in map
+    return self._map_async(func, iterable, mapstar, chunksize).get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/multiprocessing/pool.py", line 774, in get
+    raise self._value
+TypeError: unsupported operand type(s) for /: 'PosixPath' and 'float'
+ERROR conda.cli.main_run:execute(148): `conda run python audit_pretrain.py --workers 16 --split train,val,oos,test --category sm_only,sm_and_flux,flux_only` failed. (See above for error)
+Auditing 993 stations (splits=['train', 'val', 'oos', 'test'], categories=['sm_only', 'sm_and_flux', 'flux_only'])...

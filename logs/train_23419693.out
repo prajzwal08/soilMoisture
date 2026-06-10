@@ -1,0 +1,4 @@
+Job ID: 23419693
+Node:   gcn16
+GPU:    0
+[2026-06-03T11:33:33.892] error: *** JOB 23419693 ON gcn16 CANCELLED AT 2026-06-03T11:33:33 DUE to SIGNAL Terminated ***

@@ -197,16 +197,23 @@ def write_twsa(root: zarr.Group, twsa_dir: Path):
     root.array("twsa/doys",            doys,      overwrite=True)
 
 
-def write_flux_labels(root: zarr.Group, station_dir: Path):
-    """Write LE_F_MDS flux labels from work3 labels.nc for flux_only / sm_and_flux stations."""
+def write_flux_labels(root: zarr.Group, station_dir: Path,
+                      category: str = None, dir_name: str = None):
+    """Write LE_F_MDS flux labels.
+
+    Primary source: station_dir / labels.nc (old data_root layout).
+    Fallback: LEVEL1_DIR / category / dir_name.nc (new level1_organised layout).
+    """
     nc = station_dir / "labels.nc"
+    if not nc.exists() and category and dir_name:
+        nc = LEVEL1_DIR / category / f"{dir_name}.nc"
     if not nc.exists():
         return
     with xr.open_dataset(nc) as ds:
         if "LE_F_MDS" not in ds:
             return
         le    = ds["LE_F_MDS"].values.astype(np.float32)
-        qc    = ds["LE_F_MDS_QC"].values.astype(np.uint8) if "LE_F_MDS_QC" in ds else np.zeros_like(le, dtype=np.uint8)
+        qc    = ds["LE_F_MDS_QC"].values.astype(np.float32) if "LE_F_MDS_QC" in ds else np.zeros_like(le, dtype=np.float32)
         tc    = "date_time" if "date_time" in ds else "time"
         times = pd.DatetimeIndex(ds[tc].values)
     dates = np.array([t.strftime("%Y%m%d") for t in times], dtype="U8")
@@ -237,13 +244,25 @@ def write_labels(root: zarr.Group, dir_name: str, category: str,
         ds.close()
         return
 
-    sm     = ds["soil_moisture"].values.astype(np.float32)[:, mask]
+    if "soil_moisture" not in ds:
+        ds.close()
+        return   # flux_only station — SM labels not present, handled by write_flux_labels
+
+    # Normalise to (depth, date_time) — sm_only: (depth, date_time),
+    # sm_and_flux: (date_time, depth)
+    sm_da = ds["soil_moisture"]
+    if sm_da.dims[0] == time_coord:
+        sm_da = sm_da.transpose("depth", time_coord)
+    sm     = sm_da.values.astype(np.float32)[:, mask]
     depths = np.array([str(d) for d in ds["depth"].values], dtype="U20")
     qc     = np.zeros_like(sm, dtype=np.uint8)
-    if "soil_moisture_qc" in ds:
-        qc = ds["soil_moisture_qc"].values.astype(np.uint8)[:, mask]
-    elif "quality_flag" in ds:
-        qc = ds["quality_flag"].values.astype(np.uint8)[:, mask]
+    for qc_var in ("soil_moisture_qc", "quality_flag"):
+        if qc_var in ds:
+            qc_da = ds[qc_var]
+            if qc_da.dims[0] == time_coord:
+                qc_da = qc_da.transpose("depth", time_coord)
+            qc = qc_da.values.astype(np.uint8)[:, mask]
+            break
     ds.close()
 
     times = times_all[mask]
@@ -292,7 +311,7 @@ def convert_station(args: tuple) -> str:
         write_twsa(root,   station_dir / "TWSA")
         write_labels(root, station_dir.name, category, start_date, end_date)
         if category in ("flux_only", "sm_and_flux"):
-            write_flux_labels(root, station_dir)
+            write_flux_labels(root, station_dir, category, station_dir.name)
 
         zarr.consolidate_metadata(store)
         sentinel.touch()

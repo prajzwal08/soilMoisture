@@ -1,0 +1,5 @@
+Job ID: 23436114
+Node:   tcn453
+Output: /gpfs/scratch1/shared/pkhanal/token_bundles/
+[2026-06-03T17:45:59.859] error: *** JOB 23436114 ON tcn453 CANCELLED AT 2026-06-03T17:45:59 DUE to SIGNAL Terminated ***
+[2026-06-03T17:46:00.861] error: Detected 81 oom_kill events in StepId=23436114.batch. Some of the step tasks have been OOM Killed.

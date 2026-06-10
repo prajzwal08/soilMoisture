@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_era5land.py", line 37, in <module>
+    import cdsapi
+ModuleNotFoundError: No module named 'cdsapi'
+ERROR conda.cli.main_run:execute(148): `conda run python download_era5land.py --stations SCAN_Combate,SNOTEL_PortGraham,USCRN_Cape-Charles-5-ENE --fix-consolidated-dir /gpfs/work3/0/prjs1968/data` failed. (See above for error)

@@ -1,0 +1,72 @@
+Job ID : 23639491
+Node   : tcn355
+Auditing 993 stations with 64 workers...
+
+Comprehensive dataset audit — 993 stations
+============================================================
+  OK        : 993
+  WARN      : 0
+  CRITICAL  : 0
+
+1. Modality presence:
+  has_s2          : 993/993
+  has_s1_asc      : 990/993
+  has_s1_desc     : 906/993
+  has_cm          : 993/993
+  has_dem         : 993/993
+  has_lulc        : 993/993
+  has_soil        : 993/993
+  has_era5        : 993/993
+  has_sif         : 990/993
+  has_twsa        : 845/993
+  has_labels_sm   : 890/993
+  has_labels_le   : 151/993
+
+2. Cloud mask coverage (stations with S2, n=993):
+  Mean cm coverage : 100.00%
+  Min  cm coverage : 100.00%
+  Stations < 95.0% cm coverage: 0
+
+3. Stations with missing-year gaps (required modalities):
+
+   Per-modality satellite gaps (informational only):
+     s2_missing_years        : 82 stations
+     s1_asc_missing_years    : 278 stations
+     s1_desc_missing_years   : 478 stations
+     cm_missing_years        : 82 stations
+
+   SIF/TWSA (informational only):
+     has_sif  : 990/993
+     has_twsa : 845/993
+     sif_missing_years gaps  : 732 stations
+     twsa_missing_years gaps : 328 stations
+
+4. Token vs raw-image alignment (has_raw_satzarr: 993/993):
+  s2      : token>raw on 0 stations, raw>token (untokenized images) on 0 stations
+  s1_asc  : token>raw on 0 stations, raw>token (untokenized images) on 0 stations
+  s1_desc : token>raw on 0 stations, raw>token (untokenized images) on 0 stations
+  dem     : token without matching raw image: 0 stations
+  lulc    : token without matching raw image: 0 stations
+
+5. Tabular/static NaN sanity (should all be 0, except soil):
+  dem_nan         : 0 stations with NaN
+  lulc_nan        : 0 stations with NaN
+  era5_nan        : 0 stations with NaN
+  sif_nan         : 0 stations with NaN
+  twsa_nan        : 0 stations with NaN
+  labels_sm_nan   : 0 stations with NaN
+  soil_nan_pct    : 322 stations with some NaN (nearest-neighbour-filled at load time, see dataset.py::fill_soil_nans); max=44.4%
+                    0 stations > 50% (should already be excluded via soil_patch_ok=False)
+  labels_le_nan_frac (informational, flux gaps expected): mean=16.08%, max=52.78%
+
+6. Label continuity (>= 3 yr continuous, ending at end_date):
+  SM: 0/890 stations with < 3 continuous years
+  LE: 0/151 stations with < 3 continuous years
+
+CRITICAL stations (0):
+
+WARN stations (0):
+
+Detailed results → /gpfs/work3/0/prjs1968/soilMoisture/csvs/audit_comprehensive.csv
+Summary          → /gpfs/work3/0/prjs1968/soilMoisture/text/audit_comprehensive_summary.txt
+Done.

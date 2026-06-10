@@ -1,0 +1,21 @@
+Total stations: 993
+has_raw satellite_zarr: 993/993
+
+s2: token has extra dates not in raw: 5 stations
+s2: raw has extra dates not in token: 0 stations
+         station  category  n_s2_token  n_s2_raw  s2_token_minus_raw
+AmeriFlux_CA-Cbo flux_only         261       100                 161
+AmeriFlux_CA-DB2 flux_only         212       102                 110
+AmeriFlux_CA-DBB flux_only         184        93                  91
+AmeriFlux_CA-DSM flux_only         126        77                  49
+AmeriFlux_CA-Mer flux_only         291       170                 121
+
+s1_asc: token has extra dates not in raw: 0 stations
+s1_asc: raw has extra dates not in token: 0 stations
+
+s1_desc: token has extra dates not in raw: 0 stations
+s1_desc: raw has extra dates not in token: 0 stations
+
+s2 dates without cm: 1 stations
+         station  category  n_s2_token  n_cm_token  s2_minus_cm
+AmeriFlux_CA-Cbo flux_only         261         207           54

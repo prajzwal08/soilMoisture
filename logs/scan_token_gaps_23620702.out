@@ -1,0 +1,48 @@
+Job ID  : 23620702
+Node    : tcn189
+Total stations: 993
+Stations with satellite_zarr: 993
+Stations WITHOUT satellite_zarr: 0
+s2: 17 stations with extra un-tokenized dates (total 2730 dates)
+s1_asc: 18 stations with extra un-tokenized dates (total 2928 dates)
+s1_desc: 17 stations with extra un-tokenized dates (total 2884 dates)
+
+Total stations needing re-tokenization: 36
+                    station    category  s2_n_sat  s2_n_tok  s2_n_extra  s1_asc_n_sat  s1_asc_n_tok  s1_asc_n_extra  s1_desc_n_sat  s1_desc_n_tok  s1_desc_n_extra
+  ISMN_COSMOS-UK_HollinHill     sm_only       114       114           0           254           239              15            435            420               15
+            ISMN_FMI_SOD071     sm_only       212       212           0           633           136             497            682            161              521
+    ISMN_REMEDHUS_Paredinas     sm_only       187       187           0           648           461             187            321            228               93
+          ISMN_RSMN_Cotnari     sm_only       360        57         303           764           764               0            434            434                0
+         ISMN_RSMN_Darabani     sm_only       348       168         180           737           737               0            766            766                0
+       ISMN_SCAN_BodieHills     sm_only       412       412           0           746           468             278            356            217              139
+     ISMN_SCAN_ChickenRidge     sm_only       489       366         123           144           144               0            491            491                0
+       ISMN_SCAN_GreenRiver     sm_only       753       753           0            96            75              21            196            124               72
+        ISMN_SCAN_Levelland     sm_only       181        67         114           118           118               0            111            111                0
+      ISMN_SCAN_MammothCave     sm_only        72        72           0           218             3             215              1              1                0
+    ISMN_SCAN_MaricaoForest     sm_only        16        16           0            39             0              39             42             42                0
+         ISMN_SCAN_Moccasin     sm_only       473       294         179           136           136               0            449            449                0
+   ISMN_SCAN_SunleafNursery     sm_only       131        41          90           226           226               0              0              0                0
+      ISMN_SCAN_YoumansFarm     sm_only       163       163           0           339           339               0              6              0                6
+ISMN_SMOSMANIA_LaGrandCombe     sm_only       214       144          70           377           377               0            374            374                0
+          ISMN_SNOTEL_Aniak     sm_only       139        38         101            80            80               0            123            123                0
+  ISMN_SNOTEL_BakerButteSmt     sm_only       586       344         242           133           133               0            165            165                0
+    ISMN_SNOTEL_BigCreekSum     sm_only       686       157         529           253           253               0            356            356                0
+     ISMN_SNOTEL_BoxSprings     sm_only       114       114           0            83            16              67            165             19              146
+       ISMN_SNOTEL_Brighton     sm_only       541       463          78           297           297               0            491            491                0
+  ISMN_SNOTEL_BuckboardFlat     sm_only       358       358           0           143           121              22            493            374              119
+     ISMN_SNOTEL_CarsonPass     sm_only       606       246         360           297           297               0            534            534                0
+ ISMN_SNOTEL_ChocolateGulch     sm_only       131        36          95           144           144               0            130            130                0
+      ISMN_SNOTEL_CrabCreek     sm_only       235       219          16           138           138               0            379            379                0
+ ISMN_SNOTEL_HeavenlyValley     sm_only       514       514           0           667           203             464            638            168              470
+ ISMN_SNOTEL_UpperRioGrande     sm_only       231       231           0           299            14             285            185              8              177
+                ICOS_CH-Oe2   flux_only       102       102           0           454           124             330            464            121              343
+                ICOS_CZ-Stn   flux_only        82        82           0           477           334             143            462            324              138
+                ICOS_ES-Abr   flux_only       307       173         134           481           481               0            472            472                0
+                ICOS_BE-Vie sm_and_flux       117       117           0           282           127             155            585            274              311
+                ICOS_FI-Sii sm_and_flux       247       247           0           588           576              12            310            296               14
+                ICOS_FR-Tou sm_and_flux       186       186           0           260           182              78            321            240               81
+                ICOS_IT-Tor sm_and_flux       269       269           0           158            63              95            323            133              190
+           AmeriFlux_US-RGo   flux_only       345       309          36           236           236               0            217            217                0
+           AmeriFlux_US-Rws   flux_only       419       419           0           329           304              25            460            411               49
+           AmeriFlux_US-xUN   flux_only       142        62          80            14            14               0              0              0                0
+Done.

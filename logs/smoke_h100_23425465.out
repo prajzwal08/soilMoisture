@@ -1,0 +1,64 @@
+Job ID: 23425465
+Node:   gcn160
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/pkhanal/.netrc.
+wandb: Currently logged in as: prajzwal08 (prajzwal08-university-of-twente) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /gpfs/work3/0/prjs1968/soilMoisture/wandb/run-20260603_142329-jdh3mvs6
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Resuming run smoke_h100
+wandb: ⭐️ View project at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: 🚀 View run at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/jdh3mvs6
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb:            epoch ▁
+wandb:               lr ▁
+wandb:       train/loss ▁
+wandb:     val/0-10/MAE ▁
+wandb:    val/0-10/bias ▁
+wandb:  val/0-10/ubRMSE ▁
+wandb:    val/10-30/MAE ▁
+wandb:   val/10-30/bias ▁
+wandb: val/10-30/ubRMSE ▁
+wandb:   val/30-100/MAE ▁
+wandb:               +4 ...
+wandb: 
+wandb: Run summary:
+wandb:            epoch 2
+wandb:               lr 0.0001
+wandb:       train/loss -1.63805
+wandb:     val/0-10/MAE 0.09228
+wandb:    val/0-10/bias -0.05152
+wandb:  val/0-10/ubRMSE 0.09813
+wandb:    val/10-30/MAE 0.07226
+wandb:   val/10-30/bias 0.01203
+wandb: val/10-30/ubRMSE 0.08571
+wandb:   val/30-100/MAE 0.20378
+wandb:               +4 ...
+wandb: 
+wandb: 🚀 View run smoke_h100 at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/jdh3mvs6
+wandb: ⭐️ View project at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260603_142329-jdh3mvs6/logs
+Device: cuda
+Building datasets...
+Dataset: 1160521 samples from 584 stations
+Dataset: 140152 samples from 74 stations
+Building model...
+Trainable parameters: 48,673,863
+Checkpoint found — resuming from /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_h100/last.pt
+  Resuming from epoch 2  best_val_loss=-1.0527  no_improve=0
+
+Epoch 002  |  train_loss=-1.6381  val_loss=-0.7366
+      0-10  MSE=0.0123  MAE=0.0923  ubRMSE=0.0981  bias=-0.0515
+     10-30  MSE=0.0075  MAE=0.0723  ubRMSE=0.0857  bias=0.0120
+    30-100  MSE=0.0479  MAE=0.2038  ubRMSE=0.0844  bias=-0.2020
+
+Training complete. Best val_loss: -1.0527
+Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_h100

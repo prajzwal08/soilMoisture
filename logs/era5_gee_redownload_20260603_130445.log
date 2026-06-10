@@ -1,0 +1,497 @@
+/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/api_core/_python_version_support.py:273: FutureWarning: You are using a Python version (3.10.20) which Google will stop supporting in new releases of google.api_core once it reaches its end of life (2026-10-04). Please upgrade to the latest Python version, or at least Python 3.11, to continue receiving updates for google.api_core past that date.
+  warnings.warn(message, FutureWarning)
+2026-06-03 13:04:56 INFO     Stations: 1010
+2026-06-03 13:04:56 INFO     Filtered to 3 station(s): ['ISMN_SCAN_Combate', 'ISMN_SNOTEL_PortGraham', 'ISMN_USCRN_Cape-Charles-5-ENE']
+2026-06-03 13:04:56 INFO     ERA5-Land jobs: 22 station-years  (workers=6)
+2026-06-03 13:05:21 INFO     [ERA5] [   1/22] ISMN_SCAN_Combate 2020  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 1:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_2019.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:24 INFO     [ERA5] [   2/22] ISMN_SCAN_Combate 2019  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 2:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_2022.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:27 INFO     [ERA5] [   3/22] ISMN_SCAN_Combate 2022  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 3:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_2024.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:27 INFO     [ERA5] [   4/22] ISMN_SCAN_Combate 2024  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 4:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_2021.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_2023.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:27 INFO     [ERA5] [   5/22] ISMN_SCAN_Combate 2021  status=done
+2026-06-03 13:05:28 INFO     [ERA5] [   6/22] ISMN_SCAN_Combate 2023  status=done
+2026-06-03 13:05:49 INFO     [ERA5] [   7/22] ISMN_SNOTEL_PortGraham 2014  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 1:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2015.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:51 INFO     [ERA5] [   8/22] ISMN_SNOTEL_PortGraham 2015  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 2:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2016.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:54 INFO     [ERA5] [   9/22] ISMN_SNOTEL_PortGraham 2016  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 4:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2018.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:56 INFO     [ERA5] [  10/22] ISMN_SNOTEL_PortGraham 2018  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 3:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2017.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:58 INFO     [ERA5] [  11/22] ISMN_SNOTEL_PortGraham 2017  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2019.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:05:59 INFO     [ERA5] [  12/22] ISMN_SNOTEL_PortGraham 2019  status=done
+2026-06-03 13:06:16 INFO     [ERA5] [  13/22] ISMN_SNOTEL_PortGraham 2020  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 1:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2021.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:18 INFO     [ERA5] [  14/22] ISMN_SNOTEL_PortGraham 2021  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 4:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_2015.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:23 INFO     [ERA5] [  15/22] ISMN_USCRN_Cape-Charles-5-ENE 2015  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_2017.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:25 INFO     [ERA5] [  16/22] ISMN_USCRN_Cape-Charles-5-ENE 2017  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 2:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_2022.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:26 INFO     [ERA5] [  17/22] ISMN_SNOTEL_PortGraham 2022  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 3:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_2016.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:28 INFO     [ERA5] [  18/22] ISMN_USCRN_Cape-Charles-5-ENE 2016  status=done
+2026-06-03 13:06:42 INFO     [ERA5] [  19/22] ISMN_USCRN_Cape-Charles-5-ENE 2018  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 1:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_2019.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:46 INFO     [ERA5] [  20/22] ISMN_USCRN_Cape-Charles-5-ENE 2019  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 4:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_2020.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:47 INFO     [ERA5] [  21/22] ISMN_USCRN_Cape-Charles-5-ENE 2020  status=done
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_2021.tmp', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:55 INFO     [ERA5] [  22/22] ISMN_USCRN_Cape-Charles-5-ENE 2021  status=done
+2026-06-03 13:06:55 INFO     Consolidating per-year ERA5 files...
+2026-06-03 13:06:58 INFO       Removed old consolidated file: meteo_20190101_20241231.nc
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SCAN_Combate/ERA5Land/meteo_20190101_20241231.tmp.nc', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:58 INFO       Consolidated 6 years → meteo_20190101_20241231.nc
+2026-06-03 13:06:58 INFO       Removed old consolidated file: meteo_20140101_20221231.nc
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_SNOTEL_PortGraham/ERA5Land/meteo_20140101_20221231.tmp.nc', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:58 INFO       Consolidated 9 years → meteo_20140101_20221231.nc
+2026-06-03 13:06:59 INFO       Removed old consolidated file: meteo_20150101_20211231.nc
+HDF5-DIAG: Error detected in HDF5 (1.14.6) thread 5:
+  #000: H5F.c line 496 in H5Fis_accessible(): unable to determine if file is accessible as HDF5
+    major: File accessibility
+    minor: Not an HDF5 file
+  #001: H5VLcallback.c line 3913 in H5VL_file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #002: H5VLcallback.c line 3848 in H5VL__file_specific(): file specific failed
+    major: Virtual Object Layer
+    minor: Can't operate on object
+  #003: H5VLnative_file.c line 344 in H5VL__native_file_specific(): error in HDF5 file check
+    major: File accessibility
+    minor: Can't get value
+  #004: H5Fint.c line 1055 in H5F__is_hdf5(): unable to open file
+    major: File accessibility
+    minor: Unable to initialize object
+  #005: H5FD.c line 787 in H5FD_open(): can't open file
+    major: Virtual File Layer
+    minor: Unable to open file
+  #006: H5FDsec2.c line 323 in H5FD__sec2_open(): unable to open file: name = '/gpfs/work3/0/prjs1968/data/sm_only/ISMN_USCRN_Cape-Charles-5-ENE/ERA5Land/meteo_20150101_20211231.tmp.nc', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0
+    major: File accessibility
+    minor: Unable to open file
+2026-06-03 13:06:59 INFO       Consolidated 7 years → meteo_20150101_20211231.nc
+2026-06-03 13:06:59 INFO     Done.

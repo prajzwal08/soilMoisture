@@ -1,0 +1,4 @@
+Job ID : 23438765
+Node   : tcn78
+Output : /gpfs/work3/0/prjs1968/data/zarr/
+[2026-06-03T18:53:22.605] error: *** JOB 23438765 ON tcn78 CANCELLED AT 2026-06-03T18:53:22 DUE to SIGNAL Terminated ***

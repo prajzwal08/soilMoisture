@@ -48,17 +48,39 @@ def write_labels_to_zarr(zarr_dir: Path, dir_name: str, category: str,
         ds.close()
         return f"EMPTY {dir_name}: no data in [{start_date}, {end_date}]"
 
-    sm     = ds["soil_moisture"].values.astype(np.float32)[:, mask]
+    # Normalise to (depth, date_time) — sm_only is (depth, date_time),
+    # sm_and_flux is (date_time, depth)
+    sm_da = ds["soil_moisture"]
+    if sm_da.dims[0] == time_coord:
+        sm_da = sm_da.transpose("depth", time_coord)
+    sm     = sm_da.values.astype(np.float32)[:, mask]
     depths = np.array([str(d) for d in ds["depth"].values], dtype="U20")
     qc     = np.zeros_like(sm, dtype=np.uint8)
-    if "soil_moisture_qc" in ds:
-        qc = ds["soil_moisture_qc"].values.astype(np.uint8)[:, mask]
-    elif "quality_flag" in ds:
-        qc = ds["quality_flag"].values.astype(np.uint8)[:, mask]
+    for qc_var in ("soil_moisture_qc", "quality_flag"):
+        if qc_var in ds:
+            qc_da = ds[qc_var]
+            if qc_da.dims[0] == time_coord:
+                qc_da = qc_da.transpose("depth", time_coord)
+            qc = qc_da.values.astype(np.uint8)[:, mask]
+            break
     ds.close()
 
     times = times_all[mask]
     dates = np.array([t.strftime("%Y%m%d") for t in times], dtype="U8")
+
+    # Flux labels — sm_and_flux stations have LE_F_MDS in the same level1 file
+    le = le_qc = dates_flux = None
+    ds2 = xr.open_dataset(nc)
+    if "LE_F_MDS" in ds2:
+        tc2    = "date_time" if "date_time" in ds2 else "time"
+        t2_all = pd.DatetimeIndex(ds2[tc2].values)
+        m2     = (t2_all >= pd.Timestamp(start_date)) & (t2_all <= pd.Timestamp(end_date))
+        le          = ds2["LE_F_MDS"].values.astype(np.float32)[m2]
+        le_qc_raw   = ds2.get("LE_F_MDS_QC", None)
+        le_qc       = (le_qc_raw.values.astype(np.uint8)[m2]
+                       if le_qc_raw is not None else np.zeros_like(le, dtype=np.uint8))
+        dates_flux  = np.array([t.strftime("%Y%m%d") for t in t2_all[m2]], dtype="U8")
+    ds2.close()
 
     store = zarr.DirectoryStore(str(zarr_dir))
     root  = zarr.open_group(store=store, mode="a")   # append — don't wipe existing data
@@ -66,8 +88,13 @@ def write_labels_to_zarr(zarr_dir: Path, dir_name: str, category: str,
     root.array("labels/qc",     qc,     compressor=COMPRESSOR, overwrite=True)
     root.array("labels/depths", depths, overwrite=True)
     root.array("labels/dates",  dates,  overwrite=True)
+    if le is not None:
+        root.array("labels/le",         le,         compressor=COMPRESSOR, overwrite=True)
+        root.array("labels/le_qc",      le_qc,      compressor=COMPRESSOR, overwrite=True)
+        root.array("labels/dates_flux", dates_flux, overwrite=True)
     zarr.consolidate_metadata(store)
-    return f"OK    {dir_name}: {sm.shape[1]} days, depths={list(depths)}"
+    flux_note = f" + flux={len(le)} days" if le is not None else ""
+    return f"OK    {dir_name}: sm={sm.shape[1]} days, depths={list(depths)}{flux_note}"
 
 
 def main():

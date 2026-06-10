@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=128G
 #SBATCH --time=16:00:00
-#SBATCH --output=logs/create_token_zarr_%j.out
+#SBATCH --output=/gpfs/scratch1/shared/pkhanal/logs/create_token_zarr_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
@@ -14,13 +14,15 @@ set -euo pipefail
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
+ZARR_OUT="/gpfs/scratch1/shared/pkhanal/zarr"
+
 echo "Job ID : $SLURM_JOB_ID"
 echo "Node   : $SLURM_NODELIST"
-echo "Output : /gpfs/work3/0/prjs1968/data/zarr/"
+echo "Output : ${ZARR_OUT}"
 
-conda run -n terramind python create_token_zarr.py \
+conda run --no-capture-output -n terramind python /home/pkhanal/rechunk_zarr.py \
     --workers 64 \
     --execute
 
 echo "Done. Zarr stores created:"
-find /gpfs/work3/0/prjs1968/data/zarr -name ".complete" | wc -l
+find "${ZARR_OUT}" -name ".complete" | wc -l

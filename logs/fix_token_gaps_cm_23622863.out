@@ -1,0 +1,26 @@
+Job ID  : 23622863
+Node    : gcn149
+GPU     : NVIDIA H100
+Stations : 17
+Mode     : cm-force
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+[ 141/993] OK-CM  ISMN_RSMN_Cotnari  cm=360
+[ 142/993] OK-CM  ISMN_RSMN_Darabani  cm=348
+[ 171/993] OK-CM  ISMN_SCAN_ChickenRidge  cm=489
+[ 215/993] OK-CM  ISMN_SCAN_Levelland  cm=181
+[ 234/993] OK-CM  ISMN_SCAN_Moccasin  cm=473
+[ 282/993] OK-CM  ISMN_SCAN_SunleafNursery  cm=131
+[ 315/993] OK-CM  ISMN_SMOSMANIA_LaGrandCombe  cm=214
+[ 334/993] OK-CM  ISMN_SNOTEL_Aniak  cm=139
+[ 339/993] OK-CM  ISMN_SNOTEL_BakerButteSmt  cm=586
+[ 354/993] OK-CM  ISMN_SNOTEL_BigCreekSum  cm=686
+[ 371/993] OK-CM  ISMN_SNOTEL_Brighton  cm=541
+[ 388/993] OK-CM  ISMN_SNOTEL_CarsonPass  cm=606
+[ 398/993] OK-CM  ISMN_SNOTEL_ChocolateGulch  cm=131
+[ 407/993] OK-CM  ISMN_SNOTEL_CrabCreek  cm=235
+[ 853/993] OK-CM  ICOS_ES-Abr  cm=307
+[ 947/993] OK-CM  AmeriFlux_US-RGo  cm=345
+[ 980/993] OK-CM  AmeriFlux_US-xUN  cm=142
+Done.

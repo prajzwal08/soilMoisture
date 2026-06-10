@@ -3,8 +3,8 @@
 #SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=128G
 #SBATCH --time=2:00:00
 #SBATCH --output=/gpfs/work3/0/prjs1968/soilMoisture/logs/group_a_zarr_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -22,10 +22,10 @@ echo "Node   : $SLURM_NODELIST"
 
 STATIONS="ISMN_SCAN_Moccasin,ISMN_SNOTEL_Aniak,ICOS_CH-Cha,ICOS_CH-Fru,ICOS_CH-Lae,ICOS_CZ-KrP,ICOS_CZ-wet,ICOS_FR-Aur,ICOS_RU-Fy2,AmeriFlux_CA-Cbo,AmeriFlux_CA-Mer,AmeriFlux_US-BZB,AmeriFlux_US-Bi2,AmeriFlux_US-DFC,AmeriFlux_US-Mpj,AmeriFlux_US-MtB,AmeriFlux_US-ONA,AmeriFlux_US-Rls,AmeriFlux_US-Rms,AmeriFlux_US-Rwf,AmeriFlux_US-Seg,AmeriFlux_US-Ses,AmeriFlux_US-xDJ,AmeriFlux_US-xSE"
 
-conda run -n terramind python create_token_zarr.py \
+conda run --no-capture-output -n terramind python create_token_zarr.py \
     --data-root /projects/prjs1968/data \
     --stations  "${STATIONS}" \
-    --workers   24 \
+    --workers   64 \
     --force \
     --execute
 

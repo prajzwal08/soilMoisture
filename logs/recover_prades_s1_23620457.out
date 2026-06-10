@@ -1,0 +1,16 @@
+Job ID  : 23620457
+Node    : gcn131
+GPU     : NVIDIA H100
+2026-06-10 08:25:51,250 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-10 08:25:51,251 - WARNING - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-10 08:25:52,139 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+Stations : 1
+Mode     : terramind
+Execute  : True
+Device   : cuda
+Loading TerraMindEncoder...
+[   1/1] OK-TM  ISMN_SMOSMANIA_Prades-le-Lez  s2=0 s1=302
+
+Total .complete: 993
+Done.

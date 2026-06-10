@@ -1,0 +1,4 @@
+Job ID: 23424347
+Node:   gcn28
+GPU:    0
+[2026-06-03T14:12:25.741] error: *** JOB 23424347 ON gcn28 CANCELLED AT 2026-06-03T14:12:25 DUE to SIGNAL Terminated ***

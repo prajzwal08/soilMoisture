@@ -1,0 +1,12 @@
+Job ID  : 23597155
+Node    : gcn140
+GPU     : NVIDIA H100
+Stations : 0
+Mode     : cm-fill
+Execute  : True
+Device   : cuda
+Loading SEnSeIv2 (CloudSEN12)...
+
+Total .complete: 991
+Done Phase 2. Total .complete:
+991

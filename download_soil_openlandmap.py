@@ -278,6 +278,20 @@ def process_station(row: pd.Series) -> str:
 # ============================================================
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Download OpenLandMap soil patches")
+    parser.add_argument("--data-root", type=Path, default=None,
+                        help="Override DATA_ROOT (default: /gpfs/work3/0/prjs1968/data).")
+    parser.add_argument("--stations-file", type=Path, default=None,
+                        help="File with one station_id per line to restrict processing.")
+    args = parser.parse_args()
+
+    if args.data_root is not None:
+        global DATA_ROOT, LOG_DIR
+        DATA_ROOT = args.data_root
+        LOG_DIR   = DATA_ROOT / "logs"
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+
     setup_logging()
     log = logging.getLogger(__name__)
 
@@ -291,6 +305,10 @@ def main() -> None:
     if TEST_MODE:
         df = df[df["station_id"] == TEST_STATION].reset_index(drop=True)
         log.info(f"TEST_MODE: running on {len(df)} station(s): {list(df['station_id'])}")
+    elif args.stations_file:
+        keep = {l.strip() for l in args.stations_file.read_text().splitlines() if l.strip()}
+        df   = df[df["station_id"].isin(keep)].reset_index(drop=True)
+        log.info(f"Filtered to {len(df)} station(s) from {args.stations_file}")
 
     # Skip stations that already have the patch
     todo = df[~df["station_dir"].apply(

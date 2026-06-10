@@ -1,0 +1,47 @@
+/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/api_core/_python_version_support.py:273: FutureWarning: You are using a Python version (3.10.20) which Google will stop supporting in new releases of google.api_core once it reaches its end of life (2026-10-04). Please upgrade to the latest Python version, or at least Python 3.11, to continue receiving updates for google.api_core past that date.
+  warnings.warn(message, FutureWarning)
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_era5land_gee.py", line 653, in <module>
+    main()
+  File "/gpfs/work3/0/prjs1968/soilMoisture/download_era5land_gee.py", line 616, in main
+    ee.Initialize(credentials=_gee_credentials(), project=GEE_PROJECT)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/ee/_utils.py", line 39, in wrapper
+    return func(*args, **kwargs)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/ee/__init__.py", line 245, in Initialize
+    data.initialize(
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/ee/data.py", line 189, in initialize
+    _install_cloud_api_resource()
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/ee/data.py", line 263, in _install_cloud_api_resource
+    state.cloud_api_resource = _cloud_api_utils.build_cloud_resource(
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/ee/_cloud_api_utils.py", line 217, in build_cloud_resource
+    resource = build(static_discovery=False)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/ee/_cloud_api_utils.py", line 200, in build
+    return discovery.build(
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/googleapiclient/_helpers.py", line 130, in positional_wrapper
+    return wrapped(*args, **kwargs)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/googleapiclient/discovery.py", line 304, in build
+    content = _retrieve_discovery_doc(
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/googleapiclient/discovery.py", line 439, in _retrieve_discovery_doc
+    resp, content = req.execute(num_retries=num_retries)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/googleapiclient/_helpers.py", line 130, in positional_wrapper
+    return wrapped(*args, **kwargs)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/googleapiclient/http.py", line 923, in execute
+    resp, content = _retry_request(
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/googleapiclient/http.py", line 191, in _retry_request
+    resp, content = http.request(uri, method, *args, **kwargs)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google_auth_httplib2.py", line 205, in request
+    self.credentials.before_request(self._request, method, uri, request_headers)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/auth/credentials.py", line 469, in before_request
+    self._blocking_refresh(request)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/auth/credentials.py", line 203, in _blocking_refresh
+    self.refresh(request)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/auth/credentials.py", line 482, in refresh
+    self._perform_refresh_token(request)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/oauth2/credentials.py", line 435, in _perform_refresh_token
+    ) = reauth.refresh_grant(
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/oauth2/reauth.py", line 370, in refresh_grant
+    _client._handle_error_response(response_data, retryable_error)
+  File "/gpfs/home5/pkhanal/miniforge3/envs/soilmoisture/lib/python3.10/site-packages/google/oauth2/_client.py", line 73, in _handle_error_response
+    raise exceptions.RefreshError(
+google.auth.exceptions.RefreshError: ('invalid_grant: Token has been expired or revoked.', {'error': 'invalid_grant', 'error_description': 'Token has been expired or revoked.'})
+ERROR conda.cli.main_run:execute(148): `conda run python download_era5land_gee.py --stations ISMN_SCAN_Combate,ISMN_SNOTEL_PortGraham,ISMN_USCRN_Cape-Charles-5-ENE --consolidate --era5-only` failed. (See above for error)

@@ -1,0 +1,8 @@
+Job ID  : 23597156
+Node    : gcn141
+GPU     : NVIDIA H100
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/retokenize_satellite_zarr.py", line 30, in <module>
+    import numcodecs
+ModuleNotFoundError: No module named 'numcodecs'
+ERROR conda.cli.main_run:execute(148): `conda run python retokenize_satellite_zarr.py --mode cm-fill --batch-size 16 --device cuda --execute` failed. (See above for error)

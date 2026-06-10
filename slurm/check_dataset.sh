@@ -7,7 +7,7 @@
 #SBATCH --gpus=1
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
-#SBATCH --output=logs/check_dataset_%j.out
+#SBATCH --output=/gpfs/scratch1/shared/pkhanal/logs/check_dataset_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 

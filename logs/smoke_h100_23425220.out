@@ -1,0 +1,26 @@
+Job ID: 23425220
+Node:   gcn139
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/pkhanal/.netrc.
+wandb: Currently logged in as: prajzwal08 (prajzwal08-university-of-twente) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run jdh3mvs6
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /gpfs/work3/0/prjs1968/soilMoisture/wandb/run-20260603_141533-jdh3mvs6
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run smoke_h100
+wandb: ⭐️ View project at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: 🚀 View run at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/jdh3mvs6
+/scratch-local/pkhanal.23425220/tmppz0jye7y: line 3: 2084965 Killed                  python train.py --run-name smoke_h100 --max-stations 3 --max-epochs 2 --batch-size 64
+ERROR conda.cli.main_run:execute(148): `conda run python train.py --run-name smoke_h100 --max-stations 3 --max-epochs 2 --batch-size 64` failed. (See above for error)
+Device: cuda
+Building datasets...
+Dataset: 1160521 samples from 584 stations
+Dataset: 140152 samples from 74 stations
+Building model...
+Trainable parameters: 48,673,863
+No checkpoint found — starting fresh
+[2026-06-03T14:17:17.908] error: Detected 2 oom_kill events in StepId=23425220.batch. Some of the step tasks have been OOM Killed.

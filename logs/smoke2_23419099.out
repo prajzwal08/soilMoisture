@@ -1,0 +1,19 @@
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+GPU: NVIDIA A100-SXM4-40GB
+VRAM total: 42.4 GB
+Dataset: 147053 samples from 440 stations
+  batch 01  loss=0.0634  mem=1.89GB  step=5737ms
+  batch 02  loss=-0.1137  mem=1.89GB  step=302ms
+  batch 03  loss=0.0125  mem=1.89GB  step=283ms
+  batch 04  loss=-0.0635  mem=1.89GB  step=284ms
+  batch 05  loss=-0.1315  mem=1.89GB  step=284ms
+  batch 06  loss=-0.4879  mem=1.89GB  step=283ms
+  batch 07  loss=-0.5000  mem=1.89GB  step=284ms
+  batch 08  loss=-0.6336  mem=1.89GB  step=284ms
+  batch 09  loss=-0.0839  mem=1.89GB  step=280ms
+  batch 10  loss=-0.0694  mem=1.89GB  step=280ms
+Avg step time (batches 2-10): 285 ms
+Peak VRAM: 19.61 GB
+Steps/sec: 3.5
+PASSED
