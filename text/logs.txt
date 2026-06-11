@@ -903,3 +903,67 @@ retokenize_satellite_zarr.py split into two modes:
 1. Confirm job 23628017 -> OK=993/WARN=0/CRITICAL=0
 2. Final test, move some folders, and prepare for model run
    (sbatch slurm/check_dataset.sh, then sbatch slurm/train.sh --run-name baseline_nll)
+
+=== 2026-06-10 (session 3) ===
+- Built audit_comprehensive.py, consolidating audit_zarr_complete.py,
+  check_satellite_alignment.py, and check_label_continuity.py into a single
+  per-station pass: modality presence, cm<->s2 alignment, per-year coverage,
+  token-vs-raw alignment (s2/s1/dem/lulc), tabular/static NaN sanity, and
+  >=3yr label continuity.
+- First run (job 23638239) flagged 322/993 CRITICAL on raw soil-NaN
+  (boolean check). Investigated dataset.py and confirmed
+  fill_soil_nans() (nearest-neighbour distance_transform_edt) already
+  unconditionally fills any amount of NaN at load time, and the 17 stations
+  with very high NaN% (0.58-1.00) are already excluded via
+  soil_patch_ok=False. Replaced boolean flag with soil_nan_pct, only CRITICAL
+  if >50%.
+- Re-ran (job 23639491): 993/993 OK, 0 WARN, 0 CRITICAL (max soil_nan_pct
+  44.4%, 0 stations >50%). Audit closed clean again.
+- Committed everything in git status (95 files): new audit script + renamed
+  slurm/audit_comprehensive.sh, .gitignore (+wandb/), and the accumulated
+  backlog from prior sessions (tokenization gap fixes, satellite_zarr cm-trim,
+  2016 start_date clamp, Prades S1 recovery, slurm scripts/logs). Removed
+  superseded audit_zarr_complete.py / check_satellite_alignment.py /
+  check_label_continuity.py and their old outputs.
+- Architecture Q&A (no code changes):
+  - Soil data: OpenLandMap 30m, patch = 74x74px = 2.22km x 2.22km, 21 ch
+    (3 depths x 7 properties).
+  - TerraMind tile = 224x224px@10m = 2.24km, patches = 16x16px -> 14x14=196
+    tokens. Soil patch (2.22km) ~= TerraMind tile (2.24km) -> ~99% spatial
+    overlap, not a meaningful misalignment. "Soil patch size in TerraMind
+    patch units" ~= one full 14x14 token grid (i.e. soil ~ whole-tile scale,
+    much coarser than a single 16x16px token).
+  - Soil -> CNN (SoilEncoder, model.py:205): depthwise-separable conv +
+    4-scale spatial pyramid -> 4x768 tokens, ~211K params.
+  - Feasible to also feed soil into UNetDecoder (model.py:128) skip
+    connections via resize+conv at 56x56/112x112 stages -- discussed but
+    not implemented.
+  - Soil currently has NO modality dropout (unlike SIF/TWSA 50%, S1/S2
+    20%/10%) -- flagged as a possible gap; user wants ablation tests for
+    soil map too -- not yet scoped/implemented.
+  - fill_soil_nans(): no percentage threshold, ALWAYS nearest-neighbour
+    fills remaining NaN at load time; the 50%/58% thresholds only govern
+    whether a station is excluded from the dataset entirely
+    (soil_patch_ok=False), not whether the fill runs.
+- Reviewed dataset.py loading architecture (__init__ lines 728-895,
+  __getitem__ 894+): per-station eager caching at construction time for ALL
+  993 stations (era5/sif/twsa/labels/L12 token arrays into RAM, zarr group
+  opened once); __getitem__ assembles one full multimodal sample per
+  (station, year, doy) from these caches + a few small per-call zarr reads
+  (soil, dem/lulc, L3/L6/L9 skip features). Noted fill_soil_nans() reruns
+  every __getitem__ call even though soil is static per station -- possible
+  future optimization (precompute once per station), not implemented.
+
+### Next steps (carried over from project_current_state.md)
+1. Re-verify satellite_zarr vs token/cm alignment dataset-wide (now folded
+   into audit_comprehensive.py and confirmed clean for all 993 stations).
+2. Move folders -- scope still TBD with user (legacy .pt bundles vs zarr
+   token stores vs scratch->permanent storage before training).
+3. Build/consolidate the comprehensive training-ready dataset (clarify: new
+   consolidation script, or just check_dataset.sh + train.sh against
+   existing per-station zarr).
+4. Prepare for model run: sbatch slurm/check_dataset.sh, then
+   sbatch slurm/train.sh --run-name baseline_nll (ensure
+   csvs/era5_stats.json exists first).
+5. (New, discussed but not scoped) Possible soil-modality dropout +
+   soil ablation tests; possible soil-into-decoder skip connections.
