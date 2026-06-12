@@ -1432,3 +1432,91 @@ NEXT STEPS (user offline):
   sbatch slurm/train.sh --run-name baseline_nll
   Expected: ~2h/epoch, ~54 epochs in 120h wall time
   W&B monitoring: val/0-10/ubRMSE primary signal; acceptance gate < 0.07 by epoch ~15
+
+=== 2026-06-12 (continued session) — DDP bug fixes, smoke tests, and full baseline_nll submitted ===
+
+Context:
+  DDP (4-GPU) training was implemented in the previous sub-session. This session began with the
+  decision to smoke-test the DDP code on H100 before committing to the 120h baseline_nll run.
+
+DDP bug fixes (committed to GitHub):
+
+  1. train_loss reduction (commit 665a8bb):
+     Added dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG) so rank 0 logs the global mean
+     train loss, not just its local shard (which would be ~4× lower than the true loss).
+
+  2. Early stopping broadcast (commit 665a8bb):
+     Fixed a DDP deadlock: without dist.broadcast(stop_flag, src=0) before break, rank 0
+     would exit the training loop while ranks 1-3 hung waiting at the next collective
+     (dist.barrier / val_loss broadcast). Fixed with a stop_flag tensor broadcast to all ranks.
+
+  3. train_tv reduction (commit 2bd7cc2):
+     Same dist.reduce(AVG) pattern applied to train_tv (total variation loss) for accurate
+     W&B logging of the TV term.
+
+  4. gradient_as_bucket_view=True (commit 6304afb):
+     Added to DDP constructor call to eliminate "grad strides mismatch" warning and reduce
+     peak VRAM by reusing gradient buffers in-place.
+
+  5. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (commit 6304afb):
+     Added to slurm/train.sh to reduce CUDA memory fragmentation during long multi-epoch runs.
+
+  6. RAM/VRAM memory reporting (commit 83a73d2):
+     Added a memory snapshot before epoch 1: RAM usage via /proc/meminfo (MemTotal, MemFree,
+     MemAvailable), per-GPU VRAM allocated/reserved/total. Peak VRAM per epoch printed
+     alongside the loss summary line.
+
+  7. psutil replaced with /proc/meminfo (commit 1c6988b):
+     psutil is not installed in the terramind conda env. Replaced all psutil calls with
+     direct /proc/meminfo parsing, which is always available on Linux.
+
+Smoke test journey (multiple jobs before passing):
+
+  Job 23731444 (A100, batch_size=64): OOM — model requires ~39 GB VRAM; A100 has only 40 GB.
+
+  Job 23732024 (A100, batch_size=8): crashed immediately on "import psutil" —
+    fixed with /proc/meminfo replacement.
+
+  Job 23732231 (A100, batch_size=8): PASSED — 2 clean epochs, peak VRAM 5.5 GB,
+    DDP mechanics confirmed (NCCL init, DistributedSampler, val broadcast, rank-0 checkpoint).
+
+  Job 23732232 (H100, batch_size=64): PASSED — 2 clean epochs, peak VRAM 37.8 GB / 100 GB,
+    val_loss improving (epoch 1: -1.26 → epoch 2: -1.36), val 0-10 ubRMSE 0.088 m³/m³.
+
+Key findings from smoke tests:
+  - H100 nodes on Snellius are H100 SXM5 with 100 GB VRAM (not 80 GB as listed in some docs).
+  - Peak VRAM at batch_size=64 on 4 GPUs: 37.8 GB — 62 GB headroom, very comfortable.
+  - RAM: ~52 GB / 792 GB used — far below the 384 GB requested in slurm/train.sh.
+  - All DDP mechanics verified end-to-end: NCCL init, DistributedSampler, val_loss broadcast,
+    early-stop flag broadcast, rank-0-only checkpointing, W&B sync.
+
+Full training submitted:
+  Job 23733182: baseline_nll, 4× H100, 120h wall time, batch_size=64
+  Expected throughput: ~2h/epoch → ~54 epochs within 120h.
+  First epoch result visible in W&B after ~2h from job start.
+  Acceptance gate: val 0-10 ubRMSE < 0.07 m³/m³.
+  W&B: soil-moisture-phd / baseline_nll.
+
+SBU cost analysis:
+  H100 rate: ~35 SBUs/GPU-hour (4 GPUs = 140 SBUs/hr).
+  8h OOM/failure cost: ~1,120 SBUs (0.1% of 950k GPU budget) — negligible.
+  Full 120h run: ~16,800 SBUs (~1.8% of budget).
+
+Transfer learning discussion (post-baseline plan, no code changes):
+  - Phase 2: freeze TerraMind encoder + transformer backbone; replace UNet decoder head with a
+    multi-task flux head predicting LE, H, GPP, NEE.
+  - sm_and_flux / flux_only station categories are already set up in the data pipeline and zarr
+    stores (labels/{sm,le,le_qc} arrays present).
+  - Energy balance closure (Rn = LE + H + G) as an optional physics consistency loss deferred
+    to Phase 2 design; not yet scoped or implemented.
+
+Files modified:
+  train.py, slurm/train.sh, text/logs.txt
+
+Next steps:
+  1. Monitor W&B baseline_nll run (job 23733182): watch val/0-10/ubRMSE, train/loss, train/tv.
+  2. If epoch 5-10 ubRMSE stalls above 0.10, cancel and investigate (LR, TV weight, architecture).
+  3. If training converges (ubRMSE < 0.07), proceed to Phase 2 flux head design.
+  4. (Carry-over) Decide whether to remove the lazy zarr fallback in dataset.py or keep as
+     documented escape hatch.
+  5. (Carry-over) Possible soil-modality dropout + ablation tests; FiLM skip connection tuning.
