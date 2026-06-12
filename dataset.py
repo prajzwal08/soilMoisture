@@ -867,8 +867,7 @@ class SoilMoistureDataset(Dataset):
         # _l12_cache:   sat_dir → {"s2": (N,196,768) fp16, "s1_asc": ..., "s1_desc": ...}
         #               Preloads L12 token arrays into RAM so __getitem__ does 0 disk reads
         #               for history tokens. CoW fork: one physical copy across all workers.
-        # ERA5/SIF/TWSA/label caches: same format as before, populated from zarr or .nc
-        # _pt_paths: .pt fallback for stations without zarr
+        # ERA5/SIF/TWSA/label caches: same format, all populated from zarr on scratch.
         self._zarr_groups : dict[Path, zarr.Group | None]       = {}
         self._l12_cache   : dict[Path, dict[str, np.ndarray]]   = {}
         self._era5_cache  : dict[Path, tuple | None] = {}
