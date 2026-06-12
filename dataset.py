@@ -163,14 +163,16 @@ def _load_zarr_twsa(zg: zarr.Group):
 
 
 def _load_zarr_labels(zg: zarr.Group):
-    """Load labels from zarr → same tuple format as label_cache."""
+    """Load labels from zarr → (sm_np, depths, times, qc_np).
+    qc_np: 0=observed, 1=gap-filled, 2=still missing. None if not present."""
     if "labels/sm" not in zg:
         return None
     sm_np  = zg["labels/sm"][:]                        # (n_depths, n_days) float32
     depths = [str(d) for d in zg["labels/depths"][:]]
     dates  = [str(d) for d in zg["labels/dates"][:]]
     times  = pd.DatetimeIndex([pd.Timestamp(d) for d in dates])
-    return sm_np, depths, times
+    qc_np  = zg["labels/qc"][:] if "labels/qc" in zg else None  # (n_depths, n_days) uint8
+    return sm_np, depths, times, qc_np
 
 
 def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
@@ -665,7 +667,7 @@ class SoilMoistureDataset(Dataset):
 
             if sat_dir not in self._label_cache:
                 continue
-            sm_np, depths, times = self._label_cache[sat_dir]
+            sm_np, depths, times, qc_np = self._label_cache[sat_dir]
 
             for year in self.years:
                 if not (era5_start_year <= year <= era5_end_year):
@@ -678,8 +680,11 @@ class SoilMoistureDataset(Dataset):
                     continue
 
                 year_indices = np.where(year_mask)[0]
-                sm_slice     = sm_np[:, year_indices]
-                valid_days   = np.any(~np.isnan(sm_slice), axis=0)
+                # Only train on directly observed values (qc==0); gap-filled (qc==1) excluded
+                if qc_np is not None:
+                    valid_days = np.any(qc_np[:, year_indices] == 0, axis=0)
+                else:
+                    valid_days = np.any(~np.isnan(sm_np[:, year_indices]), axis=0)
                 if valid_days.sum() < min_obs:
                     continue
 
@@ -764,13 +769,14 @@ class SoilMoistureDataset(Dataset):
         if self.training and torch.rand(1).item() < 0.5:
             twsa_valid[:] = False
 
-        # ── ISMN labels — index pre-loaded numpy array ────────────────
-        sm_np, depths, _ = self._label_cache[s["sat_dir"]]
+        # ── ISMN labels — observed values only (qc==0) ───────────────
+        sm_np, depths, _, qc_np = self._label_cache[s["sat_dir"]]
         label = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
         for i, depth_str in enumerate(SM_DEPTHS):
             if depth_str in depths:
-                d_idx    = depths.index(depth_str)
-                label[i] = float(sm_np[d_idx, s["time_idx"]])
+                d_idx = depths.index(depth_str)
+                if qc_np is None or qc_np[d_idx, s["time_idx"]] == 0:
+                    label[i] = float(sm_np[d_idx, s["time_idx"]])
 
         return {
             # S2 — pre-computed L12 features
