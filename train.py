@@ -378,7 +378,7 @@ def main():
     ).to(device)
 
     if is_ddp:
-        model = DDP(model, device_ids=[local_rank])
+        model = DDP(model, device_ids=[local_rank], gradient_as_bucket_view=True)
 
     raw_model = model.module if is_ddp else model
     n_params = sum(p.numel() for p in raw_model.parameters() if p.requires_grad)
