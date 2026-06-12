@@ -172,6 +172,9 @@ def _load_zarr_labels(zg: zarr.Group):
     dates  = [str(d) for d in zg["labels/dates"][:]]
     times  = pd.DatetimeIndex([pd.Timestamp(d) for d in dates])
     qc_np  = zg["labels/qc"][:] if "labels/qc" in zg else None  # (n_depths, n_days) uint8
+    if qc_np is not None and qc_np.shape[1] != sm_np.shape[1]:
+        # trim_pre2016.py trimmed sm/dates but not qc — take trailing n days to realign
+        qc_np = qc_np[:, -sm_np.shape[1]:]
     return sm_np, depths, times, qc_np
 
 

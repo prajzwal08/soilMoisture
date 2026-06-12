@@ -40,7 +40,7 @@ GROUPS = [
     ("era5/date_ints",      False, [("era5/date_ints", 0), ("era5/values", 0), ("era5/doys", 0)]),
     ("sif/date_ints",       False, [("sif/date_ints", 0), ("sif/values", 0), ("sif/doys", 0)]),
     ("twsa/date_ints",      False, [("twsa/date_ints", 0), ("twsa/lwe", 0), ("twsa/doys", 0)]),
-    ("labels/dates",        True,  [("labels/dates", 0), ("labels/sm", 1)]),
+    ("labels/dates",        True,  [("labels/dates", 0), ("labels/sm", 1), ("labels/qc", 1)]),
     ("labels/dates_flux",   True,  [("labels/dates_flux", 0), ("labels/le", 0), ("labels/le_qc", 0)]),
 ]
 
