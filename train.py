@@ -43,7 +43,7 @@ CONFIG = {
     # Training
     "batch_size"    : 64,
     "num_workers"   : 8,
-    "prefetch_factor": 2,
+    "prefetch_factor": 4,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
     "weight_decay"  : 0.05,
