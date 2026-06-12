@@ -4,19 +4,20 @@ SoilMoistureDataset
 Loads pre-computed TerraMind features, ERA5-Land meteo, and ISMN labels
 for one station × year × day-of-year sample.
 
-Directory layout (consolidated format):
-  {data_dir}/{sm_only|sm_and_flux|flux_only}/{station}/
-      S2L2A/   {station}_L{3,6,9,12}_{start}_{end}.pt   dict{tokens[N,196,768], dates, layer, geo}
-      S1RTC/   {station}_{ASC|DESC}_L{3,6,9,12}_{start}_{end}.pt
-      DEM/     dem_L12.pt                                plain tensor [196,768] fp16
-      LULC/    lulc_L12.pt                               plain tensor [196,768] fp16
-      CloudMask/ {station}_{start}_{end}.pt              dict{masks[N,H,W] uint8, dates, geo}
-      ERA5Land/  meteo_{start}_{end}.nc
-      SIF/       sif_{start}_{end}.nc
-      TWSA/      twsa_{start}_{end}.nc
-      labels.nc
-
-See data_structure.txt for full schema.
+All data is read from Zarr stores on scratch:
+  {ZARR_ROOT}/{sm_only|sm_and_flux|flux_only}/{station}/
+      s2/             dates, l3, l6, l9, l12, token_mask, cm
+      s1_asc/         dates, l3, l6, l9, l12, token_mask
+      s1_desc/        dates, l3, l6, l9, l12, token_mask  (if available)
+      dem/            l12
+      dem_token_mask/
+      lulc/           l12
+      lulc_token_mask/
+      era5/           values, dates
+      sif/            values, dates
+      twsa/           values, dates
+      labels/         soil_moisture, depth, time
+      soil/           soil_patch (21, 74, 74)
 """
 
 import json
@@ -98,22 +99,6 @@ def _in_window(date_str: str, window_start: datetime, target_date: datetime) -> 
         return False
 
 
-def _load_pt(path: Path) -> dict:
-    """Load a consolidated .pt dict, using mmap when available (PyTorch ≥ 2.1)."""
-    try:
-        return torch.load(path, map_location="cpu", weights_only=True, mmap=True)
-    except TypeError:
-        return torch.load(path, map_location="cpu", weights_only=True)
-
-
-def _year_range_from_stem(stem: str) -> tuple[int, int]:
-    """Parse start/end year from a consolidated filename stem.
-    e.g. 'ISMN_X_L12_20160120_20241215' → (2016, 2024)
-         'meteo_20140101_20241231'        → (2014, 2024)
-    """
-    parts = stem.split("_")
-    return int(parts[-2][:4]), int(parts[-1][:4])
-
 
 def _date_to_int(dt) -> int:
     """Convert datetime-like to YYYYMMDD int."""
@@ -125,85 +110,6 @@ def _window_ints(year: int, target_doy: int) -> tuple[int, int]:
     ws, td = _window_datetimes(year, target_doy)
     return _date_to_int(ws), _date_to_int(td)
 
-
-def _resolve_pt_paths(sat_dir: Path) -> dict:
-    """
-    Pre-resolve all consolidated .pt file paths for a station.
-    Called once per station in __init__; eliminates all .glob() calls from __getitem__.
-    """
-    def _first(d: Path, pattern: str) -> Path | None:
-        if not d.exists():
-            return None
-        matches = sorted(d.glob(pattern))
-        return matches[0] if matches else None
-
-    s2  = sat_dir / "S2L2A"
-    s1  = sat_dir / "S1RTC"
-    cm  = sat_dir / "CloudMask"
-    dem = sat_dir / "DEM"  / "dem_L12.pt"
-    lc  = sat_dir / "LULC" / "lulc_L12.pt"
-
-    return {
-        "s2_l12"      : _first(s2, "*_L12_*.pt"),
-        "s2_l3"       : _first(s2, "*_L3_*.pt"),
-        "s2_l6"       : _first(s2, "*_L6_*.pt"),
-        "s2_l9"       : _first(s2, "*_L9_*.pt"),
-        "cm"          : _first(cm, "*_*.pt"),
-        "s1_asc_l12"  : _first(s1, "*_ASC_L12_*.pt"),
-        "s1_asc_l3"   : _first(s1, "*_ASC_L3_*.pt"),
-        "s1_asc_l6"   : _first(s1, "*_ASC_L6_*.pt"),
-        "s1_asc_l9"   : _first(s1, "*_ASC_L9_*.pt"),
-        "s1_desc_l12" : _first(s1, "*_DESC_L12_*.pt"),
-        "s1_desc_l3"  : _first(s1, "*_DESC_L3_*.pt"),
-        "s1_desc_l6"  : _first(s1, "*_DESC_L6_*.pt"),
-        "s1_desc_l9"  : _first(s1, "*_DESC_L9_*.pt"),
-        "dem_l12"     : dem if dem.exists() else None,
-        "lulc_l12"    : lc  if lc.exists()  else None,
-    }
-
-
-# ── Per-station NC pre-loaders (called once in __init__, not in __getitem__) ─
-
-def _load_era5_nc(era5_dir: Path):
-    """Load ERA5Land NC fully into memory. Returns (values (N,19), date_ints (N,), doys (N,)) or None."""
-    nc_files = sorted(era5_dir.glob("meteo_*_*.nc")) if era5_dir.exists() else []
-    if not nc_files:
-        return None
-    ds = xr.open_dataset(nc_files[0])
-    values = np.stack([ds[v].values for v in ERA5_VARS], axis=-1).astype(np.float32)
-    times  = pd.DatetimeIndex(ds["time"].values)
-    ds.close()
-    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
-    doys      = np.array([t.day_of_year for t in times], dtype=np.int32)
-    return values, date_ints, doys
-
-
-def _load_sif_nc(sif_dir: Path):
-    """Load SIF NC fully into memory. Returns (values (N,), date_ints (N,), doys (N,)) or None."""
-    nc_files = sorted(sif_dir.glob("sif_*_*.nc")) if sif_dir.exists() else []
-    if not nc_files:
-        return None
-    ds = xr.open_dataset(nc_files[0])
-    times  = pd.to_datetime(ds["time"].values)
-    values = ds["sif"].values.astype(np.float32)
-    ds.close()
-    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
-    doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
-    return values, date_ints, doys
-
-
-def _load_twsa_nc(twsa_dir: Path):
-    """Load TWSA NC fully into memory. Returns (values (N,), date_ints (N,), doys (N,)) or None."""
-    nc_files = sorted(twsa_dir.glob("twsa_*_*.nc")) if twsa_dir.exists() else []
-    if not nc_files:
-        return None
-    ds = xr.open_dataset(nc_files[0])
-    times  = pd.to_datetime(ds["time"].values)
-    values = ds["lwe"].values.astype(np.float32)
-    ds.close()
-    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
-    doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
-    return values, date_ints, doys
 
 
 # ── Zarr helpers ─────────────────────────────────────────────────────────────
@@ -496,21 +402,6 @@ def fill_soil_nans(patch: np.ndarray) -> np.ndarray:
     return out
 
 
-def load_soil_patch(path: Path) -> torch.Tensor | None:
-    """
-    Load soil_patch.tif → (21, 74, 74) float32 tensor, NaN-filled.
-    Returns None if the file does not exist.
-    """
-    if not path.exists():
-        return None
-    with rasterio.open(path) as src:
-        patch  = src.read().astype(np.float32)
-        nodata = src.nodata
-    if nodata is not None:
-        patch[patch == nodata] = np.nan
-    patch = fill_soil_nans(patch)
-    return torch.from_numpy(patch)
-
 
 # ── ERA5 rolling slicer (no file I/O — works on pre-loaded numpy arrays) ────
 
@@ -543,171 +434,6 @@ def load_era5_rolling(cache_entry, year: int, target_doy: int):
     out_doys[-l:] = doys_win[-l:]
     return torch.from_numpy(out_era5), torch.from_numpy(out_doys)
 
-
-# ── L12 loaders ──────────────────────────────────────────────────────────────
-
-def load_s2_rolling(l12_pt: Path | None, cm_pt: Path | None,
-                    year: int, target_doy: int,
-                    max_acq: int = MAX_S2):
-    """
-    Load pre-computed S2 L12 features within the 365-day rolling window.
-
-    Args:
-        l12_pt, cm_pt: pre-resolved paths from _resolve_pt_paths() — no glob in hot loop
-    Returns:
-        l12        : (max_acq, 196, 768) float16
-        doys       : (max_acq,) long
-        valid      : (max_acq,) bool
-        token_mask : (max_acq, 14, 14) bool — True = cloud-free token
-        rel_pos    : (max_acq,) long
-    """
-    l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
-    doys       = torch.zeros(max_acq, dtype=torch.long)
-    token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)
-    rel_pos    = torch.zeros(max_acq, dtype=torch.long)
-
-    if l12_pt is None:
-        return l12, doys, doys > 0, token_mask, rel_pos
-
-    data       = _load_pt(l12_pt)
-    tokens_all = data["tokens"]
-    all_dates  = data["dates"]
-
-    ws, td = _window_datetimes(year, target_doy)
-    win_idx = [i for i, d in enumerate(all_dates) if _in_window(d, ws, td)]
-    win_idx = win_idx[-max_acq:]
-
-    cm_masks    = None
-    cm_date_idx: dict[str, int] = {}
-    if cm_pt is not None:
-        cm_data     = _load_pt(cm_pt)
-        cm_masks    = cm_data["masks"]
-        cm_date_idx = {d: i for i, d in enumerate(cm_data["dates"])}
-
-    for out_i, src_i in enumerate(win_idx):
-        date_str = all_dates[src_i]
-        dt       = datetime.strptime(date_str[:8], "%Y%m%d")
-        acq_doy  = dt.timetuple().tm_yday
-
-        l12[out_i]     = tokens_all[src_i]
-        doys[out_i]    = acq_doy
-        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
-
-        if cm_masks is not None and date_str in cm_date_idx:
-            cm    = cm_masks[cm_date_idx[date_str]].numpy()           # (224, 224) uint8
-            cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-            # Valid classes: 0=land, 1=water, 2=snow/ice
-            # Invalid: 3=thin cloud, 4=thick cloud, 5=shadow, 255=nodata
-            # Token valid if ≤1% of its 256 pixels are in the invalid classes
-            bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))   # (14, 14)
-            token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
-
-    return l12, doys, doys > 0, token_mask, rel_pos
-
-
-def load_s1_rolling(asc_l12_pt: Path | None, desc_l12_pt: Path | None,
-                    year: int, target_doy: int,
-                    max_acq: int = MAX_S1):
-    """
-    Load pre-computed S1 L12 features (ASC + DESC merged) within the 365-day window.
-
-    Args:
-        asc_l12_pt, desc_l12_pt: pre-resolved paths from _resolve_pt_paths()
-    Returns:
-        l12     : (max_acq, 196, 768) float16
-        doys    : (max_acq,) long
-        valid   : (max_acq,) bool
-        rel_pos : (max_acq,) long
-    """
-    l12     = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
-    doys    = torch.zeros(max_acq, dtype=torch.long)
-    rel_pos = torch.zeros(max_acq, dtype=torch.long)
-
-    ws, td = _window_datetimes(year, target_doy)
-    entries: list[tuple[str, torch.Tensor, int]] = []
-    for pt in (asc_l12_pt, desc_l12_pt):
-        if pt is None:
-            continue
-        data = _load_pt(pt)
-        for i, d in enumerate(data["dates"]):
-            if _in_window(d, ws, td):
-                entries.append((d, data["tokens"], i))
-
-    if not entries:
-        return l12, doys, doys > 0, rel_pos
-
-    entries.sort(key=lambda x: x[0])
-    entries = entries[-max_acq:]
-
-    for out_i, (date_str, tokens_all, src_i) in enumerate(entries):
-        dt      = datetime.strptime(date_str[:8], "%Y%m%d")
-        acq_doy = dt.timetuple().tm_yday
-        l12[out_i]     = tokens_all[src_i]
-        doys[out_i]    = acq_doy
-        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
-
-    return l12, doys, doys > 0, rel_pos
-
-
-# ── Skip-connection feature loader ───────────────────────────────────────────
-
-def load_recent_skip_features(paths: dict, year: int, target_doy: int):
-    """
-    Load precomputed L3/L6/L9 skip features for the most-recent acquisition
-    (S2 or S1) in the rolling 365-day window.
-
-    Args:
-        paths: pre-resolved paths dict from _resolve_pt_paths()
-    Returns:
-        skip_l3, skip_l6, skip_l9 : each (196, 768) float16 — zeros if unavailable
-        recent_is_s1               : bool
-    """
-    zeros    = torch.zeros(196, 768, dtype=torch.float16)
-    ws, td   = _window_datetimes(year, target_doy)
-
-    def _most_recent(l12_pt: Path | None) -> str | None:
-        if l12_pt is None:
-            return None
-        data = _load_pt(l12_pt)
-        for d in reversed(data["dates"]):
-            if _in_window(d, ws, td):
-                return d
-        return None
-
-    s2_date  = _most_recent(paths.get("s2_l12"))
-    s1_date  = None
-    s1_orbit = None
-    for orbit, key in (("asc", "s1_asc_l12"), ("desc", "s1_desc_l12")):
-        d = _most_recent(paths.get(key))
-        if d is not None and (s1_date is None or d > s1_date):
-            s1_date, s1_orbit = d, orbit
-
-    recent_is_s1 = bool(s1_date and (not s2_date or s1_date > s2_date))
-    recent_date  = s1_date if recent_is_s1 else s2_date
-    if recent_date is None:
-        return zeros, zeros.clone(), zeros.clone(), False
-
-    skips = []
-    for layer in ("l3", "l6", "l9"):
-        pt = paths.get(f"s1_{s1_orbit}_{layer}") if recent_is_s1 else paths.get(f"s2_{layer}")
-
-        if pt is None:
-            skips.append(zeros.clone())
-            continue
-
-        data = _load_pt(pt)
-        if recent_date in data["dates"]:
-            idx = data["dates"].index(recent_date)
-            # Guard: some bundles have dates list longer than tokens tensor
-            # (partial consolidation) — fall back to zeros rather than crash
-            if idx < data["tokens"].shape[0]:
-                skips.append(data["tokens"][idx])
-            else:
-                skips.append(zeros.clone())
-        else:
-            skips.append(zeros.clone())
-
-    return skips[0], skips[1], skips[2], recent_is_s1
 
 
 # ── SIF rolling slicer (no file I/O) ─────────────────────────────────────────

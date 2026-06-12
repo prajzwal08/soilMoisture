@@ -1,9 +1,9 @@
 """
-Dataset stress test — iterate N random samples and verify shapes, dtypes, NaN counts.
+Dataset stress test — iterate every sample and verify shapes, dtypes, NaN counts.
 Run before submitting training to confirm __getitem__ is clean across all code paths.
 
 Usage:
-    python check_dataset.py [--n-samples 500] [--workers 4]
+    python check_dataset.py [--category sm_only] [--split train] [--workers 64] [--batch-size 8]
 """
 
 import argparse
