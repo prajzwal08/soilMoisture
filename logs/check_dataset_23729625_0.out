@@ -1,18 +1,18 @@
-Job ID:    23721249 (array task 2)
-Node:      tcn93
-Category:  sm_and_flux  |  Split: train
+Job ID:    23729625 (array task 0)
+Node:      tcn40
+Category:  sm_only  |  Split: train
 Building dataset (train)...
-Dataset: 44065 samples from 25 stations
-Dataset: 44065 samples from 25 stations
-Dataset ready: 44065 samples
-Checking all 44065 samples with 64 workers, batch_size=8...
+Dataset: 1049925 samples from 577 stations
+Dataset: 1049925 samples from 587 stations
+Dataset ready: 1049925 samples
+Checking 5000 random samples (subset) with 8 workers, batch_size=8...
 
 
 ============================================================
 Split           : train
-Samples checked : 44065
+Samples checked : 5000
 Label all-NaN   : 0  (no SM obs that day — fine)
-Label has obs   : 44065
+Label has obs   : 5000
 Total errors    : 0
 
 train PASSED — clean.

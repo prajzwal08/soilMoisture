@@ -116,6 +116,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers",    type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--n-samples",  type=int, default=None,
+                        help="Check a random subset of this size (default: all samples)")
     parser.add_argument("--category",   type=str, default=None,
                         help="One of sm_only, sm_and_flux, flux_only (None = all)")
     parser.add_argument("--split",      type=str, default=None,
@@ -141,7 +143,15 @@ def main():
         n = len(ds)
         print(f"Dataset: {n} samples from {len(ds._zarr_groups)} stations")
         print(f"Dataset ready: {n} samples")
-        print(f"Checking all {n} samples with {args.workers} workers, batch_size={args.batch_size}...\n")
+
+        if args.n_samples is not None and args.n_samples < n:
+            import random
+            indices = random.sample(range(n), args.n_samples)
+            ds = torch.utils.data.Subset(ds, indices)
+            n = args.n_samples
+            print(f"Checking {n} random samples (subset) with {args.workers} workers, batch_size={args.batch_size}...\n")
+        else:
+            print(f"Checking all {n} samples with {args.workers} workers, batch_size={args.batch_size}...\n")
 
         loader = DataLoader(ds, batch_size=args.batch_size, num_workers=args.workers,
                             shuffle=False, pin_memory=False, prefetch_factor=2)

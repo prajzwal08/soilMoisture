@@ -3,8 +3,8 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --gpus=1
+#SBATCH --cpus-per-task=64
+#SBATCH --gpus=4
 #SBATCH --mem=384G
 #SBATCH --time=120:00:00
 #SBATCH --output=logs/train_%j.out
@@ -23,4 +23,4 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"
 echo "GPU:    $CUDA_VISIBLE_DEVICES"
 
-conda run -n terramind python -u train.py "$@"
+conda run -n terramind torchrun --nproc_per_node=4 train.py --num-workers 8 "$@"

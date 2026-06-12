@@ -1,3 +1,4 @@
 Job ID:    23721250 (array task 1)
 Node:      tcn88
 Category:  sm_only  |  Split: val
+[2026-06-12T17:15:50.322] error: *** JOB 23721250 ON tcn88 CANCELLED AT 2026-06-12T17:15:50 DUE to SIGNAL Terminated ***

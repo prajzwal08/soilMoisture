@@ -1,3 +1,7 @@
 Job ID:    23720688 (array task 0)
 Node:      tcn131
 Category:  sm_only  |  Split: train
+[2026-06-12T17:15:50.319] error: *** JOB 23720688 ON tcn131 CANCELLED AT 2026-06-12T17:15:50 DUE to SIGNAL Terminated ***
+[2026-06-12T17:16:21.362] error: namespace_p_join: open failed for /slurm/23720688/.ns: No such file or directory
+[2026-06-12T17:16:21.362] error: namespace_g_join(JobId=23720688 SLUID=s8FXKTXXHVMH00): No such file or directory
+[2026-06-12T17:16:21.401] error: Detected 22 oom_kill events in StepId=23720688.batch. Some of the step tasks have been OOM Killed.

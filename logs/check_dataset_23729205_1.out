@@ -1,0 +1,21 @@
+Job ID:    23729205 (array task 1)
+Node:      tcn119
+Category:  sm_only  |  Split: val
+Building dataset (val)...
+Dataset: 127742 samples from 74 stations
+Dataset: 127742 samples from 74 stations
+Dataset ready: 127742 samples
+Checking 5000 random samples (subset) with 8 workers, batch_size=8...
+
+
+============================================================
+Split           : val
+Samples checked : 5000
+Label all-NaN   : 0  (no SM obs that day — fine)
+Label has obs   : 5000
+Total errors    : 0
+
+val PASSED — clean.
+
+============================================================
+OVERALL: All samples PASSED — dataset is clean.

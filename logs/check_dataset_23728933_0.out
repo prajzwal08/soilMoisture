@@ -1,0 +1,4 @@
+Job ID:    23728933 (array task 0)
+Node:      tcn72
+Category:  sm_only  |  Split: train
+[2026-06-12T17:28:48.112] error: *** JOB 23728933 ON tcn72 CANCELLED AT 2026-06-12T17:28:48 DUE to SIGNAL Terminated ***

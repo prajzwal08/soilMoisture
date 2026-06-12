@@ -1367,3 +1367,68 @@ NEXT STEPS (user offline):
   1. Wait for check_dataset job 23712838 to complete and confirm PASSED
   2. If PASSED → submit: sbatch slurm/train.sh --run-name baseline_nll
   3. Monitor W&B: soil-moisture-phd project — train/loss, val/loss, train/tv, val/mean_sigma
+
+## 2026-06-12 — DDP training setup + check_dataset hardening
+
+### ubRMSE targets confirmed
+  - Acceptance gate:   val ubRMSE < 0.07 m³/m³ for 0-10 cm (from training_plan.md)
+  - Competitive:       ~0.05–0.055 m³/m³ (matches SMAP/ESA CCI on OOT holdout)
+  - Backbone pre-trained for flux: < 0.05 m³/m³ before Phase 2 expansion
+  - compute_metrics() uses per-station temporal mean removal — matches ISMN community standard
+
+### Smoke test analysis (job 23712236, H100 gcn151)
+  - 2 epochs, 3 stations, batch_size=64
+  - VRAM: 737 MiB / 100 GB — no OOM risk at batch 64
+  - avg GPU util: 25.8% — DataLoader stall every ~4 batches (prefetch buffer draining)
+  - Epoch 1: 0-10 ubRMSE=0.099, val_loss=1.11 → Epoch 2: val_loss=0.38 (learning confirmed)
+  - Step times: fast batches ~718ms, stalls every 4 batches ~4-6s (prefetch_factor=4 refill)
+
+### Full dataset sizes (confirmed via check_dataset logs)
+  sm_only train: 1,049,925 samples from 587 stations
+  sm_only val:     127,742 samples from  74 stations
+  sm_and_flux train:  44,065 samples from  25 stations (PASSED job 23721249_2)
+  sm_and_flux val:     5,112 samples from   2 stations (PASSED job 23720691)
+
+### Epoch time estimates
+  Single GPU (1 H100):   ~5-6h/epoch → ~20 epochs in 120h
+  4-GPU DDP (torchrun):  ~2h/epoch   → ~54 epochs in 120h
+
+### check_dataset hardening
+  Previous failures:
+    - Bus error (SHM) with 64 workers + batch_size=32
+    - Hang before Python start: conda run freezes on rome partition nodes
+    - OOM killed during dataset build for sm_only train (64G insufficient for 587 stations)
+
+  Fixes applied to check_dataset.py + slurm/check_dataset.sh:
+    - Added --n-samples flag → check random subset (5000) instead of all samples
+    - Replaced conda run with direct Python path (/gpfs/home5/pkhanal/miniforge3/envs/terramind/bin/python)
+    - Added DISABLE_L12_CACHE=1 to prevent 179GB eager L12 cache OOM
+    - Reduced workers 64→8 (avoids fork-startup hang on rome nodes)
+    - Bumped mem 64G→128G, cpus-per-task 64→8, time 4h→30min
+
+  Final check_dataset results (job 23729625 / 23729205):
+    sm_only train: 5000 random samples, 0 errors — PASSED
+    sm_only val:   5000 random samples, 0 errors — PASSED
+    (sm_and_flux and flux_only splits confirmed clean in earlier jobs)
+
+### DDP implementation (train.py + slurm/train.sh)
+  Changes to train.py:
+    - Added torch.distributed, DDP, DistributedSampler imports
+    - setup_ddp(): init_process_group("nccl"), set_device(local_rank)
+    - DDP activated when LOCAL_RANK env var present (torchrun sets it); falls back to single-GPU
+    - DistributedSampler on train_loader; train_sampler.set_epoch(epoch) each epoch
+    - Val runs only on rank 0 (avoids all_gather complexity); val_loss broadcast to all ranks
+    - raw_model = model.module if DDP else model (used for checkpoint save/load)
+    - All prints, W&B logging, checkpointing guarded by is_main (rank == 0)
+    - dist.barrier() after checkpoint load to sync all ranks
+    - dist.destroy_process_group() at end/early-stop
+
+  Changes to slurm/train.sh:
+    - --gpus=1 → --gpus=4
+    - --cpus-per-task=16 → --cpus-per-task=64 (8 workers × 4 GPU processes)
+    - Launch: torchrun --nproc_per_node=4 train.py --num-workers 8
+
+### Ready to submit
+  sbatch slurm/train.sh --run-name baseline_nll
+  Expected: ~2h/epoch, ~54 epochs in 120h wall time
+  W&B monitoring: val/0-10/ubRMSE primary signal; acceptance gate < 0.07 by epoch ~15

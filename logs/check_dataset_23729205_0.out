@@ -1,0 +1,6 @@
+Job ID:    23729209 (array task 0)
+Node:      tcn119
+Category:  sm_only  |  Split: train
+Building dataset (train)...
+/var/spool/slurm/slurmd/job23729209/slurm_script: line 33: 3276434 Killed                  /gpfs/home5/pkhanal/miniforge3/envs/terramind/bin/python -u check_dataset.py --workers 8 --batch-size 8 --n-samples 5000 --category "$CATEGORY" --split "$SPLIT"
+[2026-06-12T17:38:56.083] error: Detected 1 oom_kill event in StepId=23729209.batch. Some of the step tasks have been OOM Killed.
