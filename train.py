@@ -36,7 +36,7 @@ CONFIG = {
 
     # Data
     "category_filter": ["sm_only"],
-    "years"          : list(range(2016, 2024)),
+    "years"          : list(range(2016, 2023)),  # 2023 held out for OOT/OOST evaluation
     "seed"           : 42,
 
     # Training

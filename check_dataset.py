@@ -128,7 +128,7 @@ def main():
     common_kwargs = dict(
         splits_csv      = SPLITS_CSV,
         era5_stats_path = ERA5_STATS,
-        years           = list(range(2016, 2024)),
+        years           = list(range(2016, 2023)),  # 2023 held out for OOT/OOST evaluation
         category_filter = category_filter,
     )
 

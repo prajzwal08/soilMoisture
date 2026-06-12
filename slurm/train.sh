@@ -15,6 +15,10 @@ set -euo pipefail
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
+# Disable eager L12 token cache — at 842 stations x ~150MB each = ~126GB RAM
+# loading everything upfront risks OOM_Killed with 8 DataLoader workers.
+export DISABLE_L12_CACHE=1
+
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"
 echo "GPU:    $CUDA_VISIBLE_DEVICES"
