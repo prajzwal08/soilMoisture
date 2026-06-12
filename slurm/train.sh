@@ -19,4 +19,4 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"
 echo "GPU:    $CUDA_VISIBLE_DEVICES"
 
-conda run -n terramind python train.py "$@"
+conda run -n terramind python -u train.py "$@"

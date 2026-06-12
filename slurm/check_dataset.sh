@@ -25,7 +25,7 @@ echo "Job ID:    $SLURM_JOB_ID (array task $SLURM_ARRAY_TASK_ID)"
 echo "Node:      $SLURM_NODELIST"
 echo "Category:  $CATEGORY  |  Split: $SPLIT"
 
-conda run -n terramind python check_dataset.py \
+conda run -n terramind python -u check_dataset.py \
     --workers 64 \
     --batch-size 8 \
     --category "$CATEGORY" \
