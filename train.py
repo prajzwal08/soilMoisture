@@ -447,6 +447,19 @@ def main():
         except Exception as e:
             print(f"W&B disabled: {e}")
 
+    # ── Memory snapshot (before first epoch) ─────────────────────────
+    if is_main:
+        import psutil
+        ram = psutil.virtual_memory()
+        print(f"\n=== Memory snapshot (rank 0) ===")
+        print(f"  RAM  used : {ram.used/1e9:.1f} GB / {ram.total/1e9:.1f} GB ({ram.percent:.1f}%)")
+        for i in range(torch.cuda.device_count()):
+            alloc  = torch.cuda.memory_allocated(i)  / 1e9
+            reserv = torch.cuda.memory_reserved(i)   / 1e9
+            total  = torch.cuda.get_device_properties(i).total_memory / 1e9
+            print(f"  GPU {i} VRAM: {alloc:.1f} GB alloc / {reserv:.1f} GB reserved / {total:.1f} GB total")
+        print()
+
     # ── Training loop ─────────────────────────────────────────────────
     for epoch in range(start_epoch, CONFIG["max_epochs"] + 1):
         if train_sampler is not None:
@@ -482,7 +495,10 @@ def main():
         scheduler.step(val_loss)
 
         if is_main:
-            print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")
+            peak_vram = torch.cuda.max_memory_allocated(device) / 1e9
+            print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
+                  f"  peak_vram={peak_vram:.1f}GB")
+            torch.cuda.reset_peak_memory_stats(device)
             for depth, m in metrics.items():
                 print(f"  {depth:>8s}  MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
                       f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}")
