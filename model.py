@@ -204,11 +204,14 @@ class UNetDecoder(nn.Module):
         self.conv4 = _ConvBlock(c[3], c[3])
 
         # When uncertainty=True: output 2×n_depths (mu then raw_var per depth).
-        # The raw_var bias is initialised to 0; after softplus this gives σ² ≈ log(2) ≈ 0.69 at init.
+        # Variance bias init -3.7 → softplus(-3.7)+ε ≈ 0.025, σ ≈ 0.16 m³/m³.
+        # Matches typical within-station SM variability, avoiding wasted early epochs
+        # collapsing a physically unrealistic σ=0.83 (what zero-init would give).
         out_ch    = 2 * n_depths if predict_uncertainty else n_depths
         self.head = nn.Conv2d(c[3], out_ch, 1)
         if predict_uncertainty:
             nn.init.zeros_(self.head.bias)
+            nn.init.constant_(self.head.bias[n_depths:], -3.7)   # var channels only
 
     def forward(self, bottleneck, skip_L9, skip_L6, skip_L3, context):
         # context: (B, d_context) — temporal summary from the Transformer
@@ -231,11 +234,12 @@ class UNetDecoder(nn.Module):
         raw = self.head(x)                                              # (B, out_ch, 224, 224)
 
         if self.predict_uncertainty:
-            mu      = raw[:, :self.n_depths]
-            # Softplus ensures variance > 0 with smooth gradients everywhere.
-            # log_var = log(softplus(x) + ε) is always finite; no hard gradient cutoffs.
-            log_var = torch.log(F.softplus(raw[:, self.n_depths:]) + 1e-6)
-            return mu, log_var
+            mu  = raw[:, :self.n_depths]
+            # Output variance directly (not log-variance) so masked_nll_loss can
+            # use var for the denominator and log(var) for the log term without
+            # the redundant log→exp roundtrip.
+            var = F.softplus(raw[:, self.n_depths:]) + 1e-6
+            return mu, var
         return raw, None                                                # None signals no uncertainty
 
 
@@ -619,9 +623,9 @@ class SoilMoistureModel(nn.Module):
 
     def forward(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
-        Returns (mu, log_var):
-          mu      : (B, n_depths, 224, 224)
-          log_var : (B, n_depths, 224, 224) if predict_uncertainty else None
+        Returns (mu, var):
+          mu  : (B, n_depths, 224, 224)
+          var : (B, n_depths, 224, 224) variance σ², always > 0 (softplus+ε); None if predict_uncertainty=False
         """
         B      = batch["era5"].shape[0]
         device = batch["era5"].device
@@ -695,7 +699,7 @@ class SoilMoistureModel(nn.Module):
         ctx_float = ctx_mask.float().unsqueeze(-1)                     # (B, T, 1)
         context   = (ctx * ctx_float).sum(1) / ctx_float.sum(1).clamp(min=1)  # (B, 768)
 
-        # ── 9. U-Net decoder → SM map (+ optional log_var) ────────────
+        # ── 9. U-Net decoder → SM map (+ optional var) ────────────────
         return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3, context)
 
 
@@ -719,7 +723,7 @@ def masked_huber_loss(
 
 def masked_nll_loss(
     mu:          torch.Tensor,   # (B, n_depths, 224, 224)
-    log_var:     torch.Tensor,   # (B, n_depths, 224, 224)
+    var:         torch.Tensor,   # (B, n_depths, 224, 224) — variance σ², always > 0
     label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
     station_row: int   = SoilMoistureModel.STATION_ROW,
     station_col: int   = SoilMoistureModel.STATION_COL,
@@ -727,21 +731,20 @@ def masked_nll_loss(
     """
     Gaussian negative log-likelihood at the station pixel.
     NLL = 0.5 * log(σ²) + 0.5 * (y - μ)² / σ²
-    log_var is computed via log(softplus(x) + ε) in the decoder,
-    guaranteeing finite values without hard gradient cutoffs.
+    var = softplus(raw) + ε from the decoder; always positive, no log→exp roundtrip.
     """
     mu_pt  = mu[:, :, station_row, station_col]                        # (B, n_depths)
-    lv_pt  = log_var[:, :, station_row, station_col]                   # (B, n_depths)
+    var_pt = var[:, :, station_row, station_col]                       # (B, n_depths)
     mask   = ~torch.isnan(label)
 
     if not mask.any():
         return mu_pt.sum() * 0.0
 
     mu_m  = mu_pt[mask]
-    lv_m  = lv_pt[mask]   # softplus in UNetDecoder guarantees finite values
+    var_m = var_pt[mask]
     y_m   = label[mask]
 
-    nll = 0.5 * lv_m + 0.5 * (y_m - mu_m) ** 2 / lv_m.exp()
+    nll = 0.5 * torch.log(var_m) + 0.5 * (y_m - mu_m) ** 2 / var_m
     return nll.mean()
 
 

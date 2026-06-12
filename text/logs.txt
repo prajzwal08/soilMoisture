@@ -1297,3 +1297,38 @@ point. Practical approaches:
           high-res decoder layers.
   Low: I.3 (parameterize pyramid grid size) — brittleness, not a current bug.
   Low: I.4 (Softplus for log_var) — current clamping is defensible; Softplus is cleaner but non-urgent.
+
+All 5 fixes implemented in commit bce7fd5 (model.py, train.py):
+  - circular_doy_pe: ERA5/SIF/TWSA tokens now use sin/cos(k*2π*DOY/365.25) harmonics
+  - Softplus log_var: UNetDecoder outputs log(softplus(x)+ε); clamp removed from loss
+  - FiLMLayer: temporal context (mean-pooled non-spatial transformer output) injected
+    into L9/L6/L3 skip connections via learned scale+shift
+  - total_variation_loss: λ_tv=0.001 default, tunable via --lambda-tv
+  - spatial_pyramid_pool: grid side G=int(N_tok**0.5), works for any square token grid
+
+=== 2026-06-12 — Second architecture critique and follow-up fixes ===
+
+Second critique raised 5 further issues. Assessment and fixes:
+
+Q1 (Softplus variance init): VALID — zero bias init → σ≈0.83 m³/m³ initial std, physically
+  massive for ISMN SM (range 0-0.6, within-station σ≈0.08-0.12). Fix: bias for variance
+  channels set to -3.7 → softplus(-3.7)+ε≈0.025, σ≈0.16 m³/m³. Matches realistic prior.
+
+Q2 (TV lambda too small): VALID — adjacent-pixel SM differences ~0.01-0.05; λ=0.001 gives
+  TV contribution ~2e-5, invisible against NLL ~1.0. Fix: default bumped to λ=0.1; raw
+  (unweighted) TV now logged to W&B as train/tv each epoch for empirical tuning.
+
+Q3 (log→exp redundancy in NLL): VALID — decoder computed log(softplus(x)+ε) and loss did
+  .exp() to recover variance. Fix: decoder now outputs var=softplus(x)+ε directly; loss
+  uses torch.log(var) and divides by var. Interface renamed log_var→var throughout.
+
+Q4 (RAM cap for L12 cache): Already handled — max_stations + 320G SLURM allocation.
+
+Q5 (temporal holdouts): Valid methodological concern for Phase 2. Deferred — Phase 1 goal
+  is to verify the model learns anything. Saved to memory for evaluation design later.
+
+ISMN SM units confirmed: m³/m³ (volumetric water content), range ~[0.02, 0.55],
+  within-station temporal σ ~0.08-0.12.
+
+Code changes: model.py, train.py — committed and pushed.
+Next: smoke test (slurm/smoke_h100.sh), then full baseline_nll run.

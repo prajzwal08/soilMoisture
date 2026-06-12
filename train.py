@@ -61,7 +61,7 @@ CONFIG = {
 
     # Loss: "nll" (Gaussian NLL, aleatoric uncertainty) or "huber"
     "loss_fn"   : "nll",
-    "lambda_tv" : 0.001,   # TV regularization weight (0 = disabled)
+    "lambda_tv" : 0.1,     # TV regularization weight (0 = disabled)
 
     # W&B
     "wandb_project": "soil-moisture-phd",
@@ -121,14 +121,15 @@ def compute_metrics(preds, targets, station_keys):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def _compute_loss(mu, log_var, label, loss_fn, lambda_tv=0.0):
+def _compute_loss(mu, var, label, loss_fn, lambda_tv=0.0):
     if loss_fn == "nll":
-        loss = masked_nll_loss(mu, log_var, label)
+        loss = masked_nll_loss(mu, var, label)
     else:
         loss = masked_huber_loss(mu, label)
+    tv = total_variation_loss(mu)
     if lambda_tv > 0.0:
-        loss = loss + lambda_tv * total_variation_loss(mu)
-    return loss
+        loss = loss + lambda_tv * tv
+    return loss, tv.detach()
 
 
 def _scan_for_nan(tensors: dict, exclude=()) -> dict:
@@ -157,6 +158,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
                      max_batches=None, debug_nan=False):
     model.train()
     total_loss = 0.0
+    total_tv   = 0.0
     n_batches  = 0
     t_prev     = time.perf_counter()
 
@@ -172,14 +174,14 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
             if bad_in:
                 _report_nan(f"batch {n_batches+1:03d} INPUT", batch, bad_in)
 
-        mu, log_var = model(batch)
+        mu, var = model(batch)
 
         if debug_nan:
-            bad_out = _scan_for_nan({"mu": mu, "log_var": log_var})
+            bad_out = _scan_for_nan({"mu": mu, "var": var})
             if bad_out:
                 _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-        loss = _compute_loss(mu, log_var, batch["label"], loss_fn, lambda_tv)
+        loss, tv = _compute_loss(mu, var, batch["label"], loss_fn, lambda_tv)
 
         optimizer.zero_grad()
         loss.backward()
@@ -199,13 +201,15 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
                 print(f"  [NaN DEBUG] batch {n_batches+1:03d}: NaN parameters after optimizer.step()")
 
         total_loss += loss.item()
+        total_tv   += tv.item()
         n_batches  += 1
 
         t_now = time.perf_counter()
-        print(f"  batch {n_batches:03d}  loss={loss.item():.4f}  step={1000*(t_now - t_prev):.0f}ms")
+        print(f"  batch {n_batches:03d}  loss={loss.item():.4f}  tv={tv.item():.5f}  step={1000*(t_now - t_prev):.0f}ms")
         t_prev = t_now
 
-    return total_loss / max(n_batches, 1)
+    n = max(n_batches, 1)
+    return total_loss / n, total_tv / n
 
 
 @torch.no_grad()
@@ -228,8 +232,8 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
-        mu, log_var = model(batch)
-        loss = _compute_loss(mu, log_var, batch["label"], loss_fn)
+        mu, var = model(batch)
+        loss, _ = _compute_loss(mu, var, batch["label"], loss_fn)
         total_loss += loss.item()
         n_batches  += 1
 
@@ -237,8 +241,8 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
         all_targets.append(batch["label"].cpu().numpy())
         all_station_keys.extend(batch["station_key"])
 
-        if log_var is not None:
-            sigma = (0.5 * log_var[:, :, SROW, SCOL]).exp().cpu().numpy()
+        if var is not None:
+            sigma = var[:, :, SROW, SCOL].sqrt().cpu().numpy()
             all_sigmas.append(sigma)
 
     preds   = np.concatenate(all_preds,   axis=0)
@@ -407,7 +411,7 @@ def main():
 
     # ── Training loop ─────────────────────────────────────────────────
     for epoch in range(start_epoch, CONFIG["max_epochs"] + 1):
-        train_loss = train_one_epoch(
+        train_loss, train_tv = train_one_epoch(
             model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
             lambda_tv=CONFIG["lambda_tv"],
             max_batches=args.max_train_batches, debug_nan=args.debug_nan,
@@ -426,6 +430,7 @@ def main():
             log_dict = {
                 "epoch"      : epoch,
                 "train/loss" : train_loss,
+                "train/tv"   : train_tv,   # raw (unweighted) TV for lambda tuning
                 "val/loss"   : val_loss,
                 "lr"         : optimizer.param_groups[0]["lr"],
             }
