@@ -466,11 +466,14 @@ def main():
                 val_loader, device, CONFIG["loss_fn"], max_batches=args.max_val_batches,
             )
         if is_ddp:
-            # Reduce train_loss to rank 0 for accurate global average logging
+            # Reduce train_loss and train_tv to rank 0 for accurate global average logging
             t_loss = torch.tensor(train_loss, device=device)
+            t_tv   = torch.tensor(train_tv,   device=device)
             dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
+            dist.reduce(t_tv,   dst=0, op=dist.ReduceOp.AVG)
             if is_main:
                 train_loss = t_loss.item()
+                train_tv   = t_tv.item()
             # Broadcast val_loss to all ranks for scheduler
             val_loss_t = torch.tensor(val_loss, device=device)
             dist.broadcast(val_loss_t, src=0)
