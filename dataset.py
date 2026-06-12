@@ -828,7 +828,6 @@ class SoilMoistureDataset(Dataset):
     def __init__(
         self,
         splits_csv:      str,
-        data_root:       str,
         era5_stats_path: str,
         years=None,
         min_obs:         int        = 30,
@@ -839,7 +838,6 @@ class SoilMoistureDataset(Dataset):
     ):
         self.training  = training
         self.years     = years or list(range(2016, 2024))
-        self.data_root = Path(data_root)
 
         # ERA5 normalisation stats
         with open(era5_stats_path) as f:
@@ -877,7 +875,6 @@ class SoilMoistureDataset(Dataset):
         self._sif_cache   : dict[Path, tuple | None] = {}
         self._twsa_cache  : dict[Path, tuple | None] = {}
         self._label_cache : dict[Path, tuple]        = {}
-        self._pt_paths    : dict[Path, dict]         = {}
 
         for _, r in splits.iterrows():
             has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
@@ -890,13 +887,7 @@ class SoilMoistureDataset(Dataset):
             else:
                 dir_name = f"{r['source_network']}_{r['station_id']}"
 
-            sat_dir    = self.data_root / cat / dir_name
-            label_file = sat_dir / "labels.nc"
-            soil_path  = sat_dir / "soil" / "soil_patch.tif"
-
-            zarr_complete = (ZARR_ROOT / cat / dir_name / ".complete").exists()
-            if not zarr_complete and (not sat_dir.exists() or not label_file.exists()):
-                continue
+            sat_dir = ZARR_ROOT / cat / dir_name
 
             if not bool(r.get("soil_patch_ok", True)):
                 continue
@@ -908,36 +899,18 @@ class SoilMoistureDataset(Dataset):
                 zg = _open_zarr(sat_dir, cat)
                 self._zarr_groups[sat_dir] = zg
                 if zg is not None:
-                    # Zarr path: load all tabular modalities from zarr
                     self._era5_cache[sat_dir]  = _load_zarr_era5(zg)
                     self._sif_cache[sat_dir]   = _load_zarr_sif(zg)
                     self._twsa_cache[sat_dir]  = _load_zarr_twsa(zg)
-                    self._pt_paths[sat_dir]    = {}   # not used when zarr available
-                    # Preload L12 token arrays into RAM (eliminates disk I/O for history tokens)
                     if not DISABLE_L12_CACHE:
                         self._l12_cache[sat_dir] = {
                             k: zg[f"{k}/l12"][:]
                             for k in ("s2", "s1_asc", "s1_desc")
                             if f"{k}/l12" in zg
                         }
-                    if label_file not in self._label_cache:
-                        lc = _load_zarr_labels(zg)
-                        if lc is not None:
-                            self._label_cache[label_file] = lc
-                else:
-                    # Fallback: original .pt + .nc files
-                    self._pt_paths[sat_dir]    = _resolve_pt_paths(sat_dir)
-                    self._era5_cache[sat_dir]  = _load_era5_nc(sat_dir / "ERA5Land")
-                    self._sif_cache[sat_dir]   = _load_sif_nc(sat_dir / "SIF")
-                    self._twsa_cache[sat_dir]  = _load_twsa_nc(sat_dir / "TWSA")
-                    if label_file not in self._label_cache:
-                        ds_label   = xr.open_dataset(label_file)
-                        sm_np      = ds_label["soil_moisture"].values.astype(np.float32)
-                        depths     = [str(d) for d in ds_label["depth"].values]
-                        time_coord = "date_time" if "date_time" in ds_label else "time"
-                        times      = pd.DatetimeIndex(ds_label[time_coord].values)
-                        ds_label.close()
-                        self._label_cache[label_file] = (sm_np, depths, times)
+                    lc = _load_zarr_labels(zg)
+                    if lc is not None:
+                        self._label_cache[sat_dir] = lc
 
             # ERA5 year range from cache (fast int arithmetic — no file I/O)
             era5_entry = self._era5_cache[sat_dir]
@@ -946,20 +919,16 @@ class SoilMoistureDataset(Dataset):
             era5_start_year = int(era5_entry[1][0])  // 10000
             era5_end_year   = int(era5_entry[1][-1]) // 10000
 
-            # S2 year range: from zarr dates or .pt path stem
+            # S2 year range: from zarr dates
             zg = self._zarr_groups.get(sat_dir)
-            if zg is not None:
-                if "s2/dates" not in zg:
-                    continue
-                s2_dates_zarr = [str(d) for d in zg["s2/dates"][:]]
-                s2_years = (int(s2_dates_zarr[0][:4]), int(s2_dates_zarr[-1][:4]))
-            else:
-                s2_l12_pt = self._pt_paths[sat_dir].get("s2_l12")
-                s2_years  = _year_range_from_stem(s2_l12_pt.stem) if s2_l12_pt else None
-
-            if label_file not in self._label_cache:
+            if zg is None or "s2/dates" not in zg:
                 continue
-            sm_np, depths, times = self._label_cache[label_file]
+            s2_dates_zarr = [str(d) for d in zg["s2/dates"][:]]
+            s2_years = (int(s2_dates_zarr[0][:4]), int(s2_dates_zarr[-1][:4]))
+
+            if sat_dir not in self._label_cache:
+                continue
+            sm_np, depths, times = self._label_cache[sat_dir]
 
             for year in self.years:
                 if not (era5_start_year <= year <= era5_end_year):
@@ -981,11 +950,9 @@ class SoilMoistureDataset(Dataset):
                     doy = times[year_indices[day_idx]].day_of_year
                     self.samples.append({
                         "sat_dir"    : sat_dir,
-                        "label_file" : label_file,
                         "year"       : year,
                         "doy"        : doy,
                         "time_idx"   : year_indices[day_idx],
-                        "soil_path"  : soil_path if soil_path.exists() else None,
                         "station_key": dir_name,
                     })
 
@@ -1028,39 +995,10 @@ class SoilMoistureDataset(Dataset):
             anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
                 select_anchor_zarr(zg, year, doy, l12_cache=_l12)
 
-        else:
-            # ── Fallback: original .pt files ──────────────────────────
-            paths = self._pt_paths[sat_dir]
-
-            s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = load_s2_rolling(
-                l12_pt=paths.get("s2_l12"), cm_pt=paths.get("cm"),
-                year=year, target_doy=doy,
-            )
-            s1_l12, s1_doys, s1_valid, s1_rel_pos = load_s1_rolling(
-                asc_l12_pt=paths.get("s1_asc_l12"), desc_l12_pt=paths.get("s1_desc_l12"),
-                year=year, target_doy=doy,
-            )
-            s1_token_mask   = torch.ones(MAX_S1, 14, 14, dtype=torch.bool)
-            dem_l12  = (torch.load(paths["dem_l12"],  weights_only=True, map_location="cpu")
-                        if paths.get("dem_l12")  else torch.zeros(196, 768, dtype=torch.float16))
-            lulc_l12 = (torch.load(paths["lulc_l12"], weights_only=True, map_location="cpu")
-                        if paths.get("lulc_l12") else torch.zeros(196, 768, dtype=torch.float16))
-            dem_token_mask  = torch.ones(14, 14, dtype=torch.bool)
-            lulc_token_mask = torch.ones(14, 14, dtype=torch.bool)
-            skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(paths, year, doy)
-            anchor_l3, anchor_l6, anchor_l9 = skip_l3, skip_l6, skip_l9
-            anchor_l12      = torch.zeros(196, 768, dtype=torch.float16)
-            anchor_rel_pos  = torch.tensor(0, dtype=torch.long)
-            anchor_orbit    = torch.tensor(1 if recent_is_s1 else 0, dtype=torch.long)
-
         # ── Soil patch (static, NaN-filled) ──────────────────────────
-        if zg is not None and "soil" in zg:
-            arr = zg["soil"][:]                                # (21, 74, 74) float32
-            arr = fill_soil_nans(arr)
-            soil_patch = torch.from_numpy(arr)
+        if "soil" in zg:
+            soil_patch = torch.from_numpy(fill_soil_nans(zg["soil"][:]))
         else:
-            soil_patch = load_soil_patch(s["soil_path"]) if s["soil_path"] else None
-        if soil_patch is None:
             soil_patch = torch.zeros(21, 74, 74, dtype=torch.float32)
 
         # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
@@ -1090,7 +1028,7 @@ class SoilMoistureDataset(Dataset):
             twsa_valid[:] = False
 
         # ── ISMN labels — index pre-loaded numpy array ────────────────
-        sm_np, depths, _ = self._label_cache[s["label_file"]]
+        sm_np, depths, _ = self._label_cache[s["sat_dir"]]
         label = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
         for i, depth_str in enumerate(SM_DEPTHS):
             if depth_str in depths:

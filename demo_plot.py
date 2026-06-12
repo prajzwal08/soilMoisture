@@ -32,7 +32,6 @@ from model import SoilMoistureModel
 
 CONFIG_DEFAULTS = {
     "splits_csv"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv",
-    "data_root"     : "/gpfs/work3/0/prjs1968/data",
     "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json",
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
     "category_filter": ["sm_only"],
@@ -212,7 +211,6 @@ def main():
     print("Building val dataset...")
     val_ds = SoilMoistureDataset(
         splits_csv       = CONFIG_DEFAULTS["splits_csv"],
-        data_root        = CONFIG_DEFAULTS["data_root"],
         era5_stats_path  = CONFIG_DEFAULTS["era5_stats"],
         years            = [args.year],
         category_filter  = CONFIG_DEFAULTS["category_filter"],

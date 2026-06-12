@@ -30,7 +30,6 @@ from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss, total_v
 CONFIG = {
     # Paths
     "splits_csv"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv",
-    "data_root"     : "/gpfs/work3/0/prjs1968/data",
     "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json",
     # Each run saves checkpoints under {checkpoint_dir}/{run_name}/
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
@@ -307,7 +306,6 @@ def main():
     print("Building datasets...")
     common_kwargs = dict(
         splits_csv       = CONFIG["splits_csv"],
-        data_root        = CONFIG["data_root"],
         era5_stats_path  = CONFIG["era5_stats"],
         years            = CONFIG["years"],
         category_filter  = CONFIG["category_filter"],
