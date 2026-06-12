@@ -1169,3 +1169,131 @@ ContextFormer-style random masking during training.
    documented escape hatch.
 5. (Carry-over) Possible soil-modality dropout + ablation tests; possible soil-into-decoder skip
    connections.
+
+---
+## 2026-06-12 — Architecture & Code Critique Q&A
+
+### Question (external review)
+
+A detailed technical and architectural critique was raised covering the following points:
+
+I. Technical (Code Mechanics)
+  1. RAM Limits and the _l12_cache: eager-loading the full L12 history (S2 + S1-ASC + S1-DESC) for
+     every station into RAM during __init__ risks OOM at scale. Suggested fix: use numpy mmap_mode='r'
+     instead of zg["s2/l12"][:] eager copies.
+  2. DOY Positional Encoding Discontinuity: sinusoidal_pe feeds absolute DOY (1-365) into a standard
+     Transformer PE, which is not periodic. DOY 365 and DOY 1 get very different embeddings even though
+     they are temporally adjacent. Suggested fix: circular encoding sin/cos(2π·DOY/365.25).
+  3. Hardcoded Magic Numbers in Pyramid Pooling: spatial_pyramid_pool uses explicit indices
+     _pool(6,8,6,8) etc., rigidly coupling the code to a 14×14 grid. Suggested fix:
+     torch.nn.AdaptiveAvgPool2d.
+  4. Uncertainty Clamping (log_var): .clamp(-6.0, 6.0) kills gradients outside bounds (dead neurons).
+     Suggested fix: Softplus activation to ensure positivity with gradient flow everywhere.
+
+II. Architectural (Model Design)
+  1. Point-to-Pixel Supervision on a UNet: UNet generates a 224×224 map but losses only compute
+     gradients at the single center pixel (row=col=112). No pressure for spatial coherence in the
+     other 50,175 output pixels.
+  2. Temporal-to-Spatial Bottleneck: 196 target spatial tokens must absorb 365-day ERA5 history and
+     satellite history via self-attention; high-frequency historical data may be diluted before
+     reaching the UNet bottleneck.
+  3. Skip Connections Bypass Temporal Context: UNet skip connections (L3/L6/L9) come from the static
+     anchor acquisition and completely bypass the Temporal Transformer, so high-res decoder layers
+     have no knowledge of recent weather or historical soil state.
+
+Final question: given that the UNet output is only supervised at the center pixel, how is spatial
+coherence across the 224×224 map validated?
+
+---
+
+### Answer
+
+**I.1 RAM / L12 cache — Partially valid, but already partially addressed**
+
+The critique is right that eager L12 loading is dangerous at scale. However the code already has two
+mitigations not acknowledged by the critique:
+- _load_pt (dataset.py:103) already uses mmap=True (PyTorch-level memory mapping, not eager loading).
+- DISABLE_L12_CACHE=1 env var exists as an explicit escape hatch.
+The real risk is whether __init__ does zg["s2/l12"][:] (a full array copy into RAM) rather than keeping
+a lazy zarr reference. That specific path in load_s2_rolling_zarr:296 correctly avoids the copy when
+l12_np is None. The mmap suggestion is already implemented for the .pt path.
+
+**I.2 DOY PE discontinuity — Valid, but only applies to ERA5/SIF/TWSA**
+
+sinusoidal_pe (model.py:42) does treat DOY as a linear scalar, creating a real discontinuity at year
+boundaries. However, satellite history tokens do NOT use sinusoidal_pe — they use rel_pos_emb (a
+learned relative-position embedding, model.py:494,504). The discontinuity only affects ERA5
+(model.py:519), SIF (model.py:545), and TWSA (model.py:563). The circular encoding fix is correct and
+straightforward. This is a real bug for training across year boundaries and worth fixing:
+
+  # Replace sinusoidal_pe for ERA5/SIF/TWSA with:
+  sin_enc = torch.sin(2 * math.pi * doys.float() / 365.25)
+  cos_enc = torch.cos(2 * math.pi * doys.float() / 365.25)
+  # then project [sin, cos] -> d_model via a small MLP
+
+**I.3 Hardcoded pyramid indices — Valid concern, wrong fix**
+
+The indices at model.py:103-106 are hardcoded for 14×14 and are a real brittleness. But the suggested
+fix (AdaptiveAvgPool2d) cannot replace the existing implementation because _pool uses learned attention
+weights from self.s2_pyramid_attn (nn.Linear(768,1)). AdaptiveAvgPool2d only does uniform pooling. The
+right fix is to parameterize the grid size while preserving attention-weighted pooling:
+
+  G = int(tokens.shape[1] ** 0.5)  # 14 for 196-token grid
+  c = G // 2
+  # compute scale bounds from G dynamically
+
+**I.4 log_var clamping — Critique partially misses what the code already does**
+
+The comment at model.py:195-198 already diagnoses the "dead neuron via loss-side clamping" problem and
+explicitly moved the clamp to the model output to ensure gradients flow through the network. The
+Softplus suggestion is mathematically cleaner (no zero-gradient regions anywhere), but changes the
+parametrization (would learn variance directly rather than log-variance). Given the bounds [-6,6]
+correspond to σ² ∈ [0.0025, 403] — a very wide range for soil moisture — this is a low-priority fix.
+
+**II.1 Point supervision on a UNet — The most valid critique, the most important**
+
+Confirmed: masked_huber_loss and masked_nll_loss both extract a single pixel (row=112, col=112) before
+computing loss. The entire UNet decoder (~4M parameters across 4 upsampling stages) receives gradient
+from exactly one pixel per sample. This means the model can satisfy the loss with a spatially uniform
+sheet at the station value. Practical options in order of cost:
+  1. Total Variation regularization: penalize |∇SM_map|. Low cost, physically justified (SM is
+     spatially coherent).
+  2. LULC/DEM consistency loss: pixels with identical LULC class and similar elevation should have
+     similar SM. Uses data already in the pipeline.
+  3. FiLM-modulated skip connections (see II.3 below).
+
+**II.2 Temporal-to-Spatial bottleneck — Less concerning than stated**
+
+The architecture is well-suited for cross-modal fusion: the 196 spatial tokens sit inside the
+bidirectional Transformer alongside all 365 ERA5 tokens and satellite history tokens, able to attend
+to any of them (model.py:644). This is closer to a ViT fusion pattern than a bottleneck. Whether 6
+layers is sufficient is a hyperparameter question, not a fundamental design flaw.
+
+**II.3 Skip connections bypass temporal context — Valid and tractable to fix**
+
+_get_skip_connections (model.py:429) loads L3/L6/L9 from the static anchor acquisition with no ERA5
+conditioning. The high-resolution UNet layers are driven entirely by "what did the satellite see on the
+anchor day" with no knowledge of recent weather. FiLM modulation is the right fix: take a summary
+vector from the transformer context (e.g., mean-pooled ERA5 output tokens), project to (scale, shift)
+via a small linear layer, and apply to each skip before concatenation. ~100 lines of code.
+
+**On spatial validation**
+
+Since the loss only supervises the center pixel, the map outputs are currently unvalidated beyond that
+point. Practical approaches:
+  1. Cross-station tiling: some ISMN stations are within a few km of each other. If two stations share
+     overlapping tile footprints, the model's predicted SM at each station's pixel can be compared to
+     the observed SM at that station (without ever training on that relationship).
+  2. Visual audits against LULC: generated SM maps should show lower values over urban/bare soil and
+     higher over vegetated pixels in the same tile.
+  3. Lag-correlation with precipitation: SM at any pixel should show a positive response to ERA5 tp_sum
+     within a few days. Computable for every pixel in held-out tiles.
+  None of these replace dense labels, but they would falsify the "flat sheet" failure mode.
+
+**Priority ranking of fixes**
+  High: II.1 (point supervision) — add TV or LULC/DEM consistency loss before scaling up training.
+  High: I.2 (circular DOY encoding) — real bug for cross-year samples, easy to fix.
+  Medium: II.3 (FiLM-modulated skip connections) — ~100 lines, directly improves temporal context in
+          high-res decoder layers.
+  Low: I.3 (parameterize pyramid grid size) — brittleness, not a current bug.
+  Low: I.4 (Softplus for log_var) — current clamping is defensible; Softplus is cleaner but non-urgent.

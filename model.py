@@ -16,7 +16,7 @@ Full architecture:
     [DEM pyramid × 4]                        ← static prefix (pre-computed)
     [S2 pyramid tokens × N_s2 × 4]           ← from stored L12 + s2_pyramid_attn
     [S1 pyramid tokens × N_s1 × 4]           ← from stored L12 + s1_pyramid_attn
-    [ERA5 tokens × 365]                      ← + DoY PE
+    [ERA5 tokens × 365]                      ← + circular DoY PE
     → Temporal Transformer (6L, 768D, 12H, bidirectional)
 
   Target spatial tokens:
@@ -24,11 +24,15 @@ Full architecture:
 
   Bottleneck: transformer output at target DoY → reshape (B, 768, 14, 14)
 
-  U-Net Decoder  (skip connections from TerraMind L3, L6, L9)
+  Temporal context: mean-pool of all non-spatial transformer output tokens → (B, 768)
+    → FiLM-modulates each U-Net skip connection with weather/history context
+
+  U-Net Decoder  (FiLM-modulated skip connections from TerraMind L3, L6, L9)
     14×14 → 28×28 → 56×56 → 112×112 → 224×224
     → SM map (B, n_depths, 224, 224)
 
-  Loss: Huber masked to station pixel (centre: row=col=112 in 224×224 output)
+  Loss: Huber or NLL masked to station pixel (centre: row=col=112 in 224×224 output)
+       + λ_tv * Total Variation on the full SM map (spatial smoothness)
 """
 
 import math
@@ -39,21 +43,22 @@ import torch.nn.functional as F
 
 # ── Positional encoding ──────────────────────────────────────────────────────
 
-def sinusoidal_pe(doys: torch.Tensor, dim: int = 768) -> torch.Tensor:
+def circular_doy_pe(doys: torch.Tensor, dim: int = 768) -> torch.Tensor:
     """
+    Circular positional encoding for day-of-year. Periodic at 365.25 days so
+    DOY 365 and DOY 1 share similar representations (no year-boundary seam).
+    Uses harmonics sin/cos(k * 2π * DOY / 365.25) for k = 1 … dim//2.
     doys : (N,) long tensor of day-of-year values [1, 365]
-    returns (N, dim) float positional encoding
+    returns (N, dim) float
     """
     device = doys.device
+    base   = 2.0 * math.pi / 365.25
+    k      = torch.arange(1, dim // 2 + 1, device=device).float()     # (dim//2,)
+    angles = doys.float().unsqueeze(1) * base * k                     # (N, dim//2)
     pe     = torch.zeros(len(doys), dim, device=device)
-    pos    = doys.float().unsqueeze(1)
-    div    = torch.exp(
-        torch.arange(0, dim, 2, device=device).float()
-        * (-math.log(10000.0) / dim)
-    )
-    pe[:, 0::2] = torch.sin(pos * div)
-    pe[:, 1::2] = torch.cos(pos * div)
-    return pe                                                           # (N, dim)
+    pe[:, 0::2] = torch.sin(angles)
+    pe[:, 1::2] = torch.cos(angles)
+    return pe                                                          # (N, dim)
 
 
 # ── Spatial pyramid pooling ──────────────────────────────────────────────────
@@ -62,26 +67,29 @@ def spatial_pyramid_pool(tokens: torch.Tensor,
                          token_valid: torch.Tensor = None,
                          attn: nn.Module = None) -> torch.Tensor:
     """
-    tokens      : (B, 196, 768) — TerraMind L12 output for one acquisition
-    token_valid : (B, 196) bool — True = clear/valid token; None = all valid
-    attn        : nn.Linear(768, 1) for attention-weighted pooling; None = masked mean
+    tokens      : (B, N_tok, D) — TerraMind L12 output for one acquisition
+    token_valid : (B, N_tok) bool — True = clear/valid token; None = all valid
+    attn        : nn.Linear(D, 1) for attention-weighted pooling; None = masked mean
 
     Attention mode (S2/S1): learned scores per token; masked tokens → -inf before softmax.
     Mean mode (DEM): masked average, ignoring invalid tokens.
 
-    returns: (B, 4, 768)
+    Grid size is derived from N_tok (must be a perfect square, e.g. 196 → 14×14).
+
+    returns: (B, 4, D)
                scale 0: centre ~1×1  (~160 m)
                scale 1: inner  ~3×3  (~480 m)
                scale 2: inner  ~7×7  (~1.12 km)
                scale 3: full  14×14  (~2.24 km)
     """
-    B = tokens.shape[0]
-    g = tokens.reshape(B, 14, 14, 768)
+    B, N_tok, D = tokens.shape
+    G = int(N_tok ** 0.5)                                              # grid side (14 for 196 tokens)
+    g = tokens.reshape(B, G, G, D)
 
     if attn is not None:
-        scores = attn(tokens).reshape(B, 14, 14, 1)
+        scores = attn(tokens).reshape(B, G, G, 1)
         if token_valid is not None:
-            cloud = ~token_valid.reshape(B, 14, 14).unsqueeze(-1)
+            cloud = ~token_valid.reshape(B, G, G).unsqueeze(-1)
             scores = scores.masked_fill(cloud, float("-inf"))
 
         def _pool(rs, re, cs, ce):
@@ -91,23 +99,46 @@ def spatial_pyramid_pool(tokens: torch.Tensor,
             w  = torch.nan_to_num(w, nan=0.0)
             return (wg * w.reshape(B, re-rs, ce-cs, 1)).sum(dim=(1, 2))
     else:
-        v = (token_valid.reshape(B, 14, 14).to(tokens.dtype).unsqueeze(-1)
+        v = (token_valid.reshape(B, G, G).to(tokens.dtype).unsqueeze(-1)
              if token_valid is not None
-             else torch.ones(B, 14, 14, 1, device=tokens.device, dtype=tokens.dtype))
+             else torch.ones(B, G, G, 1, device=tokens.device, dtype=tokens.dtype))
 
         def _pool(rs, re, cs, ce):
             rg = g[:, rs:re, cs:ce, :]
             rv = v[:, rs:re, cs:ce, :]
             return (rg * rv).sum(dim=(1, 2)) / rv.sum(dim=(1, 2)).clamp(min=1)
 
-    t0 = _pool(6, 8,  6, 8)
-    t1 = _pool(4, 10, 4, 10)
-    t2 = _pool(2, 12, 2, 12)
-    t3 = _pool(0, 14, 0, 14)
-    return torch.stack([t0, t1, t2, t3], dim=1)                        # (B, 4, 768)
+    # Four nested scales centred on the grid; widths computed from G so the
+    # function works for any square token grid, not just 14×14.
+    half   = G // 2
+    n_sc   = 4
+    widths = [max(1, G * (i + 1) // (n_sc * 2)) for i in range(n_sc)]
+    pools  = [_pool(half - w, half + w, half - w, half + w) for w in widths]
+    return torch.stack(pools, dim=1)                                   # (B, 4, D)
 
 
 # ── U-Net decoder ────────────────────────────────────────────────────────────
+
+class FiLMLayer(nn.Module):
+    """Feature-wise Linear Modulation: modulate a spatial feature map with a
+    context vector via learned scale and shift. Initialised as identity
+    (scale=1, shift=0) so training starts from the unmodulated baseline."""
+
+    def __init__(self, d_context: int, n_channels: int):
+        super().__init__()
+        self.proj = nn.Linear(d_context, 2 * n_channels)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.ones_(self.proj.bias[:n_channels])    # scale → 1 at init
+        nn.init.zeros_(self.proj.bias[n_channels:])   # shift → 0 at init
+
+    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, H, W)  context: (B, d_context)
+        params = self.proj(context)                               # (B, 2C)
+        C      = x.shape[1]
+        scale  = params[:, :C].unsqueeze(-1).unsqueeze(-1)       # (B, C, 1, 1)
+        shift  = params[:, C:].unsqueeze(-1).unsqueeze(-1)
+        return scale * x + shift
+
 
 class _ConvBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
@@ -129,7 +160,9 @@ class UNetDecoder(nn.Module):
     """
     4× upsampling: 14×14 → 28×28 → 56×56 → 112×112 → 224×224
 
-    Skip connections from TerraMind L9, L6, L3 of the most-recent acquisition.
+    Skip connections from TerraMind L9, L6, L3 of the most-recent acquisition,
+    each FiLM-modulated by the Transformer temporal context vector so the
+    high-resolution decoder layers are aware of recent weather and history.
     """
 
     def __init__(
@@ -139,6 +172,7 @@ class UNetDecoder(nn.Module):
         dec_ch:              tuple = (512, 256, 128, 64),
         n_depths:            int   = 3,
         predict_uncertainty: bool  = True,
+        d_context:           int   = 768,
     ):
         super().__init__()
         c = dec_ch
@@ -152,6 +186,11 @@ class UNetDecoder(nn.Module):
             nn.Conv2d(skip_ch, c[2], 1),   # L3
         ])
 
+        # FiLM layers: inject temporal context into each skip before concatenation
+        self.film_s9 = FiLMLayer(d_context, c[0])
+        self.film_s6 = FiLMLayer(d_context, c[1])
+        self.film_s3 = FiLMLayer(d_context, c[2])
+
         self.up1   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.conv1 = _ConvBlock(c[0] + c[0], c[1])
 
@@ -164,18 +203,19 @@ class UNetDecoder(nn.Module):
         self.up4   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.conv4 = _ConvBlock(c[3], c[3])
 
-        # When uncertainty=True: output 2×n_depths (mu then log_var per depth).
-        # The log_var bias is initialised to 0 so σ² ≈ 1 at the start of training.
+        # When uncertainty=True: output 2×n_depths (mu then raw_var per depth).
+        # The raw_var bias is initialised to 0; after softplus this gives σ² ≈ log(2) ≈ 0.69 at init.
         out_ch    = 2 * n_depths if predict_uncertainty else n_depths
         self.head = nn.Conv2d(c[3], out_ch, 1)
         if predict_uncertainty:
             nn.init.zeros_(self.head.bias)
 
-    def forward(self, bottleneck, skip_L9, skip_L6, skip_L3):
+    def forward(self, bottleneck, skip_L9, skip_L6, skip_L3, context):
+        # context: (B, d_context) — temporal summary from the Transformer
         x   = self.bottle_proj(bottleneck)
-        s9  = self.skip_proj[0](skip_L9)
-        s6  = self.skip_proj[1](skip_L6)
-        s3  = self.skip_proj[2](skip_L3)
+        s9  = self.film_s9(self.skip_proj[0](skip_L9), context)
+        s6  = self.film_s6(self.skip_proj[1](skip_L6), context)
+        s3  = self.film_s3(self.skip_proj[2](skip_L3), context)
 
         x = self.up1(x)
         x = self.conv1(torch.cat([x, F.interpolate(s9, x.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
@@ -192,10 +232,9 @@ class UNetDecoder(nn.Module):
 
         if self.predict_uncertainty:
             mu      = raw[:, :self.n_depths]
-            # Clamp here so gradients flow correctly at all values.
-            # Without this, extreme raw values get clamped only inside the loss,
-            # where PyTorch's clamp has zero gradient outside bounds — dead neurons.
-            log_var = raw[:, self.n_depths:].clamp(-6.0, 6.0)
+            # Softplus ensures variance > 0 with smooth gradients everywhere.
+            # log_var = log(softplus(x) + ε) is always finite; no hard gradient cutoffs.
+            log_var = torch.log(F.softplus(raw[:, self.n_depths:]) + 1e-6)
             return mu, log_var
         return raw, None                                                # None signals no uncertainty
 
@@ -338,6 +377,7 @@ class SoilMoistureModel(nn.Module):
             dec_ch              = (512, 256, 128, 64),
             n_depths            = n_depths,
             predict_uncertainty = predict_uncertainty,
+            d_context           = d_model,
         )
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -516,7 +556,7 @@ class SoilMoistureModel(nn.Module):
 
         era5_doys = batch["era5_doys"]
         flat_doys = era5_doys.reshape(-1)
-        era5_pe   = sinusoidal_pe(flat_doys, self.d_model).reshape(B, 365, self.d_model)
+        era5_pe   = circular_doy_pe(flat_doys, self.d_model).reshape(B, 365, self.d_model)
 
         era5_rel  = torch.arange(365, device=device)
         era5_rp   = self.rel_pos_emb(era5_rel).unsqueeze(0)
@@ -542,8 +582,8 @@ class SoilMoistureModel(nn.Module):
         if sif_vals.shape[1] > 0:
             sif_rel_pos = batch["sif_rel_pos"].to(device)             # (B, MAX_SIF)
             sif_tok  = self.sif_mlp(sif_vals.float())                 # (B, MAX_SIF, 768)
-            sif_pe   = sinusoidal_pe(sif_doys.reshape(-1), self.d_model
-                                     ).reshape(B, -1, self.d_model)
+            sif_pe   = circular_doy_pe(sif_doys.reshape(-1), self.d_model
+                                       ).reshape(B, -1, self.d_model)
             sif_rp   = self.rel_pos_emb(sif_rel_pos.reshape(-1).clamp(0, 364)
                                         ).reshape(B, -1, self.d_model)
             sif_mod  = self.sif_modality_emb(
@@ -560,8 +600,8 @@ class SoilMoistureModel(nn.Module):
         if twsa_vals.shape[1] > 0:
             twsa_rel_pos = batch["twsa_rel_pos"].to(device)           # (B, MAX_TWSA)
             twsa_tok  = self.twsa_mlp(twsa_vals.float())              # (B, MAX_TWSA, 768)
-            twsa_pe   = sinusoidal_pe(twsa_doys.reshape(-1), self.d_model
-                                      ).reshape(B, -1, self.d_model)
+            twsa_pe   = circular_doy_pe(twsa_doys.reshape(-1), self.d_model
+                                        ).reshape(B, -1, self.d_model)
             twsa_rp   = self.rel_pos_emb(twsa_rel_pos.reshape(-1).clamp(0, 364)
                                          ).reshape(B, -1, self.d_model)
             twsa_mod  = self.twsa_modality_emb(
@@ -648,8 +688,15 @@ class SoilMoistureModel(nn.Module):
         bottleneck  = spatial_ctx.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
                                                                        # (B, 768, 14, 14)
 
-        # ── 8. U-Net decoder → SM map (+ optional log_var) ────────────
-        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3)
+        # ── 8. Temporal context for FiLM: mean-pool non-spatial tokens ─
+        # Excludes the spatial tokens (used as bottleneck) and padding tokens.
+        ctx_mask  = (~key_mask).clone()                                # True = valid
+        ctx_mask[:, spatial_start:spatial_start + 196] = False        # exclude spatial
+        ctx_float = ctx_mask.float().unsqueeze(-1)                     # (B, T, 1)
+        context   = (ctx * ctx_float).sum(1) / ctx_float.sum(1).clamp(min=1)  # (B, 768)
+
+        # ── 9. U-Net decoder → SM map (+ optional log_var) ────────────
+        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3, context)
 
 
 # ── Loss ─────────────────────────────────────────────────────────────────────
@@ -676,13 +723,12 @@ def masked_nll_loss(
     label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
     station_row: int   = SoilMoistureModel.STATION_ROW,
     station_col: int   = SoilMoistureModel.STATION_COL,
-    log_var_min: float = -6.0,   # clamp prevents σ² → 0 collapse
-    log_var_max: float =  6.0,   # clamp prevents σ² → ∞ trivial solution
 ) -> torch.Tensor:
     """
     Gaussian negative log-likelihood at the station pixel.
     NLL = 0.5 * log(σ²) + 0.5 * (y - μ)² / σ²
-    log_var is clamped to [log_var_min, log_var_max] for numerical stability.
+    log_var is computed via log(softplus(x) + ε) in the decoder,
+    guaranteeing finite values without hard gradient cutoffs.
     """
     mu_pt  = mu[:, :, station_row, station_col]                        # (B, n_depths)
     lv_pt  = log_var[:, :, station_row, station_col]                   # (B, n_depths)
@@ -692,8 +738,19 @@ def masked_nll_loss(
         return mu_pt.sum() * 0.0
 
     mu_m  = mu_pt[mask]
-    lv_m  = lv_pt[mask].clamp(log_var_min, log_var_max)
+    lv_m  = lv_pt[mask]   # softplus in UNetDecoder guarantees finite values
     y_m   = label[mask]
 
     nll = 0.5 * lv_m + 0.5 * (y_m - mu_m) ** 2 / lv_m.exp()
     return nll.mean()
+
+
+def total_variation_loss(sm_map: torch.Tensor) -> torch.Tensor:
+    """
+    Isotropic Total Variation loss encouraging spatial smoothness in the SM map.
+    Penalises |∂SM/∂row| + |∂SM/∂col| averaged over all pixels, depths, and samples.
+    sm_map : (B, n_depths, H, W)
+    """
+    diff_h = (sm_map[:, :, 1:, :] - sm_map[:, :, :-1, :]).abs().mean()
+    diff_w = (sm_map[:, :, :, 1:] - sm_map[:, :, :, :-1]).abs().mean()
+    return diff_h + diff_w

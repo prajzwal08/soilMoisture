@@ -23,7 +23,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss
+from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss, total_variation_loss
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -60,7 +60,8 @@ CONFIG = {
     "predict_uncertainty": True,
 
     # Loss: "nll" (Gaussian NLL, aleatoric uncertainty) or "huber"
-    "loss_fn" : "nll",
+    "loss_fn"   : "nll",
+    "lambda_tv" : 0.001,   # TV regularization weight (0 = disabled)
 
     # W&B
     "wandb_project": "soil-moisture-phd",
@@ -120,10 +121,14 @@ def compute_metrics(preds, targets, station_keys):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def _compute_loss(mu, log_var, label, loss_fn):
+def _compute_loss(mu, log_var, label, loss_fn, lambda_tv=0.0):
     if loss_fn == "nll":
-        return masked_nll_loss(mu, log_var, label)
-    return masked_huber_loss(mu, label)
+        loss = masked_nll_loss(mu, log_var, label)
+    else:
+        loss = masked_huber_loss(mu, label)
+    if lambda_tv > 0.0:
+        loss = loss + lambda_tv * total_variation_loss(mu)
+    return loss
 
 
 def _scan_for_nan(tensors: dict, exclude=()) -> dict:
@@ -148,8 +153,8 @@ def _report_nan(tag, batch, bad):
             print(f"  [NaN DEBUG] {tag}: {k}[{i}] station={station} year={year} doy={doy}")
 
 
-def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, max_batches=None,
-                     debug_nan=False):
+def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda_tv=0.0,
+                     max_batches=None, debug_nan=False):
     model.train()
     total_loss = 0.0
     n_batches  = 0
@@ -174,7 +179,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, max_ba
             if bad_out:
                 _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-        loss = _compute_loss(mu, log_var, batch["label"], loss_fn)
+        loss = _compute_loss(mu, log_var, batch["label"], loss_fn, lambda_tv)
 
         optimizer.zero_grad()
         loss.backward()
@@ -255,6 +260,8 @@ def main():
     parser.add_argument("--run-name",     type=str,   default=None)
     parser.add_argument("--loss-fn",      type=str,   default=None,
                         choices=["nll", "huber"])
+    parser.add_argument("--lambda-tv",   type=float, default=None,
+                        help="TV regularization weight (default 0.001; 0 to disable)")
     parser.add_argument("--max-stations", type=int,   default=None,
                         help="Limit dataset to N stations (smoke-test mode)")
     parser.add_argument("--max-epochs",   type=int,   default=None,
@@ -279,6 +286,7 @@ def main():
     if args.prefetch_factor is not None: CONFIG["prefetch_factor"] = args.prefetch_factor
     if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
+    if args.lambda_tv   is not None: CONFIG["lambda_tv"]  = args.lambda_tv
 
     if CONFIG["loss_fn"] == "huber":
         CONFIG["predict_uncertainty"] = False
@@ -401,6 +409,7 @@ def main():
     for epoch in range(start_epoch, CONFIG["max_epochs"] + 1):
         train_loss = train_one_epoch(
             model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
+            lambda_tv=CONFIG["lambda_tv"],
             max_batches=args.max_train_batches, debug_nan=args.debug_nan,
         )
         val_loss, metrics, mean_sigma = evaluate(
