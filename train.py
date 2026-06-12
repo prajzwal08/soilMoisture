@@ -466,6 +466,12 @@ def main():
                 val_loader, device, CONFIG["loss_fn"], max_batches=args.max_val_batches,
             )
         if is_ddp:
+            # Reduce train_loss to rank 0 for accurate global average logging
+            t_loss = torch.tensor(train_loss, device=device)
+            dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
+            if is_main:
+                train_loss = t_loss.item()
+            # Broadcast val_loss to all ranks for scheduler
             val_loss_t = torch.tensor(val_loss, device=device)
             dist.broadcast(val_loss_t, src=0)
             val_loss = val_loss_t.item()
@@ -518,12 +524,18 @@ def main():
                 torch.save(state, ckpt_dir / "best.pt")
                 print(f"  New best val_loss={best_val_loss:.4f} — checkpoint saved")
 
-            if no_improve_count >= CONFIG["early_stop_patience"]:
+        # Broadcast early-stop decision to all ranks so none hang at next DDP sync
+        stop_flag = torch.tensor(
+            int(is_main and no_improve_count >= CONFIG["early_stop_patience"]),
+            device=device,
+        )
+        if is_ddp:
+            dist.broadcast(stop_flag, src=0)
+        if stop_flag.item():
+            if is_main:
                 print(f"\nEarly stopping at epoch {epoch} "
                       f"(no improvement for {CONFIG['early_stop_patience']} epochs)")
-                if is_ddp:
-                    dist.destroy_process_group()
-                break
+            break
 
     if is_main:
         if use_wandb:
