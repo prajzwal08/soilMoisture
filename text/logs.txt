@@ -967,3 +967,136 @@ retokenize_satellite_zarr.py split into two modes:
    csvs/era5_stats.json exists first).
 5. (New, discussed but not scoped) Possible soil-modality dropout +
    soil ablation tests; possible soil-into-decoder skip connections.
+
+=== 2026-06-11 ===
+Investigation:
+- Mapped out storage layout for the "delete /projects/prjs1968/data/?"
+  question. Confirmed /projects/prjs1968/data == /gpfs/work3/0/prjs1968/data
+  (same inode, just two mount paths) -- this is DATA_ROOT used throughout
+  the codebase, not a separate legacy dir.
+- Found /projects/prjs1968/data/{sm_only,flux_only} only had leftover
+  per-station folders for 169/993 stations (53G + 73G), all confirmed to
+  be a subset of the 993 stations with complete token zarr.
+- Inspected /gpfs/scratch1/shared/pkhanal/zarr/ (the active token zarr
+  ZARR_ROOT used by dataset.py): 993/993 stations have .complete markers,
+  775G total, 169,024 files. Each station's zarr group is fully
+  self-contained (s2/s1_asc/s1_desc l3/l6/l9/l12 tokens+dates, dem, lulc,
+  soil, era5, sif, twsa, labels, cloud masks) -- confirmed via structure
+  dump for ISMN_ARM_Ashton.
+- Risk identified: this 775G scratch zarr was the ONLY complete copy for
+  ~824/993 stations, and scratch is purgeable.
+- Also found a small separate /gpfs/scratch1/shared/pkhanal/data/ (248M,
+  download-staging leftovers for ~30 stations).
+- /projects/prjs1968/data/excluded_stations/ (1.4G) contains 30 station
+  dirs for stations NOT in the active 993 (per excluded_stations.csv) plus
+  trim-rollback archives (_cm_extra, _pre2016, _satzarr_trim) -- NOT
+  redundant with zarr, left untouched.
+
+Actions:
+- Wrote slurm/backup_zarr_tokens.sh: parallel rsync (xargs -P 64, rome
+  partition, 64 cores) of the 775G scratch zarr -> permanent
+  /projects/prjs1968/zarr_tokens/, with file-count + .complete-marker
+  verification. Job 23674757: rsync completed in ~5 min, verification
+  PASSED (169,024=169,024 files, 775G=775G, 993/993 .complete markers).
+  Spot-checked all 34 zarr arrays for ISMN_SNOTEL_BearCreek -- byte-for-
+  byte identical between scratch and backup.
+- Code review of the backup script flagged 4 issues (xargs subshell
+  overhead, glob-in-find for verification, slow recursive find/du on
+  zarr's many small chunk files, redundant mkdir before rsync -a).
+  Assessed: only the slow find/du was a real issue (cost ~15 min extra
+  walltime, well within the 4hr budget); others were correct but minor.
+  Did not change the script since the run already succeeded.
+- Deleted /projects/prjs1968/data/sm_only/ (53G) and
+  /projects/prjs1968/data/flux_only/ (73G) -- the 169 legacy per-station
+  folders, fully superseded by the verified zarr backup.
+- Deleted /gpfs/scratch1/shared/pkhanal/data/ (248M) -- staging leftovers.
+- Total freed: ~126.2G. Kept excluded_stations/, logs/, sm_and_flux/,
+  failures.log, station_splits.csv in /projects/prjs1968/data/ (~1.7G).
+- Committed + pushed slurm/backup_zarr_tokens.sh and prior session's
+  logs.txt update to origin/main.
+
+### Next steps (carried over)
+1. Build/consolidate the comprehensive training-ready dataset (clarify: new
+   consolidation script, or just check_dataset.sh + train.sh against
+   existing per-station zarr).
+2. Prepare for model run: sbatch slurm/check_dataset.sh, then
+   sbatch slurm/train.sh --run-name baseline_nll (ensure
+   csvs/era5_stats.json exists first).
+3. (New, discussed but not scoped) Possible soil-modality dropout +
+   soil ablation tests; possible soil-into-decoder skip connections.
+4. (Optional, low priority) Decide whether to also clean up
+   /projects/prjs1968/data/excluded_stations/ and logs/ (~1.7G,
+   currently preserved).
+
+=== 2026-06-12 ===
+Investigation:
+- Dug into the H100 smoke-test OOM (job 23676471, 2026-06-11): root cause
+  was SoilMoistureDataset.__init__ eagerly caching L12 token arrays for
+  ALL stations in a split into RAM, ignoring --max-stations entirely.
+- Decided to empirically test eager (RAM-cached L12) vs lazy (on-demand
+  zarr chunk reads) before committing to a --mem setting for the full run,
+  since this had never been measured directly.
+
+Fixes (dataset.py, train.py, slurm/smoke_h100.sh):
+- dataset.py: added max_stations param with an early-exit in the splits
+  loop (stop opening new station zarr groups once max_stations reached),
+  and a DISABLE_L12_CACHE env toggle that skips the eager L12 RAM cache
+  and forces the existing lazy zarr-chunk-read fallback.
+- train.py: replaced the old post-hoc Subset-based --max-stations limiting
+  with passing max_stations directly into SoilMoistureDataset; added
+  per-batch step timing to train_one_epoch; added --num-workers /
+  --prefetch-factor CLI overrides + CONFIG["prefetch_factor"].
+- Verified via CPU sanity test (max_stations=1) that both eager and lazy
+  paths produce correct samples (s2_l12 shape [60,196,768]).
+
+New OOM discovered mid-experiment (jobs 23704119/23704120, both hung at
+0% GPU util, killed by OOM-killer per dmesg):
+- Independent of eager/lazy: DataLoader num_workers=16 x prefetch_factor=4
+  = 64 queued batches x ~2GB/batch (31MB/sample x batch_size=64) ~= 125GB,
+  nearly exhausting --mem=128G on its own.
+- Fix: reduced smoke_h100.sh to --num-workers 4 --prefetch-factor 2
+  (8 queued batches ~= 16GB). Cancelled hung jobs.
+
+Eager vs lazy comparison (re-run with fixed settings, jobs 23704637 eager
+vs 23704638 lazy, --max-stations 3, 2 epochs):
+- Eager: completed cleanly in ~5.5 min. avg GPU util 41.2%, max VRAM
+  737 MiB, steady ~720ms/batch (periodic ~3.5-4s stalls for worker
+  refill). val_loss improved -0.75 -> -0.80.
+- Lazy: cancelled after 10 min, only ~2-3 batches done (~2-2.5 min/batch
+  vs eager's 0.7s -- would take 130-165 min/epoch). CPU RSS stable
+  (~26GB), no OOM -- purely a throughput problem.
+- Root cause of lazy slowdown: load_s2_rolling_zarr/load_s1_rolling_zarr
+  (dataset.py:304,352) call tokens_z[src_i] once per timestep over a
+  60-step history window. Plain zarr.Array has no chunk cache, and chunk
+  size is 32 along the time axis, so each chunk gets re-read +
+  re-decompressed ~30x per sample, x3 modalities (s2/s1_asc/s1_desc),
+  x batch_size 64 -- ~1500x redundant decompression.
+
+Decisions:
+- Eager L12 RAM caching is the right approach for the full run; the lazy
+  fallback is not viable without a rewrite (would need either a chunk
+  cache or reading the full window slice in one call).
+- For slurm/train.sh (full baseline_nll run): eager L12 caches need
+  ~180GB (train 157.72G + val 21.63G, measured) + ~24GB worker overhead
+  + ~16-32GB DataLoader prefetch queues ~= 220-235GB total. 256G would
+  leave only ~8-14% headroom for a long multi-day run -- recommended
+  bumping to 320G instead. Also worth testing num_workers=8 (prefetch
+  ~32GB) since the smoke test showed GPU util only 41% at num_workers=4,
+  suggesting the CPU-side batch prep is the bottleneck on the 16-cpu
+  allocation.
+
+### Next steps (carried over)
+1. Update slurm/train.sh: --mem=256G -> 320G, set --num-workers/
+   --prefetch-factor (test 8x2 vs 4x2 for GPU utilization), decide
+   whether to keep DISABLE_L12_CACHE as a documented escape hatch or
+   remove the lazy fallback code entirely.
+2. Commit accumulated changes: dataset.py, train.py, slurm/smoke_h100.sh,
+   text/logs.txt, plus new log files under logs/.
+3. Prepare for model run: sbatch slurm/check_dataset.sh, then
+   sbatch slurm/train.sh --run-name baseline_nll (ensure
+   csvs/era5_stats.json exists first).
+4. (New, discussed but not scoped) Possible soil-modality dropout +
+   soil ablation tests; possible soil-into-decoder skip connections.
+5. (Optional, low priority) Decide whether to also clean up
+   /projects/prjs1968/data/excluded_stations/ and logs/ (~1.7G,
+   currently preserved).

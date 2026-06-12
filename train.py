@@ -13,6 +13,7 @@ W&B project: soil-moisture-phd
 
 import argparse
 import random
+import time
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +42,8 @@ CONFIG = {
 
     # Training
     "batch_size"    : 64,
-    "num_workers"   : 16,
+    "num_workers"   : 8,
+    "prefetch_factor": 2,
     "max_epochs"    : 100,
     "lr"            : 1e-4,
     "weight_decay"  : 0.05,
@@ -110,31 +112,85 @@ def _compute_loss(mu, log_var, label, loss_fn):
     return masked_huber_loss(mu, label)
 
 
-def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn):
+def _scan_for_nan(tensors: dict, exclude=()) -> dict:
+    """Return {key: [bad sample indices]} for float tensors containing NaN/Inf."""
+    bad = {}
+    for k, v in tensors.items():
+        if k in exclude or v is None or not isinstance(v, torch.Tensor) or not v.is_floating_point():
+            continue
+        bad_mask = torch.isnan(v) | torch.isinf(v)
+        if bad_mask.any():
+            per_sample = bad_mask.reshape(v.shape[0], -1).any(dim=1)
+            bad[k] = torch.where(per_sample)[0].tolist()
+    return bad
+
+
+def _report_nan(tag, batch, bad):
+    for k, idx_list in bad.items():
+        for i in idx_list[:5]:
+            station = batch["station_key"][i] if "station_key" in batch else "?"
+            year    = batch["year"][i].item()  if "year" in batch else "?"
+            doy     = batch["doy"][i].item()   if "doy" in batch else "?"
+            print(f"  [NaN DEBUG] {tag}: {k}[{i}] station={station} year={year} doy={doy}")
+
+
+def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, max_batches=None,
+                     debug_nan=False):
     model.train()
     total_loss = 0.0
     n_batches  = 0
+    t_prev     = time.perf_counter()
 
     for batch in loader:
+        if max_batches is not None and n_batches >= max_batches:
+            break
+
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
+        if debug_nan:
+            bad_in = _scan_for_nan(batch, exclude={"label"})
+            if bad_in:
+                _report_nan(f"batch {n_batches+1:03d} INPUT", batch, bad_in)
+
         mu, log_var = model(batch)
+
+        if debug_nan:
+            bad_out = _scan_for_nan({"mu": mu, "log_var": log_var})
+            if bad_out:
+                _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
+
         loss = _compute_loss(mu, log_var, batch["label"], loss_fn)
 
         optimizer.zero_grad()
         loss.backward()
+
+        if debug_nan:
+            bad_grad = any(p.grad is not None and (torch.isnan(p.grad).any() or torch.isinf(p.grad).any())
+                           for p in model.parameters())
+            if bad_grad:
+                print(f"  [NaN DEBUG] batch {n_batches+1:03d}: NaN/Inf in gradients")
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
 
+        if debug_nan:
+            bad_param = any(torch.isnan(p).any() for p in model.parameters())
+            if bad_param:
+                print(f"  [NaN DEBUG] batch {n_batches+1:03d}: NaN parameters after optimizer.step()")
+
         total_loss += loss.item()
         n_batches  += 1
+
+        t_now = time.perf_counter()
+        print(f"  batch {n_batches:03d}  loss={loss.item():.4f}  step={1000*(t_now - t_prev):.0f}ms")
+        t_prev = t_now
 
     return total_loss / max(n_batches, 1)
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, loss_fn):
+def evaluate(model, loader, device, loss_fn, max_batches=None):
     model.eval()
     total_loss  = 0.0
     n_batches   = 0
@@ -146,6 +202,9 @@ def evaluate(model, loader, device, loss_fn):
     SCOL = SoilMoistureModel.STATION_COL
 
     for batch in loader:
+        if max_batches is not None and n_batches >= max_batches:
+            break
+
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
@@ -184,12 +243,24 @@ def main():
                         help="Limit dataset to N stations (smoke-test mode)")
     parser.add_argument("--max-epochs",   type=int,   default=None,
                         help="Override max_epochs (smoke-test mode)")
+    parser.add_argument("--num-workers",     type=int, default=None,
+                        help="Override DataLoader num_workers (smoke-test mode)")
+    parser.add_argument("--prefetch-factor", type=int, default=None,
+                        help="Override DataLoader prefetch_factor (smoke-test mode)")
+    parser.add_argument("--max-train-batches", type=int, default=None,
+                        help="Limit batches per training epoch (trial/debug mode)")
+    parser.add_argument("--max-val-batches",   type=int, default=None,
+                        help="Limit batches during validation (trial/debug mode)")
+    parser.add_argument("--debug-nan", action="store_true",
+                        help="Scan inputs/outputs/grads/params for NaN/Inf each batch (slow)")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
     if args.batch_size  is not None: CONFIG["batch_size"] = args.batch_size
     if args.n_layers    is not None: CONFIG["n_layers"]   = args.n_layers
     if args.run_name    is not None: CONFIG["run_name"]   = args.run_name
+    if args.num_workers     is not None: CONFIG["num_workers"]     = args.num_workers
+    if args.prefetch_factor is not None: CONFIG["prefetch_factor"] = args.prefetch_factor
     if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
 
@@ -213,21 +284,11 @@ def main():
         years            = CONFIG["years"],
         category_filter  = CONFIG["category_filter"],
     )
-    train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True)
-    val_dataset   = SoilMoistureDataset(**common_kwargs, split_filter=["val"],   training=False)
-
-    if args.max_stations is not None:
-        def _limit(ds, n):
-            seen, idx = set(), []
-            for i, s in enumerate(ds.samples):
-                seen.add(s["station_key"])
-                if len(seen) > n:
-                    break
-                idx.append(i)
-            from torch.utils.data import Subset
-            return Subset(ds, idx)
-        train_dataset = _limit(train_dataset, args.max_stations)
-        val_dataset   = _limit(val_dataset,   max(1, args.max_stations // 5))
+    val_max_stations = max(1, args.max_stations // 5) if args.max_stations is not None else None
+    train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
+                                         max_stations=args.max_stations)
+    val_dataset   = SoilMoistureDataset(**common_kwargs, split_filter=["val"],   training=False,
+                                         max_stations=val_max_stations)
 
     train_loader = DataLoader(
         train_dataset,
@@ -238,7 +299,7 @@ def main():
         drop_last          = True,
         worker_init_fn     = worker_init_fn,
         persistent_workers = CONFIG["num_workers"] > 0,
-        prefetch_factor    = 4 if CONFIG["num_workers"] > 0 else None,
+        prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -248,7 +309,7 @@ def main():
         pin_memory         = True,
         worker_init_fn     = worker_init_fn,
         persistent_workers = CONFIG["num_workers"] > 0,
-        prefetch_factor    = 4 if CONFIG["num_workers"] > 0 else None,
+        prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
     )
 
     # ── Model ─────────────────────────────────────────────────────────
@@ -323,9 +384,12 @@ def main():
     # ── Training loop ─────────────────────────────────────────────────
     for epoch in range(start_epoch, CONFIG["max_epochs"] + 1):
         train_loss = train_one_epoch(
-            model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"]
+            model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
+            max_batches=args.max_train_batches, debug_nan=args.debug_nan,
         )
-        val_loss, metrics, mean_sigma = evaluate(model, val_loader, device, CONFIG["loss_fn"])
+        val_loss, metrics, mean_sigma = evaluate(
+            model, val_loader, device, CONFIG["loss_fn"], max_batches=args.max_val_batches
+        )
         scheduler.step(val_loss)
 
         print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}")

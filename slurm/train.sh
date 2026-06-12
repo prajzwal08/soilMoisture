@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus=1
-#SBATCH --mem=128G
+#SBATCH --mem=320G
 #SBATCH --time=120:00:00
 #SBATCH --output=logs/train_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL

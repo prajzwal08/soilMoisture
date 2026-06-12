@@ -1,0 +1,13 @@
+Job ID : 23674757
+Node   : tcn501
+Source : /gpfs/scratch1/shared/pkhanal/zarr
+Dest   : /projects/prjs1968/zarr_tokens
+--- Verification ---
+Source .complete markers: 993
+Dest   .complete markers: 993
+Source file count: 169024
+Dest   file count: 169024
+775G	/gpfs/scratch1/shared/pkhanal/zarr
+775G	/projects/prjs1968/zarr_tokens
+VERIFICATION PASSED
+Done.

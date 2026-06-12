@@ -1,0 +1,203 @@
+Job ID: 23704637
+Node:   gcn142
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/pkhanal/.netrc.
+wandb: Currently logged in as: prajzwal08 (prajzwal08-university-of-twente) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /gpfs/work3/0/prjs1968/soilMoisture/wandb/run-20260612_063725-eqc5p0ez
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run smoke_h100_eager2
+wandb: ⭐️ View project at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: 🚀 View run at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/eqc5p0ez
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb:            epoch ▁█
+wandb:               lr ▁▁
+wandb:       train/loss █▁
+wandb:     val/0-10/MAE ▁█
+wandb:    val/0-10/bias █▁
+wandb:  val/0-10/ubRMSE ▁█
+wandb:    val/10-30/MAE █▁
+wandb:   val/10-30/bias ▁█
+wandb: val/10-30/ubRMSE █▁
+wandb:   val/30-100/MAE █▁
+wandb:               +4 ...
+wandb: 
+wandb: Run summary:
+wandb:            epoch 2
+wandb:               lr 0.0001
+wandb:       train/loss -2.00417
+wandb:     val/0-10/MAE 0.0858
+wandb:    val/0-10/bias 0.02488
+wandb:  val/0-10/ubRMSE 0.09417
+wandb:    val/10-30/MAE 0.13879
+wandb:   val/10-30/bias -0.12709
+wandb: val/10-30/ubRMSE 0.0989
+wandb:   val/30-100/MAE 0.07492
+wandb:               +4 ...
+wandb: 
+wandb: 🚀 View run smoke_h100_eager2 at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/eqc5p0ez
+wandb: ⭐️ View project at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260612_063725-eqc5p0ez/logs
+Device: cuda
+Building datasets...
+Dataset: 4280 samples from 3 stations
+Dataset: 1132 samples from 1 stations
+Building model...
+Trainable parameters: 48,673,863
+No checkpoint found — starting fresh
+  batch 001  loss=-0.0089  step=11570ms
+  batch 002  loss=-0.1796  step=723ms
+  batch 003  loss=-0.3280  step=718ms
+  batch 004  loss=-0.3544  step=725ms
+  batch 005  loss=-0.3599  step=719ms
+  batch 006  loss=-0.5768  step=717ms
+  batch 007  loss=-0.6741  step=719ms
+  batch 008  loss=-0.8415  step=722ms
+  batch 009  loss=-0.9258  step=3542ms
+  batch 010  loss=-0.8904  step=1153ms
+  batch 011  loss=-0.8532  step=718ms
+  batch 012  loss=-1.1093  step=722ms
+  batch 013  loss=-1.2653  step=3515ms
+  batch 014  loss=-1.2976  step=1058ms
+  batch 015  loss=-1.2866  step=723ms
+  batch 016  loss=-1.4089  step=717ms
+  batch 017  loss=-0.8855  step=3626ms
+  batch 018  loss=-0.1130  step=721ms
+  batch 019  loss=-1.2539  step=721ms
+  batch 020  loss=-1.0291  step=719ms
+  batch 021  loss=-1.2297  step=3600ms
+  batch 022  loss=-1.3769  step=717ms
+  batch 023  loss=-1.2299  step=722ms
+  batch 024  loss=-1.3141  step=718ms
+  batch 025  loss=-1.3674  step=3219ms
+  batch 026  loss=-1.0903  step=1080ms
+  batch 027  loss=-1.0936  step=720ms
+  batch 028  loss=-1.2697  step=720ms
+  batch 029  loss=-1.4621  step=3551ms
+  batch 030  loss=-1.3192  step=1064ms
+  batch 031  loss=-1.5580  step=722ms
+  batch 032  loss=-1.6340  step=717ms
+  batch 033  loss=-1.6983  step=4241ms
+  batch 034  loss=-1.5763  step=718ms
+  batch 035  loss=-1.6686  step=718ms
+  batch 036  loss=-1.6944  step=718ms
+  batch 037  loss=-1.3887  step=3310ms
+  batch 038  loss=-1.9495  step=718ms
+  batch 039  loss=-1.8927  step=723ms
+  batch 040  loss=-1.2164  step=720ms
+  batch 041  loss=-1.6831  step=3496ms
+  batch 042  loss=-1.6528  step=720ms
+  batch 043  loss=-1.8157  step=719ms
+  batch 044  loss=-1.9673  step=717ms
+  batch 045  loss=-1.4493  step=4213ms
+  batch 046  loss=-0.3201  step=720ms
+  batch 047  loss=-0.6271  step=718ms
+  batch 048  loss=-2.0201  step=721ms
+  batch 049  loss=-0.7860  step=2951ms
+  batch 050  loss=-0.7991  step=720ms
+  batch 051  loss=-1.1247  step=717ms
+  batch 052  loss=-1.5589  step=720ms
+  batch 053  loss=-1.7321  step=3471ms
+  batch 054  loss=-1.4694  step=721ms
+  batch 055  loss=-1.1957  step=718ms
+  batch 056  loss=-1.2926  step=718ms
+  batch 057  loss=-1.0697  step=3581ms
+  batch 058  loss=-1.2854  step=721ms
+  batch 059  loss=-1.3351  step=723ms
+  batch 060  loss=-1.4406  step=718ms
+  batch 061  loss=-1.5735  step=3084ms
+  batch 062  loss=-1.5831  step=1560ms
+  batch 063  loss=-1.5821  step=718ms
+  batch 064  loss=-1.5593  step=720ms
+  batch 065  loss=-1.8148  step=2912ms
+  batch 066  loss=-1.4680  step=1450ms
+
+Epoch 001  |  train_loss=-1.2254  val_loss=-0.7510
+      0-10  MSE=0.0090  MAE=0.0829  ubRMSE=0.0908  bias=0.0276
+     10-30  MSE=0.0889  MAE=0.2754  ubRMSE=0.1275  bias=-0.2694
+    30-100  MSE=0.0141  MAE=0.0968  ubRMSE=0.1038  bias=0.0579
+  New best val_loss=-0.7510 — checkpoint saved
+  batch 001  loss=-1.7520  step=8596ms
+  batch 002  loss=-2.0468  step=720ms
+  batch 003  loss=-1.8532  step=718ms
+  batch 004  loss=-1.9475  step=717ms
+  batch 005  loss=-1.4286  step=3268ms
+  batch 006  loss=-1.7477  step=718ms
+  batch 007  loss=-1.9087  step=719ms
+  batch 008  loss=-1.8030  step=723ms
+  batch 009  loss=-1.7288  step=4011ms
+  batch 010  loss=-1.6836  step=719ms
+  batch 011  loss=-1.7543  step=720ms
+  batch 012  loss=-1.9866  step=720ms
+  batch 013  loss=-1.6836  step=3844ms
+  batch 014  loss=-1.5376  step=714ms
+  batch 015  loss=-1.6491  step=716ms
+  batch 016  loss=-1.3966  step=720ms
+  batch 017  loss=-1.7250  step=3564ms
+  batch 018  loss=-1.8611  step=720ms
+  batch 019  loss=-1.9341  step=718ms
+  batch 020  loss=-2.0345  step=717ms
+  batch 021  loss=-1.7715  step=3198ms
+  batch 022  loss=-1.9191  step=719ms
+  batch 023  loss=-2.1209  step=720ms
+  batch 024  loss=-2.2917  step=721ms
+  batch 025  loss=-1.9236  step=3644ms
+  batch 026  loss=-2.2342  step=719ms
+  batch 027  loss=-2.2272  step=720ms
+  batch 028  loss=-2.0081  step=719ms
+  batch 029  loss=-2.2939  step=4353ms
+  batch 030  loss=-2.1315  step=717ms
+  batch 031  loss=-1.9524  step=717ms
+  batch 032  loss=-2.2794  step=719ms
+  batch 033  loss=-2.1302  step=3404ms
+  batch 034  loss=-1.9790  step=720ms
+  batch 035  loss=-1.9447  step=721ms
+  batch 036  loss=-2.3078  step=720ms
+  batch 037  loss=-2.2940  step=3687ms
+  batch 038  loss=-1.9138  step=719ms
+  batch 039  loss=-1.8363  step=719ms
+  batch 040  loss=-1.9506  step=719ms
+  batch 041  loss=-1.3385  step=3414ms
+  batch 042  loss=-2.0983  step=722ms
+  batch 043  loss=-2.1683  step=719ms
+  batch 044  loss=-2.1057  step=718ms
+  batch 045  loss=-2.1136  step=3620ms
+  batch 046  loss=-2.0872  step=717ms
+  batch 047  loss=-2.0326  step=717ms
+  batch 048  loss=-1.6977  step=716ms
+  batch 049  loss=-2.2629  step=3440ms
+  batch 050  loss=-2.0665  step=720ms
+  batch 051  loss=-2.1397  step=718ms
+  batch 052  loss=-2.4701  step=722ms
+  batch 053  loss=-2.3985  step=3250ms
+  batch 054  loss=-2.2818  step=722ms
+  batch 055  loss=-2.3388  step=723ms
+  batch 056  loss=-2.2786  step=718ms
+  batch 057  loss=-2.4333  step=3597ms
+  batch 058  loss=-1.5925  step=1029ms
+  batch 059  loss=-1.9745  step=717ms
+  batch 060  loss=-2.2302  step=719ms
+  batch 061  loss=-2.1659  step=3810ms
+  batch 062  loss=-1.9137  step=789ms
+  batch 063  loss=-2.2725  step=719ms
+  batch 064  loss=-2.3960  step=721ms
+  batch 065  loss=-2.3080  step=3639ms
+  batch 066  loss=-2.1379  step=718ms
+
+Epoch 002  |  train_loss=-2.0042  val_loss=-0.7961
+      0-10  MSE=0.0095  MAE=0.0858  ubRMSE=0.0942  bias=0.0249
+     10-30  MSE=0.0259  MAE=0.1388  ubRMSE=0.0989  bias=-0.1271
+    30-100  MSE=0.0081  MAE=0.0749  ubRMSE=0.0804  bias=0.0403
+  New best val_loss=-0.7961 — checkpoint saved
+
+Training complete. Best val_loss: -0.7961
+Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_h100_eager2
+--- GPU utilization summary ---
+avg GPU util: 41.2%  max VRAM used: 737 MiB / 95830

@@ -1,0 +1,7 @@
+Job ID: 23704119
+Node:   gcn144
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+[2026-06-12T06:33:33.306] error: *** JOB 23704119 ON gcn144 CANCELLED AT 2026-06-12T06:33:33 DUE to SIGNAL Terminated ***
+[2026-06-12T06:33:33.581] error: Detected 6 oom_kill events in StepId=23704119.batch. Some of the step tasks have been OOM Killed.

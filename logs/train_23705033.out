@@ -1,0 +1,75 @@
+Job ID: 23705033
+Node:   gcn144
+GPU:    0
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/pkhanal/.netrc.
+wandb: Currently logged in as: prajzwal08 (prajzwal08-university-of-twente) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 74al6lo9
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /gpfs/work3/0/prjs1968/soilMoisture/wandb/run-20260612_071746-74al6lo9
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run trial_fullscale
+wandb: ⭐️ View project at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: 🚀 View run at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/74al6lo9
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb: epoch ▁
+wandb:    lr ▁
+wandb:    +3 ...
+wandb: 
+wandb: Run summary:
+wandb:          epoch 1
+wandb:             lr 0.0001
+wandb:     train/loss nan
+wandb:       val/loss nan
+wandb: val/mean_sigma nan
+wandb: 
+wandb: 🚀 View run trial_fullscale at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/74al6lo9
+wandb: ⭐️ View project at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260612_071746-74al6lo9/logs
+Device: cuda
+Building datasets...
+Dataset: 1174334 samples from 584 stations
+Dataset: 143436 samples from 74 stations
+Building model...
+Trainable parameters: 48,673,863
+No checkpoint found — starting fresh
+  batch 001  loss=0.0584  step=41844ms
+  batch 002  loss=nan  step=729ms
+  batch 003  loss=nan  step=725ms
+  batch 004  loss=nan  step=728ms
+  batch 005  loss=nan  step=726ms
+  batch 006  loss=nan  step=726ms
+  batch 007  loss=nan  step=724ms
+  batch 008  loss=nan  step=723ms
+  batch 009  loss=nan  step=20198ms
+  batch 010  loss=nan  step=722ms
+  batch 011  loss=nan  step=720ms
+  batch 012  loss=nan  step=720ms
+  batch 013  loss=nan  step=719ms
+  batch 014  loss=nan  step=722ms
+  batch 015  loss=nan  step=721ms
+  batch 016  loss=nan  step=721ms
+  batch 017  loss=nan  step=23207ms
+  batch 018  loss=nan  step=722ms
+  batch 019  loss=nan  step=720ms
+  batch 020  loss=nan  step=723ms
+  batch 021  loss=nan  step=718ms
+  batch 022  loss=nan  step=720ms
+  batch 023  loss=nan  step=720ms
+  batch 024  loss=nan  step=720ms
+  batch 025  loss=nan  step=21615ms
+  batch 026  loss=nan  step=721ms
+  batch 027  loss=nan  step=723ms
+  batch 028  loss=nan  step=721ms
+  batch 029  loss=nan  step=720ms
+  batch 030  loss=nan  step=719ms
+
+Epoch 001  |  train_loss=nan  val_loss=nan
+
+Training complete. Best val_loss: inf
+Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/trial_fullscale

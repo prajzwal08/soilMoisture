@@ -1,0 +1,8 @@
+Job ID: 23676471
+Node:   gcn154
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+/scratch-local/pkhanal.23676471/tmpkakgbdju: line 3: 1951864 Killed                  python train.py --run-name smoke_h100 --max-stations 3 --max-epochs 2 --batch-size 64 --run-name smoke_zarr
+ERROR conda.cli.main_run:execute(148): `conda run python train.py --run-name smoke_h100 --max-stations 3 --max-epochs 2 --batch-size 64 --run-name smoke_zarr` failed. (See above for error)
+[2026-06-11T14:58:36.135] error: Detected 1 oom_kill event in StepId=23676471.batch. Some of the step tasks have been OOM Killed.

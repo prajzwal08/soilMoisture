@@ -20,6 +20,7 @@ See data_structure.txt for full schema.
 """
 
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -33,6 +34,10 @@ from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 
 ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+
+# Set DISABLE_L12_CACHE=1 to skip eager L12 RAM caching and force the lazy
+# zarr chunk-read fallback in load_s2_rolling_zarr / load_s1_rolling_zarr.
+DISABLE_L12_CACHE = os.environ.get("DISABLE_L12_CACHE", "") == "1"
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -716,13 +721,18 @@ class SoilMoistureDataset(Dataset):
 
     Args:
         splits_csv       : path to station_splits.csv
-        data_root        : root of /gpfs/…/data  (contains sm_only/, sm_and_flux/, flux_only/)
+        data_root        : root of /gpfs/…/data  (legacy per-station dirs; only sm_and_flux/
+                           still has files on disk — sm_only/ and flux_only/ stations are
+                           served entirely from ZARR_ROOT on scratch, see _open_zarr())
         era5_stats_path  : path to csvs/era5_stats.json  (from compute_era5_stats.py)
         years            : list of years to include (default 2016–2023)
         min_obs          : minimum observed SM days per year to include
         category_filter  : list of categories to include, e.g. ["sm_only"]  (None = all)
         split_filter     : list of split values to include, e.g. ["train"]  (None = all)
         training         : if True, apply SIF/TWSA modality dropout (p=0.5 each)
+        max_stations     : if set, stop scanning splits once this many stations have
+                           been cached (smoke-test mode — avoids loading the full
+                           dataset's L12 caches into RAM)
     """
 
     def __init__(
@@ -735,6 +745,7 @@ class SoilMoistureDataset(Dataset):
         category_filter: list | None = None,
         split_filter:    list | None = None,
         training:        bool        = True,
+        max_stations:    int | None  = None,
     ):
         self.training  = training
         self.years     = years or list(range(2016, 2024))
@@ -802,6 +813,8 @@ class SoilMoistureDataset(Dataset):
 
             # Load per-station data into memory once (subsequent rows reuse caches)
             if sat_dir not in self._zarr_groups:
+                if max_stations is not None and len(self._zarr_groups) >= max_stations:
+                    break
                 zg = _open_zarr(sat_dir, cat)
                 self._zarr_groups[sat_dir] = zg
                 if zg is not None:
@@ -811,11 +824,12 @@ class SoilMoistureDataset(Dataset):
                     self._twsa_cache[sat_dir]  = _load_zarr_twsa(zg)
                     self._pt_paths[sat_dir]    = {}   # not used when zarr available
                     # Preload L12 token arrays into RAM (eliminates disk I/O for history tokens)
-                    self._l12_cache[sat_dir] = {
-                        k: zg[f"{k}/l12"][:]
-                        for k in ("s2", "s1_asc", "s1_desc")
-                        if f"{k}/l12" in zg
-                    }
+                    if not DISABLE_L12_CACHE:
+                        self._l12_cache[sat_dir] = {
+                            k: zg[f"{k}/l12"][:]
+                            for k in ("s2", "s1_asc", "s1_desc")
+                            if f"{k}/l12" in zg
+                        }
                     if label_file not in self._label_cache:
                         lc = _load_zarr_labels(zg)
                         if lc is not None:
@@ -1022,4 +1036,9 @@ class SoilMoistureDataset(Dataset):
 
             # Labels
             "label"         : label,             # (3,) — NaN where depth absent
+
+            # Debug identifiers (non-tensor; for NaN tracing)
+            "station_key"   : s["station_key"],
+            "year"          : s["year"],
+            "doy"           : s["doy"],
         }
