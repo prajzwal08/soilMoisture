@@ -449,10 +449,13 @@ def main():
 
     # ── Memory snapshot (before first epoch) ─────────────────────────
     if is_main:
-        import psutil
-        ram = psutil.virtual_memory()
+        mem = {}
+        for line in open("/proc/meminfo"):
+            k, v = line.split(":"); mem[k.strip()] = int(v.split()[0])
+        ram_total = mem["MemTotal"] / 1e6
+        ram_avail = mem["MemAvailable"] / 1e6
         print(f"\n=== Memory snapshot (rank 0) ===")
-        print(f"  RAM  used : {ram.used/1e9:.1f} GB / {ram.total/1e9:.1f} GB ({ram.percent:.1f}%)")
+        print(f"  RAM  used : {ram_total - ram_avail:.1f} GB / {ram_total:.1f} GB")
         for i in range(torch.cuda.device_count()):
             alloc  = torch.cuda.memory_allocated(i)  / 1e9
             reserv = torch.cuda.memory_reserved(i)   / 1e9
