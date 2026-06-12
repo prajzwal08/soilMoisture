@@ -320,87 +320,163 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           l12_desc_np: np.ndarray | None = None):
     """Load S1 L12 tokens (ASC + DESC merged) from zarr.
     l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates chunk reads for L12.
+    Returns (l12, doys, valid, token_mask, rel_pos) matching S2's 5-tuple signature.
     """
-    l12     = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
-    doys    = torch.zeros(max_acq, dtype=torch.long)
-    rel_pos = torch.zeros(max_acq, dtype=torch.long)
+    l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
+    doys       = torch.zeros(max_acq, dtype=torch.long)
+    token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)  # True = valid
+    rel_pos    = torch.zeros(max_acq, dtype=torch.long)
 
     ws, td  = _window_datetimes(year, target_doy)
-    entries: list[tuple[str, object, int]] = []
+    entries: list[tuple[str, object, int, str]] = []
 
     l12_np_map = {"s1_asc": l12_asc_np, "s1_desc": l12_desc_np}
+    # Preload per-orbit token_mask arrays (small: N×14×14 bool)
+    tm_np_map: dict[str, np.ndarray | None] = {}
     for orbit_key in ("s1_asc", "s1_desc"):
+        mk = f"{orbit_key}/token_mask"
+        tm_np_map[orbit_key] = np.asarray(zg[mk][:]) if mk in zg else None
         if f"{orbit_key}/l12" not in zg:
             continue
         orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
-        # Use preloaded numpy array when available (zero disk I/O)
         tokens_src  = l12_np_map[orbit_key] if l12_np_map[orbit_key] is not None \
                       else zg[f"{orbit_key}/l12"]
         for i, d in enumerate(orbit_dates):
             if _in_window(d, ws, td):
-                entries.append((d, tokens_src, i))
+                entries.append((d, tokens_src, i, orbit_key))
 
     if not entries:
-        return l12, doys, doys > 0, rel_pos
+        return l12, doys, doys > 0, token_mask, rel_pos
 
     entries.sort(key=lambda x: x[0])
     entries = entries[-max_acq:]
 
-    for out_i, (date_str, tokens_z, src_i) in enumerate(entries):
+    out_i = 0
+    for date_str, tokens_z, src_i, orbit_key in entries:
+        tok = torch.from_numpy(np.asarray(tokens_z[src_i]))   # one chunk read
+        if torch.isnan(tok).any():
+            # Corrupted TerraMind acquisition (whole-tile NaN) -- skip rather
+            # than letting NaN propagate into the model.
+            continue
         dt      = datetime.strptime(date_str[:8], "%Y%m%d")
         acq_doy = dt.timetuple().tm_yday
-        l12[out_i]     = torch.from_numpy(tokens_z[src_i])   # one chunk read
+        l12[out_i]     = tok
         doys[out_i]    = acq_doy
         rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+        if tm_np_map[orbit_key] is not None:
+            token_mask[out_i] = torch.from_numpy(tm_np_map[orbit_key][src_i])
+        out_i += 1
 
-    return l12, doys, doys > 0, rel_pos
+    return l12, doys, doys > 0, token_mask, rel_pos
 
 
-def load_recent_skip_features_zarr(zg: zarr.Group, year: int, target_doy: int):
-    """Load L3/L6/L9 skip features for the most-recent acquisition from zarr."""
+def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
+                        l12_cache: dict | None = None
+                        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor,
+                                   torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Select the best anchor acquisition for the U-Net skip connections and
+    target spatial tokens.
+
+    Priority:
+      1. Most recent acquisition with ALL 196 patches valid (fully clear/no-NaN).
+      2. If none fully clear, fall back to most recent acquisition regardless.
+
+    Quality sources:
+      S2  — cm/masks cloud raster (bad class ∈ {3,4,5,255}; bad_frac ≤ 1% → valid)
+      S1  — s1_asc/token_mask | s1_desc/token_mask (written by compute_s1_dem_lulc_token_masks.py)
+      When a quality array is absent, the acquisition is treated as fully valid.
+
+    Returns:
+      anchor_l3, anchor_l6, anchor_l9, anchor_l12 : (196, 768) fp16 tensors
+      anchor_rel_pos                               : () long scalar tensor
+      anchor_is_s1                                 : () bool scalar tensor
+    All zero if no in-window acquisition found.
+    """
     zeros  = torch.zeros(196, 768, dtype=torch.float16)
     ws, td = _window_datetimes(year, target_doy)
 
-    def _most_recent_zarr(orbit_key: str) -> str | None:
-        dates_key = f"{orbit_key}/dates"
-        if dates_key not in zg:
-            return None
-        for d in reversed([str(x) for x in zg[dates_key][:]]):
-            if _in_window(d, ws, td):
-                return d
-        return None
+    # ── Preload S2 cloud-mask index ───────────────────────────────────────
+    cm_date_idx: dict[str, int] = {}
+    cm_z = None
+    if "cm/masks" in zg and "cm/dates" in zg:
+        cm_date_idx = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
+        cm_z = zg["cm/masks"]
 
-    s2_date  = _most_recent_zarr("s2")
-    s1_date, s1_orbit_key = None, None
+    # ── Preload S1 token-mask arrays (small: N×14×14 bool) ───────────────
+    tm_np: dict[str, np.ndarray | None] = {}
     for ok in ("s1_asc", "s1_desc"):
-        d = _most_recent_zarr(ok)
-        if d is not None and (s1_date is None or d > s1_date):
-            s1_date, s1_orbit_key = d, ok
+        mk = f"{ok}/token_mask"
+        tm_np[ok] = np.asarray(zg[mk][:]) if mk in zg else None
 
-    recent_is_s1 = bool(s1_date and (not s2_date or s1_date > s2_date))
-    recent_date  = s1_date if recent_is_s1 else s2_date
-    if recent_date is None:
-        return zeros, zeros.clone(), zeros.clone(), False
+    # ── Collect all in-window candidates ─────────────────────────────────
+    # Each entry: (date_str, orbit_key, src_idx, n_valid_patches [0..196])
+    candidates: list[tuple[str, str, int, int]] = []
 
-    orbit_key = s1_orbit_key if recent_is_s1 else "s2"
-    skips = []
-    for layer in ("l3", "l6", "l9"):
-        arr_key = f"{orbit_key}/{layer}"
-        dates_key = f"{orbit_key}/dates"
-        if arr_key not in zg:
-            skips.append(zeros.clone())
+    for orbit in ("s2", "s1_asc", "s1_desc"):
+        dates_key = f"{orbit}/dates"
+        if dates_key not in zg or f"{orbit}/l12" not in zg:
             continue
-        date_list = [str(d) for d in zg[dates_key][:]]
-        if recent_date in date_list:
-            idx = date_list.index(recent_date)
-            if idx < zg[arr_key].shape[0]:
-                skips.append(torch.from_numpy(zg[arr_key][idx]))
+        orbit_dates = [str(d) for d in zg[dates_key][:]]
+        for i, d in enumerate(orbit_dates):
+            if not _in_window(d, ws, td):
+                continue
+            if orbit == "s2":
+                if d in cm_date_idx:
+                    cm    = cm_z[cm_date_idx[d]]
+                    cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
+                    bad   = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
+                    n_valid = int((bad <= 0.01).sum())
+                else:
+                    n_valid = 196   # no cloud mask → assume clear
             else:
-                skips.append(zeros.clone())
-        else:
-            skips.append(zeros.clone())
+                if tm_np[orbit] is not None:
+                    n_valid = int(tm_np[orbit][i].sum())
+                else:
+                    n_valid = 196   # mask not yet computed → assume clear
+            candidates.append((d, orbit, i, n_valid))
 
-    return skips[0], skips[1], skips[2], recent_is_s1
+    if not candidates:
+        return (zeros, zeros.clone(), zeros.clone(), zeros.clone(),
+                torch.tensor(0, dtype=torch.long),
+                torch.tensor(0, dtype=torch.long))   # default orbit: S2=0
+
+    # ── Select anchor ─────────────────────────────────────────────────────
+    # Priority 1: most recent fully-clear (n_valid == 196)
+    fully_clear = [c for c in candidates if c[3] == 196]
+    best = max(fully_clear, key=lambda c: c[0]) if fully_clear \
+           else max(candidates, key=lambda c: c[0])   # fallback: most recent
+
+    best_date, best_orbit, best_idx, _ = best
+    dt      = datetime.strptime(best_date[:8], "%Y%m%d")
+    acq_doy = dt.timetuple().tm_yday
+    rp      = _rel_pos(acq_doy, dt.year, target_doy, year)
+    orbit_id = {"s2": 0, "s1_asc": 1, "s1_desc": 2}[best_orbit]
+
+    # ── Load L3 / L6 / L9 / L12 for chosen anchor ────────────────────────
+    def _load_layer(layer: str) -> torch.Tensor:
+        key = f"{best_orbit}/{layer}"
+        if key not in zg or best_idx >= zg[key].shape[0]:
+            return zeros.clone()
+        return torch.from_numpy(np.asarray(zg[key][best_idx]))
+
+    # Use preloaded L12 RAM cache (zero disk I/O) when available
+    l12_np_for_orbit = (l12_cache or {}).get(
+        best_orbit if best_orbit == "s2" else best_orbit   # "s2"|"s1_asc"|"s1_desc"
+    )
+    if l12_np_for_orbit is not None and best_idx < len(l12_np_for_orbit):
+        anchor_l12 = torch.from_numpy(np.asarray(l12_np_for_orbit[best_idx]))
+    else:
+        anchor_l12 = _load_layer("l12")
+
+    return (
+        _load_layer("l3"),
+        _load_layer("l6"),
+        _load_layer("l9"),
+        anchor_l12,
+        torch.tensor(rp,       dtype=torch.long),
+        torch.tensor(orbit_id, dtype=torch.long),  # 0=S2, 1=S1_asc, 2=S1_desc
+    )
 
 
 # ── Soil patch helpers ───────────────────────────────────────────────────────
@@ -647,32 +723,39 @@ def load_sif_rolling(cache_entry, year: int, target_doy: int):
     Args:
         cache_entry: (values (N,) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
-        vals  : (MAX_SIF, 1) float32
-        doys  : (MAX_SIF,) long
-        valid : (MAX_SIF,) bool
+        vals    : (MAX_SIF, 1) float32
+        doys    : (MAX_SIF,) long  -- absolute day-of-year (for sinusoidal_pe)
+        rel_pos : (MAX_SIF,) long  -- 0..364 rolling-window position (for rel_pos_emb)
+        valid   : (MAX_SIF,) bool
     """
-    vals  = torch.zeros(MAX_SIF, 1, dtype=torch.float32)
-    doys  = torch.zeros(MAX_SIF, dtype=torch.long)
-    valid = torch.zeros(MAX_SIF, dtype=torch.bool)
+    vals    = torch.zeros(MAX_SIF, 1, dtype=torch.float32)
+    doys    = torch.zeros(MAX_SIF, dtype=torch.long)
+    rel_pos = torch.zeros(MAX_SIF, dtype=torch.long)
+    valid   = torch.zeros(MAX_SIF, dtype=torch.bool)
 
     if cache_entry is None:
-        return vals, doys, valid
+        return vals, doys, rel_pos, valid
 
     values, date_ints, doy_arr = cache_entry
     start_int, end_int = _window_ints(year, target_doy)
     mask = (date_ints >= start_int) & (date_ints <= end_int)
 
-    win_vals = values[mask]
-    win_doys = doy_arr[mask]
+    win_vals  = values[mask]
+    win_doys  = doy_arr[mask]
+    win_dates = date_ints[mask]
     n_win = min(len(win_vals), MAX_SIF)
-    win_vals = win_vals[-n_win:]
-    win_doys = win_doys[-n_win:]
+    win_vals  = win_vals[-n_win:]
+    win_doys  = win_doys[-n_win:]
+    win_dates = win_dates[-n_win:]
 
     vals[:n_win, 0] = torch.from_numpy(win_vals)
     doys[:n_win]    = torch.from_numpy(win_doys.astype(np.int64))
     valid[:n_win]   = True
+    for i in range(n_win):
+        acq_year   = int(win_dates[i]) // 10000
+        rel_pos[i] = _rel_pos(int(win_doys[i]), acq_year, target_doy, year)
 
-    return vals, doys, valid
+    return vals, doys, rel_pos, valid
 
 
 # ── TWSA rolling slicer (no file I/O) ────────────────────────────────────────
@@ -685,32 +768,39 @@ def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     Args:
         cache_entry: (values (N,) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
-        vals  : (MAX_TWSA, 1) float32
-        doys  : (MAX_TWSA,) long
-        valid : (MAX_TWSA,) bool
+        vals    : (MAX_TWSA, 1) float32
+        doys    : (MAX_TWSA,) long  -- absolute day-of-year (for sinusoidal_pe)
+        rel_pos : (MAX_TWSA,) long  -- 0..364 rolling-window position (for rel_pos_emb)
+        valid   : (MAX_TWSA,) bool
     """
-    vals  = torch.zeros(MAX_TWSA, 1, dtype=torch.float32)
-    doys  = torch.zeros(MAX_TWSA, dtype=torch.long)
-    valid = torch.zeros(MAX_TWSA, dtype=torch.bool)
+    vals    = torch.zeros(MAX_TWSA, 1, dtype=torch.float32)
+    doys    = torch.zeros(MAX_TWSA, dtype=torch.long)
+    rel_pos = torch.zeros(MAX_TWSA, dtype=torch.long)
+    valid   = torch.zeros(MAX_TWSA, dtype=torch.bool)
 
     if cache_entry is None:
-        return vals, doys, valid
+        return vals, doys, rel_pos, valid
 
     values, date_ints, doy_arr = cache_entry
     start_int, end_int = _window_ints(year, target_doy)
     mask = (date_ints >= start_int) & (date_ints <= end_int)
 
-    win_vals = values[mask]
-    win_doys = doy_arr[mask]
+    win_vals  = values[mask]
+    win_doys  = doy_arr[mask]
+    win_dates = date_ints[mask]
     n_win = min(len(win_vals), MAX_TWSA)
-    win_vals = win_vals[-n_win:]
-    win_doys = win_doys[-n_win:]
+    win_vals  = win_vals[-n_win:]
+    win_doys  = win_doys[-n_win:]
+    win_dates = win_dates[-n_win:]
 
     vals[:n_win, 0] = torch.from_numpy(win_vals)
     doys[:n_win]    = torch.from_numpy(win_doys.astype(np.int64))
     valid[:n_win]   = True
+    for i in range(n_win):
+        acq_year   = int(win_dates[i]) // 10000
+        rel_pos[i] = _rel_pos(int(win_doys[i]), acq_year, target_doy, year)
 
-    return vals, doys, valid
+    return vals, doys, rel_pos, valid
 
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
@@ -918,7 +1008,7 @@ class SoilMoistureDataset(Dataset):
             s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = \
                 load_s2_rolling_zarr(zg, year, doy, l12_np=_l12.get("s2"))
 
-            s1_l12, s1_doys, s1_valid, s1_rel_pos = \
+            s1_l12, s1_doys, s1_valid, s1_token_mask, s1_rel_pos = \
                 load_s1_rolling_zarr(zg, year, doy,
                                      l12_asc_np=_l12.get("s1_asc"),
                                      l12_desc_np=_l12.get("s1_desc"))
@@ -928,8 +1018,15 @@ class SoilMoistureDataset(Dataset):
             lulc_l12 = (torch.from_numpy(zg["lulc"][:])
                         if "lulc" in zg else torch.zeros(196, 768, dtype=torch.float16))
 
-            skip_l3, skip_l6, skip_l9, recent_is_s1 = \
-                load_recent_skip_features_zarr(zg, year, doy)
+            dem_token_mask  = (torch.from_numpy(np.asarray(zg["dem_token_mask"][:]))
+                               if "dem_token_mask" in zg
+                               else torch.ones(14, 14, dtype=torch.bool))
+            lulc_token_mask = (torch.from_numpy(np.asarray(zg["lulc_token_mask"][:]))
+                               if "lulc_token_mask" in zg
+                               else torch.ones(14, 14, dtype=torch.bool))
+
+            anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
+                select_anchor_zarr(zg, year, doy, l12_cache=_l12)
 
         else:
             # ── Fallback: original .pt files ──────────────────────────
@@ -943,11 +1040,18 @@ class SoilMoistureDataset(Dataset):
                 asc_l12_pt=paths.get("s1_asc_l12"), desc_l12_pt=paths.get("s1_desc_l12"),
                 year=year, target_doy=doy,
             )
+            s1_token_mask   = torch.ones(MAX_S1, 14, 14, dtype=torch.bool)
             dem_l12  = (torch.load(paths["dem_l12"],  weights_only=True, map_location="cpu")
                         if paths.get("dem_l12")  else torch.zeros(196, 768, dtype=torch.float16))
             lulc_l12 = (torch.load(paths["lulc_l12"], weights_only=True, map_location="cpu")
                         if paths.get("lulc_l12") else torch.zeros(196, 768, dtype=torch.float16))
+            dem_token_mask  = torch.ones(14, 14, dtype=torch.bool)
+            lulc_token_mask = torch.ones(14, 14, dtype=torch.bool)
             skip_l3, skip_l6, skip_l9, recent_is_s1 = load_recent_skip_features(paths, year, doy)
+            anchor_l3, anchor_l6, anchor_l9 = skip_l3, skip_l6, skip_l9
+            anchor_l12      = torch.zeros(196, 768, dtype=torch.float16)
+            anchor_rel_pos  = torch.tensor(0, dtype=torch.long)
+            anchor_orbit    = torch.tensor(1 if recent_is_s1 else 0, dtype=torch.long)
 
         # ── Soil patch (static, NaN-filled) ──────────────────────────
         if zg is not None and "soil" in zg:
@@ -971,7 +1075,7 @@ class SoilMoistureDataset(Dataset):
         era5    = torch.from_numpy(era5_np)
 
         # ── SIF — optional sparse modality, numpy slice from cache ───
-        sif_vals, sif_doys, sif_valid = load_sif_rolling(
+        sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy
         )
         # Modality dropout: per-sample coin flip using PyTorch RNG (worker-safe)
@@ -979,7 +1083,7 @@ class SoilMoistureDataset(Dataset):
             sif_valid[:] = False
 
         # ── TWSA — optional sparse modality, numpy slice from cache ──
-        twsa_vals, twsa_doys, twsa_valid = load_twsa_rolling(
+        twsa_vals, twsa_doys, twsa_rel_pos, twsa_valid = load_twsa_rolling(
             self._twsa_cache.get(sat_dir), year, doy
         )
         if self.training and torch.rand(1).item() < 0.5:
@@ -1005,17 +1109,22 @@ class SoilMoistureDataset(Dataset):
             "s1_l12"        : s1_l12,            # (MAX_S1, 196, 768) fp16
             "s1_doys"       : s1_doys,           # (MAX_S1,) long
             "s1_valid"      : s1_valid,          # (MAX_S1,) bool
+            "s1_token_mask" : s1_token_mask,     # (MAX_S1, 14, 14) bool
             "s1_rel_pos"    : s1_rel_pos,        # (MAX_S1,) long
 
             # Static
             "dem_l12"       : dem_l12,           # (196, 768) fp16
             "lulc_l12"      : lulc_l12,          # (196, 768) fp16
+            "dem_token_mask" : dem_token_mask,   # (14, 14) bool
+            "lulc_token_mask": lulc_token_mask,  # (14, 14) bool
 
-            # Skip connection features (most-recent acquisition, precomputed)
-            "skip_l3"       : skip_l3,           # (196, 768) fp16
-            "skip_l6"       : skip_l6,           # (196, 768) fp16
-            "skip_l9"       : skip_l9,           # (196, 768) fp16
-            "recent_is_s1"  : torch.tensor(recent_is_s1, dtype=torch.bool),
+            # Anchor (best clear + recent acquisition) — used for U-Net skip + spatial target
+            "anchor_l3"       : anchor_l3,         # (196, 768) fp16
+            "anchor_l6"       : anchor_l6,         # (196, 768) fp16
+            "anchor_l9"       : anchor_l9,         # (196, 768) fp16
+            "anchor_l12"      : anchor_l12,        # (196, 768) fp16
+            "anchor_rel_pos"  : anchor_rel_pos,    # () long
+            "anchor_orbit"    : anchor_orbit,      # () long  0=S2, 1=S1_asc, 2=S1_desc
 
             # Soil (static)
             "soil_patch"    : soil_patch,        # (21, 74, 74) fp32 — NaN-free
@@ -1027,11 +1136,13 @@ class SoilMoistureDataset(Dataset):
             # SIF (optional, sparse)
             "sif"           : sif_vals,          # (MAX_SIF, 1) fp32
             "sif_doys"      : sif_doys,          # (MAX_SIF,) long
+            "sif_rel_pos"   : sif_rel_pos,       # (MAX_SIF,) long
             "sif_valid"     : sif_valid,         # (MAX_SIF,) bool
 
             # TWSA (optional, sparse)
             "twsa"          : twsa_vals,         # (MAX_TWSA, 1) fp32
             "twsa_doys"     : twsa_doys,         # (MAX_TWSA,) long
+            "twsa_rel_pos"  : twsa_rel_pos,      # (MAX_TWSA,) long
             "twsa_valid"    : twsa_valid,        # (MAX_TWSA,) bool
 
             # Labels

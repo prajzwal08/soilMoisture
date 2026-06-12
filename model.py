@@ -294,8 +294,8 @@ class SoilMoistureModel(nn.Module):
         self.soil_modality_emb = nn.Embedding(1, d_model)
         # Static (DEM=0, LULC=1)
         self.static_modality_emb = nn.Embedding(2, d_model)
-        # Target-day spatial (S2=0, S1=1)
-        self.spatial_modality_emb = nn.Embedding(2, d_model)
+        # Target-day spatial (S2=0, S1_asc=1, S1_desc=2)
+        self.spatial_modality_emb = nn.Embedding(3, d_model)
         # Satellite history (S2hist=0, S1hist=1) — distinguishes S2 from S1 in sequence
         self.hist_modality_emb = nn.Embedding(2, d_model)
         # ERA5 temporal tokens
@@ -385,48 +385,27 @@ class SoilMoistureModel(nn.Module):
 
         return pyramid                                                   # (B, MAX_ACQ, 4, 768)
 
-    def _static_pyramid(self, l12: torch.Tensor, attn: nn.Linear) -> torch.Tensor:
-        """l12: (B, 196, 768) fp16 → (B, 4, 768) fp32 pyramid."""
-        return spatial_pyramid_pool(l12.float(), token_valid=None, attn=attn)
+    def _static_pyramid(self, l12: torch.Tensor, attn: nn.Linear,
+                        token_valid: torch.Tensor | None = None) -> torch.Tensor:
+        """l12: (B, 196, 768) fp16 → (B, 4, 768) fp32 pyramid.
+        token_valid: (B, 14, 14) bool | None — True = valid patch."""
+        B  = l12.shape[0]
+        tv = token_valid.reshape(B, 196) if token_valid is not None else None
+        return spatial_pyramid_pool(l12.float(), token_valid=tv, attn=attn)
 
     def _get_target_spatial_tokens(self, batch: dict, B: int,
                                    device) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Select the most recent valid acquisition ≤ T per sample and return its
-        stored L12 features as target spatial tokens.
+        Build target spatial tokens from the pre-selected anchor acquisition
+        (chosen in dataset.py by select_anchor_zarr: most recent fully-clear,
+        falling back to most recent regardless).
 
         Returns:
             spatial_tokens : (B, 196, 768)
-            use_s1         : (B,) bool — True where S1 is most recent
+            use_s1         : (B,) bool
         """
-        # Use rel_pos (0=oldest, 364=today) not DOY — DOY breaks at year boundaries
-        # (e.g. Dec DOY~350 > Jun DOY~180, so DOY wrongly picks a 6-month-old image)
-        s2_rel   = batch["s2_rel_pos"].to(device)
-        s1_rel   = batch["s1_rel_pos"].to(device)
-        s2_valid = batch["s2_valid"].to(device)
-        s1_valid = batch["s1_valid"].to(device)
-
-        s2_latest = (s2_rel * s2_valid.long()).max(dim=1)
-        s1_latest = (s1_rel * s1_valid.long()).max(dim=1)
-        use_s1    = s1_latest.values > s2_latest.values                # (B,) bool
-
-        spatial_tokens = torch.zeros(B, 196, self.d_model, device=device)
-
-        s2_mask = ~use_s1
-        if s2_mask.any():
-            idx      = s2_latest.indices[s2_mask]
-            l12_s2   = batch["s2_l12"][s2_mask].float().to(device)    # (n, MAX_S2, 196, 768)
-            spatial_tokens[s2_mask] = l12_s2[
-                torch.arange(s2_mask.sum(), device=device), idx
-            ]
-
-        s1_mask = use_s1
-        if s1_mask.any():
-            idx      = s1_latest.indices[s1_mask]
-            l12_s1   = batch["s1_l12"][s1_mask].float().to(device)
-            spatial_tokens[s1_mask] = l12_s1[
-                torch.arange(s1_mask.sum(), device=device), idx
-            ]
+        spatial_tokens = batch["anchor_l12"].float().to(device)        # (B, 196, 768)
+        anchor_orbit   = batch["anchor_orbit"].to(device)              # (B,) long: 0=S2,1=S1_asc,2=S1_desc
 
         # 2D spatial positional encoding
         rows       = torch.arange(14, device=device)
@@ -435,19 +414,16 @@ class SoilMoistureModel(nn.Module):
                       self.spatial_col_emb(cols).unsqueeze(0)).reshape(196, self.d_model)
         spatial_tokens = spatial_tokens + spatial_pe.unsqueeze(0)
 
-        # Modality embedding
-        mod_emb        = self.spatial_modality_emb(use_s1.long())      # (B, 768)
+        # Modality embedding: distinct learned vector for S2, S1-asc, S1-desc
+        mod_emb        = self.spatial_modality_emb(anchor_orbit)       # (B, 768)
         spatial_tokens = spatial_tokens + mod_emb.unsqueeze(1)
 
-        # Staleness embedding: tells the U-Net decoder how old the anchor image is.
-        # Without this the decoder is blind to whether the spatial texture is
-        # from yesterday or 6 months ago — critical when ERA5 shows rain since capture.
-        anchor_rel_pos = torch.where(use_s1,
-                                     s1_latest.values,
-                                     s2_latest.values).clamp(0, 364)   # (B,)
-        staleness_emb  = self.rel_pos_emb(anchor_rel_pos)              # (B, 768)
+        # Staleness embedding: how old is the anchor relative to target day
+        anchor_rp      = batch["anchor_rel_pos"].to(device).clamp(0, 364)  # (B,)
+        staleness_emb  = self.rel_pos_emb(anchor_rp)                   # (B, 768)
         spatial_tokens = spatial_tokens + staleness_emb.unsqueeze(1)
 
+        use_s1 = anchor_orbit > 0
         return spatial_tokens, use_s1
 
     def _get_skip_connections(self, batch: dict, B: int,
@@ -461,7 +437,7 @@ class SoilMoistureModel(nn.Module):
                     .reshape(B, 14, 14, self.d_model)
                     .permute(0, 3, 1, 2))                  # (B, 768, 14, 14)
 
-        return to_spatial("skip_l3"), to_spatial("skip_l6"), to_spatial("skip_l9")
+        return to_spatial("anchor_l3"), to_spatial("anchor_l6"), to_spatial("anchor_l9")
 
     def _build_sequence(self, batch: dict, dem_pyr, lulc_pyr, soil_tok,
                         s2_pyr, s2_doys, s2_valid,
@@ -564,10 +540,11 @@ class SoilMoistureModel(nn.Module):
         sif_doys  = batch["sif_doys"].to(device)                      # (B, MAX_SIF)
         sif_valid = batch["sif_valid"].to(device)                     # (B, MAX_SIF)
         if sif_vals.shape[1] > 0:
+            sif_rel_pos = batch["sif_rel_pos"].to(device)             # (B, MAX_SIF)
             sif_tok  = self.sif_mlp(sif_vals.float())                 # (B, MAX_SIF, 768)
             sif_pe   = sinusoidal_pe(sif_doys.reshape(-1), self.d_model
                                      ).reshape(B, -1, self.d_model)
-            sif_rp   = self.rel_pos_emb(sif_doys.reshape(-1).clamp(0, 364)
+            sif_rp   = self.rel_pos_emb(sif_rel_pos.reshape(-1).clamp(0, 364)
                                         ).reshape(B, -1, self.d_model)
             sif_mod  = self.sif_modality_emb(
                 torch.zeros(1, dtype=torch.long, device=device)
@@ -581,10 +558,11 @@ class SoilMoistureModel(nn.Module):
         twsa_doys  = batch["twsa_doys"].to(device)
         twsa_valid = batch["twsa_valid"].to(device)
         if twsa_vals.shape[1] > 0:
+            twsa_rel_pos = batch["twsa_rel_pos"].to(device)           # (B, MAX_TWSA)
             twsa_tok  = self.twsa_mlp(twsa_vals.float())              # (B, MAX_TWSA, 768)
             twsa_pe   = sinusoidal_pe(twsa_doys.reshape(-1), self.d_model
                                       ).reshape(B, -1, self.d_model)
-            twsa_rp   = self.rel_pos_emb(twsa_doys.reshape(-1).clamp(0, 364)
+            twsa_rp   = self.rel_pos_emb(twsa_rel_pos.reshape(-1).clamp(0, 364)
                                          ).reshape(B, -1, self.d_model)
             twsa_mod  = self.twsa_modality_emb(
                 torch.zeros(1, dtype=torch.long, device=device)
@@ -608,34 +586,51 @@ class SoilMoistureModel(nn.Module):
         B      = batch["era5"].shape[0]
         device = batch["era5"].device
 
-        # ── 1. Pyramid tokens from pre-stored L12 (no TerraMind) ──────
+        # ── 1. Token masks from batch (True = valid/clear patch) ─────
+        s2_tm   = batch["s2_token_mask"].to(device)    # (B, MAX_S2, 14, 14)
+        s1_tm   = batch["s1_token_mask"].to(device)    # (B, MAX_S1, 14, 14)
+        dem_tv  = batch["dem_token_mask"].to(device)   # (B, 14, 14)
+        lulc_tv = batch["lulc_token_mask"].to(device)  # (B, 14, 14)
+
+        # ContextFormer-style random token masking (training only, p=0.5).
+        # For each patch, independently mask with probability 0.5, AND'd with
+        # the real nodata mask so genuinely-bad patches remain masked.
+        if self.training:
+            s2_tm   = s2_tm   & (torch.rand_like(s2_tm.float())   >= 0.5)
+            s1_tm   = s1_tm   & (torch.rand_like(s1_tm.float())   >= 0.5)
+            dem_tv  = dem_tv  & (torch.rand_like(dem_tv.float())  >= 0.5)
+            lulc_tv = lulc_tv & (torch.rand_like(lulc_tv.float()) >= 0.5)
+
+        # ── 2. Pyramid tokens from pre-stored L12 (no TerraMind) ──────
         s2_pyr = self._pyramid_from_l12(
             batch["s2_l12"].to(device),
             batch["s2_valid"].to(device),
-            batch["s2_token_mask"].to(device),
+            s2_tm,
             self.s2_pyramid_attn,
         )
         s1_pyr = self._pyramid_from_l12(
             batch["s1_l12"].to(device),
             batch["s1_valid"].to(device),
-            token_mask = None,
-            attn       = self.s1_pyramid_attn,
+            s1_tm,
+            self.s1_pyramid_attn,
         )
 
-        # ── 2. Static pyramid tokens (DEM + LULC) ─────────────────────
-        dem_pyr  = self._static_pyramid(batch["dem_l12"].to(device),  self.dem_pyramid_attn)
-        lulc_pyr = self._static_pyramid(batch["lulc_l12"].to(device), self.lulc_pyramid_attn)
+        # ── 3. Static pyramid tokens (DEM + LULC) ─────────────────────
+        dem_pyr  = self._static_pyramid(batch["dem_l12"].to(device),
+                                        self.dem_pyramid_attn, dem_tv)
+        lulc_pyr = self._static_pyramid(batch["lulc_l12"].to(device),
+                                        self.lulc_pyramid_attn, lulc_tv)
 
-        # ── 2b. Soil tokens ────────────────────────────────────────────
+        # ── 3b. Soil tokens ────────────────────────────────────────────
         soil_tok = self.soil_encoder(batch["soil_patch"].to(device))   # (B, 4, 768)
 
-        # ── 3. Target spatial tokens from stored L12 ──────────────────
+        # ── 4. Target spatial tokens from stored L12 ──────────────────
         spatial_tokens, _ = self._get_target_spatial_tokens(batch, B, device)
 
-        # ── 4. Skip connections from precomputed features ─────────────
+        # ── 5. Skip connections from precomputed features ─────────────
         skip_L3, skip_L6, skip_L9 = self._get_skip_connections(batch, B, device)
 
-        # ── 5. Build sequence and run transformer ──────────────────────
+        # ── 6. Build sequence and run transformer ──────────────────────
         seq, key_mask, spatial_start = self._build_sequence(
             batch,
             dem_pyr,
@@ -648,12 +643,12 @@ class SoilMoistureModel(nn.Module):
 
         ctx = self.transformer(seq, src_key_padding_mask=key_mask)    # (B, T, 768)
 
-        # ── 6. Extract spatially-structured bottleneck ─────────────────
+        # ── 7. Extract spatially-structured bottleneck ─────────────────
         spatial_ctx = ctx[:, spatial_start : spatial_start + 196, :]  # (B, 196, 768)
         bottleneck  = spatial_ctx.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
                                                                        # (B, 768, 14, 14)
 
-        # ── 7. U-Net decoder → SM map (+ optional log_var) ────────────
+        # ── 8. U-Net decoder → SM map (+ optional log_var) ────────────
         return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3)
 
 

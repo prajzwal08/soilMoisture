@@ -1100,3 +1100,72 @@ Decisions:
 5. (Optional, low priority) Decide whether to also clean up
    /projects/prjs1968/data/excluded_stations/ and logs/ (~1.7G,
    currently preserved).
+
+---
+## 2026-06-12
+
+### Summary
+Debugged and fixed the S1 NaN token overwrite job (zarr vindex vs oindex API mismatch), then built a
+full nodata-mask pipeline for S1, DEM, and LULC modalities. Propagated these masks through dataset.py
+and model.py, adding quality-filtered anchor selection, per-orbit spatial embeddings, and
+ContextFormer-style random masking during training.
+
+### Discussions & Decisions
+- zarr 2.18.7 `vindex` does not support a plain 1-D integer array as an index into a 3-D array; `oindex`
+  (outer/orthogonal indexing) does — switched `arr.vindex[idxs]` to `arr.oindex[idxs]` in
+  fix_bad_s1_tokens.py. This is the canonical zarr 2.x way to do arbitrary-row selection.
+- Nodata fraction threshold for patch masking set to FILLABLE_THRESH=0.01, matching the convention
+  already used in precompute_terramind.py (patches with >1% nodata pixels are flagged invalid).
+- Anchor selection strategy: prefer the most recent fully-clear S2 image (all 196 patches valid);
+  fall back to most recent image regardless of cloud cover. This replaces the previous
+  `load_recent_skip_features_zarr` approach which ignored cloud quality.
+- `anchor_orbit` encoding changed from bool (is_s1: True/False) to 3-class int (0=S2, 1=S1_asc,
+  2=S1_desc) so the spatial modality embedding can distinguish the two orbit directions.
+- ContextFormer-style random masking (p=0.5, training only) AND-ed with real nodata masks before
+  pyramid pooling — forces the model to learn spatial redundancy robustly.
+- DEM/LULC are static per station, so their token_mask is written once as a (14,14) bool array rather
+  than per-acquisition.
+
+### Code & Files Changed
+- **fix_bad_s1_tokens.py** — `arr.vindex[idxs]` replaced with `arr.oindex[idxs]`; job 23708627
+  rerun and verified: 571 stale fully-NaN S1 tokens overwritten, 0 remaining NaN acquisitions.
+- **compute_s1_dem_lulc_token_masks.py** (new) — CPU scan (Pool(64)) over all 993 stations; reads
+  raw satellite_zarr, computes nodata_frac per 16×16 patch, writes `s1_asc/token_mask` (N,14,14),
+  `s1_desc/token_mask` (N,14,14), `dem_token_mask` (14,14), `lulc_token_mask` (14,14) into token zarr.
+- **slurm/compute_token_masks.sh** (new) — SLURM submission for above; rome node, Pool(64),
+  --cpus-per-task=64, ~3m16s wall time. Job 23709150: COMPLETED, 374,992 total masked patches written,
+  0 errors.
+- **dataset.py** — multiple changes:
+  - `load_s1_rolling_zarr`: now returns 5-tuple; added `s1_token_mask` (per-acquisition, per-orbit);
+    tracks orbit_key per entry so the correct orbit's token_mask is fetched from zarr.
+  - `load_recent_skip_features_zarr` removed; replaced with `select_anchor_zarr` (quality-filtered
+    anchor selection with L3/L6/L9/L12 load + l12_cache zero-I/O path).
+  - `__getitem__`: adds `s1_token_mask` (MAX_S1,14,14), `dem_token_mask` (14,14), `lulc_token_mask`
+    (14,14); replaces skip_l3/l6/l9/recent_is_s1 keys with anchor_l3/l6/l9/l12/rel_pos/orbit keys.
+- **model.py** — multiple changes:
+  - `_static_pyramid`: accepts `token_valid` (14,14 bool reshaped to 196) for DEM/LULC nodata masking.
+  - `spatial_modality_emb`: Embedding(2→3, d_model) — S2, S1-asc, S1-desc.
+  - `_get_target_spatial_tokens`: simplified to read directly from `batch["anchor_l12"]` and
+    `batch["anchor_orbit"]`; removed argmax over rel_pos.
+  - `_get_skip_connections`: reads anchor_l3/l6/l9 keys.
+  - `forward()`: wires all 4 token masks; applies ContextFormer-style random masking (p=0.5,
+    training only) AND-ed with real nodata masks for S2, S1, DEM, LULC before pyramid pooling.
+- **check_dataset.py** — EXPECTED shapes updated for all new dict keys.
+
+### Key Outcomes
+- All 571 stale fully-NaN S1 tokens in the token zarr are fixed and verified clean.
+- Nodata token masks computed and stored for S1 (both orbits), DEM, and LULC across all 993 stations
+  (374,992 total masked patches written).
+- dataset.py and model.py are consistent with the new 4-mask / 3-class orbit / anchor-selection design.
+- check_dataset.py updated; pipeline is ready for a smoke test.
+
+### Next Steps
+1. Submit slurm/smoke_h100.sh to confirm train_loss stays finite with all changes end-to-end.
+2. If smoke test passes, submit slurm/train.sh --run-name baseline_nll (verify csvs/era5_stats.json
+   exists first; ensure --mem=320G).
+3. Commit accumulated changes: fix_bad_s1_tokens.py, compute_s1_dem_lulc_token_masks.py,
+   slurm/compute_token_masks.sh, dataset.py, model.py, check_dataset.py, text/logs.txt.
+4. (Carry-over) Decide whether to remove the lazy zarr fallback in dataset.py entirely or keep as
+   documented escape hatch.
+5. (Carry-over) Possible soil-modality dropout + ablation tests; possible soil-into-decoder skip
+   connections.

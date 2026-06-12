@@ -83,11 +83,17 @@ def worker_init_fn(worker_id: int):
     random.seed(seed)
 
 
-def compute_metrics(preds, targets):
+def compute_metrics(preds, targets, station_keys):
     """
     preds, targets : (N, n_depths) numpy arrays
+    station_keys   : (N,) array-like of per-sample station identifiers
     Returns dict of MSE, MAE, ubRMSE, bias per depth.
+
+    ubRMSE removes each station's own temporal mean before computing RMSE
+    (the standard unbiased-RMSE definition) -- a global mean across all
+    stations would otherwise leave cross-station bias in the result.
     """
+    station_keys = np.asarray(station_keys)
     metrics = {}
     for i, depth in enumerate(SM_DEPTHS):
         p = preds[:, i]
@@ -95,11 +101,19 @@ def compute_metrics(preds, targets):
         mask = ~(np.isnan(p) | np.isnan(t))
         if mask.sum() == 0:
             continue
-        p, t   = p[mask], t[mask]
+        p, t, sk = p[mask], t[mask], station_keys[mask]
         bias   = float(np.mean(p - t))
         mae    = float(np.mean(np.abs(p - t)))
         mse    = float(np.mean((p - t) ** 2))
-        ubrmse = float(np.sqrt(np.mean(((p - p.mean()) - (t - t.mean())) ** 2)))
+
+        p_anom = np.empty_like(p)
+        t_anom = np.empty_like(t)
+        for station in np.unique(sk):
+            sel = sk == station
+            p_anom[sel] = p[sel] - p[sel].mean()
+            t_anom[sel] = t[sel] - t[sel].mean()
+        ubrmse = float(np.sqrt(np.mean((p_anom - t_anom) ** 2)))
+
         metrics[depth] = {"MSE": mse, "MAE": mae, "ubRMSE": ubrmse, "bias": bias}
     return metrics
 
@@ -197,6 +211,7 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
     all_preds   = []
     all_targets = []
     all_sigmas  = []
+    all_station_keys = []
 
     SROW = SoilMoistureModel.STATION_ROW
     SCOL = SoilMoistureModel.STATION_COL
@@ -215,6 +230,7 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
 
         all_preds.append(mu[:, :, SROW, SCOL].cpu().numpy())
         all_targets.append(batch["label"].cpu().numpy())
+        all_station_keys.extend(batch["station_key"])
 
         if log_var is not None:
             sigma = (0.5 * log_var[:, :, SROW, SCOL]).exp().cpu().numpy()
@@ -222,7 +238,7 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
 
     preds   = np.concatenate(all_preds,   axis=0)
     targets = np.concatenate(all_targets, axis=0)
-    metrics = compute_metrics(preds, targets)
+    metrics = compute_metrics(preds, targets, all_station_keys)
 
     mean_sigma = float(np.concatenate(all_sigmas).mean()) if all_sigmas else None
     return total_loss / max(n_batches, 1), metrics, mean_sigma

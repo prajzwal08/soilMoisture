@@ -31,19 +31,6 @@ CATEGORY_FILTER = ["sm_only"]
 
 ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
 
-# Values with |x| above this (and finite) are likely sentinel/fill values
-# (e.g. -9999, 1e20) rather than real physical quantities.
-SENTINEL_ABS_THRESHOLD = 1e5
-
-RAW_FIELDS = {
-    "sif":  "sif/values",
-    "twsa": "twsa/lwe",
-    "soil": "soil",
-    "era5": "era5/values",
-    "dem":  "dem",
-    "lulc": "lulc",
-}
-
 
 def _category(r):
     if r["has_soil_moisture"] and r["has_flux"]:
@@ -59,9 +46,18 @@ def _dir_name(r):
     return f"{r['source_network']}_{r['station_id']}"
 
 
-def _check_station_ranges(row: dict) -> list:
-    """Per-station worker: return a list of (dir_name, field, msg) issues for
-    Inf or |value| > SENTINEL_ABS_THRESHOLD in sif/twsa/soil/era5/dem/lulc."""
+def _iter_arrays(group, prefix=""):
+    """Recursively yield (path, zarr.Array) for every array in a zarr group tree."""
+    for key in sorted(group.array_keys()):
+        yield f"{prefix}{key}", group[key]
+    for key in sorted(group.group_keys()):
+        yield from _iter_arrays(group[key], f"{prefix}{key}/")
+
+
+def _check_station_all_arrays(row: dict) -> list:
+    """Per-station worker: check isnan/isinf for every float array in the zarr
+    group -- covers fields never checked before (s2/s1 L3/L6/L9/L12 fp16 token
+    arrays, dem, lulc, labels/sm) in addition to era5/sif/twsa/soil."""
     cat, dir_name = row["cat"], row["dir_name"]
     path = ZARR_ROOT / cat / dir_name
     if not (path / ".complete").exists():
@@ -75,26 +71,22 @@ def _check_station_ranges(row: dict) -> list:
             return [(dir_name, "OPEN_ERROR", str(e))]
 
     issues = []
-    for name, key in RAW_FIELDS.items():
-        if key not in zg:
+    for arr_path, arr in _iter_arrays(zg):
+        if not np.issubdtype(arr.dtype, np.floating):
             continue
-        arr = np.asarray(zg[key][:])
         if arr.size == 0:
             continue
-        has_inf = bool(np.isinf(arr).any())
-        finite  = arr[np.isfinite(arr)]
-        if finite.size == 0:
-            continue
-        amin, amax = float(finite.min()), float(finite.max())
-        if has_inf or max(abs(amin), abs(amax)) > SENTINEL_ABS_THRESHOLD:
-            issues.append((dir_name, name, f"min={amin:.4g} max={amax:.4g} has_inf={has_inf}"))
+        data  = np.asarray(arr[:])
+        n_nan = int(np.isnan(data).sum())
+        n_inf = int(np.isinf(data).sum())
+        if n_nan or n_inf:
+            issues.append((dir_name, arr_path,
+                           f"nan={n_nan} inf={n_inf} shape={data.shape} dtype={data.dtype}"))
     return issues
 
 
-def check_raw_ranges(workers: int = 64):
-    """Scan raw zarr arrays (all sm_only stations) for Inf or |value| > SENTINEL_ABS_THRESHOLD
-    in sif/twsa/soil/era5/dem/lulc -- catches sentinel/fill values that pass
-    audit_comprehensive.py's isnan-only checks."""
+def check_all_zarr_arrays(workers: int = 64):
+    """Scan every float array in every sm_only station's zarr group for NaN/Inf."""
     df = pd.read_csv(SPLITS_CSV)
     df["cat"]      = df.apply(_category, axis=1)
     df["dir_name"] = df.apply(_dir_name, axis=1)
@@ -102,15 +94,15 @@ def check_raw_ranges(workers: int = 64):
 
     rows = df[["cat", "dir_name"]].to_dict("records")
     with Pool(workers) as pool:
-        results = pool.map(_check_station_ranges, rows)
+        results = pool.map(_check_station_all_arrays, rows)
     issues = [issue for station_issues in results for issue in station_issues]
 
-    print(f"\n=== Raw zarr range check: {len(df)} sm_only stations ({workers} workers) ===")
+    print(f"\n=== Full zarr array scan (isnan/isinf): {len(df)} sm_only stations ({workers} workers) ===")
     if not issues:
-        print("  No Inf or |value| > 1e5 found in sif/twsa/soil/era5/dem/lulc.")
+        print("  No NaN/Inf found in any float array.")
     else:
-        for dir_name, field, msg in issues:
-            print(f"  [{dir_name}] {field}: {msg}")
+        for dir_name, arr_path, msg in issues:
+            print(f"  [{dir_name}] {arr_path}: {msg}")
 
 
 def scan(ds, name):
@@ -177,7 +169,7 @@ def main():
     if np.isnan(means).any() or np.isnan(stds).any():
         print("  WARNING: era5_stats.json contains NaN!")
 
-    check_raw_ranges()
+    check_all_zarr_arrays()
 
     for split in args.split.split(","):
         train_flag = (split == "train")
