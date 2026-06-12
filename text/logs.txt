@@ -1332,3 +1332,38 @@ ISMN SM units confirmed: m³/m³ (volumetric water content), range ~[0.02, 0.55]
 
 Code changes: model.py, train.py — committed and pushed.
 Next: smoke test (slurm/smoke_h100.sh), then full baseline_nll run.
+
+=== 2026-06-12 — Pre-training validation, OOM fix, and full-run prep ===
+
+Smoke test (job 23712236) PASSED:
+  - train_loss epoch 1: -1.85  epoch 2: -2.28  (decreasing ✓)
+  - val_loss  epoch 1:  1.11   epoch 2:  0.38   (improving ✓)
+  - val 0-10 ubRMSE: 0.099 m³/m³  (reasonable for 2 epochs, 3 stations)
+  - raw TV: ~0.02 (with λ=0.1 contributes ~0.002 to NLL — scale is fine)
+  - VRAM: 737 MiB / 100 GB  (plenty of headroom)
+  - avg GPU util: 25.8%  (stalls every ~4 batches from DataLoader refill)
+
+prefetch_factor bumped 2→4 (train.py CONFIG) to improve GPU utilisation:
+  - 8 workers × 4 prefetch = 32 queued batches, ~62GB prefetch buffer
+  - Total estimated RAM: L12 cache 179GB + prefetch 62GB + misc = ~246GB
+  - Headroom under 384G: ~138GB (36%)  — committed fab8f9b, pushed to main
+
+check_dataset (job 23712199) FAILED: OUT_OF_MEMORY
+  - Root cause: slurm/check_dataset.sh requested only 64G; L12 cache alone is 179GB
+  - Fix: switched partition rome (CPU, no GPU wasted), --mem=220G (rome node max 224GB),
+    --cpus-per-task=64, --workers 64  (matching standing Pool(64) rule for audit scripts)
+  - check_dataset.py uses no GPU — pure DataLoader iteration over in-memory cache
+  - Resubmitted as job 23712838 on rome; estimated ~20-30 min (cache load dominates)
+
+RAM breakdown for full training run (384G SLURM):
+  L12 cache train:      157.7 GB
+  L12 cache val:         21.6 GB
+  Model + Adam states:   ~1.8 GB
+  DataLoader prefetch:   ~62   GB  (8w × 4pf)
+  Python/misc:            ~3   GB
+  TOTAL:                ~246   GB   →  138 GB headroom (36%)
+
+NEXT STEPS (user offline):
+  1. Wait for check_dataset job 23712838 to complete and confirm PASSED
+  2. If PASSED → submit: sbatch slurm/train.sh --run-name baseline_nll
+  3. Monitor W&B: soil-moisture-phd project — train/loss, val/loss, train/tv, val/mean_sigma
