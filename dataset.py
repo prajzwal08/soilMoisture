@@ -809,11 +809,24 @@ class SoilMoistureDataset(Dataset):
     """
     One sample = one (station, year, day-of-year) triple.
 
+    All data is read from ZARR_ROOT (/gpfs/scratch1/shared/pkhanal/zarr).
+    Zarr layout per station:
+        {ZARR_ROOT}/{sm_only|sm_and_flux|flux_only}/{station}/
+            s2/          dates, l3, l6, l9, l12, token_mask, cm
+            s1_asc/      dates, l3, l6, l9, l12, token_mask
+            s1_desc/     dates, l3, l6, l9, l12, token_mask  (if available)
+            dem/         l12
+            dem_token_mask/
+            lulc/        l12
+            lulc_token_mask/
+            era5/        values, dates
+            sif/         values, dates
+            twsa/        values, dates
+            labels/      soil_moisture, depth, time
+            soil/        soil_patch (21, 74, 74)
+
     Args:
         splits_csv       : path to station_splits.csv
-        data_root        : root of /gpfs/…/data  (legacy per-station dirs; only sm_and_flux/
-                           still has files on disk — sm_only/ and flux_only/ stations are
-                           served entirely from ZARR_ROOT on scratch, see _open_zarr())
         era5_stats_path  : path to csvs/era5_stats.json  (from compute_era5_stats.py)
         years            : list of years to include (default 2016–2023)
         min_obs          : minimum observed SM days per year to include
@@ -821,8 +834,7 @@ class SoilMoistureDataset(Dataset):
         split_filter     : list of split values to include, e.g. ["train"]  (None = all)
         training         : if True, apply SIF/TWSA modality dropout (p=0.5 each)
         max_stations     : if set, stop scanning splits once this many stations have
-                           been cached (smoke-test mode — avoids loading the full
-                           dataset's L12 caches into RAM)
+                           been cached (smoke-test mode)
     """
 
     def __init__(
