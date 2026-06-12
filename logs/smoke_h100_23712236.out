@@ -1,0 +1,205 @@
+Job ID: 23712236
+Node:   gcn151
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/pkhanal/.netrc.
+wandb: Currently logged in as: prajzwal08 (prajzwal08-university-of-twente) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run hclbd0bz
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /gpfs/work3/0/prjs1968/soilMoisture/wandb/run-20260612_113955-hclbd0bz
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run smoke_h100
+wandb: ⭐️ View project at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: 🚀 View run at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/hclbd0bz
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb:            epoch ▁█
+wandb:               lr ▁▁
+wandb:       train/loss █▁
+wandb:         train/tv █▁
+wandb:     val/0-10/MAE ▁█
+wandb:    val/0-10/bias ▁█
+wandb:  val/0-10/ubRMSE ▁█
+wandb:    val/10-30/MAE █▁
+wandb:   val/10-30/bias ▁█
+wandb: val/10-30/ubRMSE █▁
+wandb:               +5 ...
+wandb: 
+wandb: Run summary:
+wandb:            epoch 2
+wandb:               lr 0.0001
+wandb:       train/loss -2.28338
+wandb:         train/tv 0.0192
+wandb:     val/0-10/MAE 0.13033
+wandb:    val/0-10/bias 0.12293
+wandb:  val/0-10/ubRMSE 0.09903
+wandb:    val/10-30/MAE 0.51041
+wandb:   val/10-30/bias -0.51041
+wandb: val/10-30/ubRMSE 0.08861
+wandb:               +5 ...
+wandb: 
+wandb: 🚀 View run smoke_h100 at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/hclbd0bz
+wandb: ⭐️ View project at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260612_113955-hclbd0bz/logs
+Device: cuda
+Building datasets...
+Dataset: 4280 samples from 3 stations
+Dataset: 1132 samples from 1 stations
+Building model...
+Trainable parameters: 50,052,679
+No checkpoint found — starting fresh
+  batch 001  loss=-0.0422  tv=0.07717  step=15244ms
+  batch 002  loss=-0.3441  tv=0.06965  step=726ms
+  batch 003  loss=-1.0856  tv=0.06215  step=718ms
+  batch 004  loss=-0.4327  tv=0.05579  step=719ms
+  batch 005  loss=-1.2785  tv=0.05292  step=3623ms
+  batch 006  loss=-1.4448  tv=0.05043  step=2111ms
+  batch 007  loss=-1.4725  tv=0.04674  step=717ms
+  batch 008  loss=-0.8384  tv=0.04694  step=715ms
+  batch 009  loss=-1.4992  tv=0.04574  step=4715ms
+  batch 010  loss=-1.5807  tv=0.04385  step=1644ms
+  batch 011  loss=-1.5896  tv=0.04306  step=716ms
+  batch 012  loss=-1.6429  tv=0.04267  step=720ms
+  batch 013  loss=-1.6893  tv=0.04089  step=5288ms
+  batch 014  loss=-1.6744  tv=0.03897  step=2122ms
+  batch 015  loss=-1.5793  tv=0.03469  step=718ms
+  batch 016  loss=-1.6039  tv=0.03669  step=718ms
+  batch 017  loss=-1.6543  tv=0.03517  step=4993ms
+  batch 018  loss=-1.7191  tv=0.03355  step=1909ms
+  batch 019  loss=-1.7149  tv=0.03179  step=715ms
+  batch 020  loss=-1.6665  tv=0.03229  step=716ms
+  batch 021  loss=-1.8101  tv=0.02977  step=5069ms
+  batch 022  loss=-1.7408  tv=0.02880  step=1941ms
+  batch 023  loss=-1.7423  tv=0.02969  step=718ms
+  batch 024  loss=-1.9021  tv=0.03056  step=717ms
+  batch 025  loss=-1.8580  tv=0.02754  step=5443ms
+  batch 026  loss=-1.8714  tv=0.02880  step=1604ms
+  batch 027  loss=-1.9790  tv=0.02958  step=716ms
+  batch 028  loss=-1.9323  tv=0.02822  step=718ms
+  batch 029  loss=-1.9867  tv=0.02885  step=5253ms
+  batch 030  loss=-1.8552  tv=0.02758  step=1271ms
+  batch 031  loss=-2.0335  tv=0.02738  step=718ms
+  batch 032  loss=-1.9684  tv=0.02662  step=717ms
+  batch 033  loss=-2.0323  tv=0.02599  step=5921ms
+  batch 034  loss=-2.0301  tv=0.02613  step=1410ms
+  batch 035  loss=-2.0147  tv=0.02528  step=717ms
+  batch 036  loss=-2.0193  tv=0.02624  step=718ms
+  batch 037  loss=-1.9799  tv=0.02595  step=5768ms
+  batch 038  loss=-2.1070  tv=0.02450  step=1450ms
+  batch 039  loss=-2.0581  tv=0.02464  step=768ms
+  batch 040  loss=-2.0617  tv=0.02689  step=718ms
+  batch 041  loss=-2.2090  tv=0.02557  step=5817ms
+  batch 042  loss=-2.1847  tv=0.02592  step=1371ms
+  batch 043  loss=-2.1705  tv=0.02481  step=716ms
+  batch 044  loss=-2.1929  tv=0.02577  step=716ms
+  batch 045  loss=-2.1199  tv=0.02640  step=6084ms
+  batch 046  loss=-2.2867  tv=0.02577  step=1658ms
+  batch 047  loss=-1.9694  tv=0.02270  step=717ms
+  batch 048  loss=-1.9989  tv=0.02431  step=716ms
+  batch 049  loss=-2.1494  tv=0.02290  step=5307ms
+  batch 050  loss=-2.1719  tv=0.02213  step=1851ms
+  batch 051  loss=-2.1135  tv=0.02296  step=718ms
+  batch 052  loss=-2.1886  tv=0.02219  step=716ms
+  batch 053  loss=-2.1867  tv=0.02286  step=5176ms
+  batch 054  loss=-2.2428  tv=0.02202  step=1583ms
+  batch 055  loss=-1.9566  tv=0.02200  step=719ms
+  batch 056  loss=-2.1931  tv=0.02135  step=717ms
+  batch 057  loss=-2.0743  tv=0.02129  step=5634ms
+  batch 058  loss=-2.2069  tv=0.02125  step=1145ms
+  batch 059  loss=-2.2575  tv=0.02186  step=717ms
+  batch 060  loss=-2.2168  tv=0.02078  step=718ms
+  batch 061  loss=-2.1196  tv=0.02153  step=5972ms
+  batch 062  loss=-2.1990  tv=0.02094  step=1027ms
+  batch 063  loss=-2.2374  tv=0.01932  step=718ms
+  batch 064  loss=-2.3337  tv=0.02122  step=716ms
+  batch 065  loss=-2.3265  tv=0.02102  step=5941ms
+  batch 066  loss=-2.2736  tv=0.01989  step=1490ms
+
+Epoch 001  |  train_loss=-1.8502  val_loss=1.1069
+      0-10  MSE=0.0140  MAE=0.0962  ubRMSE=0.0986  bias=0.0653
+     10-30  MSE=0.5013  MAE=0.6975  ubRMSE=0.1215  bias=-0.6975
+    30-100  MSE=0.0246  MAE=0.1229  ubRMSE=0.1094  bias=-0.1124
+  New best val_loss=1.1069 — checkpoint saved
+  batch 001  loss=-2.3256  tv=0.02130  step=11784ms
+  batch 002  loss=-2.2348  tv=0.02173  step=720ms
+  batch 003  loss=-2.1877  tv=0.02185  step=717ms
+  batch 004  loss=-2.2701  tv=0.02184  step=717ms
+  batch 005  loss=-2.4052  tv=0.02074  step=6897ms
+  batch 006  loss=-2.3853  tv=0.02062  step=718ms
+  batch 007  loss=-2.3747  tv=0.02108  step=716ms
+  batch 008  loss=-2.3698  tv=0.02131  step=717ms
+  batch 009  loss=-2.4906  tv=0.02196  step=5731ms
+  batch 010  loss=-2.5514  tv=0.02117  step=719ms
+  batch 011  loss=-2.4659  tv=0.02129  step=715ms
+  batch 012  loss=-2.3001  tv=0.02224  step=719ms
+  batch 013  loss=-2.2167  tv=0.02150  step=6600ms
+  batch 014  loss=-2.4245  tv=0.02058  step=718ms
+  batch 015  loss=-2.4378  tv=0.01985  step=719ms
+  batch 016  loss=-2.4330  tv=0.02017  step=717ms
+  batch 017  loss=-2.3697  tv=0.01936  step=6340ms
+  batch 018  loss=-2.4382  tv=0.01967  step=718ms
+  batch 019  loss=-2.5095  tv=0.01952  step=718ms
+  batch 020  loss=-2.5693  tv=0.01923  step=718ms
+  batch 021  loss=-2.4799  tv=0.01938  step=5896ms
+  batch 022  loss=-2.3549  tv=0.02027  step=716ms
+  batch 023  loss=-2.4776  tv=0.01984  step=719ms
+  batch 024  loss=-1.5902  tv=0.01967  step=721ms
+  batch 025  loss=-1.5234  tv=0.01987  step=6318ms
+  batch 026  loss=-2.2555  tv=0.01980  step=726ms
+  batch 027  loss=-2.5333  tv=0.01941  step=719ms
+  batch 028  loss=-1.4369  tv=0.01997  step=717ms
+  batch 029  loss=-2.1328  tv=0.01977  step=6040ms
+  batch 030  loss=-1.5952  tv=0.01956  step=1100ms
+  batch 031  loss=-2.4241  tv=0.01952  step=719ms
+  batch 032  loss=-2.4343  tv=0.01827  step=719ms
+  batch 033  loss=-2.0576  tv=0.01829  step=5570ms
+  batch 034  loss=-1.3000  tv=0.01737  step=923ms
+  batch 035  loss=-1.9168  tv=0.01808  step=718ms
+  batch 036  loss=-1.9762  tv=0.01776  step=716ms
+  batch 037  loss=-2.1513  tv=0.01875  step=5564ms
+  batch 038  loss=-2.4661  tv=0.01826  step=717ms
+  batch 039  loss=-2.1927  tv=0.01764  step=717ms
+  batch 040  loss=-2.2428  tv=0.01851  step=720ms
+  batch 041  loss=-2.2902  tv=0.01899  step=6801ms
+  batch 042  loss=-1.9861  tv=0.01825  step=715ms
+  batch 043  loss=-1.9528  tv=0.01752  step=717ms
+  batch 044  loss=-2.3509  tv=0.01831  step=718ms
+  batch 045  loss=-2.3714  tv=0.01818  step=6724ms
+  batch 046  loss=-2.3850  tv=0.01771  step=717ms
+  batch 047  loss=-2.4019  tv=0.01801  step=719ms
+  batch 048  loss=-2.3963  tv=0.01852  step=719ms
+  batch 049  loss=-2.3847  tv=0.01778  step=6109ms
+  batch 050  loss=-2.4360  tv=0.01817  step=714ms
+  batch 051  loss=-2.4218  tv=0.01809  step=718ms
+  batch 052  loss=-2.4098  tv=0.01801  step=721ms
+  batch 053  loss=-2.3302  tv=0.01867  step=5638ms
+  batch 054  loss=-2.4584  tv=0.01901  step=718ms
+  batch 055  loss=-2.3694  tv=0.01841  step=732ms
+  batch 056  loss=-2.5133  tv=0.01805  step=718ms
+  batch 057  loss=-2.4556  tv=0.01757  step=6526ms
+  batch 058  loss=-2.5512  tv=0.01818  step=718ms
+  batch 059  loss=-2.3493  tv=0.01786  step=1072ms
+  batch 060  loss=-2.3501  tv=0.01793  step=718ms
+  batch 061  loss=-2.4020  tv=0.01818  step=6490ms
+  batch 062  loss=-2.5259  tv=0.01778  step=719ms
+  batch 063  loss=-2.4353  tv=0.01785  step=717ms
+  batch 064  loss=-2.2571  tv=0.01815  step=716ms
+  batch 065  loss=-2.1664  tv=0.01775  step=6492ms
+  batch 066  loss=-2.4506  tv=0.01728  step=718ms
+
+Epoch 002  |  train_loss=-2.2834  val_loss=0.3817
+      0-10  MSE=0.0249  MAE=0.1303  ubRMSE=0.0990  bias=0.1229
+     10-30  MSE=0.2684  MAE=0.5104  ubRMSE=0.0886  bias=-0.5104
+    30-100  MSE=0.0410  MAE=0.1762  ubRMSE=0.1091  bias=-0.1706
+  New best val_loss=0.3817 — checkpoint saved
+
+Training complete. Best val_loss: 0.3817
+Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_h100
+--- GPU utilization summary ---
+avg GPU util: 25.8%  max VRAM used: 737 MiB / 95830

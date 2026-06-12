@@ -1,0 +1,7 @@
+Job ID : 23709150
+Node   : tcn476
+Started: Fri Jun 12 10:01:46 CEST 2026
+2026-06-12 10:01:58,120 INFO EXECUTE: 993 stations, Pool(64)
+2026-06-12 10:04:51,385 INFO Total masked patches: 374,992
+2026-06-12 10:04:51,385 INFO Missing satellite_zarr: 0  |  Errors: 0
+Finished: Fri Jun 12 10:04:51 CEST 2026

@@ -1,0 +1,71 @@
+Job ID : 23708117
+Node   : tcn6
+Started: Fri Jun 12 09:18:48 CEST 2026
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/cuda/__init__.py:734: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+2026-06-12 09:19:16,508 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-12 09:19:16,508 - WARNING - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-06-12 09:19:17,936 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+Loading TerraMindEncoder (CPU)...
+
+27 test cases. Pre-encode sanitized-input NaN/Inf check:
+  ISMN_Berlin_PSA4Heerstrasse s1_desc 20210526: sanitized nan=0 inf=0
+  ISMN_COSMOS-UK_BickleyHall s1_desc 20190204: sanitized nan=0 inf=0
+  ISMN_COSMOS-UK_HartwoodHome s1_desc 20190603: sanitized nan=0 inf=0
+  ISMN_COSMOS-UK_Sheepdrove s1_desc 20190523: sanitized nan=0 inf=0
+  ISMN_FMI_SOD012 s1_desc 20210621: sanitized nan=0 inf=0
+  ISMN_FMI_SOD130 s1_asc 20161001: sanitized nan=0 inf=0
+  ISMN_FMI_SOD130 s1_desc 20170601: sanitized nan=0 inf=0
+  ISMN_REMEDHUS_LasVacas s1_desc 20180516: sanitized nan=0 inf=0
+  ISMN_ROMPS_GolubinGlacier s1_desc 20250511: sanitized nan=0 inf=0
+  ISMN_RSMN_Alexandria s1_desc 20170926: sanitized nan=0 inf=0
+  ISMN_SCAN_LyeBrook s1_asc 20250922: sanitized nan=0 inf=0
+  ISMN_SCAN_MonoclineRidge s1_desc 20170120: sanitized nan=0 inf=0
+  ISMN_SCAN_WillowWells s1_asc 20170220: sanitized nan=0 inf=0
+  ISMN_SMOSMANIA_Mouthoumet s1_desc 20190725: sanitized nan=0 inf=0
+  ISMN_SNOTEL_AtlantaSummit s1_desc 20210828: sanitized nan=0 inf=0
+  ISMN_SNOTEL_BearCreek s1_desc 20191101: sanitized nan=0 inf=0
+  ISMN_SNOTEL_BlackFlat-U.M.Ck s1_asc 20160313: sanitized nan=0 inf=0
+  ISMN_SNOTEL_ForestdaleCreek s1_desc 20210728: sanitized nan=0 inf=0
+  ISMN_SNOTEL_Hopewell s1_desc 20170310: sanitized nan=0 inf=0
+  ISMN_SNOTEL_HuntingtonHorse s1_asc 20160909: sanitized nan=0 inf=0
+  ISMN_SNOTEL_JackwhackerGulch s1_asc 20161104: sanitized nan=0 inf=0
+  ISMN_SNOTEL_LostCreekResv s1_asc 20161026: sanitized nan=0 inf=0
+  ISMN_SNOTEL_MonitorPass s1_desc 20181117: sanitized nan=0 inf=0
+  ISMN_SNOTEL_PalisadesTahoe s1_asc 20160513: sanitized nan=0 inf=0
+  ISMN_SNOTEL_PorphyryCreek s1_desc 20220301: sanitized nan=0 inf=0
+  ISMN_SNOTEL_RainyPass s1_asc 20250226: sanitized nan=0 inf=0
+  ISMN_SNOTEL_CrowCreek s1_asc 20160830: sanitized nan=0 inf=0
+
+Running encoder on batch shape (27, 2, 224, 224)...
+
+Post-encode output NaN/Inf per case:
+  ISMN_Berlin_PSA4Heerstrasse s1_desc 20210526: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_COSMOS-UK_BickleyHall s1_desc 20190204: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_COSMOS-UK_HartwoodHome s1_desc 20190603: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_COSMOS-UK_Sheepdrove s1_desc 20190523: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_FMI_SOD012 s1_desc 20210621: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_FMI_SOD130 s1_asc 20161001: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_FMI_SOD130 s1_desc 20170601: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_REMEDHUS_LasVacas s1_desc 20180516: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_ROMPS_GolubinGlacier s1_desc 20250511: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_RSMN_Alexandria s1_desc 20170926: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SCAN_LyeBrook s1_asc 20250922: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SCAN_MonoclineRidge s1_desc 20170120: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SCAN_WillowWells s1_asc 20170220: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SMOSMANIA_Mouthoumet s1_desc 20190725: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_AtlantaSummit s1_desc 20210828: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_BearCreek s1_desc 20191101: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_BlackFlat-U.M.Ck s1_asc 20160313: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_ForestdaleCreek s1_desc 20210728: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_Hopewell s1_desc 20170310: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_HuntingtonHorse s1_asc 20160909: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_JackwhackerGulch s1_asc 20161104: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_LostCreekResv s1_asc 20161026: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_MonitorPass s1_desc 20181117: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_PalisadesTahoe s1_asc 20160513: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_PorphyryCreek s1_desc 20220301: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_RainyPass s1_asc 20250226: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+  ISMN_SNOTEL_CrowCreek s1_asc 20160830: L3(nan=0,inf=0) L6(nan=0,inf=0) L9(nan=0,inf=0) L12(nan=0,inf=0) 
+Finished: Fri Jun 12 09:20:01 CEST 2026

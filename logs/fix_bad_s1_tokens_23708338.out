@@ -1,0 +1,36 @@
+Job ID : 23708338
+Node   : tcn481
+Started: Fri Jun 12 09:29:09 CEST 2026
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/cuda/__init__.py:734: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+ISMN_Berlin_PSA4Heerstrasse s1_desc: 15 bad acquisitions
+ISMN_COSMOS-UK_BickleyHall s1_desc: 9 bad acquisitions
+ISMN_COSMOS-UK_HartwoodHome s1_desc: 1 bad acquisitions
+ISMN_COSMOS-UK_Sheepdrove s1_desc: 1 bad acquisitions
+ISMN_FMI_SOD012 s1_desc: 10 bad acquisitions
+ISMN_FMI_SOD130 s1_asc: 1 bad acquisitions
+ISMN_FMI_SOD130 s1_desc: 42 bad acquisitions
+ISMN_REMEDHUS_LasVacas s1_desc: 1 bad acquisitions
+ISMN_ROMPS_GolubinGlacier s1_desc: 1 bad acquisitions
+ISMN_RSMN_Alexandria s1_desc: 1 bad acquisitions
+ISMN_SCAN_LyeBrook s1_asc: 5 bad acquisitions
+ISMN_SCAN_MonoclineRidge s1_desc: 1 bad acquisitions
+ISMN_SCAN_WillowWells s1_asc: 91 bad acquisitions
+ISMN_SMOSMANIA_Mouthoumet s1_desc: 10 bad acquisitions
+ISMN_SNOTEL_AtlantaSummit s1_desc: 10 bad acquisitions
+ISMN_SNOTEL_BearCreek s1_desc: 162 bad acquisitions
+ISMN_SNOTEL_BlackFlat-U.M.Ck s1_asc: 2 bad acquisitions
+ISMN_SNOTEL_ForestdaleCreek s1_desc: 2 bad acquisitions
+ISMN_SNOTEL_Hopewell s1_desc: 43 bad acquisitions
+ISMN_SNOTEL_HuntingtonHorse s1_asc: 1 bad acquisitions
+ISMN_SNOTEL_JackwhackerGulch s1_asc: 5 bad acquisitions
+ISMN_SNOTEL_LostCreekResv s1_asc: 146 bad acquisitions
+ISMN_SNOTEL_MonitorPass s1_desc: 1 bad acquisitions
+ISMN_SNOTEL_PalisadesTahoe s1_asc: 2 bad acquisitions
+ISMN_SNOTEL_PorphyryCreek s1_desc: 2 bad acquisitions
+ISMN_SNOTEL_RainyPass s1_asc: 5 bad acquisitions
+ISMN_SNOTEL_CrowCreek s1_asc: 1 bad acquisitions
+
+Total bad acquisitions: 571
+Dry run -- pass --execute to re-encode and overwrite.
+Finished: Fri Jun 12 09:30:03 CEST 2026

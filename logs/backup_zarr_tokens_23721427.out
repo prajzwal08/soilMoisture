@@ -1,0 +1,6 @@
+Job ID : 23721427
+Node   : tcn164
+Source : /gpfs/scratch1/shared/pkhanal/zarr
+Dest   : /projects/prjs1968/zarr_tokens
+--- Verification ---
+[2026-06-12T15:04:42.194] error: *** JOB 23721427 ON tcn164 CANCELLED AT 2026-06-12T15:04:42 DUE to SIGNAL Terminated ***

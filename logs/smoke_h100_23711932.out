@@ -1,0 +1,25 @@
+Job ID: 23711932
+Node:   gcn141
+GPU:    0
+GPU: NVIDIA H100
+VRAM total: 100.0 GB
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+Traceback (most recent call last):
+  File "/gpfs/work3/0/prjs1968/soilMoisture/train.py", line 481, in <module>
+    main()
+  File "/gpfs/work3/0/prjs1968/soilMoisture/train.py", line 383, in main
+    model.load_state_dict(ckpt["model"])
+  File "/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/module.py", line 2581, in load_state_dict
+    raise RuntimeError(
+RuntimeError: Error(s) in loading state_dict for SoilMoistureModel:
+	Missing key(s) in state_dict: "decoder.film_s9.proj.weight", "decoder.film_s9.proj.bias", "decoder.film_s6.proj.weight", "decoder.film_s6.proj.bias", "decoder.film_s3.proj.weight", "decoder.film_s3.proj.bias". 
+	size mismatch for spatial_modality_emb.weight: copying a param with shape torch.Size([2, 768]) from checkpoint, the shape in current model is torch.Size([3, 768]).
+ERROR conda.cli.main_run:execute(148): `conda run python train.py --run-name smoke_h100 --max-stations 3 --max-epochs 2 --batch-size 64 --num-workers 4 --prefetch-factor 2` failed. (See above for error)
+Device: cuda
+Building datasets...
+Dataset: 4280 samples from 3 stations
+Dataset: 1132 samples from 1 stations
+Building model...
+Trainable parameters: 50,052,679
+Checkpoint found — resuming from /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_h100/last.pt

@@ -1,0 +1,108 @@
+Job ID : 23708627
+Node   : tcn30
+Started: Fri Jun 12 09:41:45 CEST 2026
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/cuda/__init__.py:734: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+2026-06-12 09:42:55,059 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-Tokenizer-LULC/resolve/main/TerraMind_Tokenizer_LULC.pt "HTTP/1.1 302 Found"
+2026-06-12 09:42:56,181 - INFO - HTTP Request: HEAD https://huggingface.co/ibm-esa-geospatial/TerraMind-1.0-base/resolve/main/TerraMind_v1_base.pt "HTTP/1.1 302 Found"
+ISMN_Berlin_PSA4Heerstrasse s1_desc: 15 bad acquisitions
+ISMN_COSMOS-UK_BickleyHall s1_desc: 9 bad acquisitions
+ISMN_COSMOS-UK_HartwoodHome s1_desc: 1 bad acquisitions
+ISMN_COSMOS-UK_Sheepdrove s1_desc: 1 bad acquisitions
+ISMN_FMI_SOD012 s1_desc: 10 bad acquisitions
+ISMN_FMI_SOD130 s1_asc: 1 bad acquisitions
+ISMN_FMI_SOD130 s1_desc: 42 bad acquisitions
+ISMN_REMEDHUS_LasVacas s1_desc: 1 bad acquisitions
+ISMN_ROMPS_GolubinGlacier s1_desc: 1 bad acquisitions
+ISMN_RSMN_Alexandria s1_desc: 1 bad acquisitions
+ISMN_SCAN_LyeBrook s1_asc: 5 bad acquisitions
+ISMN_SCAN_MonoclineRidge s1_desc: 1 bad acquisitions
+ISMN_SCAN_WillowWells s1_asc: 91 bad acquisitions
+ISMN_SMOSMANIA_Mouthoumet s1_desc: 10 bad acquisitions
+ISMN_SNOTEL_AtlantaSummit s1_desc: 10 bad acquisitions
+ISMN_SNOTEL_BearCreek s1_desc: 162 bad acquisitions
+ISMN_SNOTEL_BlackFlat-U.M.Ck s1_asc: 2 bad acquisitions
+ISMN_SNOTEL_ForestdaleCreek s1_desc: 2 bad acquisitions
+ISMN_SNOTEL_Hopewell s1_desc: 43 bad acquisitions
+ISMN_SNOTEL_HuntingtonHorse s1_asc: 1 bad acquisitions
+ISMN_SNOTEL_JackwhackerGulch s1_asc: 5 bad acquisitions
+ISMN_SNOTEL_LostCreekResv s1_asc: 146 bad acquisitions
+ISMN_SNOTEL_MonitorPass s1_desc: 1 bad acquisitions
+ISMN_SNOTEL_PalisadesTahoe s1_asc: 2 bad acquisitions
+ISMN_SNOTEL_PorphyryCreek s1_desc: 2 bad acquisitions
+ISMN_SNOTEL_RainyPass s1_asc: 5 bad acquisitions
+ISMN_SNOTEL_CrowCreek s1_asc: 1 bad acquisitions
+
+Total bad acquisitions: 571
+Loading TerraMindEncoder (CPU)...
+  encoded 16/571
+  encoded 32/571
+  encoded 48/571
+  encoded 64/571
+  encoded 80/571
+  encoded 96/571
+  encoded 112/571
+  encoded 128/571
+  encoded 144/571
+  encoded 160/571
+  encoded 176/571
+  encoded 192/571
+  encoded 208/571
+  encoded 224/571
+  encoded 240/571
+  encoded 256/571
+  encoded 272/571
+  encoded 288/571
+  encoded 304/571
+  encoded 320/571
+  encoded 336/571
+  encoded 352/571
+  encoded 368/571
+  encoded 384/571
+  encoded 400/571
+  encoded 416/571
+  encoded 432/571
+  encoded 448/571
+  encoded 464/571
+  encoded 480/571
+  encoded 496/571
+  encoded 512/571
+  encoded 528/571
+  encoded 544/571
+  encoded 560/571
+  encoded 571/571
+
+Overwriting stale tokens in-place...
+  ISMN_Berlin_PSA4Heerstrasse/s1_desc: overwrote 15 acquisitions
+  ISMN_COSMOS-UK_BickleyHall/s1_desc: overwrote 9 acquisitions
+  ISMN_COSMOS-UK_HartwoodHome/s1_desc: overwrote 1 acquisitions
+  ISMN_COSMOS-UK_Sheepdrove/s1_desc: overwrote 1 acquisitions
+  ISMN_FMI_SOD012/s1_desc: overwrote 10 acquisitions
+  ISMN_FMI_SOD130/s1_asc: overwrote 1 acquisitions
+  ISMN_FMI_SOD130/s1_desc: overwrote 42 acquisitions
+  ISMN_REMEDHUS_LasVacas/s1_desc: overwrote 1 acquisitions
+  ISMN_ROMPS_GolubinGlacier/s1_desc: overwrote 1 acquisitions
+  ISMN_RSMN_Alexandria/s1_desc: overwrote 1 acquisitions
+  ISMN_SCAN_LyeBrook/s1_asc: overwrote 5 acquisitions
+  ISMN_SCAN_MonoclineRidge/s1_desc: overwrote 1 acquisitions
+  ISMN_SCAN_WillowWells/s1_asc: overwrote 91 acquisitions
+  ISMN_SMOSMANIA_Mouthoumet/s1_desc: overwrote 10 acquisitions
+  ISMN_SNOTEL_AtlantaSummit/s1_desc: overwrote 10 acquisitions
+  ISMN_SNOTEL_BearCreek/s1_desc: overwrote 162 acquisitions
+  ISMN_SNOTEL_BlackFlat-U.M.Ck/s1_asc: overwrote 2 acquisitions
+  ISMN_SNOTEL_ForestdaleCreek/s1_desc: overwrote 2 acquisitions
+  ISMN_SNOTEL_Hopewell/s1_desc: overwrote 43 acquisitions
+  ISMN_SNOTEL_HuntingtonHorse/s1_asc: overwrote 1 acquisitions
+  ISMN_SNOTEL_JackwhackerGulch/s1_asc: overwrote 5 acquisitions
+  ISMN_SNOTEL_LostCreekResv/s1_asc: overwrote 146 acquisitions
+  ISMN_SNOTEL_MonitorPass/s1_desc: overwrote 1 acquisitions
+  ISMN_SNOTEL_PalisadesTahoe/s1_asc: overwrote 2 acquisitions
+  ISMN_SNOTEL_PorphyryCreek/s1_desc: overwrote 2 acquisitions
+  ISMN_SNOTEL_RainyPass/s1_asc: overwrote 5 acquisitions
+  ISMN_SNOTEL_CrowCreek/s1_asc: overwrote 1 acquisitions
+
+Verifying...
+
+Remaining fully-NaN acquisitions: 0
+PASS
+Finished: Fri Jun 12 09:45:14 CEST 2026

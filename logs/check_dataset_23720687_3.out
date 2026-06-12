@@ -1,0 +1,21 @@
+Job ID:    23720691 (array task 3)
+Node:      tcn135
+Category:  sm_and_flux  |  Split: val
+Building dataset (val)...
+Dataset: 5112 samples from 2 stations
+Dataset: 5112 samples from 2 stations
+Dataset ready: 5112 samples
+Checking all 5112 samples with 64 workers, batch_size=32...
+
+
+============================================================
+Split           : val
+Samples checked : 5112
+Label all-NaN   : 0  (no SM obs that day — fine)
+Label has obs   : 5112
+Total errors    : 0
+
+val PASSED — clean.
+
+============================================================
+OVERALL: All samples PASSED — dataset is clean.

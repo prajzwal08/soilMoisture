@@ -1,0 +1,21 @@
+Job ID:    23720687 (array task 5)
+Node:      tcn140
+Category:  flux_only  |  Split: val
+Building dataset (val)...
+Dataset: 0 samples from 0 stations
+Dataset: 0 samples from 15 stations
+Dataset ready: 0 samples
+Checking all 0 samples with 64 workers, batch_size=32...
+
+
+============================================================
+Split           : val
+Samples checked : 0
+Label all-NaN   : 0  (no SM obs that day — fine)
+Label has obs   : 0
+Total errors    : 0
+
+val PASSED — clean.
+
+============================================================
+OVERALL: All samples PASSED — dataset is clean.

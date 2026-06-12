@@ -1,0 +1,2 @@
+Terminated
+ERROR conda.cli.main_run:execute(148): `conda run python scan_nan.py --max-stations 3` failed. (See above for error)
