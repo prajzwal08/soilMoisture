@@ -186,11 +186,15 @@ def compute_metrics(preds, targets, station_keys):
 
         p_anom = np.empty_like(p)
         t_anom = np.empty_like(t)
+        ub_mask = np.zeros(len(p), dtype=bool)
         for station in np.unique(sk):
             sel = sk == station
+            if sel.sum() < 2:          # single sample → anomaly is always 0, deflates ubRMSE
+                continue
             p_anom[sel] = p[sel] - p[sel].mean()
             t_anom[sel] = t[sel] - t[sel].mean()
-        ubrmse = float(np.sqrt(np.mean((p_anom - t_anom) ** 2)))
+            ub_mask[sel] = True
+        ubrmse = float(np.sqrt(np.mean((p_anom[ub_mask] - t_anom[ub_mask]) ** 2))) if ub_mask.any() else float("nan")
 
         metrics[depth] = {"MSE": mse, "MAE": mae, "ubRMSE": ubrmse, "bias": bias}
     return metrics
@@ -243,7 +247,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
         if max_batches is not None and n_batches >= max_batches:
             break
 
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+        batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
         if debug_nan:
@@ -307,7 +311,7 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
         if max_batches is not None and n_batches >= max_batches:
             break
 
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+        batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
         with torch.autocast("cuda", dtype=torch.bfloat16):

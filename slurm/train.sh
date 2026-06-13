@@ -12,6 +12,7 @@
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
 set -euo pipefail
+ulimit -n 65536   # memmap FDs: 612 stations × 3 keys × 8 workers ≈ 14k handles
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
