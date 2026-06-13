@@ -1779,3 +1779,20 @@ Jobs:
   23758952: ACTIVE — baseline_nll with all fixes (7200s timeout + checkpoint-before-val)
 
 Files modified: train.py, slurm/train.sh
+
+Active job as of 2026-06-13:
+  23758952: baseline_nll, node gcn120, all fixes applied.
+  Status at 06:30 runtime: rank 0 preloading L12 to /dev/shm (~21 min total).
+    Only 3 lines in log (job header) — normal, preload is silent.
+  Expected timeline:
+    ~21 min: preload done, DDP init, datasets built, training starts
+    ~21 + 20 min: epoch 1 training done → last.pt saved with val_pending=True
+    ~21 + 20 + 15-30 min: epoch 1 val done → last.pt overwritten with val_pending=False
+  If job cancelled/crashed during val: resume with same sbatch command.
+    last.pt will have val_pending=True → resumes at val only, skips re-training.
+  If job cancelled during training: no last.pt yet → starts fresh from epoch 1.
+  Fixes in this job vs previous crashes:
+    - PyTorch PG timeout: 7200s (was 600s default → caused 23752836 crash)
+    - NCCL_TIMEOUT: 7200s env var
+    - Checkpoint saved before val (val_pending=True) → epoch training not lost if val crashes
+    - All previous fixes: /dev/shm L12 preload, bf16, no-capture-output, 700G RAM
