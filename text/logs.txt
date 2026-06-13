@@ -68,7 +68,23 @@ Full run estimate (baseline_nll, ~500 train stations):
   Epoch 1 (cold): ~25–30 min. Epochs 2+: ~14 min each.
   50 epochs estimated → ~12–16 hours total. Well within 120h limit.
 
-Changes committed: 1310807 (--no-capture-output), b3554db (--mem=700G), + dataset.py warning fix.
+Why the original OOM crash (job 23733182) cannot recur:
+  Old behaviour: _l12_cache populated lazily per DataLoader worker. Each of 4 ranks
+    independently loaded L12 for every station it sampled → progressive AnonPages growth
+    until batch ~600 when all stations had been sampled. 600 stations × 300 MB × 4 ranks
+    = ~728 GB L12 in AnonPages alone → hit 384G cgroup limit at batch 603.
+  New behaviour: rank 0 preloads ALL stations' L12 to /dev/shm before DDP init.
+    All 4 ranks read via np.memmap(mode='r') → OS shares one physical copy in Shmem.
+    L12 cost: 182 GB Shmem (counted once, not 4×). No lazy loading, no progressive growth.
+  L3/L6/L9 zarr reads during training land in OS page cache (reclaimable, not counted
+    by SLURM cgroup). RAM profile is flat from batch 1 onward.
+  Current full-run memory budget:
+    L12 Shmem:         182 GB
+    DataLoader IPC:    160 GB
+    AnonPages:        ~130 GB
+    Total counted:    ~472 GB / 700 GB → 228 GB headroom, no growth expected.
+
+Changes committed: 1310807 (--no-capture-output), b3554db (--mem=700G), e3d512b (warning fix + this log).
 Next: submit baseline_nll.
 
 === 2026-06-13 ===
