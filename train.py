@@ -375,6 +375,23 @@ def main():
     if CONFIG["loss_fn"] == "huber":
         CONFIG["predict_uncertainty"] = False
 
+    # ── L12 shared memory preloading (before DDP init to avoid TCPStore timeout) ──
+    # Rank 0 reads ~120 GB from GPFS — can take several minutes. Doing this before
+    # dist.init_process_group() means ranks 1-3 spin on a sentinel file rather than
+    # inside an NCCL communicator setup that times out after 600 s.
+    SHM_DIR  = Path(f"/dev/shm/sm_l12_{os.environ.get('SLURM_JOB_ID', os.getpid())}")
+    _shm_done = SHM_DIR / ".done"
+    _pre_rank = int(os.environ.get("RANK", "0"))
+    if _pre_rank == 0:
+        SHM_DIR.mkdir(parents=True, exist_ok=True)
+        t_shm = time.perf_counter()
+        _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR)
+        _shm_done.touch()
+        print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s  ({SHM_DIR})")
+    else:
+        while not _shm_done.exists():
+            time.sleep(2)
+
     is_ddp = "LOCAL_RANK" in os.environ
     if is_ddp:
         local_rank, rank, world_size = setup_ddp()
@@ -391,18 +408,6 @@ def main():
     # Each run gets its own subdirectory so runs never clobber each other's checkpoints
     ckpt_dir = Path(CONFIG["checkpoint_dir"]) / CONFIG["run_name"]
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    # ── L12 shared memory preloading ──────────────────────────────────
-    # Rank 0 writes all L12 arrays to /dev/shm tmpfs; all ranks memmap the
-    # same files read-only → OS shares one physical copy (~400 GB saved).
-    SHM_DIR = Path(f"/dev/shm/sm_l12_{os.environ.get('SLURM_JOB_ID', os.getpid())}")
-    if rank == 0:
-        SHM_DIR.mkdir(parents=True, exist_ok=True)
-        t_shm = time.perf_counter()
-        _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR)
-        print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s")
-    if is_ddp:
-        dist.barrier()   # ranks 1-3 wait for rank 0 to finish writing /dev/shm
 
     # ── Datasets ──────────────────────────────────────────────────────
     if is_main:
