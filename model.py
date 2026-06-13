@@ -234,7 +234,7 @@ class UNetDecoder(nn.Module):
 
         if self.predict_uncertainty:
             mu      = raw[:, :self.n_depths]
-            log_var = raw[:, self.n_depths:].clamp(-10, 10)   # σ ∈ [0.007, 148] m³/m³; prevents bfloat16 overflow
+            log_var = torch.tanh(raw[:, self.n_depths:] / 10) * 10   # soft-clamp to (-10,10), σ ∈ (0.007,148) m³/m³
             return mu, log_var
         return raw, None                                                # None signals no uncertainty
 
