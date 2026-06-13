@@ -17,6 +17,7 @@ import os
 import random
 import shutil
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -141,7 +142,7 @@ CONFIG = {
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 def setup_ddp():
-    dist.init_process_group(backend="nccl")
+    dist.init_process_group(backend="nccl", timeout=timedelta(seconds=3600))
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
     return local_rank, dist.get_rank(), dist.get_world_size()

@@ -39,6 +39,7 @@ ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
 
 # torch.from_numpy on a read-only /dev/shm memmap triggers a non-writable warning;
 # the tensor is immediately copied into a pre-allocated output buffer so mutation is safe.
+warnings.filterwarnings("ignore", message=".*not writable.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*non-writeable.*", category=UserWarning)
 
 # Set DISABLE_L12_CACHE=1 to skip eager L12 RAM caching and force the lazy
