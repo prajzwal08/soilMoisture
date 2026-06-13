@@ -162,11 +162,12 @@ def worker_init_fn(worker_id: int):
     random.seed(seed)
 
 
-def compute_metrics(preds, targets, station_keys):
+def compute_metrics(preds, targets, station_keys, n_worst=5):
     """
     preds, targets : (N, n_depths) numpy arrays
     station_keys   : (N,) array-like of per-sample station identifiers
-    Returns dict of MSE, MAE, ubRMSE, bias per depth.
+    Returns (global_metrics, per_station_metrics) where per_station_metrics
+    is a dict {station: {depth: {MSE, MAE, ubRMSE, bias}}}.
 
     ubRMSE removes each station's own temporal mean before computing RMSE
     (the standard unbiased-RMSE definition) -- a global mean across all
@@ -174,6 +175,8 @@ def compute_metrics(preds, targets, station_keys):
     """
     station_keys = np.asarray(station_keys)
     metrics = {}
+    per_station = {}  # station -> depth -> metrics
+
     for i, depth in enumerate(SM_DEPTHS):
         p = preds[:, i]
         t = targets[:, i]
@@ -190,21 +193,33 @@ def compute_metrics(preds, targets, station_keys):
         ub_mask = np.zeros(len(p), dtype=bool)
         for station in np.unique(sk):
             sel = sk == station
-            if sel.sum() < 2:          # single sample → anomaly is always 0, deflates ubRMSE
+            if sel.sum() < 2:
                 continue
             p_anom[sel] = p[sel] - p[sel].mean()
             t_anom[sel] = t[sel] - t[sel].mean()
             ub_mask[sel] = True
+            st_ubrmse = float(np.sqrt(np.mean((p_anom[sel] - t_anom[sel]) ** 2)))
+            st_bias   = float(np.mean(p[sel] - t[sel]))
+            st_mae    = float(np.mean(np.abs(p[sel] - t[sel])))
+            if station not in per_station:
+                per_station[station] = {}
+            per_station[station][depth] = {"ubRMSE": st_ubrmse, "MAE": st_mae, "bias": st_bias,
+                                           "n": int(sel.sum())}
         ubrmse = float(np.sqrt(np.mean((p_anom[ub_mask] - t_anom[ub_mask]) ** 2))) if ub_mask.any() else float("nan")
 
         metrics[depth] = {"MSE": mse, "MAE": mae, "ubRMSE": ubrmse, "bias": bias}
-    return metrics
+    return metrics, per_station
 
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
+SIGMA_MIN = 0.01   # floor on predicted σ; prevents NLL explosion on overconfident wrong predictions
+LOG_VAR_MIN = 2.0 * np.log(SIGMA_MIN)   # ≈ -9.21
+
 def _compute_loss(mu, var, label, loss_fn, lambda_tv=0.0):
     if loss_fn == "nll":
+        if var is not None:
+            var = var.clamp(min=LOG_VAR_MIN)
         loss = masked_nll_loss(mu, var, label)
     else:
         loss = masked_huber_loss(mu, label)
@@ -383,18 +398,18 @@ def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=N
             preds        = np.concatenate(gathered_preds,   axis=0)
             targets      = np.concatenate(gathered_targets, axis=0)
             station_keys = [k for keys in gathered_keys for k in keys]
-            metrics      = compute_metrics(preds, targets, station_keys)
+            metrics, per_station = compute_metrics(preds, targets, station_keys)
             valid_sigmas = [s for s in gathered_sigmas if s is not None]
             mean_sigma   = float(np.concatenate(valid_sigmas).mean()) if valid_sigmas else None
         else:
-            metrics, mean_sigma = {}, None
+            metrics, per_station, mean_sigma = {}, {}, None
     else:
         preds   = np.concatenate(all_preds,   axis=0)
         targets = np.concatenate(all_targets, axis=0)
-        metrics = compute_metrics(preds, targets, all_station_keys)
+        metrics, per_station = compute_metrics(preds, targets, all_station_keys)
         mean_sigma = float(np.concatenate(all_sigmas).mean()) if all_sigmas else None
 
-    return mean_loss, metrics, mean_sigma
+    return mean_loss, metrics, per_station, mean_sigma
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -514,7 +529,7 @@ def main():
         batch_size         = CONFIG["batch_size"],
         shuffle            = False,
         sampler            = val_sampler,
-        num_workers        = 2,
+        num_workers        = 8,
         pin_memory         = True,
         worker_init_fn     = worker_init_fn,
         persistent_workers = False,
@@ -698,7 +713,7 @@ def main():
         # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
         # averages the loss across ranks; all_gather_object collects preds to rank 0.
         # No NCCL timeout risk: all GPUs stay active throughout validation.
-        val_loss, metrics, mean_sigma = evaluate(
+        val_loss, metrics, per_station, mean_sigma = evaluate(
             model if not is_ddp else model.module,
             val_loader, device, CONFIG["loss_fn"],
             world_size=world_size, rank=rank,
@@ -725,6 +740,18 @@ def main():
             for depth, m in metrics.items():
                 print(f"  {depth:>8s}  MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
                       f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}")
+
+            # Worst 5 stations by 0-10 cm ubRMSE
+            surface_depth = SM_DEPTHS[0]
+            if per_station and surface_depth in next(iter(per_station.values()), {}):
+                ranked = sorted(
+                    [(st, v[surface_depth]["ubRMSE"]) for st, v in per_station.items()
+                     if surface_depth in v],
+                    key=lambda x: x[1], reverse=True,
+                )
+                print(f"  Worst 5 stations ({surface_depth} ubRMSE):")
+                for st, ub in ranked[:5]:
+                    print(f"    {st:50s}  ubRMSE={ub:.4f}")
 
             if use_wandb:
                 log_dict = {
