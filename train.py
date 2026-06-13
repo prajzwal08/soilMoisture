@@ -487,7 +487,7 @@ def main():
     val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
                                        max_stations=val_max_stations)
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
-                                      shuffle=False, drop_last=True) if is_ddp else None
+                                      shuffle=False, drop_last=False) if is_ddp else None
     val_loader = DataLoader(
         val_dataset,
         batch_size         = CONFIG["batch_size"],
