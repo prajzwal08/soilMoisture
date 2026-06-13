@@ -22,6 +22,7 @@ All data is read from Zarr stores on scratch:
 
 import json
 import os
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -35,6 +36,10 @@ from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 
 ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+
+# torch.from_numpy on a read-only /dev/shm memmap triggers a non-writable warning;
+# the tensor is immediately copied into a pre-allocated output buffer so mutation is safe.
+warnings.filterwarnings("ignore", message=".*non-writeable.*", category=UserWarning)
 
 # Set DISABLE_L12_CACHE=1 to skip eager L12 RAM caching and force the lazy
 # zarr chunk-read fallback in load_s2_rolling_zarr / load_s1_rolling_zarr.

@@ -1,4 +1,76 @@
 
+=== 2026-06-13 (session 2 — smoke test results + tuning analysis) ===
+
+Smoke test 23751546 completed (50 stations, 2 epochs, all fixes applied).
+
+Root cause of silent logs — conda run stdout buffering:
+  Every previous job showed only 3 lines (bash echo) then silence until job exit.
+  Root cause: conda run internally pipes child stdout and batches it until process
+    exits. All 20+ Python/torchrun/worker processes wrote to the same pipe;
+    conda run only forwarded to the SLURM log file at exit.
+  PYTHONUNBUFFERED=1 only unbuffers Python's internal buffer — not the kernel pipe.
+  Fix: conda run --no-capture-output (-s flag). Streams stdout live. All future
+    jobs will show real-time output.
+  Also bumped --mem=600G → 700G: full-run DataLoader IPC Shmem could push counted
+    memory close to 600G. 700G gives ~170G headroom at no SBU cost (GPU-billed).
+
+Smoke test results:
+  L12 preload: 842 stations preloaded in 1247s (21 min) before DDP init.
+  RAM at training start: 251.9 GB / 792.3 GB (32% of node).
+  Peak VRAM: 24.2 GB / 100 GB per GPU — 76% unused headroom.
+  Trainable parameters: 50,052,679.
+  Train loss: epoch 1 = -2.1497 → epoch 2 = -2.5059 (NLL, decreasing = learning).
+  Val loss:   epoch 1 = -1.0594 → epoch 2 = -0.2848.
+  Validation metrics (epoch 2, 10 stations):
+    0–10 cm:   ubRMSE=0.061  MAE=0.084  bias=+0.002
+    10–30 cm:  ubRMSE=0.050  MAE=0.069  bias=-0.017
+    30–100 cm: ubRMSE=0.054  MAE=0.106  bias=+0.071
+  Surface ubRMSE 0.061 already below 0.07 target after just 2 epochs / 48 stations.
+
+Step time analysis (GPFS stall signature):
+  Batch 1: 27s  — cold GPFS read, all 32 workers hammer metadata servers simultaneously
+  Batch 2: 3.9s — partially page-cached
+  Batch 3+: 283ms — OS page cache warm, effectively RAM speed
+  Stalls at batches 17 (3s), 25 (8s), 33 (8s): DataLoader queue starvation.
+    Pattern: 8 workers × prefetch_factor=2 = 16 queued batches. When slowest worker
+    hits a new un-cached zarr chunk on GPFS, queue drains in 8×285ms = 2.3s, then
+    GPU stalls waiting. Stalls every 8 batches until all chunks page-cached (~batch 34).
+  After batch 34: clean 283ms for remainder of epoch 1 and all of epoch 2.
+  GPU SM utilisation during compute: 97–100% at 460W. Duty cycle ~60% in steady state
+    (GPU active ~150–180ms per 283ms step; remaining is DataLoader + PCIe transfer).
+
+Memory architecture confirmed:
+  /dev/shm is 378 GB total (50% of 792 GB node RAM) — not 1 TB as assumed.
+  L12 preload uses 182 GB → only 192 GB free. L3+L6+L9 ≈ 546 GB → cannot preload.
+  Page cache handles L3/L6/L9: after epoch 1 warmup, zarr reads hit RAM at same speed
+    as memmap. Converting zarr → GPFS memmaps provides no benefit (page cache already
+    does this). Current architecture is correct and complete for hardware available.
+  GPFS memmaps are only beneficial on local storage (NVMe); Snellius H100 nodes have
+    no local NVMe — scratch is GPFS network storage.
+
+Worker / prefetch tuning analysis (decided NOT to change):
+  Each queued batch costs ~2.5 GB in DataLoader IPC Shmem.
+  Current (8w × pf=2): 16 queued batches × 4 ranks = 160 GB IPC Shmem.
+  Proposed 10w × pf=3: 240 GB IPC (+80 GB), 108 GB headroom — technically safe.
+  Proposed 8w × pf=4: 320 GB IPC (+160 GB), only 28 GB headroom — risky on full run.
+  Proposed 12w × pf=8: 960 GB IPC → OOM.
+  Decision: keep 8w × pf=2. GPFS stalls in epoch 1 = ~60s total overhead across a
+    700-min full run = 0.1% of training time. Not worth RAM risk or added complexity.
+
+Memmap warning fix:
+  torch.from_numpy() on mode='r' /dev/shm memmaps triggered PyTorch non-writable
+    warning, printing source line 215 of dataset.py 39× in log output.
+  Fix: warnings.filterwarnings("ignore", message=".*non-writeable.*") in dataset.py.
+    Warning is benign: tok is immediately copied into pre-allocated l12 buffer.
+
+Full run estimate (baseline_nll, ~500 train stations):
+  ~2,880 batches/epoch × 283ms = 814s = 14 min/epoch steady state.
+  Epoch 1 (cold): ~25–30 min. Epochs 2+: ~14 min each.
+  50 epochs estimated → ~12–16 hours total. Well within 120h limit.
+
+Changes committed: 1310807 (--no-capture-output), b3554db (--mem=700G), + dataset.py warning fix.
+Next: submit baseline_nll.
+
 === 2026-06-13 ===
 Problem: Three consecutive training job crashes before completing a single epoch.
 
