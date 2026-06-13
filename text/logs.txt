@@ -1725,3 +1725,57 @@ Next steps:
   4. (Carry-over) Decide whether to remove the lazy zarr fallback in dataset.py or keep as
      documented escape hatch.
   5. (Carry-over) Possible soil-modality dropout + ablation tests; FiLM skip connection tuning.
+
+=== 2026-06-13 (session 3 — NCCL timeout hardening + checkpoint-before-val) ===
+
+Context: job 23752836 (baseline_nll, epoch 1) crashed after training completed.
+  Epoch 1 training: 4101/4101 batches done. No crash during training.
+  Val ran on rank 0 only (~127,742 cold GPFS samples; never page-cached since training
+    only reads train split). Rank 0 took >10 min to evaluate cold val set.
+  Ranks 1-3 waited at dist.broadcast(val_loss) which never came.
+  PyTorch ProcessGroup default timeout = 600s → ranks 1-3 timed out at BROADCAST SeqNum=41013.
+  NCCL_TIMEOUT=3600 env var was set but it controls NCCL library timeout, NOT PyTorch PG timeout.
+  These are two separate timeout systems.
+  No checkpoint was saved (crash happened before save). Epoch 1 training ~20 min lost.
+
+Fix 1 — PyTorch PG timeout (already in previous commit 405a91e):
+  dist.init_process_group(backend="nccl") →
+  dist.init_process_group(backend="nccl", timeout=timedelta(seconds=3600))
+
+Fix 2 — PyTorch PG timeout increased further (this session):
+  timedelta(seconds=3600) → timedelta(seconds=7200)   # 2 hours
+  NCCL_TIMEOUT env var: 3600 → 7200 in slurm/train.sh
+  Reasoning: 127k val samples × cold GPFS; at 2s/batch = ~66 min > 60 min worst case.
+  2 hours gives comfortable margin even if GPFS is degraded.
+
+Fix 3 — Checkpoint saved before validation (this session, user's suggestion):
+  Previously: epoch trains → evaluate() → save last.pt. If val crashes, epoch is lost.
+  Now:        epoch trains → save last.pt (val_pending=True) → evaluate() → overwrite last.pt (val_pending=False).
+  If val crashes at any point, last.pt exists with trained weights for that epoch.
+
+Resume logic for val_pending:
+  On resume, if ckpt["val_pending"] is True:
+    - Load model/optimizer/scheduler weights from checkpoint
+    - Set val_pending_epoch = ckpt["epoch"] and start_epoch = that epoch
+    - In the training loop: skip train_one_epoch() for that epoch, reuse saved train_loss/train_tv
+    - Skip dist.reduce() for train_loss (training didn't happen; no ranks to average)
+    - Run evaluate() on rank 0, broadcast val_loss, save full checkpoint with val_pending=False
+    - Continue to next epoch normally
+  This means a val crash only costs the time to re-run validation (~15-30 min), not re-training.
+
+Tensor pipeline usage analysis (low GPU utilization):
+  GPU duty cycle ~60% in steady state: GPU active ~150-180ms per 283ms step.
+  Remaining 40% is DataLoader waiting for next batch.
+  Root cause: GPFS cold-read latency during first epoch. Workers hit un-cached zarr chunks
+    and stall; DataLoader queue drains; GPU idles.
+  This is a hardware constraint, not a code bug. Page cache warms after epoch 1 → epoch 2+
+    runs at near 100% duty cycle.
+  No code change made — increasing prefetch_factor risks RAM OOM; stalls = 0.1% of total runtime.
+
+Jobs:
+  23752836: FAILED — NCCL timeout during epoch 1 val (600s PG timeout, val took >10 min)
+  23758139: submitted with 3600s fix, then cancelled (2 min in, still preloading) to apply
+            further hardening
+  23758952: ACTIVE — baseline_nll with all fixes (7200s timeout + checkpoint-before-val)
+
+Files modified: train.py, slurm/train.sh

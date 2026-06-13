@@ -20,7 +20,7 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 # Eliminates zarr disk reads for L12 tokens during training, removing batch stalls.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
-export NCCL_TIMEOUT=3600   # 1 hour; default 30 min risks timeout during zarr stalls
+export NCCL_TIMEOUT=7200   # 2 hours; covers cold-GPFS val on first epoch
 
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"

@@ -142,7 +142,7 @@ CONFIG = {
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 def setup_ddp():
-    dist.init_process_group(backend="nccl", timeout=timedelta(seconds=3600))
+    dist.init_process_group(backend="nccl", timeout=timedelta(seconds=7200))
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
     return local_rank, dist.get_rank(), dist.get_world_size()
@@ -496,10 +496,13 @@ def main():
     )
 
     # ── Resume from checkpoint (automatic if last.pt exists) ──────────
-    start_epoch      = 1
-    best_val_loss    = float("inf")
-    no_improve_count = 0
-    wandb_run_id     = None
+    start_epoch       = 1
+    best_val_loss     = float("inf")
+    no_improve_count  = 0
+    wandb_run_id      = None
+    val_pending_epoch = None   # epoch whose training is done but val crashed last time
+    saved_train_loss  = None
+    saved_train_tv    = None
 
     ckpt_last = ckpt_dir / "last.pt"
     if ckpt_last.exists():
@@ -509,13 +512,22 @@ def main():
         raw_model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
-        start_epoch      = ckpt["epoch"] + 1
         best_val_loss    = ckpt["best_val_loss"]
         no_improve_count = ckpt["no_improve_count"]
         wandb_run_id     = ckpt.get("wandb_run_id")
-        if is_main:
-            print(f"  Resuming from epoch {start_epoch}  "
-                  f"best_val_loss={best_val_loss:.4f}  no_improve={no_improve_count}")
+        if ckpt.get("val_pending"):
+            # Training completed but validation crashed — skip training, run val only
+            start_epoch       = ckpt["epoch"]
+            val_pending_epoch = ckpt["epoch"]
+            saved_train_loss  = ckpt.get("train_loss")
+            saved_train_tv    = ckpt.get("train_tv")
+            if is_main:
+                print(f"  Resuming epoch {start_epoch} — training done, validation pending")
+        else:
+            start_epoch = ckpt["epoch"] + 1
+            if is_main:
+                print(f"  Resuming from epoch {start_epoch}  "
+                      f"best_val_loss={best_val_loss:.4f}  no_improve={no_improve_count}")
     else:
         if is_main:
             print("No checkpoint found — starting fresh")
@@ -561,11 +573,33 @@ def main():
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
-        train_loss, train_tv = train_one_epoch(
-            model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
-            lambda_tv=CONFIG["lambda_tv"],
-            max_batches=args.max_train_batches, debug_nan=args.debug_nan,
-        )
+        if epoch == val_pending_epoch:
+            # Resuming after a val crash — training already completed, reuse saved metrics
+            train_loss = saved_train_loss or 0.0
+            train_tv   = saved_train_tv   or 0.0
+        else:
+            train_loss, train_tv = train_one_epoch(
+                model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
+                lambda_tv=CONFIG["lambda_tv"],
+                max_batches=args.max_train_batches, debug_nan=args.debug_nan,
+            )
+
+            # Save post-training checkpoint before validation — epoch not lost if val crashes
+            if is_main:
+                torch.save({
+                    "epoch"           : epoch,
+                    "model"           : raw_model.state_dict(),
+                    "optimizer"       : optimizer.state_dict(),
+                    "scheduler"       : scheduler.state_dict(),
+                    "train_loss"      : train_loss,
+                    "train_tv"        : train_tv,
+                    "val_loss"        : float("inf"),
+                    "best_val_loss"   : best_val_loss,
+                    "no_improve_count": no_improve_count,
+                    "config"          : CONFIG,
+                    "wandb_run_id"    : wandb.run.id if use_wandb else None,
+                    "val_pending"     : True,
+                }, ckpt_last)
 
         # Evaluate on rank 0 only; broadcast val_loss to all ranks for scheduler
         val_loss, metrics, mean_sigma = 0.0, {}, None
@@ -575,14 +609,15 @@ def main():
                 val_loader, device, CONFIG["loss_fn"], max_batches=args.max_val_batches,
             )
         if is_ddp:
-            # Reduce train_loss and train_tv to rank 0 for accurate global average logging
-            t_loss = torch.tensor(train_loss, device=device)
-            t_tv   = torch.tensor(train_tv,   device=device)
-            dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
-            dist.reduce(t_tv,   dst=0, op=dist.ReduceOp.AVG)
-            if is_main:
-                train_loss = t_loss.item()
-                train_tv   = t_tv.item()
+            if epoch != val_pending_epoch:
+                # Reduce train_loss and train_tv to rank 0 for accurate global average logging
+                t_loss = torch.tensor(train_loss, device=device)
+                t_tv   = torch.tensor(train_tv,   device=device)
+                dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
+                dist.reduce(t_tv,   dst=0, op=dist.ReduceOp.AVG)
+                if is_main:
+                    train_loss = t_loss.item()
+                    train_tv   = t_tv.item()
             # Broadcast val_loss to all ranks for scheduler
             val_loss_t = torch.tensor(val_loss, device=device)
             dist.broadcast(val_loss_t, src=0)
@@ -615,7 +650,7 @@ def main():
                     log_dict["val/mean_sigma"] = mean_sigma
                 wandb.log(log_dict)
 
-            # ── Checkpoint ────────────────────────────────────────────
+            # ── Checkpoint (post-validation; overwrites the val_pending checkpoint) ──
             if val_loss < best_val_loss:
                 best_val_loss    = val_loss
                 no_improve_count = 0
@@ -632,6 +667,7 @@ def main():
                 "no_improve_count": no_improve_count,
                 "config"          : CONFIG,
                 "wandb_run_id"    : wandb.run.id if use_wandb else None,
+                "val_pending"     : False,
             }
             torch.save(state, ckpt_last)
 
