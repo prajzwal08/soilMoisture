@@ -296,7 +296,13 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, loss_fn, max_batches=None):
+def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=None):
+    """Distributed-aware evaluation.
+
+    All ranks process their shard in parallel; loss is all_reduced; predictions
+    are gathered to rank 0 for metric computation.  Keeps all GPUs active so
+    NCCL watchdog never triggers regardless of GPFS latency.
+    """
     model.eval()
     total_loss  = 0.0
     n_batches   = 0
@@ -330,12 +336,44 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
             sigma = var[:, :, SROW, SCOL].float().mul(0.5).exp().cpu().numpy()
             all_sigmas.append(sigma)
 
-    preds   = np.concatenate(all_preds,   axis=0)
-    targets = np.concatenate(all_targets, axis=0)
-    metrics = compute_metrics(preds, targets, all_station_keys)
+    mean_loss = total_loss / max(n_batches, 1)
 
-    mean_sigma = float(np.concatenate(all_sigmas).mean()) if all_sigmas else None
-    return total_loss / max(n_batches, 1), metrics, mean_sigma
+    if world_size > 1:
+        # Average loss across all ranks
+        loss_t = torch.tensor(mean_loss, device=device)
+        dist.all_reduce(loss_t, op=dist.ReduceOp.AVG)
+        mean_loss = loss_t.item()
+
+        # Gather predictions from all ranks to rank 0 (variable-length safe via pickle)
+        n_depths = len(SM_DEPTHS)
+        local_preds   = np.concatenate(all_preds,   axis=0) if all_preds   else np.empty((0, n_depths))
+        local_targets = np.concatenate(all_targets, axis=0) if all_targets else np.empty((0, n_depths))
+        local_sigmas  = np.concatenate(all_sigmas,  axis=0) if all_sigmas  else None
+        gathered_preds   = [None] * world_size
+        gathered_targets = [None] * world_size
+        gathered_keys    = [None] * world_size
+        gathered_sigmas  = [None] * world_size
+        dist.all_gather_object(gathered_preds,   local_preds)
+        dist.all_gather_object(gathered_targets, local_targets)
+        dist.all_gather_object(gathered_keys,    all_station_keys)
+        dist.all_gather_object(gathered_sigmas,  local_sigmas)
+
+        if rank == 0:
+            preds        = np.concatenate(gathered_preds,   axis=0)
+            targets      = np.concatenate(gathered_targets, axis=0)
+            station_keys = [k for keys in gathered_keys for k in keys]
+            metrics      = compute_metrics(preds, targets, station_keys)
+            valid_sigmas = [s for s in gathered_sigmas if s is not None]
+            mean_sigma   = float(np.concatenate(valid_sigmas).mean()) if valid_sigmas else None
+        else:
+            metrics, mean_sigma = {}, None
+    else:
+        preds   = np.concatenate(all_preds,   axis=0)
+        targets = np.concatenate(all_targets, axis=0)
+        metrics = compute_metrics(preds, targets, all_station_keys)
+        mean_sigma = float(np.concatenate(all_sigmas).mean()) if all_sigmas else None
+
+    return mean_loss, metrics, mean_sigma
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -443,21 +481,24 @@ def main():
         prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
     )
 
-    # Val runs only on rank 0 to avoid gathering complexity
-    val_loader = None
-    if is_main:
-        val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
-                                           max_stations=val_max_stations)
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size         = CONFIG["batch_size"],
-            shuffle            = False,
-            num_workers        = CONFIG["num_workers"],
-            pin_memory         = True,
-            worker_init_fn     = worker_init_fn,
-            persistent_workers = CONFIG["num_workers"] > 0,
-            prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
-        )
+    # Val dataset on all ranks — DistributedSampler splits it across GPUs
+    # Use lighter workers (2w × pf=2, persistent=False) to cap IPC Shmem at ~37GB
+    # while train DataLoader IPC (~293GB) stays resident during val.
+    val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
+                                       max_stations=val_max_stations)
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
+                                      shuffle=False, drop_last=True) if is_ddp else None
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size         = CONFIG["batch_size"],
+        shuffle            = False,
+        sampler            = val_sampler,
+        num_workers        = 2,
+        pin_memory         = True,
+        worker_init_fn     = worker_init_fn,
+        persistent_workers = False,
+        prefetch_factor    = 2,
+    )
 
     # ── Model ─────────────────────────────────────────────────────────
     if is_main:
@@ -601,27 +642,25 @@ def main():
                     "val_pending"     : True,
                 }, ckpt_last)
 
-        # Evaluate on rank 0 only; broadcast val_loss to all ranks for scheduler
-        val_loss, metrics, mean_sigma = 0.0, {}, None
-        if is_main:
-            val_loss, metrics, mean_sigma = evaluate(
-                model if not is_ddp else model.module,
-                val_loader, device, CONFIG["loss_fn"], max_batches=args.max_val_batches,
-            )
-        if is_ddp:
-            if epoch != val_pending_epoch:
-                # Reduce train_loss and train_tv to rank 0 for accurate global average logging
-                t_loss = torch.tensor(train_loss, device=device)
-                t_tv   = torch.tensor(train_tv,   device=device)
-                dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
-                dist.reduce(t_tv,   dst=0, op=dist.ReduceOp.AVG)
-                if is_main:
-                    train_loss = t_loss.item()
-                    train_tv   = t_tv.item()
-            # Broadcast val_loss to all ranks for scheduler
-            val_loss_t = torch.tensor(val_loss, device=device)
-            dist.broadcast(val_loss_t, src=0)
-            val_loss = val_loss_t.item()
+        # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
+        # averages the loss across ranks; all_gather_object collects preds to rank 0.
+        # No NCCL timeout risk: all GPUs stay active throughout validation.
+        val_loss, metrics, mean_sigma = evaluate(
+            model if not is_ddp else model.module,
+            val_loader, device, CONFIG["loss_fn"],
+            world_size=world_size, rank=rank,
+            max_batches=args.max_val_batches,
+        )
+        if is_ddp and epoch != val_pending_epoch:
+            # Reduce train_loss and train_tv to rank 0 for accurate global average logging
+            t_loss = torch.tensor(train_loss, device=device)
+            t_tv   = torch.tensor(train_tv,   device=device)
+            dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
+            dist.reduce(t_tv,   dst=0, op=dist.ReduceOp.AVG)
+            if is_main:
+                train_loss = t_loss.item()
+                train_tv   = t_tv.item()
+        # val_loss already all_reduced inside evaluate() — same on all ranks, no broadcast needed
 
         scheduler.step(val_loss)
 
