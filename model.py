@@ -406,7 +406,7 @@ class SoilMoistureModel(nn.Module):
 
         pyramid    = torch.zeros(B, MAX_ACQ, 4, self.d_model, device=device)
 
-        flat_l12   = l12.reshape(B * MAX_ACQ, 196, self.d_model).float()
+        flat_l12   = l12.reshape(B * MAX_ACQ, 196, self.d_model)
         flat_valid = valid.reshape(B * MAX_ACQ)
 
         valid_idx  = flat_valid.nonzero(as_tuple=True)[0]
@@ -435,7 +435,7 @@ class SoilMoistureModel(nn.Module):
         token_valid: (B, 14, 14) bool | None — True = valid patch."""
         B  = l12.shape[0]
         tv = token_valid.reshape(B, 196) if token_valid is not None else None
-        return spatial_pyramid_pool(l12.float(), token_valid=tv, attn=attn)
+        return spatial_pyramid_pool(l12, token_valid=tv, attn=attn)
 
     def _get_target_spatial_tokens(self, batch: dict, B: int,
                                    device) -> tuple[torch.Tensor, torch.Tensor]:
@@ -448,7 +448,7 @@ class SoilMoistureModel(nn.Module):
             spatial_tokens : (B, 196, 768)
             use_s1         : (B,) bool
         """
-        spatial_tokens = batch["anchor_l12"].float().to(device)        # (B, 196, 768)
+        spatial_tokens = batch["anchor_l12"].to(device)                 # (B, 196, 768)
         anchor_orbit   = batch["anchor_orbit"].to(device)              # (B,) long: 0=S2,1=S1_asc,2=S1_desc
 
         # 2D spatial positional encoding
@@ -477,7 +477,7 @@ class SoilMoistureModel(nn.Module):
         Features are precomputed by precompute_terramind.py and loaded by the dataset.
         """
         def to_spatial(key: str) -> torch.Tensor:
-            return (batch[key].float().to(device)          # (B, 196, 768)
+            return (batch[key].to(device)                  # (B, 196, 768)
                     .reshape(B, 14, 14, self.d_model)
                     .permute(0, 3, 1, 2))                  # (B, 768, 14, 14)
 

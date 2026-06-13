@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
 #SBATCH --gpus=4
-#SBATCH --mem=384G
+#SBATCH --mem=600G
 #SBATCH --time=120:00:00
 #SBATCH --output=logs/train_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -15,10 +15,11 @@ set -euo pipefail
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
-# Disable eager L12 token cache — at 842 stations x ~150MB each = ~126GB RAM
-# loading everything upfront risks OOM_Killed with 8 DataLoader workers.
-export DISABLE_L12_CACHE=1
+# L12 cache re-enabled: 600G budget covers ~91GB shared pages at init.
+# Eliminates zarr disk reads for L12 tokens during training, removing batch stalls.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONUNBUFFERED=1
+export NCCL_TIMEOUT=3600   # 1 hour; default 30 min risks timeout during zarr stalls
 
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"

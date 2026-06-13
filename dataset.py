@@ -534,6 +534,20 @@ def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     return vals, doys, rel_pos, valid
 
 
+def _load_l12_shm(dir_name: str, shm_dir: Path) -> dict[str, np.ndarray] | None:
+    """Return memmapped L12 arrays from /dev/shm (shared across all DDP ranks)."""
+    result = {}
+    for key in ("s2", "s1_asc", "s1_desc"):
+        bin_path  = shm_dir / f"{dir_name}__{key}.bin"
+        meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
+        if not bin_path.exists():
+            continue
+        meta = json.loads(meta_path.read_text())
+        result[key] = np.memmap(bin_path, dtype=meta["dtype"], mode="r",
+                                shape=tuple(meta["shape"]))
+    return result or None
+
+
 # ── Dataset ──────────────────────────────────────────────────────────────────
 
 class SoilMoistureDataset(Dataset):
@@ -578,6 +592,7 @@ class SoilMoistureDataset(Dataset):
         split_filter:    list | None = None,
         training:        bool        = True,
         max_stations:    int | None  = None,
+        shm_dir:         Path | None = None,
     ):
         self.training  = training
         self.years     = years or list(range(2016, 2024))
@@ -611,12 +626,15 @@ class SoilMoistureDataset(Dataset):
         #               Preloads L12 token arrays into RAM so __getitem__ does 0 disk reads
         #               for history tokens. CoW fork: one physical copy across all workers.
         # ERA5/SIF/TWSA/label caches: same format, all populated from zarr on scratch.
-        self._zarr_groups : dict[Path, zarr.Group | None]       = {}
-        self._l12_cache   : dict[Path, dict[str, np.ndarray]]   = {}
-        self._era5_cache  : dict[Path, tuple | None] = {}
-        self._sif_cache   : dict[Path, tuple | None] = {}
-        self._twsa_cache  : dict[Path, tuple | None] = {}
-        self._label_cache : dict[Path, tuple]        = {}
+        self._zarr_groups  : dict[Path, zarr.Group | None]       = {}
+        self._l12_cache    : dict[Path, dict[str, np.ndarray]]   = {}
+        self._era5_cache   : dict[Path, tuple | None] = {}
+        self._sif_cache    : dict[Path, tuple | None] = {}
+        self._twsa_cache   : dict[Path, tuple | None] = {}
+        self._label_cache  : dict[Path, tuple]        = {}
+        # Static-per-station tensors (DEM, LULC, soil, token masks).
+        # Loaded once at init; workers inherit as shared CoW pages (read-only).
+        self._static_cache : dict[Path, dict[str, torch.Tensor]] = {}
 
         for _, r in splits.iterrows():
             has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
@@ -644,12 +662,34 @@ class SoilMoistureDataset(Dataset):
                     self._era5_cache[sat_dir]  = _load_zarr_era5(zg)
                     self._sif_cache[sat_dir]   = _load_zarr_sif(zg)
                     self._twsa_cache[sat_dir]  = _load_zarr_twsa(zg)
-                    if not DISABLE_L12_CACHE:
+                    # Prefer /dev/shm memmaps (one physical copy shared across DDP ranks)
+                    if shm_dir is not None:
+                        shm_l12 = _load_l12_shm(dir_name, shm_dir)
+                        if shm_l12:
+                            self._l12_cache[sat_dir] = shm_l12
+                    if sat_dir not in self._l12_cache and not DISABLE_L12_CACHE:
                         self._l12_cache[sat_dir] = {
                             k: zg[f"{k}/l12"][:]
                             for k in ("s2", "s1_asc", "s1_desc")
                             if f"{k}/l12" in zg
                         }
+                    self._static_cache[sat_dir] = {
+                        "dem":            (torch.from_numpy(zg["dem"][:])
+                                           if "dem" in zg
+                                           else torch.zeros(196, 768, dtype=torch.float16)),
+                        "lulc":           (torch.from_numpy(zg["lulc"][:])
+                                           if "lulc" in zg
+                                           else torch.zeros(196, 768, dtype=torch.float16)),
+                        "dem_token_mask": (torch.from_numpy(np.asarray(zg["dem_token_mask"][:]))
+                                           if "dem_token_mask" in zg
+                                           else torch.ones(14, 14, dtype=torch.bool)),
+                        "lulc_token_mask":(torch.from_numpy(np.asarray(zg["lulc_token_mask"][:]))
+                                           if "lulc_token_mask" in zg
+                                           else torch.ones(14, 14, dtype=torch.bool)),
+                        "soil":           (torch.from_numpy(fill_soil_nans(zg["soil"][:]))
+                                           if "soil" in zg
+                                           else torch.zeros(21, 74, 74, dtype=torch.float32)),
+                    }
                     lc = _load_zarr_labels(zg)
                     if lc is not None:
                         self._label_cache[sat_dir] = lc
@@ -725,26 +765,19 @@ class SoilMoistureDataset(Dataset):
                                      l12_asc_np=_l12.get("s1_asc"),
                                      l12_desc_np=_l12.get("s1_desc"))
 
-            dem_l12  = (torch.from_numpy(zg["dem"][:])
-                        if "dem" in zg else torch.zeros(196, 768, dtype=torch.float16))
-            lulc_l12 = (torch.from_numpy(zg["lulc"][:])
-                        if "lulc" in zg else torch.zeros(196, 768, dtype=torch.float16))
-
-            dem_token_mask  = (torch.from_numpy(np.asarray(zg["dem_token_mask"][:]))
-                               if "dem_token_mask" in zg
-                               else torch.ones(14, 14, dtype=torch.bool))
-            lulc_token_mask = (torch.from_numpy(np.asarray(zg["lulc_token_mask"][:]))
-                               if "lulc_token_mask" in zg
-                               else torch.ones(14, 14, dtype=torch.bool))
+            _static     = self._static_cache.get(sat_dir, {})
+            dem_l12          = _static.get("dem",            torch.zeros(196, 768, dtype=torch.float16))
+            lulc_l12         = _static.get("lulc",           torch.zeros(196, 768, dtype=torch.float16))
+            dem_token_mask   = _static.get("dem_token_mask", torch.ones(14, 14, dtype=torch.bool))
+            lulc_token_mask  = _static.get("lulc_token_mask",torch.ones(14, 14, dtype=torch.bool))
 
             anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
                 select_anchor_zarr(zg, year, doy, l12_cache=_l12)
 
-        # ── Soil patch (static, NaN-filled) ──────────────────────────
-        if "soil" in zg:
-            soil_patch = torch.from_numpy(fill_soil_nans(zg["soil"][:]))
-        else:
-            soil_patch = torch.zeros(21, 74, 74, dtype=torch.float32)
+        # ── Soil patch (static, from cache) ──────────────────────────
+        soil_patch = self._static_cache.get(sat_dir, {}).get(
+            "soil", torch.zeros(21, 74, 74, dtype=torch.float32)
+        )
 
         # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
         era5, era5_doys = load_era5_rolling(self._era5_cache.get(sat_dir), year, doy)

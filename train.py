@@ -12,8 +12,10 @@ W&B project: soil-moisture-phd
 """
 
 import argparse
+import json
 import os
 import random
+import shutil
 import time
 from pathlib import Path
 
@@ -28,6 +30,71 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss, total_variation_loss
+
+# ── /dev/shm L12 preloader ────────────────────────────────────────────────────
+
+def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path) -> None:
+    """Rank 0: load all stations' L12 tokens from zarr → /dev/shm tmpfs memmaps.
+
+    All DDP ranks then open the same files via numpy.memmap(mode='r') so the OS
+    serves one shared physical copy — cuts node RAM by ~400 GB on the full run.
+    """
+    import zarr
+    import pandas as pd
+    from dataset import ZARR_ROOT
+
+    splits = pd.read_csv(splits_csv)
+    if category_filter:
+        def _cat(r):
+            sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+            fl = str(r.get("has_flux",          "False")).lower() == "true"
+            return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
+        splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
+
+    n_written = 0
+    for _, r in splits.iterrows():
+        if not bool(r.get("soil_patch_ok", True)):
+            continue
+        has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
+        has_fl = str(r.get("has_flux",          "False")).lower() == "true"
+        cat    = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+        if str(r["source_network"]) == "ISMN":
+            dir_name = f"ISMN_{r['network']}_{r['station_name']}"
+        else:
+            dir_name = f"{r['source_network']}_{r['station_id']}"
+
+        zarr_path = ZARR_ROOT / cat / dir_name
+        if not (zarr_path / ".complete").exists():
+            continue
+        try:
+            zg = zarr.open_consolidated(str(zarr_path), mode="r")
+        except Exception:
+            try:
+                zg = zarr.open_group(str(zarr_path), mode="r")
+            except Exception:
+                continue
+
+        wrote_any = False
+        for key in ("s2", "s1_asc", "s1_desc"):
+            if f"{key}/l12" not in zg:
+                continue
+            arr      = zg[f"{key}/l12"][:]
+            bin_path = shm_dir / f"{dir_name}__{key}.bin"
+            meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
+            if bin_path.exists():        # already written (resume case)
+                wrote_any = True
+                continue
+            mm = np.memmap(bin_path, dtype=arr.dtype, mode="w+", shape=arr.shape)
+            mm[:] = arr
+            del mm                       # flush to tmpfs
+            meta_path.write_text(json.dumps({"shape": list(arr.shape),
+                                             "dtype": str(arr.dtype)}))
+            wrote_any = True
+        if wrote_any:
+            n_written += 1
+
+    print(f"[SHM] L12 preloaded for {n_written} stations → {shm_dir}")
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -184,14 +251,15 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
             if bad_in:
                 _report_nan(f"batch {n_batches+1:03d} INPUT", batch, bad_in)
 
-        mu, var = model(batch)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            mu, var = model(batch)
 
-        if debug_nan:
-            bad_out = _scan_for_nan({"mu": mu, "var": var})
-            if bad_out:
-                _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
+            if debug_nan:
+                bad_out = _scan_for_nan({"mu": mu, "var": var})
+                if bad_out:
+                    _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-        loss, tv = _compute_loss(mu, var, batch["label"], loss_fn, lambda_tv)
+            loss, tv = _compute_loss(mu, var, batch["label"], loss_fn, lambda_tv)
 
         optimizer.zero_grad()
         loss.backward()
@@ -242,17 +310,18 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
-        mu, var = model(batch)
-        loss, _ = _compute_loss(mu, var, batch["label"], loss_fn)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            mu, var = model(batch)
+            loss, _ = _compute_loss(mu, var, batch["label"], loss_fn)
         total_loss += loss.item()
         n_batches  += 1
 
-        all_preds.append(mu[:, :, SROW, SCOL].cpu().numpy())
+        all_preds.append(mu[:, :, SROW, SCOL].float().cpu().numpy())
         all_targets.append(batch["label"].cpu().numpy())
         all_station_keys.extend(batch["station_key"])
 
         if var is not None:
-            sigma = var[:, :, SROW, SCOL].sqrt().cpu().numpy()
+            sigma = var[:, :, SROW, SCOL].float().sqrt().cpu().numpy()
             all_sigmas.append(sigma)
 
     preds   = np.concatenate(all_preds,   axis=0)
@@ -322,6 +391,18 @@ def main():
     ckpt_dir = Path(CONFIG["checkpoint_dir"]) / CONFIG["run_name"]
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── L12 shared memory preloading ──────────────────────────────────
+    # Rank 0 writes all L12 arrays to /dev/shm tmpfs; all ranks memmap the
+    # same files read-only → OS shares one physical copy (~400 GB saved).
+    SHM_DIR = Path(f"/dev/shm/sm_l12_{os.environ.get('SLURM_JOB_ID', os.getpid())}")
+    if rank == 0:
+        SHM_DIR.mkdir(parents=True, exist_ok=True)
+        t_shm = time.perf_counter()
+        _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR)
+        print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s")
+    if is_ddp:
+        dist.barrier()   # ranks 1-3 wait for rank 0 to finish writing /dev/shm
+
     # ── Datasets ──────────────────────────────────────────────────────
     if is_main:
         print("Building datasets...")
@@ -330,6 +411,7 @@ def main():
         era5_stats_path  = CONFIG["era5_stats"],
         years            = CONFIG["years"],
         category_filter  = CONFIG["category_filter"],
+        shm_dir          = SHM_DIR,
     )
     val_max_stations = max(1, args.max_stations // 5) if args.max_stations is not None else None
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
@@ -564,6 +646,10 @@ def main():
             wandb.finish()
         print(f"\nTraining complete. Best val_loss: {best_val_loss:.4f}")
         print(f"Checkpoints: {ckpt_dir}")
+
+    if rank == 0 and SHM_DIR.exists():
+        shutil.rmtree(SHM_DIR, ignore_errors=True)
+        print(f"[SHM] Cleaned up {SHM_DIR}")
 
     if is_ddp:
         dist.destroy_process_group()
