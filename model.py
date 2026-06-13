@@ -90,13 +90,12 @@ def spatial_pyramid_pool(tokens: torch.Tensor,
         scores = attn(tokens).reshape(B, G, G, 1)
         if token_valid is not None:
             cloud = ~token_valid.reshape(B, G, G).unsqueeze(-1)
-            scores = scores.masked_fill(cloud, float("-inf"))
+            scores = scores.masked_fill(cloud, -1e4)   # -inf → NaN gradient when all-clouded
 
         def _pool(rs, re, cs, ce):
             wg = g[:, rs:re, cs:ce, :]
             ws = scores[:, rs:re, cs:ce, :]
             w  = F.softmax(ws.reshape(B, -1), dim=1)
-            w  = torch.nan_to_num(w, nan=0.0)
             return (wg * w.reshape(B, re-rs, ce-cs, 1)).sum(dim=(1, 2))
     else:
         v = (token_valid.reshape(B, G, G).to(tokens.dtype).unsqueeze(-1)
@@ -203,10 +202,10 @@ class UNetDecoder(nn.Module):
         self.up4   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.conv4 = _ConvBlock(c[3], c[3])
 
-        # When uncertainty=True: output 2×n_depths (mu then raw_var per depth).
-        # Variance bias init -3.7 → softplus(-3.7)+ε ≈ 0.025, σ ≈ 0.16 m³/m³.
+        # When uncertainty=True: output 2×n_depths (mu then log_var per depth).
+        # log_var bias init -3.7 → σ² = exp(-3.7) ≈ 0.025, σ ≈ 0.16 m³/m³.
         # Matches typical within-station SM variability, avoiding wasted early epochs
-        # collapsing a physically unrealistic σ=0.83 (what zero-init would give).
+        # with σ=1.0 (what zero-init would give).
         out_ch    = 2 * n_depths if predict_uncertainty else n_depths
         self.head = nn.Conv2d(c[3], out_ch, 1)
         if predict_uncertainty:
@@ -234,12 +233,9 @@ class UNetDecoder(nn.Module):
         raw = self.head(x)                                              # (B, out_ch, 224, 224)
 
         if self.predict_uncertainty:
-            mu  = raw[:, :self.n_depths]
-            # Output variance directly (not log-variance) so masked_nll_loss can
-            # use var for the denominator and log(var) for the log term without
-            # the redundant log→exp roundtrip.
-            var = F.softplus(raw[:, self.n_depths:]) + 1e-6
-            return mu, var
+            mu      = raw[:, :self.n_depths]
+            log_var = raw[:, self.n_depths:]   # log(σ²); masked_nll_loss uses exp(-log_var)
+            return mu, log_var
         return raw, None                                                # None signals no uncertainty
 
 
@@ -723,28 +719,28 @@ def masked_huber_loss(
 
 def masked_nll_loss(
     mu:          torch.Tensor,   # (B, n_depths, 224, 224)
-    var:         torch.Tensor,   # (B, n_depths, 224, 224) — variance σ², always > 0
+    log_var:     torch.Tensor,   # (B, n_depths, 224, 224) — log-variance log(σ²), unbounded
     label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
     station_row: int   = SoilMoistureModel.STATION_ROW,
     station_col: int   = SoilMoistureModel.STATION_COL,
 ) -> torch.Tensor:
     """
-    Gaussian negative log-likelihood at the station pixel.
-    NLL = 0.5 * log(σ²) + 0.5 * (y - μ)² / σ²
-    var = softplus(raw) + ε from the decoder; always positive, no log→exp roundtrip.
+    Numerically stable Gaussian NLL at the station pixel.
+    NLL = 0.5 * log_var + 0.5 * (y - μ)² * exp(-log_var)
+    Avoids dividing by near-zero variance; gradients stay bounded even at init.
     """
     mu_pt  = mu[:, :, station_row, station_col]                        # (B, n_depths)
-    var_pt = var[:, :, station_row, station_col]                       # (B, n_depths)
+    lv_pt  = log_var[:, :, station_row, station_col]                   # (B, n_depths)
     mask   = ~torch.isnan(label)
 
     if not mask.any():
         return mu_pt.sum() * 0.0
 
     mu_m  = mu_pt[mask]
-    var_m = var_pt[mask]
+    lv_m  = lv_pt[mask]
     y_m   = label[mask]
 
-    nll = 0.5 * torch.log(var_m) + 0.5 * (y_m - mu_m) ** 2 / var_m
+    nll = 0.5 * lv_m + 0.5 * (y_m - mu_m) ** 2 * torch.exp(-lv_m)
     return nll.mean()
 
 

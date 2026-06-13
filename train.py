@@ -156,7 +156,7 @@ def set_seed(seed: int):
 
 def worker_init_fn(worker_id: int):
     """Seed each DataLoader worker independently so RNG state is not duplicated across workers."""
-    seed = torch.initial_seed() % (2 ** 32)
+    seed = (torch.initial_seed() + worker_id) % (2 ** 32)
     np.random.seed(seed)
     random.seed(seed)
 
@@ -321,7 +321,8 @@ def evaluate(model, loader, device, loss_fn, max_batches=None):
         all_station_keys.extend(batch["station_key"])
 
         if var is not None:
-            sigma = var[:, :, SROW, SCOL].float().sqrt().cpu().numpy()
+            # var holds log_var; σ = exp(0.5 * log_var)
+            sigma = var[:, :, SROW, SCOL].float().mul(0.5).exp().cpu().numpy()
             all_sigmas.append(sigma)
 
     preds   = np.concatenate(all_preds,   axis=0)

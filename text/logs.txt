@@ -1,4 +1,59 @@
 
+=== 2026-06-13 ===
+Problem: Three consecutive training job crashes before completing a single epoch.
+
+Crash 1 — Job 23733182 (OOM):
+  Symptom: SLURM cgroup killed the job at batch 603 after ~2h. Node RAM hit 421GB.
+  Root cause: 4 DDP rank processes each loaded a full copy of the dataset. Workers dirtied
+    CoW pages progressively (zarr chunk reads), causing burst-style RAM growth from 48GB
+    to 421GB, exceeding the 384G cgroup limit.
+  Fix: --mem=384G → --mem=600G in slurm/train.sh.
+
+Crash 2 — Job 23749254 (empty log):
+  Symptom: Log file had only the job header then silence. Job cancelled immediately.
+  Root cause: Python stdout is block-buffered inside `conda run` subprocess; buffer never
+    flushed before SIGTERM.
+  Fix: export PYTHONUNBUFFERED=1 in slurm/train.sh.
+
+Crash 3 — Job 23750234 (BFloat16 numpy):
+  Symptom: TypeError: Got unsupported ScalarType BFloat16 in evaluate() at line 252.
+    Job ran 277 batches successfully (2.4× faster) then crashed at the first val epoch.
+  Root cause: mu/var tensors from torch.autocast("cuda", dtype=torch.bfloat16) remain
+    bfloat16; numpy does not support bfloat16.
+  Fix: .float() cast before .numpy() on mu and var in evaluate().
+
+Performance fixes applied (from tensor core utilisation analysis):
+  - Added torch.autocast("cuda", dtype=torch.bfloat16) to train_one_epoch and evaluate.
+    Before: tensor core utilisation 0.4%, batch time ~724ms.
+    After (job 23750234): batch time 283-300ms (2.4×), stalls 6-7× shorter (3-9s vs 30-68s).
+  - Removed 4 explicit .float() casts in model.py that upcast fp16 tensors before linears,
+    defeating autocast.
+  - Re-enabled L12 RAM cache (removed DISABLE_L12_CACHE); added static cache for
+    DEM/LULC/soil/token_masks in dataset.py — eliminates per-sample zarr reads for all
+    static-per-station data.
+
+RAM fix — /dev/shm shared L12 cache (job 23751109, pending):
+  Problem: Full run estimated 660GB peak (614GB data + 46GB prefetch/CUDA overhead),
+    exceeding the 600G cgroup limit. Root cause: torchrun spawns 4 independent OS processes,
+    each holding its own copy of the L12 cache — no shared memory by default.
+  Fix: _preload_l12_to_shm() in train.py — rank 0 writes all L12 arrays to /dev/shm tmpfs
+    as numpy memmaps before dataset construction. All 4 ranks open the same files with
+    np.memmap(mode='r'); OS shares one physical copy (~400GB saved, peak ~258GB).
+    /dev/shm on Snellius H100 nodes ≈ 1TB; we need ~134GB.
+  Also added NCCL_TIMEOUT=3600 to prevent NCCL allreduce timeout during zarr stalls.
+
+Files modified: train.py, dataset.py, model.py, slurm/train.sh
+Commit: 1aabd3a — pushed to main.
+
+Active job:
+  23751109: smoke_bf16, 50 stations, 2 epochs — verifies all fixes end-to-end.
+
+Next steps:
+  1. Confirm job 23751109 completes both epochs + val without error.
+  2. Check log for "[SHM] L12 preloaded for ~48 stations" and startup RAM ~115GB.
+  3. Submit full baseline_nll: sbatch slurm/train.sh --run-name baseline_nll
+  4. Monitor W&B: target val/0-10/ubRMSE < 0.07 m³/m³.
+
 === 2026-06-02 ===
 Investigation:
 - Audited tokenized .pt files: 993 active stations; 337 clean, 188 with both old+new format, 468 missing tokens

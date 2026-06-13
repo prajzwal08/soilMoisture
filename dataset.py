@@ -212,7 +212,10 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
         dt       = datetime.strptime(date_str[:8], "%Y%m%d")
         acq_doy  = dt.timetuple().tm_yday
 
-        l12[out_i]     = torch.from_numpy(tokens_z[src_i])   # RAM slice or chunk read
+        tok = torch.from_numpy(tokens_z[src_i])               # RAM slice or chunk read
+        if torch.isnan(tok).any():
+            continue                                           # skip swath-edge corruptions
+        l12[out_i]     = tok
         doys[out_i]    = acq_doy
         rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
 
