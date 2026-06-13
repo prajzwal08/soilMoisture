@@ -85,7 +85,31 @@ Why the original OOM crash (job 23733182) cannot recur:
     Total counted:    ~472 GB / 700 GB → 228 GB headroom, no growth expected.
 
 Changes committed: 1310807 (--no-capture-output), b3554db (--mem=700G), e3d512b (warning fix + this log).
-Next: submit baseline_nll.
+
+Training plan and research priorities:
+
+Phase 1 — Baselines:
+  baseline_nll   (job 23752836): NLL log-var loss, uncertainty-aware. Primary model. Running.
+  baseline_huber (pending):      Huber loss, point estimate. Submit only after NLL converges
+                                 cleanly. Required for paper — reviewers need the comparison.
+  Both must run to full convergence (~50 epochs, ~17h each) for a fair comparison.
+  If NLL ubRMSE < Huber: "uncertainty improves accuracy."
+  If NLL ubRMSE ≈ Huber: "uncertainty at zero accuracy cost."
+  Either outcome is publishable; without Huber the NLL contribution is unproven.
+
+Phase 2 — Ablations (after both baselines converge):
+  - Skip connection ablation: remove L3/L6/L9 intermediate layers, keep L12 only
+  - Frozen decoder: freeze TerraMind ViT, train fusion head only
+  - Modality ablation: S2-only vs S2+S1 vs full multimodal
+
+Research questions to answer in priority order:
+  1. Does the model learn?          → epoch 1 val ubRMSE < 0.07  (answer in minutes)
+  2. Does it converge?              → epochs 20-30, ubRMSE still improving?
+  3. Is NLL better than Huber?      → compare converged final metrics
+  4. What drives accuracy?          → ablations: skips, S1, ERA5 contribution
+  5. Does it generalise?            → test stations, by climate zone, seasonal breakdown
+
+Next: watch epoch 1 val metrics. Everything else depends on that answer.
 
 === 2026-06-13 ===
 Problem: Three consecutive training job crashes before completing a single epoch.
