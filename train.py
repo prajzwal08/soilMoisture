@@ -477,7 +477,7 @@ def main():
         pin_memory         = True,
         drop_last          = True,
         worker_init_fn     = worker_init_fn,
-        persistent_workers = CONFIG["num_workers"] > 0,
+        persistent_workers = False,   # workers die at epoch end → IPC freed before val starts
         prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
     )
 
