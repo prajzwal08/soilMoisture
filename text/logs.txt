@@ -54,6 +54,44 @@ Next steps:
   3. Submit full baseline_nll: sbatch slurm/train.sh --run-name baseline_nll
   4. Monitor W&B: target val/0-10/ubRMSE < 0.07 m³/m³.
 
+--- Code review fixes (same session, continued) ---
+
+Job 23751109 failed — TCPStore timeout after 600s:
+  Root cause: rank 0 preloaded ~120GB to /dev/shm while ranks 1-3 sat inside
+    dist.barrier() waiting for rank 0 to store its NCCL unique ID. TCPStore times
+    out after 600s independently of NCCL_TIMEOUT.
+  Fix: moved preloading to BEFORE dist.init_process_group(). Ranks 1-3 now spin
+    on a sentinel file (.done) with sleep(2) — no NCCL involved, no timeout risk.
+
+Additional fixes from structured code review:
+  1. NLL loss — replaced softplus+1e-6 variance with log-variance parameterization.
+     NLL = 0.5*log_var + 0.5*(y-mu)^2*exp(-log_var). Avoids division by near-zero
+     variance (gradient ~1e9 under softplus) → stable gradients in bfloat16.
+     Decoder bias init -3.7 unchanged: exp(-3.7)≈0.025, σ≈0.16 m³/m³.
+  2. log_var bounded via tanh(raw/10)*10 — soft clamp to (-10,10), σ∈(0.007,148).
+     Hard clamp rejected: kills gradient at boundary (dead neuron). tanh preserves
+     non-zero gradient everywhere.
+  3. S2 NaN guardrail — load_s2_rolling_zarr was missing the isnan check that S1
+     already had. Swath-edge corruptions would silently corrupt batch embeddings.
+  4. All-cloud NaN gradient — spatial_pyramid_pool: -inf → -1e4 in attention mask.
+     -inf + softmax = NaN; autograd cannot backprop through NaN in bfloat16.
+  5. Worker seed offset — worker_init_fn: seed += worker_id for explicit per-worker
+     numpy/random divergence.
+  6. ulimit -n 65536 — slurm/train.sh: 612 stations × 3 memmap keys × 8 workers
+     ≈14k FDs; default SLURM ulimit 4096 would crash dataset init on full run.
+  7. non_blocking=True — all .to(device) calls in train loop and evaluate. With
+     pin_memory=True already set, overlaps PCIe transfer with GPU compute.
+  8. ubRMSE deflation guard — compute_metrics: skip stations with <2 samples.
+     Single-sample station has zero anomaly → deflates metric; guard now explicit.
+  9. Architecture note (no change): 14×14 U-Net skip connections provide semantic
+     depth but not high-frequency spatial edges. Acceptable for soil moisture;
+     revisit for Phase 2 flux estimation where spatial sharpness matters.
+
+Commits: 0347379, 39ead73, 2845faa, 5db3d1c — all pushed to main.
+
+Active job:
+  23751546: smoke_bf16, 50 stations, 2 epochs — resubmitted with all fixes.
+
 === 2026-06-02 ===
 Investigation:
 - Audited tokenized .pt files: 993 active stations; 337 clean, 188 with both old+new format, 468 missing tokens
