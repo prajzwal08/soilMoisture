@@ -237,14 +237,31 @@ def _report_nan(tag, batch, bad):
 
 
 def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda_tv=0.0,
-                     max_batches=None, debug_nan=False):
+                     max_batches=None, debug_nan=False,
+                     skip_batches=0, mid_ckpt_every=500, mid_ckpt_fn=None):
+    """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
+    batches (data loads but no GPU compute) then resumes training from that
+    point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
+    rank 0 can save a recovery checkpoint.
+    """
     model.train()
     total_loss = 0.0
     total_tv   = 0.0
     n_batches  = 0
     t_prev     = time.perf_counter()
 
-    for batch in loader:
+    loader_iter = iter(loader)
+
+    # Fast-forward past batches already processed in a previous (interrupted) run.
+    # Data is loaded by workers but skipped before GPU — fast once page-cached.
+    if skip_batches > 0:
+        print(f"  [mid-epoch resume] skipping {skip_batches} batches...")
+        for _ in range(skip_batches):
+            if next(loader_iter, None) is None:
+                break
+        print(f"  [mid-epoch resume] resuming from batch {skip_batches + 1}")
+
+    for batch in loader_iter:
         if max_batches is not None and n_batches >= max_batches:
             break
 
@@ -288,8 +305,12 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
         n_batches  += 1
 
         t_now = time.perf_counter()
-        print(f"  batch {n_batches:03d}  loss={loss.item():.4f}  tv={tv.item():.5f}  step={1000*(t_now - t_prev):.0f}ms")
+        print(f"  batch {skip_batches + n_batches:04d}  loss={loss.item():.4f}  tv={tv.item():.5f}  step={1000*(t_now - t_prev):.0f}ms")
         t_prev = t_now
+
+        # Mid-epoch checkpoint every N batches (rank 0 only, via callback)
+        if mid_ckpt_fn is not None and mid_ckpt_every > 0 and n_batches % mid_ckpt_every == 0:
+            mid_ckpt_fn(skip_batches + n_batches)
 
     n = max(n_batches, 1)
     return total_loss / n, total_tv / n
@@ -512,7 +533,7 @@ def main():
     ).to(device)
 
     if is_ddp:
-        model = DDP(model, device_ids=[local_rank], gradient_as_bucket_view=True)
+        model = DDP(model, device_ids=[local_rank])
 
     raw_model = model.module if is_ddp else model
     n_params = sum(p.numel() for p in raw_model.parameters() if p.requires_grad)
@@ -572,6 +593,22 @@ def main():
     else:
         if is_main:
             print("No checkpoint found — starting fresh")
+
+    # ── Mid-epoch checkpoint (survives node failure mid-epoch) ────────
+    # Saved every 500 batches; allows resuming from last saved point
+    # rather than repeating the entire epoch.
+    skip_batches = 0
+    mid_ckpt_path = ckpt_dir / "mid_epoch.pt"
+    if mid_ckpt_path.exists() and not val_pending_epoch:
+        mc = torch.load(mid_ckpt_path, map_location=device, weights_only=False)
+        if mc.get("epoch") == start_epoch:
+            raw_model.load_state_dict(mc["model"])
+            optimizer.load_state_dict(mc["optimizer"])
+            skip_batches = mc.get("batches_done", 0)
+            if is_main:
+                print(f"  Mid-epoch checkpoint: epoch {start_epoch}, "
+                      f"resuming from batch {skip_batches + 1}")
+
     if is_ddp:
         dist.barrier()
 
@@ -619,10 +656,26 @@ def main():
             train_loss = saved_train_loss or 0.0
             train_tv   = saved_train_tv   or 0.0
         else:
+            # Mid-epoch checkpoint callback (rank 0 only)
+            def _save_mid_ckpt(batches_done):
+                torch.save({
+                    "epoch"       : epoch,
+                    "model"       : raw_model.state_dict(),
+                    "optimizer"   : optimizer.state_dict(),
+                    "batches_done": batches_done,
+                    "best_val_loss"   : best_val_loss,
+                    "no_improve_count": no_improve_count,
+                    "config"          : CONFIG,
+                    "wandb_run_id"    : wandb.run.id if use_wandb else None,
+                }, mid_ckpt_path)
+
             train_loss, train_tv = train_one_epoch(
                 model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
                 lambda_tv=CONFIG["lambda_tv"],
                 max_batches=args.max_train_batches, debug_nan=args.debug_nan,
+                skip_batches = skip_batches if epoch == start_epoch else 0,
+                mid_ckpt_every = 500,
+                mid_ckpt_fn    = _save_mid_ckpt if is_main else None,
             )
 
             # Save post-training checkpoint before validation — epoch not lost if val crashes
@@ -709,6 +762,8 @@ def main():
                 "val_pending"     : False,
             }
             torch.save(state, ckpt_last)
+            if mid_ckpt_path.exists():
+                mid_ckpt_path.unlink()
 
             if no_improve_count == 0:
                 torch.save(state, ckpt_dir / "best.pt")
