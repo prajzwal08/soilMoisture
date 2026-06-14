@@ -10,6 +10,7 @@
 #SBATCH --output=logs/train_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
+#SBATCH --requeue
 
 set -euo pipefail
 ulimit -n 65536   # memmap FDs: 612 stations × 3 keys × 8 workers ≈ 14k handles
