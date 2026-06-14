@@ -1796,3 +1796,94 @@ Active job as of 2026-06-13:
     - NCCL_TIMEOUT: 7200s env var
     - Checkpoint saved before val (val_pending=True) → epoch training not lost if val crashes
     - All previous fixes: /dev/shm L12 preload, bf16, no-capture-output, 700G RAM
+
+=== 2026-06-14 (session 4 — baseline_nll analysis, huber switch, diagnostics) ===
+
+--- What happened with baseline_nll ---
+
+Job 23764793 (baseline_nll) ran on gcn131, 4×H100.
+Completed 3 full epochs before being cancelled for huber switch.
+
+Results:
+  Epoch 1: train_loss=5.1284  val_loss=1574.6  | 0-10 ubRMSE=1.9783  MAE=0.0930
+  Epoch 2: train_loss=0.8748  val_loss=435.4   | 0-10 ubRMSE=1.9782  MAE=0.0855
+  Epoch 3: train_loss=-2.0056 val_loss=656.8   | 0-10 ubRMSE=1.9781  MAE=0.0890
+
+Key observations:
+  - 0-10 cm ubRMSE completely frozen at 1.9782 across all 3 epochs — model not improving
+  - val_loss spiked to 1574 in epoch 1 because NLL loss explodes when σ is small but μ is wrong
+  - Labels audited (job 23794318): all 74 val stations have SM in [0, 0.6] — labels are clean
+  - Root cause of frozen ubRMSE: model output unbounded (no sigmoid/clamp) → some val samples
+    get predictions of ±2-3 m³/m³ which are physically impossible and dominate the MSE
+  - NLL loss allowed model to "game" by shrinking σ rather than improving μ
+  - mid-epoch checkpointing working correctly (mid_epoch.pt saved every 500 batches, deleted after epoch)
+  - per-station worst-5 printing added (commit 130ef1f) but old code still running — no per-station
+    data available for NLL epochs
+
+Code changes this session (all committed and pushed):
+  32baa5a — mid-epoch checkpointing every 500 batches + skip_batches resume logic
+  130ef1f — sigma clamping (sigma_min=0.01, log_var_min≈-9.21) + per-station val metrics
+  85ce2e3 — eval_stations.py standalone script for checkpoint analysis
+
+--- Switch to baseline_huber ---
+
+Decision: NLL is masking learning signal. Huber loss directly penalises prediction error,
+no σ to game. Also more robust to outliers (delta=0.05 m³/m³).
+
+Job 23790427 (baseline_huber) started fresh on gcn131.
+Epoch 1 training: Huber loss converged to ~0.0006-0.0007 by batch 3750.
+  Small training Huber loss could indicate either:
+  (a) Model learning well (typical error ≈ 0.037 m³/m³)
+  (b) Trivial solution: predicting station climatological mean (no temporal dynamics)
+  ubRMSE will discriminate — val results pending.
+
+--- Architecture encodings clarified ---
+
+SoilMoistureModel token assembly per ERA5 timestep:
+  era5_tok   — ERA5 feature values projected to 768-dim (weather content)
+  era5_pe    — circular_doy_pe: sin/cos(k × 2π × DOY/365.25), k=1..384
+               Explicitly periodic at 365.25 days — no year-boundary discontinuity
+               Tells model "what season it is" (absolute calendar position)
+  era5_rp    — rel_pos_emb: learned embedding of days-before-target (staleness)
+               Tells model "how long ago" (relative temporal proximity)
+  era5_mod   — learned modality token distinguishing ERA5 from S2/S1/SIF/TWSA
+
+Discussion: advisor suggested stripping era5_pe to avoid "year-boundary discontinuity".
+  This argument is WRONG for our circular_doy_pe (designed to be periodic at 365.25 days —
+  DOY 365 and DOY 1 are nearly identical in embedding space). Stripping era5_pe would
+  remove seasonality information with no benefit.
+  Decision: keep era5_pe.
+
+--- Data audit results ---
+
+Label audit (job 23794318): 0 stations with SM values outside [0, 0.6] across all val stations.
+Zarr completeness (job 23775422): 890 stations fully complete, 103 flux_only have no SM labels
+  (by design — they're flux towers). All 993 zarr stores exist, all have S2/ERA5/L12.
+
+--- Action plan ---
+
+Step 1 (in progress): Wait for baseline_huber epoch 1 val results.
+  - If 0-10 ubRMSE drops significantly (< 0.5): Huber is learning, continue for 5-10 epochs
+  - If 0-10 ubRMSE still flat (~1.978): proceed to Phase 1 diagnostic below
+
+Step 2 (if needed): Phase 1 diagnostic run
+  - Zero skip connections (s9, s6, s3 × 0.0 in UNetDecoder forward)
+  - Keep era5_pe (circular, no discontinuity)
+  - Run: sbatch slurm/train.sh --run-name diag_phase1 --loss-fn huber --lambda-tv 0
+  - Goal: isolate whether temporal transformer alone can learn SM temporal dynamics
+  - Success criterion: 0-10 ubRMSE < 0.10 within 5 epochs
+
+Step 3 (after Phase 1 converges):
+  - Re-enable skip connections
+  - Add NLL with sigma clamping (sigma_min=0.01 already coded)
+  - Add per-station worst-5 reporting (already coded)
+
+Step 4 (deferred):
+  - eval_stations.py: run standalone per-station eval on any checkpoint
+  - Distributed val (all_gather across 4 ranks): already implemented
+
+SBU status (2026-06-14):
+  GPU budget (L2): 13,368 / 800,000 SBU used (1.7%)
+  CPU budget (L1): 4,664 / 200,000 SBU used (2.3%)
+  Current job 23790427 (baseline_huber): 768 SBU/hour, ~13h runtime so far
+
