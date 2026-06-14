@@ -1955,3 +1955,34 @@ SBU status (2026-06-14):
   4. If still stuck after 10 epochs: run diag_phase1 (zero skip connections) to isolate
      whether temporal transformer alone can learn SM dynamics.
 
+--- Session 5 continued: job resubmission, dataset geography analysis ---
+
+Job 23790427 cancelled. Resubmitted as job 23796729 (gcn121, 4× H100) with:
+  - batch_size=128, prefetch_factor=2, lr=2e-4 (from train.py CONFIG)
+  - LR override added after optimizer.load_state_dict() so CONFIG lr takes
+    effect immediately on resume — not restored from checkpoint
+  - Resumes from epoch 1 last.pt checkpoint; epoch 2 starts with new settings
+
+Raw data SNOTEL count:
+  /projects/prjs1968/raw_soil_moisture/: 441 SNOTEL files out of 1326 total (33%)
+  After preprocessing quality filters: 385/993 in station_splits.csv (38.8%)
+  SNOTEL stations that failed preprocessing: 56 (frozen/insufficient data)
+
+Global station distribution map (demo_output/station_splits_map.png):
+  Three-panel figure: world overview + North America inset + Europe inset.
+  Key findings from map:
+    - Dataset heavily biased toward North America and Europe
+    - SNOTEL (385 stations) clusters entirely in western US Rockies + Alaska
+    - Africa, South America, Southeast Asia, Australia barely represented
+    - Without SNOTEL, North American coverage drops substantially → more
+      geographically balanced dataset
+  Geographic bias is a dissertation limitation to acknowledge explicitly.
+  Map committed to GitHub (commit 3339513). Script: make_map.py.
+
+Decision on SNOTEL (final for now):
+  Keep all SNOTEL in training. Too early to exclude after only 1 epoch.
+  Monitor per-station ubRMSE over 10+ epochs — if SNOTEL systematically
+  fails to improve while non-SNOTEL converges, revisit with principled
+  exclusion criterion (not just network name).
+  station_splits.csv: unchanged (original splits retained).
+
