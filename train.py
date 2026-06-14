@@ -13,6 +13,7 @@ W&B project: soil-moisture-phd
 
 import argparse
 import json
+import math
 import os
 import random
 import shutil
@@ -251,6 +252,48 @@ def _report_nan(tag, batch, bad):
             print(f"  [NaN DEBUG] {tag}: {k}[{i}] station={station} year={year} doy={doy}")
 
 
+def make_resume_loader(full_loader, skip_batches, epoch):
+    """
+    Return a DataLoader starting at batch skip_batches+1 with ZERO disk IO.
+    Reproduces DistributedSampler's deterministic index sequence for `epoch`,
+    slices off the first skip_batches*batch_size indices, and wraps the rest
+    in a new DataLoader — no data files are touched during the skip.
+    """
+    from torch.utils.data import Sampler as _Sampler
+
+    class _IndexSampler(_Sampler):
+        def __init__(self, idx): self._idx = idx
+        def __iter__(self):      return iter(self._idx)
+        def __len__(self):       return len(self._idx)
+
+    ds  = full_loader.dataset
+    bs  = full_loader.batch_size
+    sam = full_loader.sampler          # DistributedSampler
+
+    g = torch.Generator()
+    g.manual_seed(sam.seed + epoch)   # mirrors DistributedSampler.__iter__
+    n          = len(ds)
+    indices    = torch.randperm(n, generator=g).tolist()
+    total_size = math.ceil(n / sam.num_replicas) * sam.num_replicas
+    indices   += indices[:(total_size - n)]                         # pad
+    indices    = indices[sam.rank:total_size:sam.num_replicas]      # subsample
+    indices    = indices[: len(indices) - (len(indices) % bs)]      # drop_last
+
+    indices = indices[skip_batches * bs:]                           # zero-IO skip
+
+    return DataLoader(
+        ds,
+        batch_size         = bs,
+        sampler            = _IndexSampler(indices),
+        num_workers        = full_loader.num_workers,
+        pin_memory         = full_loader.pin_memory,
+        drop_last          = False,
+        worker_init_fn     = full_loader.worker_init_fn,
+        persistent_workers = full_loader.persistent_workers,
+        prefetch_factor    = full_loader.prefetch_factor if full_loader.num_workers > 0 else None,
+    )
+
+
 def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda_tv=0.0,
                      max_batches=None, debug_nan=False,
                      skip_batches=0, mid_ckpt_every=500, mid_ckpt_fn=None):
@@ -267,13 +310,9 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
 
     loader_iter = iter(loader)
 
-    # Fast-forward past batches already processed in a previous (interrupted) run.
-    # Data is loaded by workers but skipped before GPU — fast once page-cached.
+    # Loader is pre-sliced by make_resume_loader — no IO skip needed here.
+    # skip_batches is kept as a display/checkpoint offset only.
     if skip_batches > 0:
-        print(f"  [mid-epoch resume] skipping {skip_batches} batches...")
-        for _ in range(skip_batches):
-            if next(loader_iter, None) is None:
-                break
         print(f"  [mid-epoch resume] resuming from batch {skip_batches + 1}")
 
     for batch in loader_iter:
@@ -686,11 +725,19 @@ def main():
                     "wandb_run_id"    : wandb.run.id if use_wandb else None,
                 }, mid_ckpt_path)
 
+            _skip = skip_batches if epoch == start_epoch else 0
+            if _skip > 0:
+                if rank == 0:
+                    print(f"  [mid-epoch resume] fast-forwarding to batch {_skip + 1} (zero IO)...")
+                _loader = make_resume_loader(train_loader, _skip, epoch)
+            else:
+                _loader = train_loader
+
             train_loss, train_tv = train_one_epoch(
-                model, train_loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
+                model, _loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
                 lambda_tv=CONFIG["lambda_tv"],
                 max_batches=args.max_train_batches, debug_nan=args.debug_nan,
-                skip_batches = skip_batches if epoch == start_epoch else 0,
+                skip_batches = _skip,
                 mid_ckpt_every = 500,
                 mid_ckpt_fn    = _save_mid_ckpt if is_main else None,
             )
