@@ -1887,3 +1887,71 @@ SBU status (2026-06-14):
   CPU budget (L1): 4,664 / 200,000 SBU used (2.3%)
   Current job 23790427 (baseline_huber): 768 SBU/hour, ~13h runtime so far
 
+=== 2026-06-14 (session 5 — epoch 1 results, SNOTEL analysis, training speedup) ===
+
+--- Epoch 1 results (baseline_huber, job 23790427) ---
+
+  train_loss=0.0012  val_loss=0.0036  peak_vram=24.7 GB
+  0-10   ubRMSE=1.9785  MAE=0.0867  bias=-0.0221
+  10-30  ubRMSE=0.2467  MAE=0.0692  bias=+0.0131
+  30-100 ubRMSE=0.2293  MAE=0.0899  bias=+0.0223
+  Best checkpoint saved (val_loss=0.0036).
+
+  Worst 5 stations (0-10 cm):
+    ISMN_SNOTEL_UpperRioGrande   ubRMSE=15.40  ← single outlier dominating aggregate
+    ISMN_SNOTEL_Zirkel           ubRMSE=1.63
+    ISMN_SNOTEL_DonkeyReservoir  ubRMSE=0.094
+    ISMN_SNOTEL_OakCreek         ubRMSE=0.091
+    ISMN_SNOTEL_BurroMountain    ubRMSE=0.085
+
+  Key observation: 0-10 ubRMSE appears frozen at ~1.978 but is dominated by one SNOTEL outlier.
+  Three of the five worst-5 SNOTEL stations are actually performing well (ubRMSE < 0.10).
+  10-30 and 30-100 depths show reasonable ubRMSE for epoch 1.
+  Decision: too early to draw conclusions — only epoch 1.
+
+--- SNOTEL dataset analysis ---
+
+  SNOTEL stations: 385 / 993 total (38.8%)
+    train: 284 (41.8% of train set)
+    val:    27 (30% of val set)
+    oos:    74 (34% of oos set)
+
+  SNOTEL measures soil moisture under snowpack (Rocky Mountain alpine terrain).
+  Concern: anomalous SM dynamics (frozen soil, snowmelt spikes) may corrupt training signal.
+  Counter-argument: model has DEM tokens (elevation), LULC, ERA5 temperature — in principle
+    can learn snow-affected SM if given enough epochs.
+  Decision: keep all SNOTEL in training. Monitor per-station ubRMSE trends over 10+ epochs.
+  If SNOTEL stations systematically fail to improve while non-SNOTEL improves, revisit exclusion
+  with principled threshold (e.g. by data quality flags, not network name).
+  station_splits.csv: reverted to original (no change committed).
+
+--- Memory analysis (gcn131 H100 node) ---
+
+  Total RAM: 755 GB  |  Used: 686 GB  |  Available: 68 GB
+  /dev/shm (L12 preload): 182 GB used / 378 GB total
+  GPU VRAM: 24.7 GB / 80 GB per GPU (55 GB headroom — not a bottleneck)
+
+  IO bottleneck identified: step times spike to 14-22s vs 284ms normal (GPFS stalls).
+  Increasing num_workers (8→12) or prefetch_factor (4→6) would roughly double CPU prefetch
+  buffer → ~120 GB additional RAM needed → OOM with only 68 GB available.
+
+--- Training speedup (train.py CONFIG changes) ---
+
+  batch_size:      64  → 128   (halves batches per epoch, fewer IO round-trips)
+  prefetch_factor:  4  → 2     (compensates RAM: 2× bigger batches × 0.5× prefetch = same total)
+  lr:           1e-4  → 2e-4   (linear scaling for 2× batch size)
+
+  Net CPU prefetch RAM: neutral (same as before).
+  GPU VRAM impact: ~50 GB / 80 GB at batch 128 — within H100 limits.
+
+--- Next steps ---
+
+  1. Resubmit baseline_huber with new train.py settings:
+       sbatch slurm/train.sh --run-name baseline_huber --loss-fn huber
+     (Delete last.pt first if resuming from epoch 1 checkpoint is not desired)
+  2. Run for 10+ epochs before making any SNOTEL decisions.
+  3. Monitor per-station ubRMSE: if 0-10 ubRMSE improves consistently across epochs,
+     Huber + new batch size is working. Target: 0-10 ubRMSE < 0.10 within 10 epochs.
+  4. If still stuck after 10 epochs: run diag_phase1 (zero skip connections) to isolate
+     whether temporal transformer alone can learn SM dynamics.
+

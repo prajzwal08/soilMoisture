@@ -112,11 +112,11 @@ CONFIG = {
     "seed"           : 42,
 
     # Training
-    "batch_size"    : 64,
+    "batch_size"    : 128,
     "num_workers"   : 8,
-    "prefetch_factor": 4,
+    "prefetch_factor": 2,
     "max_epochs"    : 100,
-    "lr"            : 1e-4,
+    "lr"            : 2e-4,
     "weight_decay"  : 0.05,
     "lr_patience"   : 10,
     "lr_factor"     : 0.5,
