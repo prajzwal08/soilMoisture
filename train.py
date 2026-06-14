@@ -588,6 +588,8 @@ def main():
         ckpt = torch.load(ckpt_last, map_location=device, weights_only=False)
         raw_model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
+        for pg in optimizer.param_groups:  # honour CONFIG lr even when resuming
+            pg["lr"] = CONFIG["lr"]
         scheduler.load_state_dict(ckpt["scheduler"])
         best_val_loss    = ckpt["best_val_loss"]
         no_improve_count = ckpt["no_improve_count"]
