@@ -8,6 +8,7 @@
 #SBATCH --mem=720G
 #SBATCH --time=120:00:00
 #SBATCH --output=logs/train_%j.out
+#SBATCH --open-mode=append
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 #SBATCH --requeue
