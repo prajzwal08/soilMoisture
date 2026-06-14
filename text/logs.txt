@@ -1986,3 +1986,47 @@ Decision on SNOTEL (final for now):
   exclusion criterion (not just network name).
   station_splits.csv: unchanged (original splits retained).
 
+
+═══════════════════════════════════════════════════════════════
+Session 6 — 2026-06-14
+═══════════════════════════════════════════════════════════════
+
+Training status (job 23796729, baseline_huber, bs=128, lr=2e-4):
+  Epoch 1 completed (from previous job, train_23790427.out):
+    val_loss=0.0036 | peak_vram=24.7GB
+    0-10 cm:  MSE=3.95, MAE=0.087, ubRMSE=1.98 (SNOTEL_UpperRioGrande=15.4)
+    10-30 cm: MSE=0.066, MAE=0.069, ubRMSE=0.247
+    30-100 cm: MSE=0.062, MAE=0.090, ubRMSE=0.229
+  Epoch 2: still running (resumed from mid-epoch batch 501, currently ~batch 653/2050)
+
+IO bottleneck analysis:
+  Root cause: GPFS stalls from L3/L6/L9 skip connection reads.
+  L12 is already preloaded to /dev/shm (182GB, 24-min overhead) → no L12 stalls.
+  L3+L6+L9 are read from GPFS per batch → 39% stall rate, avg spike ~9s.
+  Current epoch wall time: ~2.2 hrs. Without stalls: ~19 min (7× speedup).
+
+  Options considered and ruled out:
+    - Rechunking zarr: N/A — data is in consolidated .pt files, not zarr
+    - Per-date .pt files (chunk_size=1 equivalent): tried before consolidation,
+      hit HPC inode quota limit (millions of files not allowed)
+    - Preload L3/L6/L9 to /dev/shm: too large (~700GB), doesn't fit
+    - Local NVMe copy: unknown if Snellius GPU nodes have local NVMe
+
+Two-phase training proposal (deferred — revisit after convergence check):
+  Phase 1 — no UNet decoder, no L3/L6/L9 skip reads:
+    Full transformer sequence unchanged (DEM, LULC, Soil, anchor spatial×196,
+    S2/S1 history, ERA5, SIF, TWSA). L12 still preloaded to /dev/shm.
+    Output: PointHead MLP → (B, n_depths) point prediction directly.
+    No GPFS stalls → ~19 min/epoch. Clean ablation baseline for paper.
+
+  Phase 2 — add UNet decoder (full model, same as current architecture):
+    Load Phase 1 transformer checkpoint.
+    Restore UNet decoder + L3/L6/L9 loading.
+    Training signal: same point loss at center pixel + TV regularization.
+    Spatial tokens (196) from transformer become (B, 768, 14×14) bottleneck.
+    Strategy: freeze transformer 3-5 epochs → unfreeze end-to-end.
+    IO stalls return (L3/L6/L9 back) → same ~2.2 hrs/epoch.
+
+  Decision criterion: implement two-phase ONLY IF full model loss stagnates
+  after 10+ epochs. If loss keeps improving, current approach is fine.
+  Revisit after reviewing multi-epoch convergence curves.
