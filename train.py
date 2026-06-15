@@ -194,8 +194,8 @@ CONFIG = {
     "n_layers"           : 6,
     "predict_uncertainty": True,
 
-    # Loss: "nll" (Gaussian NLL, aleatoric uncertainty) or "huber"
-    "loss_fn"         : "nll",
+    # Loss: "huber" (default) or "nll" (Gaussian NLL, aleatoric uncertainty)
+    "loss_fn"         : "huber",
     "lambda_tv"       : 0.1,    # TV regularization weight (0 = disabled)
     "lambda_boundary" : 0.1,    # penalty for SM outside [0, 1]
 
