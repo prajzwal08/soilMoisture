@@ -97,6 +97,8 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
     serves one shared physical copy — cuts node RAM by ~400 GB on the full run.
     max_stations: if set, only preload the first N stations (matches dataset cap,
     so smoke tests don't preload 145 GB of data they'll never use).
+    Only train+val splits are preloaded — OOS/test stations are never touched
+    during training so preloading them wastes /dev/shm.
     """
     import zarr
     import pandas as pd
@@ -109,6 +111,7 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
             fl = str(r.get("has_flux",          "False")).lower() == "true"
             return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
         splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
+    splits = splits[splits["split"].isin(["train", "val"])]
 
     n_written = 0
     for _, r in splits.iterrows():
