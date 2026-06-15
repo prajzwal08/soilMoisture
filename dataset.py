@@ -308,13 +308,15 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
             doys_a      = dc["doys"]
             years_a     = dc["years"]
             idx_arr     = np.where((di >= start_int) & (di <= end_int))[0]
-            tokens_src  = l12_np_map[orbit_key] or zg[f"{orbit_key}/l12"]
+            _src = l12_np_map[orbit_key]
+            tokens_src  = _src if _src is not None else zg[f"{orbit_key}/l12"]
             for i in idx_arr:
                 entries.append((orbit_dates[i], tokens_src, int(i), orbit_key,
                                  int(doys_a[i]), int(years_a[i])))
         else:
             orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
-            tokens_src  = l12_np_map[orbit_key] or zg[f"{orbit_key}/l12"]
+            _src = l12_np_map[orbit_key]
+            tokens_src  = _src if _src is not None else zg[f"{orbit_key}/l12"]
             for i, d in enumerate(orbit_dates):
                 if _in_window(d, ws, td):
                     entries.append((d, tokens_src, i, orbit_key, None, None))

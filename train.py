@@ -290,10 +290,11 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
             st_ubrmse = float(np.sqrt(np.mean((p_anom[sel] - t_anom[sel]) ** 2)))
             st_bias   = float(np.mean(p[sel] - t[sel]))
             st_mae    = float(np.mean(np.abs(p[sel] - t[sel])))
+            st_mse    = float(np.mean((p[sel] - t[sel]) ** 2))
             if station not in per_station:
                 per_station[station] = {}
             per_station[station][depth] = {"ubRMSE": st_ubrmse, "MAE": st_mae, "bias": st_bias,
-                                           "n": int(sel.sum())}
+                                           "MSE": st_mse, "n": int(sel.sum())}
         ubrmse = float(np.sqrt(np.mean((p_anom[ub_mask] - t_anom[ub_mask]) ** 2))) if ub_mask.any() else float("nan")
 
         metrics[depth] = {"MSE": mse, "MAE": mae, "ubRMSE": ubrmse, "bias": bias}

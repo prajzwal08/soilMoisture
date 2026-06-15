@@ -2030,3 +2030,126 @@ Two-phase training proposal (deferred — revisit after convergence check):
   Decision criterion: implement two-phase ONLY IF full model loss stagnates
   after 10+ epochs. If loss keeps improving, current approach is fine.
   Revisit after reviewing multi-epoch convergence curves.
+
+═══════════════════════════════════════════════════════════════
+Session 7 — 2026-06-15
+═══════════════════════════════════════════════════════════════
+
+Context: Previous full run (job 23864068) OOM'd. Last smoke test (job 23868316,
+run "smoke_gather") showed catastrophic gpu_util=4% due to a bad §3c architectural
+change (workers return indices only, main process gathers L12 from /dev/shm). That
+change was reverted. This session focused on diagnosing and fixing the OOM root
+cause and a separate DDP rank imbalance issue.
+
+--- Working tree reverted to last commit (cdd8f42) ---
+
+The §3c indices-only IPC approach caused data=875s compute=36s gpu_util=4%.
+Reverted to the parallel multi-worker IPC approach (workers copy full L12 tensors
+into shared memory, prefetch_factor controls queue depth).
+
+--- OOM root cause and fix ---
+
+Runbook memory budget was built on estimated /dev/shm=91 GB, but actual measured
+value on the H100 gcn node is 145 GB (+54 GB). With prefetch_factor=3, the
+boundary peak was:
+  /dev/shm L12:  145 GB
+  rank heaps:    159 GB
+  train IPC:     440 GB  (32 workers × pf=3 × batch)
+  val IPC:        61 GB
+  Boundary peak: 805 GB > 790G SLURM limit → OOM
+
+Fix 1: prefetch_factor dropped 3 → 2
+  Train IPC drops from 440 GB → 242 GB.
+  New boundary peak: 607 GB → 183 GB headroom vs 790G.
+
+Fix 2: gc.freeze() inserted in train.py after both datasets are built, before
+  DataLoader forks workers.
+  Mechanism: gc.freeze() moves all existing Python objects into a permanent GC
+  generation that the collector never scans. Without it, the GC traversal touches
+  refcount fields on CoW-shared pages → kernel gives each worker a private RSS copy
+  → RAM blowup across 32 worker processes (observed in earlier sessions).
+  With gc.freeze(): refcount fields are never touched after fork → CoW pages stay
+  shared → ~159 GB rank heap stays as one physical copy.
+
+Runbook (text/training_runbook.md) §2 and §4 updated with actual measured numbers:
+  /dev/shm = 145 GB (not 91 GB estimated), pf=2 budget, dual-limit table for
+  720G shared vs 790G gcn nodes.
+
+--- DDP rank imbalance fix (model.py) ---
+
+Symptom: G0 = 100% GPU util, G3 = 30% at DDP gradient barrier.
+Root cause: _pyramid_from_l12() in model.py used .nonzero() to find valid
+  (non-padded) acquisitions. nonzero() output size depends on data → PyTorch
+  must sync CPU↔GPU to determine output shape → different ranks stall for
+  different durations depending on how many valid acquisitions they have →
+  imbalance at the DDP allreduce barrier.
+
+Fix: removed .nonzero() and all gather/scatter logic (~22 lines deleted).
+  New approach: run spatial_pyramid_pool on ALL rows (padded l12=zeros →
+  zero output from pool), then multiply by flat_valid[:, None, None] to zero
+  out padded slots. No GPU sync required. All ranks process the same number
+  of rows (MAX_S2 + MAX_S1) regardless of how many are valid.
+  Zero-init invariant documented in model.py comment: padded l12 slots must
+  be initialised to zero (guaranteed by dataset.py pre-allocation).
+
+--- Code review (multi-agent ultra review) ---
+
+Four additional fixes found and applied:
+  1. val_loader had prefetch_factor=2 hard-coded; now reads CONFIG["prefetch_factor"].
+  2. val_loader had no guard for val_num_workers=0 (persistent_workers and
+     prefetch_factor are now conditionally set only when val_num_workers > 0).
+  3. slurm/train.sh had redundant --num-workers 8 before $@ (removed; $@ already
+     passes --num-workers from the sbatch command line).
+  4. model.py _pyramid_from_l12 zero-init invariant documented in comment.
+
+--- Commits pushed ---
+
+  7a18f77 — Fix OOM risk: pf 3→2, gc.freeze() before fork, update budget with
+             measured numbers
+  dcf888c — Remove .nonzero() GPU sync from _pyramid_from_l12 to fix DDP rank
+             imbalance
+  03dbc82 — Fix val_loader guards, remove redundant --num-workers, document
+             padding invariant
+
+--- Memory budget for full run (confirmed) ---
+
+  /dev/shm L12:   145 GB
+  Rank heaps:     159 GB
+  Train IPC:      242 GB  (32 workers × pf=2)
+  Val IPC:         61 GB
+  Boundary peak:  607 GB  → 183 GB headroom vs 790G ✓
+
+--- prefetch_factor vs CudaPrefetcher clarified ---
+
+  prefetch_factor: DataLoader workers stay ahead of main process (CPU→CPU,
+    IPC shared memory buffers). Controls queue depth of assembled batches.
+  CudaPrefetcher: overlaps H2D transfer of batch N+1 with GPU compute of
+    batch N (CPU→GPU, async CUDA stream). These two mechanisms stack
+    independently.
+
+--- Current status ---
+
+  Smoke test submitted: job 23880783
+    --run-name smoke_v2, --max-stations 20, --max-epochs 3, --mem=240G
+  Awaiting smoke test completion.
+  Full run command ready (pending smoke test approval):
+    sbatch slurm/train.sh --run-name baseline_huber --loss-fn huber
+
+--- Files modified ---
+
+  train.py       — gc.freeze() before DataLoader fork; val_loader guards; pf=2
+  model.py       — removed .nonzero() / gather/scatter from _pyramid_from_l12;
+                   zero-init invariant comment
+  slurm/train.sh — removed redundant --num-workers 8; updated mem/prefetch notes
+  text/training_runbook.md — §2 and §4 updated with measured /dev/shm=145 GB,
+                              pf=2, corrected boundary peaks, dual-limit table
+
+--- Next steps ---
+
+  1. Confirm smoke test job 23880783 completes cleanly (gpu_util > 50%, no OOM).
+  2. Get user approval then submit:
+       sbatch slurm/train.sh --run-name baseline_huber --loss-fn huber
+  3. Monitor W&B: val/0-10/ubRMSE acceptance gate < 0.07 m³/m³.
+  4. After baseline_huber converges: submit baseline_nll (NLL with sigma clamping).
+  5. (Carry-over) Distributed val across all 4 ranks (all_gather) deferred until
+     baseline converges.
