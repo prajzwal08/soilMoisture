@@ -89,11 +89,14 @@ class CudaPrefetcher:
 
 # ── /dev/shm L12 preloader ────────────────────────────────────────────────────
 
-def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path) -> None:
+def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
+                        max_stations: int | None = None) -> None:
     """Rank 0: load all stations' L12 tokens from zarr → /dev/shm tmpfs memmaps.
 
     All DDP ranks then open the same files via numpy.memmap(mode='r') so the OS
     serves one shared physical copy — cuts node RAM by ~400 GB on the full run.
+    max_stations: if set, only preload the first N stations (matches dataset cap,
+    so smoke tests don't preload 145 GB of data they'll never use).
     """
     import zarr
     import pandas as pd
@@ -148,6 +151,8 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path) -> None
             wrote_any = True
         if wrote_any:
             n_written += 1
+            if max_stations is not None and n_written >= max_stations:
+                break
 
     print(f"[SHM] L12 preloaded for {n_written} stations → {shm_dir}")
 
@@ -599,7 +604,8 @@ def main():
     if _pre_rank == 0:
         SHM_DIR.mkdir(parents=True, exist_ok=True)
         t_shm = time.perf_counter()
-        _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR)
+        _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR,
+                            max_stations=args.max_stations)
         _shm_done.touch()
         print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s  ({SHM_DIR})")
     else:
