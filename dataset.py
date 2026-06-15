@@ -839,18 +839,18 @@ class SoilMoistureDataset(Dataset):
                     self._zarr_date_cache[sat_dir] = _dc
 
             # ERA5 year range from cache (fast int arithmetic — no file I/O)
-            era5_entry = self._era5_cache[sat_dir]
+            era5_entry = self._era5_cache.get(sat_dir)
             if era5_entry is None:
                 continue
             era5_start_year = int(era5_entry[1][0])  // 10000
             era5_end_year   = int(era5_entry[1][-1]) // 10000
 
-            # S2 year range: from zarr dates
-            zg = self._zarr_groups.get(sat_dir)
-            if zg is None or "s2/dates" not in zg:
+            # S2 year range: from date cache (no zarr I/O)
+            _s2_dc = self._zarr_date_cache.get(sat_dir, {}).get("s2")
+            if _s2_dc is None:
                 continue
-            s2_dates_zarr = [str(d) for d in zg["s2/dates"][:]]
-            s2_years = (int(s2_dates_zarr[0][:4]), int(s2_dates_zarr[-1][:4]))
+            s2_years = (int(_s2_dc["date_ints"][0]) // 10000,
+                        int(_s2_dc["date_ints"][-1]) // 10000)
 
             if sat_dir not in self._label_cache:
                 continue
