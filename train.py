@@ -24,7 +24,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -222,14 +225,17 @@ def _log_mem_snapshot(label: str, device, is_main: bool,
     """Print RAM/CPU/per-GPU VRAM snapshot; optionally emit to W&B log_dict."""
     if not is_main:
         return
-    vm           = psutil.virtual_memory()
-    ram_used_gb  = (vm.total - vm.available) / 1e9
-    ram_total_gb = vm.total / 1e9
-    cpu_pct      = psutil.cpu_percent(interval=0.1)
     lines = [f"\n=== Memory snapshot: {label} ==="]
-    lines.append(f"  RAM  used : {ram_used_gb:.1f} GB / {ram_total_gb:.1f} GB"
-                 f"  ({100 * ram_used_gb / ram_total_gb:.0f}%)")
-    lines.append(f"  CPU  util : {cpu_pct:.0f}%")
+    if psutil is not None:
+        vm           = psutil.virtual_memory()
+        ram_used_gb  = (vm.total - vm.available) / 1e9
+        ram_total_gb = vm.total / 1e9
+        cpu_pct      = psutil.cpu_percent(interval=0.1)
+        lines.append(f"  RAM  used : {ram_used_gb:.1f} GB / {ram_total_gb:.1f} GB"
+                     f"  ({100 * ram_used_gb / ram_total_gb:.0f}%)")
+        lines.append(f"  CPU  util : {cpu_pct:.0f}%")
+    else:
+        lines.append(f"  RAM / CPU : psutil not installed")
     for i in range(torch.cuda.device_count()):
         alloc = torch.cuda.memory_allocated(i) / 1e9
         resv  = torch.cuda.memory_reserved(i) / 1e9
