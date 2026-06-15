@@ -22,6 +22,8 @@ from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+import psutil
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -30,8 +32,56 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+import torch.multiprocessing
+
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss, total_variation_loss
+
+
+# ── CUDA prefetcher ───────────────────────────────────────────────────────────
+
+class CudaPrefetcher:
+    """Overlaps H2D transfer of batch N+1 with GPU compute on batch N.
+
+    Wraps any DataLoader.  Batches arrive on `device` with tensors already
+    transferred; non-tensor fields (station_key, year, doy) pass through as-is.
+    """
+    def __init__(self, loader, device):
+        self._loader = loader
+        self._device = device
+        self._stream = torch.cuda.Stream(device=device)
+        self._iter   = iter(loader)
+        self._next   = None
+        self._preload()
+
+    def _preload(self):
+        try:
+            raw = next(self._iter)
+        except StopIteration:
+            self._next = None
+            return
+        with torch.cuda.stream(self._stream):
+            self._next = {
+                k: v.to(self._device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                for k, v in raw.items()
+            }
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        torch.cuda.current_stream(self._device).wait_stream(self._stream)
+        batch = self._next
+        if batch is None:
+            raise StopIteration
+        for v in batch.values():
+            if isinstance(v, torch.Tensor):
+                v.record_stream(torch.cuda.current_stream(self._device))
+        self._preload()
+        return batch
+
+    def __len__(self):
+        return len(self._loader)
 
 # ── /dev/shm L12 preloader ────────────────────────────────────────────────────
 
@@ -113,15 +163,16 @@ CONFIG = {
     "seed"           : 42,
 
     # Training
-    "batch_size"    : 128,
-    "num_workers"   : 8,
-    "prefetch_factor": 2,
-    "max_epochs"    : 100,
-    "lr"            : 2e-4,
-    "weight_decay"  : 0.05,
-    "lr_patience"   : 10,
-    "lr_factor"     : 0.5,
-    "grad_clip"     : 1.0,
+    "batch_size"      : 128,
+    "num_workers"     : 8,
+    "val_num_workers" : 2,    # val uses 2w×pf2; train uses 8w×pf3
+    "prefetch_factor" : 3,
+    "max_epochs"      : 100,
+    "lr"              : 2e-4,
+    "weight_decay"    : 0.05,
+    "lr_patience"     : 10,
+    "lr_factor"       : 0.5,
+    "grad_clip"       : 1.0,
     "early_stop_patience": 20,
 
     # Model
@@ -132,8 +183,9 @@ CONFIG = {
     "predict_uncertainty": True,
 
     # Loss: "nll" (Gaussian NLL, aleatoric uncertainty) or "huber"
-    "loss_fn"   : "nll",
-    "lambda_tv" : 0.1,     # TV regularization weight (0 = disabled)
+    "loss_fn"         : "nll",
+    "lambda_tv"       : 0.1,    # TV regularization weight (0 = disabled)
+    "lambda_boundary" : 0.1,    # penalty for SM outside [0, 1]
 
     # W&B
     "wandb_project": "soil-moisture-phd",
@@ -161,6 +213,35 @@ def worker_init_fn(worker_id: int):
     seed = (torch.initial_seed() + worker_id) % (2 ** 32)
     np.random.seed(seed)
     random.seed(seed)
+
+
+def _log_mem_snapshot(label: str, device, is_main: bool,
+                      use_wandb: bool = False, epoch: int | None = None,
+                      log_dict: dict | None = None):
+    """Print RAM/CPU/per-GPU VRAM snapshot; optionally emit to W&B log_dict."""
+    if not is_main:
+        return
+    vm           = psutil.virtual_memory()
+    ram_used_gb  = (vm.total - vm.available) / 1e9
+    ram_total_gb = vm.total / 1e9
+    cpu_pct      = psutil.cpu_percent(interval=0.1)
+    lines = [f"\n=== Memory snapshot: {label} ==="]
+    lines.append(f"  RAM  used : {ram_used_gb:.1f} GB / {ram_total_gb:.1f} GB"
+                 f"  ({100 * ram_used_gb / ram_total_gb:.0f}%)")
+    lines.append(f"  CPU  util : {cpu_pct:.0f}%")
+    for i in range(torch.cuda.device_count()):
+        alloc = torch.cuda.memory_allocated(i) / 1e9
+        resv  = torch.cuda.memory_reserved(i) / 1e9
+        peak  = torch.cuda.max_memory_allocated(i) / 1e9
+        total = torch.cuda.get_device_properties(i).total_memory / 1e9
+        lines.append(f"  GPU {i} VRAM: {alloc:.1f} alloc / {resv:.1f} rsv /"
+                     f" {peak:.1f} peak / {total:.0f} GB total")
+    print("\n".join(lines))
+    if use_wandb and epoch is not None and log_dict is not None:
+        tag = label.replace(" ", "_")
+        log_dict[f"mem/{tag}/ram_used_gb"]  = ram_used_gb
+        log_dict[f"mem/{tag}/cpu_pct"]      = cpu_pct
+        log_dict[f"mem/{tag}/gpu0_peak_gb"] = torch.cuda.max_memory_allocated(device) / 1e9
 
 
 def compute_metrics(preds, targets, station_keys, n_worst=5):
@@ -217,7 +298,8 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
 SIGMA_MIN = 0.01   # floor on predicted σ; prevents NLL explosion on overconfident wrong predictions
 LOG_VAR_MIN = 2.0 * np.log(SIGMA_MIN)   # ≈ -9.21
 
-def _compute_loss(mu, var, label, loss_fn, lambda_tv=0.0):
+def _compute_loss(mu, var, label, loss_fn, lambda_tv=0.0, lambda_boundary=0.0):
+    import torch.nn.functional as F
     if loss_fn == "nll":
         if var is not None:
             var = var.clamp(min=LOG_VAR_MIN)
@@ -227,6 +309,10 @@ def _compute_loss(mu, var, label, loss_fn, lambda_tv=0.0):
     tv = total_variation_loss(mu)
     if lambda_tv > 0.0:
         loss = loss + lambda_tv * tv
+    if lambda_boundary > 0.0:
+        # Smooth physical penalty: pushes predictions back into [0, 1]
+        boundary = F.relu(-mu).mean() + F.relu(mu - 1.0).mean()
+        loss = loss + lambda_boundary * boundary
     return loss, tv.detach()
 
 
@@ -295,7 +381,7 @@ def make_resume_loader(full_loader, skip_batches, epoch):
 
 
 def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda_tv=0.0,
-                     max_batches=None, debug_nan=False,
+                     lambda_boundary=0.0, max_batches=None, debug_nan=False,
                      skip_batches=0, mid_ckpt_every=500, mid_ckpt_fn=None):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
@@ -303,30 +389,30 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
     rank 0 can save a recovery checkpoint.
     """
     model.train()
-    total_loss = 0.0
-    total_tv   = 0.0
-    n_batches  = 0
-    t_prev     = time.perf_counter()
-
-    loader_iter = iter(loader)
+    total_loss   = 0.0
+    total_tv     = 0.0
+    n_batches    = 0
+    data_time    = 0.0
+    compute_time = 0.0
+    t_data_start = time.perf_counter()
 
     # Loader is pre-sliced by make_resume_loader — no IO skip needed here.
     # skip_batches is kept as a display/checkpoint offset only.
     if skip_batches > 0:
         print(f"  [mid-epoch resume] resuming from batch {skip_batches + 1}")
 
-    for batch in loader_iter:
+    for batch in CudaPrefetcher(loader, device):
         if max_batches is not None and n_batches >= max_batches:
             break
 
-        batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-                 for k, v in batch.items()}
+        data_time += time.perf_counter() - t_data_start
 
         if debug_nan:
             bad_in = _scan_for_nan(batch, exclude={"label"})
             if bad_in:
                 _report_nan(f"batch {n_batches+1:03d} INPUT", batch, bad_in)
 
+        t_compute = time.perf_counter()
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu, var = model(batch)
 
@@ -335,7 +421,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
                 if bad_out:
                     _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-            loss, tv = _compute_loss(mu, var, batch["label"], loss_fn, lambda_tv)
+            loss, tv = _compute_loss(mu, var, batch["label"], loss_fn, lambda_tv, lambda_boundary)
 
         optimizer.zero_grad()
         loss.backward()
@@ -354,20 +440,22 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
             if bad_param:
                 print(f"  [NaN DEBUG] batch {n_batches+1:03d}: NaN parameters after optimizer.step()")
 
-        total_loss += loss.item()
-        total_tv   += tv.item()
-        n_batches  += 1
+        compute_time += time.perf_counter() - t_compute
+        total_loss   += loss.item()
+        total_tv     += tv.item()
+        n_batches    += 1
 
-        t_now = time.perf_counter()
-        print(f"  batch {skip_batches + n_batches:04d}  loss={loss.item():.4f}  tv={tv.item():.5f}  step={1000*(t_now - t_prev):.0f}ms")
-        t_prev = t_now
+        step_ms = 1000 * (data_time + compute_time) / n_batches
+        print(f"  batch {skip_batches + n_batches:04d}  loss={loss.item():.4f}  tv={tv.item():.5f}  step={step_ms:.0f}ms")
 
         # Mid-epoch checkpoint every N batches (rank 0 only, via callback)
         if mid_ckpt_fn is not None and mid_ckpt_every > 0 and n_batches % mid_ckpt_every == 0:
             mid_ckpt_fn(skip_batches + n_batches)
 
+        t_data_start = time.perf_counter()
+
     n = max(n_batches, 1)
-    return total_loss / n, total_tv / n
+    return total_loss / n, total_tv / n, data_time, compute_time
 
 
 @torch.no_grad()
@@ -389,12 +477,9 @@ def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=N
     SROW = SoilMoistureModel.STATION_ROW
     SCOL = SoilMoistureModel.STATION_COL
 
-    for batch in loader:
+    for batch in CudaPrefetcher(loader, device):
         if max_batches is not None and n_batches >= max_batches:
             break
-
-        batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-                 for k, v in batch.items()}
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu, var = model(batch)
@@ -462,8 +547,10 @@ def main():
     parser.add_argument("--run-name",     type=str,   default=None)
     parser.add_argument("--loss-fn",      type=str,   default=None,
                         choices=["nll", "huber"])
-    parser.add_argument("--lambda-tv",   type=float, default=None,
+    parser.add_argument("--lambda-tv",       type=float, default=None,
                         help="TV regularization weight (default 0.001; 0 to disable)")
+    parser.add_argument("--lambda-boundary", type=float, default=None,
+                        help="Boundary penalty weight for SM ∈ [0,1] (default 0.1; 0 to disable)")
     parser.add_argument("--max-stations", type=int,   default=None,
                         help="Limit dataset to N stations (smoke-test mode)")
     parser.add_argument("--max-epochs",   type=int,   default=None,
@@ -488,7 +575,8 @@ def main():
     if args.prefetch_factor is not None: CONFIG["prefetch_factor"] = args.prefetch_factor
     if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
-    if args.lambda_tv   is not None: CONFIG["lambda_tv"]  = args.lambda_tv
+    if args.lambda_tv       is not None: CONFIG["lambda_tv"]       = args.lambda_tv
+    if args.lambda_boundary is not None: CONFIG["lambda_boundary"] = args.lambda_boundary
 
     if CONFIG["loss_fn"] == "huber":
         CONFIG["predict_uncertainty"] = False
@@ -538,6 +626,9 @@ def main():
         shm_dir          = SHM_DIR,
     )
     val_max_stations = max(1, args.max_stations // 5) if args.max_stations is not None else None
+    # file_system strategy avoids fd exhaustion with 32 workers; must be set before workers spawn
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
                                          max_stations=args.max_stations)
 
@@ -552,13 +643,12 @@ def main():
         pin_memory         = True,
         drop_last          = True,
         worker_init_fn     = worker_init_fn,
-        persistent_workers = False,   # workers die at epoch end → IPC freed before val starts
+        persistent_workers = True,    # persistent avoids worker respawn race at epoch boundaries
         prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
     )
 
     # Val dataset on all ranks — DistributedSampler splits it across GPUs
-    # Use lighter workers (2w × pf=2, persistent=False) to cap IPC Shmem at ~37GB
-    # while train DataLoader IPC (~293GB) stays resident during val.
+    # 2 workers × pf=2: IPC ~62 GB; safe even at val→train boundary (train IPC + 62 = 502 GB)
     val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
                                        max_stations=val_max_stations)
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
@@ -568,10 +658,10 @@ def main():
         batch_size         = CONFIG["batch_size"],
         shuffle            = False,
         sampler            = val_sampler,
-        num_workers        = 8,
+        num_workers        = CONFIG.get("val_num_workers", 2),
         pin_memory         = True,
         worker_init_fn     = worker_init_fn,
-        persistent_workers = False,
+        persistent_workers = True,
         prefetch_factor    = 2,
     )
 
@@ -687,30 +777,21 @@ def main():
             print(f"W&B disabled: {e}")
 
     # ── Memory snapshot (before first epoch) ─────────────────────────
-    if is_main:
-        mem = {}
-        for line in open("/proc/meminfo"):
-            k, v = line.split(":"); mem[k.strip()] = int(v.split()[0])
-        ram_total = mem["MemTotal"] / 1e6
-        ram_avail = mem["MemAvailable"] / 1e6
-        print(f"\n=== Memory snapshot (rank 0) ===")
-        print(f"  RAM  used : {ram_total - ram_avail:.1f} GB / {ram_total:.1f} GB")
-        for i in range(torch.cuda.device_count()):
-            alloc  = torch.cuda.memory_allocated(i)  / 1e9
-            reserv = torch.cuda.memory_reserved(i)   / 1e9
-            total  = torch.cuda.get_device_properties(i).total_memory / 1e9
-            print(f"  GPU {i} VRAM: {alloc:.1f} GB alloc / {reserv:.1f} GB reserved / {total:.1f} GB total")
-        print()
+    _log_mem_snapshot("job_start", device, is_main)
 
     # ── Training loop ─────────────────────────────────────────────────
     for epoch in range(start_epoch, CONFIG["max_epochs"] + 1):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
+        torch.cuda.reset_peak_memory_stats(device)
+        _log_mem_snapshot(f"epoch_{epoch:03d}_start", device, is_main)
+
         if epoch == val_pending_epoch:
             # Resuming after a val crash — training already completed, reuse saved metrics
             train_loss = saved_train_loss or 0.0
             train_tv   = saved_train_tv   or 0.0
+            data_time = compute_time = 0.0
         else:
             # Mid-epoch checkpoint callback (rank 0 only)
             def _save_mid_ckpt(batches_done):
@@ -733,14 +814,16 @@ def main():
             else:
                 _loader = train_loader
 
-            train_loss, train_tv = train_one_epoch(
+            train_loss, train_tv, data_time, compute_time = train_one_epoch(
                 model, _loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
                 lambda_tv=CONFIG["lambda_tv"],
+                lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
                 max_batches=args.max_train_batches, debug_nan=args.debug_nan,
                 skip_batches = _skip,
                 mid_ckpt_every = 500,
                 mid_ckpt_fn    = _save_mid_ckpt if is_main else None,
             )
+            _log_mem_snapshot(f"epoch_{epoch:03d}_post_train", device, is_main)
 
             # Save post-training checkpoint before validation — epoch not lost if val crashes
             if is_main:
@@ -768,6 +851,7 @@ def main():
             world_size=world_size, rank=rank,
             max_batches=args.max_val_batches,
         )
+        _log_mem_snapshot(f"epoch_{epoch:03d}_post_val", device, is_main)
         if is_ddp and epoch != val_pending_epoch:
             # Reduce train_loss and train_tv to rank 0 for accurate global average logging
             t_loss = torch.tensor(train_loss, device=device)
@@ -783,32 +867,63 @@ def main():
 
         if is_main:
             peak_vram = torch.cuda.max_memory_allocated(device) / 1e9
+            gpu_util  = (compute_time / max(data_time + compute_time, 1e-6)) * 100
             print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
-                  f"  peak_vram={peak_vram:.1f}GB")
-            torch.cuda.reset_peak_memory_stats(device)
+                  f"  data={data_time:.0f}s  compute={compute_time:.0f}s"
+                  f"  gpu_util={gpu_util:.0f}%  peak_vram={peak_vram:.1f}GB")
             for depth, m in metrics.items():
                 print(f"  {depth:>8s}  MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
                       f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}")
 
-            # Worst 5 stations by 0-10 cm ubRMSE
+            # Per-station ubRMSE — all stations, all depths, sorted by surface ubRMSE
             surface_depth = SM_DEPTHS[0]
             if per_station and surface_depth in next(iter(per_station.values()), {}):
                 ranked = sorted(
-                    [(st, v[surface_depth]["ubRMSE"]) for st, v in per_station.items()
-                     if surface_depth in v],
-                    key=lambda x: x[1], reverse=True,
+                    per_station.items(),
+                    key=lambda x: x[1].get(surface_depth, {}).get("ubRMSE", 0.0),
+                    reverse=True,
                 )
-                print(f"  Worst 5 stations ({surface_depth} ubRMSE):")
-                for st, ub in ranked[:5]:
-                    print(f"    {st:50s}  ubRMSE={ub:.4f}")
+                # header
+                depth_header = "  ".join(f"{d:>8s}" for d in SM_DEPTHS)
+                print(f"\n  Per-station ubRMSE  [{depth_header}]")
+                for depth in SM_DEPTHS:
+                    ubs = [v[depth]["ubRMSE"] for _, v in ranked if depth in v]
+                    if ubs:
+                        print(f"    {depth:>8s}  station-mean={np.mean(ubs):.4f}  "
+                              f"median={np.median(ubs):.4f}  pooled={metrics[depth]['ubRMSE']:.4f}")
+                print()
+                for st, v in ranked:
+                    vals = "  ".join(
+                        f"{v[d]['ubRMSE']:8.4f}" if d in v else f"{'N/A':>8s}"
+                        for d in SM_DEPTHS
+                    )
+                    print(f"    {st:50s}  {vals}")
+
+            # Persist per-station metrics to CSV (append per epoch)
+            if per_station:
+                csv_path = ckpt_dir / "val_station_metrics.csv"
+                rows = [
+                    {"epoch": epoch, "station": st, "depth": d,
+                     "ubRMSE": m["ubRMSE"], "MAE": m["MAE"],
+                     "bias": m["bias"], "MSE": m["MSE"], "n": m["n"]}
+                    for st, dv in per_station.items()
+                    for d, m in dv.items()
+                ]
+                pd.DataFrame(rows).to_csv(
+                    csv_path, mode="a", header=not csv_path.exists(), index=False
+                )
 
             if use_wandb:
                 log_dict = {
-                    "epoch"      : epoch,
-                    "train/loss" : train_loss,
-                    "train/tv"   : train_tv,
-                    "val/loss"   : val_loss,
-                    "lr"         : optimizer.param_groups[0]["lr"],
+                    "epoch"        : epoch,
+                    "train/loss"   : train_loss,
+                    "train/tv"     : train_tv,
+                    "val/loss"     : val_loss,
+                    "lr"           : optimizer.param_groups[0]["lr"],
+                    "perf/data_s"  : data_time,
+                    "perf/compute_s": compute_time,
+                    "perf/gpu_util": gpu_util,
+                    "perf/peak_vram_gb": peak_vram,
                 }
                 for depth, m in metrics.items():
                     log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
@@ -816,6 +931,18 @@ def main():
                     log_dict[f"val/{depth}/bias"]   = m["bias"]
                 if mean_sigma is not None:
                     log_dict["val/mean_sigma"] = mean_sigma
+                # Worst-5 stations per depth
+                if per_station:
+                    for depth in SM_DEPTHS:
+                        worst = sorted(
+                            [(st, v[depth]["ubRMSE"]) for st, v in per_station.items() if depth in v],
+                            key=lambda x: x[1], reverse=True,
+                        )[:5]
+                        for i, (st, ub) in enumerate(worst, 1):
+                            log_dict[f"val/{depth}/worst{i}_ubRMSE"]  = ub
+                            log_dict[f"val/{depth}/worst{i}_station"]  = st
+                _log_mem_snapshot(f"epoch_{epoch:03d}_post_val", device, is_main,
+                                  use_wandb=True, epoch=epoch, log_dict=log_dict)
                 wandb.log(log_dict)
 
             # ── Checkpoint (post-validation; overwrites the val_pending checkpoint) ──

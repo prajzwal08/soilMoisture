@@ -22,6 +22,7 @@ All data is read from Zarr stores on scratch:
 
 import json
 import os
+import random
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -61,6 +62,8 @@ ERA5_VARS = [
 SM_DEPTHS = ["0-10", "10-30", "30-100"]  # n_depths = 3
 
 S2_BAND_INDICES = list(range(12))  # all 12 S2L2A bands (no B10)
+
+PREC_IDX = ERA5_VARS.index("tp_sum")  # index computed once at import, not per sample
 
 MAX_S2 = 60
 MAX_S1 = 40
@@ -186,11 +189,15 @@ def _load_zarr_labels(zg: zarr.Group):
 
 def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           max_acq: int = MAX_S2,
-                          l12_np: np.ndarray | None = None):
+                          l12_np: np.ndarray | None = None,
+                          date_cache: dict | None = None,
+                          cm_token_mask: np.ndarray | None = None):
     """
-    Load S2 L12 tokens and cloud mask from zarr for the 365-day rolling window.
-    l12_np: if provided (preloaded into RAM), L12 tokens are served from RAM
-    with zero disk I/O. Otherwise falls back to chunk reads from zarr.
+    Load S2 L12 tokens and cloud mask for the 365-day rolling window.
+
+    date_cache:    precomputed per-orbit date info from _zarr_date_cache (eliminates zarr date reads)
+    cm_token_mask: precomputed (N_cm, 14, 14) bool quality array from _cm_token_mask_cache
+    l12_np:        preloaded L12 tokens from RAM/shm (eliminates chunk reads for history tokens)
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
@@ -200,36 +207,59 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
     if "s2/l12" not in zg:
         return l12, doys, doys > 0, token_mask, rel_pos
 
-    all_dates = [str(d) for d in zg["s2/dates"][:]]
-    ws, td    = _window_datetimes(year, target_doy)
-    win_idx   = [i for i, d in enumerate(all_dates) if _in_window(d, ws, td)]
-    win_idx   = win_idx[-max_acq:]
+    # Date arrays — use precomputed cache (no zarr read) or fall back to zarr
+    if date_cache is not None and "s2" in date_cache:
+        s2_dc      = date_cache["s2"]
+        all_dates  = s2_dc["dates"]
+        date_ints  = s2_dc["date_ints"]
+        doys_arr   = s2_dc["doys"]
+        years_arr  = s2_dc["years"]
+        start_int, end_int = _window_ints(year, target_doy)
+        win_idx    = np.where((date_ints >= start_int) & (date_ints <= end_int))[0][-max_acq:].tolist()
+    else:
+        all_dates  = [str(d) for d in zg["s2/dates"][:]]
+        ws, td     = _window_datetimes(year, target_doy)
+        win_idx    = [i for i, d in enumerate(all_dates) if _in_window(d, ws, td)][-max_acq:]
+        doys_arr   = None
+        years_arr  = None
 
-    cm_date_idx: dict[str, int] = {}
-    has_cm = "cm/masks" in zg and "cm/dates" in zg
-    if has_cm:
-        cm_date_idx = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
+    # CM date→index lookup — prefer precomputed, fall back to zarr read
+    if date_cache is not None and "cm" in date_cache:
+        cm_d2i = date_cache["cm"].get("date_to_idx", {})
+    elif "cm/masks" in zg and "cm/dates" in zg:
+        cm_d2i = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
+    else:
+        cm_d2i = {}
 
     tokens_z = l12_np if l12_np is not None else zg["s2/l12"]
-    cm_z     = zg["cm/masks"] if has_cm else None
+    cm_z     = None if (cm_token_mask is not None or not ("cm/masks" in zg)) else zg["cm/masks"]
 
     for out_i, src_i in enumerate(win_idx):
         date_str = all_dates[src_i]
-        dt       = datetime.strptime(date_str[:8], "%Y%m%d")
-        acq_doy  = dt.timetuple().tm_yday
+        if doys_arr is not None:
+            acq_doy  = int(doys_arr[src_i])
+            acq_year = int(years_arr[src_i])
+        else:
+            dt       = datetime.strptime(date_str[:8], "%Y%m%d")
+            acq_doy  = dt.timetuple().tm_yday
+            acq_year = dt.year
 
-        tok = torch.from_numpy(tokens_z[src_i])               # RAM slice or chunk read
+        tok = torch.from_numpy(tokens_z[src_i])
         if torch.isnan(tok).any():
-            continue                                           # skip swath-edge corruptions
+            continue
         l12[out_i]     = tok
         doys[out_i]    = acq_doy
-        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+        rel_pos[out_i] = _rel_pos(acq_doy, acq_year, target_doy, year)
 
-        if date_str in cm_date_idx:
-            cm    = cm_z[cm_date_idx[date_str]]               # one chunk read
-            cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-            bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
-            token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
+        if date_str in cm_d2i:
+            cm_idx = cm_d2i[date_str]
+            if cm_token_mask is not None:
+                token_mask[out_i] = torch.from_numpy(cm_token_mask[cm_idx])
+            elif cm_z is not None:
+                cm    = cm_z[cm_idx]
+                cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
+                bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
+                token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
 
     return l12, doys, doys > 0, token_mask, rel_pos
 
@@ -237,33 +267,57 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
 def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           max_acq: int = MAX_S1,
                           l12_asc_np: np.ndarray | None = None,
-                          l12_desc_np: np.ndarray | None = None):
+                          l12_desc_np: np.ndarray | None = None,
+                          date_cache: dict | None = None,
+                          s1_token_mask_cache: dict | None = None):
     """Load S1 L12 tokens (ASC + DESC merged) from zarr.
-    l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates chunk reads for L12.
+
+    date_cache:          precomputed per-orbit date info (eliminates zarr date reads)
+    s1_token_mask_cache: precomputed {orbit: (N,14,14) bool} from _s1_token_mask_cache
+    l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates L12 chunk reads.
     Returns (l12, doys, valid, token_mask, rel_pos) matching S2's 5-tuple signature.
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
-    token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)  # True = valid
+    token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)
     rel_pos    = torch.zeros(max_acq, dtype=torch.long)
 
-    ws, td  = _window_datetimes(year, target_doy)
-    entries: list[tuple[str, object, int, str]] = []
+    start_int, end_int = _window_ints(year, target_doy)
+    ws, td = _window_datetimes(year, target_doy)
+    entries: list[tuple[str, object, int, str, int | None, int | None]] = []
 
     l12_np_map = {"s1_asc": l12_asc_np, "s1_desc": l12_desc_np}
-    # Preload per-orbit token_mask arrays (small: N×14×14 bool)
+
+    # S1 token masks — use precomputed cache or fall back to zarr read
     tm_np_map: dict[str, np.ndarray | None] = {}
     for orbit_key in ("s1_asc", "s1_desc"):
-        mk = f"{orbit_key}/token_mask"
-        tm_np_map[orbit_key] = np.asarray(zg[mk][:]) if mk in zg else None
+        if s1_token_mask_cache is not None:
+            tm_np_map[orbit_key] = s1_token_mask_cache.get(orbit_key)
+        else:
+            mk = f"{orbit_key}/token_mask"
+            tm_np_map[orbit_key] = np.asarray(zg[mk][:]) if mk in zg else None
+
         if f"{orbit_key}/l12" not in zg:
             continue
-        orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
-        tokens_src  = l12_np_map[orbit_key] if l12_np_map[orbit_key] is not None \
-                      else zg[f"{orbit_key}/l12"]
-        for i, d in enumerate(orbit_dates):
-            if _in_window(d, ws, td):
-                entries.append((d, tokens_src, i, orbit_key))
+
+        # Date arrays — precomputed cache or zarr read
+        if date_cache is not None and orbit_key in date_cache:
+            dc         = date_cache[orbit_key]
+            orbit_dates = dc["dates"]
+            di          = dc["date_ints"]
+            doys_a      = dc["doys"]
+            years_a     = dc["years"]
+            idx_arr     = np.where((di >= start_int) & (di <= end_int))[0]
+            tokens_src  = l12_np_map[orbit_key] or zg[f"{orbit_key}/l12"]
+            for i in idx_arr:
+                entries.append((orbit_dates[i], tokens_src, int(i), orbit_key,
+                                 int(doys_a[i]), int(years_a[i])))
+        else:
+            orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
+            tokens_src  = l12_np_map[orbit_key] or zg[f"{orbit_key}/l12"]
+            for i, d in enumerate(orbit_dates):
+                if _in_window(d, ws, td):
+                    entries.append((d, tokens_src, i, orbit_key, None, None))
 
     if not entries:
         return l12, doys, doys > 0, token_mask, rel_pos
@@ -272,17 +326,20 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
     entries = entries[-max_acq:]
 
     out_i = 0
-    for date_str, tokens_z, src_i, orbit_key in entries:
-        tok = torch.from_numpy(np.asarray(tokens_z[src_i]))   # one chunk read
+    for date_str, tokens_z, src_i, orbit_key, cached_doy, cached_year in entries:
+        tok = torch.from_numpy(np.asarray(tokens_z[src_i]))
         if torch.isnan(tok).any():
-            # Corrupted TerraMind acquisition (whole-tile NaN) -- skip rather
-            # than letting NaN propagate into the model.
             continue
-        dt      = datetime.strptime(date_str[:8], "%Y%m%d")
-        acq_doy = dt.timetuple().tm_yday
+        if cached_doy is not None:
+            acq_doy  = cached_doy
+            acq_year = cached_year
+        else:
+            dt       = datetime.strptime(date_str[:8], "%Y%m%d")
+            acq_doy  = dt.timetuple().tm_yday
+            acq_year = dt.year
         l12[out_i]     = tok
         doys[out_i]    = acq_doy
-        rel_pos[out_i] = _rel_pos(acq_doy, dt.year, target_doy, year)
+        rel_pos[out_i] = _rel_pos(acq_doy, acq_year, target_doy, year)
         if tm_np_map[orbit_key] is not None:
             token_mask[out_i] = torch.from_numpy(tm_np_map[orbit_key][src_i])
         out_i += 1
@@ -291,69 +348,83 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
 
 
 def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
-                        l12_cache: dict | None = None
+                        l12_cache: dict | None = None,
+                        date_cache: dict | None = None,
+                        cm_token_mask: np.ndarray | None = None,
+                        s1_token_mask_cache: dict | None = None,
                         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor,
                                    torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Select the best anchor acquisition for the U-Net skip connections and
     target spatial tokens.
 
+    date_cache:          precomputed per-orbit date info (eliminates zarr date reads)
+    cm_token_mask:       precomputed (N_cm, 14, 14) bool from _cm_token_mask_cache
+    s1_token_mask_cache: precomputed {orbit: (N,14,14) bool} from _s1_token_mask_cache
+
     Priority:
       1. Most recent acquisition with ALL 196 patches valid (fully clear/no-NaN).
       2. If none fully clear, fall back to most recent acquisition regardless.
-
-    Quality sources:
-      S2  — cm/masks cloud raster (bad class ∈ {3,4,5,255}; bad_frac ≤ 1% → valid)
-      S1  — s1_asc/token_mask | s1_desc/token_mask (written by compute_s1_dem_lulc_token_masks.py)
-      When a quality array is absent, the acquisition is treated as fully valid.
-
-    Returns:
-      anchor_l3, anchor_l6, anchor_l9, anchor_l12 : (196, 768) fp16 tensors
-      anchor_rel_pos                               : () long scalar tensor
-      anchor_is_s1                                 : () bool scalar tensor
     All zero if no in-window acquisition found.
     """
     zeros  = torch.zeros(196, 768, dtype=torch.float16)
+    start_int, end_int = _window_ints(year, target_doy)
     ws, td = _window_datetimes(year, target_doy)
 
-    # ── Preload S2 cloud-mask index ───────────────────────────────────────
-    cm_date_idx: dict[str, int] = {}
-    cm_z = None
-    if "cm/masks" in zg and "cm/dates" in zg:
-        cm_date_idx = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
-        cm_z = zg["cm/masks"]
+    # CM date→index lookup
+    if date_cache is not None and "cm" in date_cache:
+        cm_d2i = date_cache["cm"].get("date_to_idx", {})
+    elif "cm/masks" in zg and "cm/dates" in zg:
+        cm_d2i = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
+    else:
+        cm_d2i = {}
+    cm_z = None if cm_token_mask is not None else (zg["cm/masks"] if "cm/masks" in zg else None)
 
-    # ── Preload S1 token-mask arrays (small: N×14×14 bool) ───────────────
+    # S1 token masks — precomputed or zarr fallback
     tm_np: dict[str, np.ndarray | None] = {}
     for ok in ("s1_asc", "s1_desc"):
-        mk = f"{ok}/token_mask"
-        tm_np[ok] = np.asarray(zg[mk][:]) if mk in zg else None
+        if s1_token_mask_cache is not None:
+            tm_np[ok] = s1_token_mask_cache.get(ok)
+        else:
+            mk = f"{ok}/token_mask"
+            tm_np[ok] = np.asarray(zg[mk][:]) if mk in zg else None
 
     # ── Collect all in-window candidates ─────────────────────────────────
-    # Each entry: (date_str, orbit_key, src_idx, n_valid_patches [0..196])
     candidates: list[tuple[str, str, int, int]] = []
 
     for orbit in ("s2", "s1_asc", "s1_desc"):
         dates_key = f"{orbit}/dates"
         if dates_key not in zg or f"{orbit}/l12" not in zg:
             continue
-        orbit_dates = [str(d) for d in zg[dates_key][:]]
-        for i, d in enumerate(orbit_dates):
-            if not _in_window(d, ws, td):
-                continue
+        # Date filtering — precomputed cache or zarr read
+        if date_cache is not None and orbit in date_cache:
+            dc          = date_cache[orbit]
+            orbit_dates = dc["dates"]
+            idx_arr     = np.where((dc["date_ints"] >= start_int) &
+                                   (dc["date_ints"] <= end_int))[0]
+            in_window_pairs = [(orbit_dates[i], int(i)) for i in idx_arr]
+        else:
+            orbit_dates = [str(d) for d in zg[dates_key][:]]
+            in_window_pairs = [(d, i) for i, d in enumerate(orbit_dates)
+                               if _in_window(d, ws, td)]
+
+        for d, i in in_window_pairs:
             if orbit == "s2":
-                if d in cm_date_idx:
-                    cm    = cm_z[cm_date_idx[d]]
-                    cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-                    bad   = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
-                    n_valid = int((bad <= 0.01).sum())
+                if d in cm_d2i:
+                    cm_idx = cm_d2i[d]
+                    if cm_token_mask is not None:
+                        n_valid = int(cm_token_mask[cm_idx].sum())
+                    elif cm_z is not None:
+                        cm    = cm_z[cm_idx]
+                        cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
+                        bad   = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
+                        n_valid = int((bad <= 0.01).sum())
+                    else:
+                        n_valid = 196
                 else:
-                    n_valid = 196   # no cloud mask → assume clear
+                    n_valid = 196
             else:
-                if tm_np[orbit] is not None:
-                    n_valid = int(tm_np[orbit][i].sum())
-                else:
-                    n_valid = 196   # mask not yet computed → assume clear
+                n_valid = int(tm_np[orbit][i].sum()) if tm_np[orbit] is not None else 196
             candidates.append((d, orbit, i, n_valid))
 
     if not candidates:
@@ -368,9 +439,15 @@ def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
            else max(candidates, key=lambda c: c[0])   # fallback: most recent
 
     best_date, best_orbit, best_idx, _ = best
-    dt      = datetime.strptime(best_date[:8], "%Y%m%d")
-    acq_doy = dt.timetuple().tm_yday
-    rp      = _rel_pos(acq_doy, dt.year, target_doy, year)
+    if date_cache is not None and best_orbit in date_cache:
+        dc_o     = date_cache[best_orbit]
+        acq_doy  = int(dc_o["doys"][best_idx])
+        acq_year = int(dc_o["years"][best_idx])
+    else:
+        dt       = datetime.strptime(best_date[:8], "%Y%m%d")
+        acq_doy  = dt.timetuple().tm_yday
+        acq_year = dt.year
+    rp      = _rel_pos(acq_doy, acq_year, target_doy, year)
     orbit_id = {"s2": 0, "s1_asc": 1, "s1_desc": 2}[best_orbit]
 
     # ── Load L3 / L6 / L9 / L12 for chosen anchor ────────────────────────
@@ -426,12 +503,12 @@ def load_era5_rolling(cache_entry, year: int, target_doy: int):
     Args:
         cache_entry: (values (N,19) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
-        era5 : (365, 19) float32
-        doys : (365,) long
+        era5 : (365, 19) float32 numpy array
+        doys : (365,) int64 numpy array
     """
     if cache_entry is None:
-        return (torch.zeros(365, len(ERA5_VARS), dtype=torch.float32),
-                torch.zeros(365, dtype=torch.long))
+        return (np.zeros((365, len(ERA5_VARS)), dtype=np.float32),
+                np.zeros(365, dtype=np.int64))
 
     values, date_ints, doy_arr = cache_entry
     start_int, end_int = _window_ints(year, target_doy)
@@ -446,7 +523,7 @@ def load_era5_rolling(cache_entry, year: int, target_doy: int):
     l = min(len(doys_win), n)
     out_era5[-l:] = era5_win[-l:]
     out_doys[-l:] = doys_win[-l:]
-    return torch.from_numpy(out_era5), torch.from_numpy(out_doys)
+    return out_era5, out_doys
 
 
 
@@ -491,9 +568,15 @@ def load_sif_rolling(cache_entry, year: int, target_doy: int):
     vals[:n_win, 0] = torch.from_numpy(win_vals)
     doys[:n_win]    = torch.from_numpy(win_doys.astype(np.int64))
     valid[:n_win]   = True
-    for i in range(n_win):
-        acq_year   = int(win_dates[i]) // 10000
-        rel_pos[i] = _rel_pos(int(win_doys[i]), acq_year, target_doy, year)
+    if n_win > 0:
+        acq_years = (win_dates // 10000).astype(np.int32)
+        target_dt = datetime(year, 1, 1) + timedelta(days=target_doy - 1)
+        rp = np.array([
+            364 - (target_dt - (datetime(int(acq_years[i]), 1, 1)
+                                + timedelta(days=int(win_doys[i]) - 1))).days
+            for i in range(n_win)
+        ], dtype=np.int64)
+        rel_pos[:n_win] = torch.from_numpy(rp)
 
     return vals, doys, rel_pos, valid
 
@@ -536,9 +619,15 @@ def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     vals[:n_win, 0] = torch.from_numpy(win_vals)
     doys[:n_win]    = torch.from_numpy(win_doys.astype(np.int64))
     valid[:n_win]   = True
-    for i in range(n_win):
-        acq_year   = int(win_dates[i]) // 10000
-        rel_pos[i] = _rel_pos(int(win_doys[i]), acq_year, target_doy, year)
+    if n_win > 0:
+        acq_years = (win_dates // 10000).astype(np.int32)
+        target_dt = datetime(year, 1, 1) + timedelta(days=target_doy - 1)
+        rp = np.array([
+            364 - (target_dt - (datetime(int(acq_years[i]), 1, 1)
+                                + timedelta(days=int(win_doys[i]) - 1))).days
+            for i in range(n_win)
+        ], dtype=np.int64)
+        rel_pos[:n_win] = torch.from_numpy(rp)
 
     return vals, doys, rel_pos, valid
 
@@ -644,6 +733,13 @@ class SoilMoistureDataset(Dataset):
         # Static-per-station tensors (DEM, LULC, soil, token masks).
         # Loaded once at init; workers inherit as shared CoW pages (read-only).
         self._static_cache : dict[Path, dict[str, torch.Tensor]] = {}
+        # Precomputed zarr data — eliminates all GPFS reads per __getitem__:
+        #   _cm_token_mask_cache : (N_cm, 14, 14) bool quality array per station
+        #   _s1_token_mask_cache : {orbit: (N, 14, 14) bool} per station
+        #   _zarr_date_cache     : {orbit: {"dates", "date_ints", "doys", "years"}} per station
+        self._cm_token_mask_cache : dict[Path, np.ndarray | None] = {}
+        self._s1_token_mask_cache : dict[Path, dict]               = {}
+        self._zarr_date_cache     : dict[Path, dict]               = {}
 
         for _, r in splits.iterrows():
             has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
@@ -703,6 +799,43 @@ class SoilMoistureDataset(Dataset):
                     if lc is not None:
                         self._label_cache[sat_dir] = lc
 
+                    # ── Precompute GPFS-hot-path data once at init ──────────────
+                    # (a) CM token-mask quality: (N_cm, 14, 14) bool — one bulk read
+                    cm_qm = None
+                    if "cm/masks" in zg and "cm/dates" in zg:
+                        cm_all = zg["cm/masks"][:]
+                        cm_4d  = cm_all[:, :224, :224].reshape(len(cm_all), 14, 16, 14, 16)
+                        bad    = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(2, 4))
+                        cm_qm  = (bad <= 0.01)
+                    self._cm_token_mask_cache[sat_dir] = cm_qm
+
+                    # (b) S1 token masks per orbit: {orbit: (N, 14, 14) bool}
+                    s1_tm: dict[str, np.ndarray] = {}
+                    for _ok in ("s1_asc", "s1_desc"):
+                        _mk = f"{_ok}/token_mask"
+                        if _mk in zg:
+                            s1_tm[_ok] = np.asarray(zg[_mk][:])
+                    self._s1_token_mask_cache[sat_dir] = s1_tm
+
+                    # (c) Date arrays + precomputed date_ints/years/doys per orbit
+                    _dc: dict = {}
+                    for _orbit in ("s2", "s1_asc", "s1_desc", "cm"):
+                        _dkey = f"{_orbit}/dates"
+                        if _dkey not in zg:
+                            continue
+                        _dates     = [str(d) for d in zg[_dkey][:]]
+                        _date_ints = np.array([int(d[:8]) for d in _dates], dtype=np.int32)
+                        _years_a   = (_date_ints // 10000).astype(np.int16)
+                        _doys_a    = np.array([
+                            datetime(int(d[:4]), int(d[4:6]), int(d[6:8])).timetuple().tm_yday
+                            for d in _dates
+                        ], dtype=np.int16)
+                        _dc[_orbit] = {"dates": _dates, "date_ints": _date_ints,
+                                        "years": _years_a, "doys": _doys_a}
+                    if "cm" in _dc:
+                        _dc["cm"]["date_to_idx"] = {d: i for i, d in enumerate(_dc["cm"]["dates"])}
+                    self._zarr_date_cache[sat_dir] = _dc
+
             # ERA5 year range from cache (fast int arithmetic — no file I/O)
             era5_entry = self._era5_cache[sat_dir]
             if era5_entry is None:
@@ -756,6 +889,9 @@ class SoilMoistureDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    def __getitems__(self, indices):
+        return [self.__getitem__(i) for i in indices]
+
     def __getitem__(self, idx):
         s       = self.samples[idx]
         sat_dir = s["sat_dir"]
@@ -764,15 +900,24 @@ class SoilMoistureDataset(Dataset):
         zg      = self._zarr_groups.get(sat_dir)   # zarr group or None
 
         if zg is not None:
-            # ── Zarr path — L12 served from RAM cache (zero disk I/O for history) ──
-            _l12 = self._l12_cache.get(sat_dir, {})
+            # ── Zarr path — all GPFS data served from precomputed caches ──
+            _l12     = self._l12_cache.get(sat_dir, {})
+            _dc      = self._zarr_date_cache.get(sat_dir, {})
+            _cm_tm   = self._cm_token_mask_cache.get(sat_dir)
+            _s1_tm   = self._s1_token_mask_cache.get(sat_dir, {})
+
             s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = \
-                load_s2_rolling_zarr(zg, year, doy, l12_np=_l12.get("s2"))
+                load_s2_rolling_zarr(zg, year, doy,
+                                     l12_np=_l12.get("s2"),
+                                     date_cache=_dc,
+                                     cm_token_mask=_cm_tm)
 
             s1_l12, s1_doys, s1_valid, s1_token_mask, s1_rel_pos = \
                 load_s1_rolling_zarr(zg, year, doy,
                                      l12_asc_np=_l12.get("s1_asc"),
-                                     l12_desc_np=_l12.get("s1_desc"))
+                                     l12_desc_np=_l12.get("s1_desc"),
+                                     date_cache=_dc,
+                                     s1_token_mask_cache=_s1_tm)
 
             _static     = self._static_cache.get(sat_dir, {})
             dem_l12          = _static.get("dem",            torch.zeros(196, 768, dtype=torch.float16))
@@ -781,7 +926,11 @@ class SoilMoistureDataset(Dataset):
             lulc_token_mask  = _static.get("lulc_token_mask",torch.ones(14, 14, dtype=torch.bool))
 
             anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
-                select_anchor_zarr(zg, year, doy, l12_cache=_l12)
+                select_anchor_zarr(zg, year, doy,
+                                   l12_cache=_l12,
+                                   date_cache=_dc,
+                                   cm_token_mask=_cm_tm,
+                                   s1_token_mask_cache=_s1_tm)
 
         # ── Soil patch (static, from cache) ──────────────────────────
         soil_patch = self._static_cache.get(sat_dir, {}).get(
@@ -789,29 +938,26 @@ class SoilMoistureDataset(Dataset):
         )
 
         # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
-        era5, era5_doys = load_era5_rolling(self._era5_cache.get(sat_dir), year, doy)
-
-        # Z-score normalisation: log1p precipitation then standardise all vars
-        era5_np = era5.numpy()
+        # load_era5_rolling returns numpy directly; single torch.from_numpy at end
+        era5_np, era5_doys_np = load_era5_rolling(self._era5_cache.get(sat_dir), year, doy)
         if self._era5_log1p_prec:
-            prec_idx = ERA5_VARS.index("tp_sum")
-            era5_np[:, prec_idx] = np.log1p(era5_np[:, prec_idx].clip(0))
-        era5_np = (era5_np - self._era5_means) / (self._era5_stds + 1e-8)
-        era5    = torch.from_numpy(era5_np)
+            era5_np[:, PREC_IDX] = np.log1p(era5_np[:, PREC_IDX].clip(0))
+        era5_np  = (era5_np - self._era5_means) / (self._era5_stds + 1e-8)
+        era5     = torch.from_numpy(era5_np)
+        era5_doys = torch.from_numpy(era5_doys_np)
 
         # ── SIF — optional sparse modality, numpy slice from cache ───
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy
         )
-        # Modality dropout: per-sample coin flip using PyTorch RNG (worker-safe)
-        if self.training and torch.rand(1).item() < 0.5:
+        if self.training and random.random() < 0.5:
             sif_valid[:] = False
 
         # ── TWSA — optional sparse modality, numpy slice from cache ──
         twsa_vals, twsa_doys, twsa_rel_pos, twsa_valid = load_twsa_rolling(
             self._twsa_cache.get(sat_dir), year, doy
         )
-        if self.training and torch.rand(1).item() < 0.5:
+        if self.training and random.random() < 0.5:
             twsa_valid[:] = False
 
         # ── ISMN labels — observed values only (qc==0) ───────────────

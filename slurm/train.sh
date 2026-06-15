@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
 #SBATCH --gpus=4
-#SBATCH --mem=720G
+#SBATCH --mem=790G
 #SBATCH --time=120:00:00
 #SBATCH --output=logs/train_%j.out
 #SBATCH --open-mode=append
