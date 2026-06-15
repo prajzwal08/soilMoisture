@@ -1,7 +1,7 @@
 """Standalone per-station validation using a saved checkpoint.
 
 Usage:
-    python eval_stations.py --run-name baseline_nll [--ckpt last.pt]
+    python eval_stations.py --run-name baseline_huber [--ckpt last.pt]
 """
 import argparse
 import os
@@ -12,7 +12,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss, total_variation_loss
+from model import SoilMoistureModel, masked_huber_loss, total_variation_loss
 from train import compute_metrics, evaluate
 
 CKPT_ROOT = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
@@ -41,8 +41,7 @@ def main():
         splits_csv      = config["splits_csv"],
         shm_dir         = None,
         category_filter = config.get("category_filter"),
-        era5_stats_path = config.get("era5_stats_path"),
-        window_size     = config["window_size"],
+        era5_stats_path = config.get("era5_stats"),
     )
     val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False)
     val_loader = DataLoader(
@@ -59,20 +58,17 @@ def main():
 
     # Build model and load weights
     model = SoilMoistureModel(
-        n_depths    = config["n_depths"],
-        n_layers    = config["n_layers"],
-        d_model     = config["d_model"],
-        n_heads     = config["n_heads"],
-        dropout     = config["dropout"],
-        loss_fn     = config["loss_fn"],
-        window_size = config["window_size"],
+        n_depths = config["n_depths"],
+        n_layers = config["n_layers"],
+        d_model  = config["d_model"],
+        n_heads  = config["n_heads"],
     ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
 
     # Run evaluation
-    val_loss, metrics, per_station, mean_sigma = evaluate(
-        model, val_loader, device, config["loss_fn"]
+    val_loss, metrics, per_station = evaluate(
+        model, val_loader, device
     )
 
     print(f"\n=== Global metrics (epoch {ckpt['epoch']}) ===")

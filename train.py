@@ -3,7 +3,7 @@ Training script for SoilMoistureModel — Phase 1 (sm_only).
 
 Usage (terramind conda env):
     python train.py [--lr LR] [--batch-size N] [--n-layers N] [--run-name NAME]
-                    [--loss-fn nll|huber] [--max-stations N]
+                    [--max-stations N]
 
 Resume behaviour: if {checkpoint_dir}/{run_name}/last.pt exists the run
 resumes automatically — no flag needed. Delete last.pt for a fresh start.
@@ -39,7 +39,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.multiprocessing
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss, masked_nll_loss, total_variation_loss
+from model import SoilMoistureModel, masked_huber_loss, total_variation_loss
 
 
 # ── CUDA prefetcher ───────────────────────────────────────────────────────────
@@ -188,20 +188,19 @@ CONFIG = {
     "early_stop_patience": 20,
 
     # Model
-    "n_depths"           : 3,
-    "d_model"            : 768,
-    "n_heads"            : 12,
-    "n_layers"           : 6,
-    "predict_uncertainty": True,
+    "n_depths": 3,
+    "d_model" : 768,
+    "n_heads" : 12,
+    "n_layers": 6,
 
-    # Loss: "huber" (default) or "nll" (Gaussian NLL, aleatoric uncertainty)
-    "loss_fn"         : "huber",
+    # Loss
+    "loss_fn" : "huber",
     "lambda_tv"       : 0.1,    # TV regularization weight (0 = disabled)
     "lambda_boundary" : 0.1,    # penalty for SM outside [0, 1]
 
     # W&B
     "wandb_project": "soil-moisture-phd",
-    "run_name"     : "baseline_nll",
+    "run_name"     : "baseline_huber",
 }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -312,23 +311,16 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-SIGMA_MIN = 0.01   # floor on predicted σ; prevents NLL explosion on overconfident wrong predictions
-LOG_VAR_MIN = 2.0 * np.log(SIGMA_MIN)   # ≈ -9.21
-
-def _compute_loss(mu, var, label, loss_fn, lambda_tv=0.0, lambda_boundary=0.0):
+def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0):
     import torch.nn.functional as F
-    if loss_fn == "nll":
-        if var is not None:
-            var = var.clamp(min=LOG_VAR_MIN)
-        loss = masked_nll_loss(mu, var, label)
-    else:
-        loss = masked_huber_loss(mu, label)
-    tv = total_variation_loss(mu)
+    loss = masked_huber_loss(pred, label)
     if lambda_tv > 0.0:
+        tv = total_variation_loss(pred)
         loss = loss + lambda_tv * tv
+    else:
+        tv = pred.new_zeros(1)
     if lambda_boundary > 0.0:
-        # Smooth physical penalty: pushes predictions back into [0, 1]
-        boundary = F.relu(-mu).mean() + F.relu(mu - 1.0).mean()
+        boundary = F.relu(-pred).mean() + F.relu(pred - 1.0).mean()
         loss = loss + lambda_boundary * boundary
     return loss, tv.detach()
 
@@ -397,7 +389,7 @@ def make_resume_loader(full_loader, skip_batches, epoch):
     )
 
 
-def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda_tv=0.0,
+def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
                      lambda_boundary=0.0, max_batches=None, debug_nan=False,
                      skip_batches=0, mid_ckpt_every=500, mid_ckpt_fn=None):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
@@ -431,14 +423,14 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
 
         t_compute = time.perf_counter()
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu, var = model(batch)
+            mu = model(batch)
 
             if debug_nan:
-                bad_out = _scan_for_nan({"mu": mu, "var": var})
+                bad_out = _scan_for_nan({"mu": mu})
                 if bad_out:
                     _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-            loss, tv = _compute_loss(mu, var, batch["label"], loss_fn, lambda_tv, lambda_boundary)
+            loss, tv = _compute_loss(mu, batch["label"], lambda_tv, lambda_boundary)
 
         optimizer.zero_grad()
         loss.backward()
@@ -476,7 +468,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, loss_fn, lambda
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=None):
+def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None):
     """Distributed-aware evaluation.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
@@ -488,7 +480,6 @@ def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=N
     n_batches   = 0
     all_preds   = []
     all_targets = []
-    all_sigmas  = []
     all_station_keys = []
 
     SROW = SoilMoistureModel.STATION_ROW
@@ -499,19 +490,14 @@ def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=N
             break
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu, var = model(batch)
-            loss, _ = _compute_loss(mu, var, batch["label"], loss_fn)
+            mu = model(batch)
+            loss, _ = _compute_loss(mu, batch["label"])
         total_loss += loss.item()
         n_batches  += 1
 
         all_preds.append(mu[:, :, SROW, SCOL].float().cpu().numpy())
         all_targets.append(batch["label"].cpu().numpy())
         all_station_keys.extend(batch["station_key"])
-
-        if var is not None:
-            # var holds log_var; σ = exp(0.5 * log_var)
-            sigma = var[:, :, SROW, SCOL].float().mul(0.5).exp().cpu().numpy()
-            all_sigmas.append(sigma)
 
     mean_loss = total_loss / max(n_batches, 1)
 
@@ -525,32 +511,26 @@ def evaluate(model, loader, device, loss_fn, world_size=1, rank=0, max_batches=N
         n_depths = len(SM_DEPTHS)
         local_preds   = np.concatenate(all_preds,   axis=0) if all_preds   else np.empty((0, n_depths))
         local_targets = np.concatenate(all_targets, axis=0) if all_targets else np.empty((0, n_depths))
-        local_sigmas  = np.concatenate(all_sigmas,  axis=0) if all_sigmas  else None
         gathered_preds   = [None] * world_size
         gathered_targets = [None] * world_size
         gathered_keys    = [None] * world_size
-        gathered_sigmas  = [None] * world_size
         dist.all_gather_object(gathered_preds,   local_preds)
         dist.all_gather_object(gathered_targets, local_targets)
         dist.all_gather_object(gathered_keys,    all_station_keys)
-        dist.all_gather_object(gathered_sigmas,  local_sigmas)
 
         if rank == 0:
             preds        = np.concatenate(gathered_preds,   axis=0)
             targets      = np.concatenate(gathered_targets, axis=0)
             station_keys = [k for keys in gathered_keys for k in keys]
             metrics, per_station = compute_metrics(preds, targets, station_keys)
-            valid_sigmas = [s for s in gathered_sigmas if s is not None]
-            mean_sigma   = float(np.concatenate(valid_sigmas).mean()) if valid_sigmas else None
         else:
-            metrics, per_station, mean_sigma = {}, {}, None
+            metrics, per_station = {}, {}
     else:
         preds   = np.concatenate(all_preds,   axis=0)
         targets = np.concatenate(all_targets, axis=0)
         metrics, per_station = compute_metrics(preds, targets, all_station_keys)
-        mean_sigma = float(np.concatenate(all_sigmas).mean()) if all_sigmas else None
 
-    return mean_loss, metrics, per_station, mean_sigma
+    return mean_loss, metrics, per_station
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -562,8 +542,6 @@ def main():
     parser.add_argument("--batch-size",   type=int,   default=None)
     parser.add_argument("--n-layers",     type=int,   default=None)
     parser.add_argument("--run-name",     type=str,   default=None)
-    parser.add_argument("--loss-fn",      type=str,   default=None,
-                        choices=["nll", "huber"])
     parser.add_argument("--lambda-tv",       type=float, default=None,
                         help="TV regularization weight (default 0.001; 0 to disable)")
     parser.add_argument("--lambda-boundary", type=float, default=None,
@@ -590,13 +568,9 @@ def main():
     if args.run_name    is not None: CONFIG["run_name"]   = args.run_name
     if args.num_workers     is not None: CONFIG["num_workers"]     = args.num_workers
     if args.prefetch_factor is not None: CONFIG["prefetch_factor"] = args.prefetch_factor
-    if args.loss_fn     is not None: CONFIG["loss_fn"]    = args.loss_fn
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
     if args.lambda_tv       is not None: CONFIG["lambda_tv"]       = args.lambda_tv
     if args.lambda_boundary is not None: CONFIG["lambda_boundary"] = args.lambda_boundary
-
-    if CONFIG["loss_fn"] == "huber":
-        CONFIG["predict_uncertainty"] = False
 
     # ── L12 shared memory preloading (before DDP init to avoid TCPStore timeout) ──
     # Rank 0 reads ~120 GB from GPFS — can take several minutes. Doing this before
@@ -694,11 +668,10 @@ def main():
     if is_main:
         print("Building model...")
     model = SoilMoistureModel(
-        n_depths            = CONFIG["n_depths"],
-        d_model             = CONFIG["d_model"],
-        n_heads             = CONFIG["n_heads"],
-        n_layers            = CONFIG["n_layers"],
-        predict_uncertainty = CONFIG["predict_uncertainty"],
+        n_depths = CONFIG["n_depths"],
+        d_model  = CONFIG["d_model"],
+        n_heads  = CONFIG["n_heads"],
+        n_layers = CONFIG["n_layers"],
     ).to(device)
 
     if is_ddp:
@@ -840,7 +813,7 @@ def main():
                 _loader = train_loader
 
             train_loss, train_tv, data_time, compute_time = train_one_epoch(
-                model, _loader, optimizer, device, CONFIG["grad_clip"], CONFIG["loss_fn"],
+                model, _loader, optimizer, device, CONFIG["grad_clip"],
                 lambda_tv=CONFIG["lambda_tv"],
                 lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
                 max_batches=args.max_train_batches, debug_nan=args.debug_nan,
@@ -870,9 +843,9 @@ def main():
         # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
         # averages the loss across ranks; all_gather_object collects preds to rank 0.
         # No NCCL timeout risk: all GPUs stay active throughout validation.
-        val_loss, metrics, per_station, mean_sigma = evaluate(
+        val_loss, metrics, per_station = evaluate(
             model if not is_ddp else model.module,
-            val_loader, device, CONFIG["loss_fn"],
+            val_loader, device,
             world_size=world_size, rank=rank,
             max_batches=args.max_val_batches,
         )
@@ -954,8 +927,6 @@ def main():
                     log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
                     log_dict[f"val/{depth}/MAE"]    = m["MAE"]
                     log_dict[f"val/{depth}/bias"]   = m["bias"]
-                if mean_sigma is not None:
-                    log_dict["val/mean_sigma"] = mean_sigma
                 # Worst-5 stations per depth
                 if per_station:
                     for depth in SM_DEPTHS:

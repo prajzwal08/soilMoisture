@@ -8,7 +8,6 @@ Usage:
 
 Produces per-station plots:
   - Predicted vs observed time series for all 3 depths
-  - Predicted uncertainty band (σ = exp(0.5 * log_var))
   - 224×224 spatial SM map for the target day (shows spatial context)
 """
 
@@ -36,7 +35,7 @@ CONFIG_DEFAULTS = {
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
     "category_filter": ["sm_only"],
     "years"         : list(range(2016, 2024)),
-    "run_name"      : "baseline_nll",
+    "run_name"      : "baseline_huber",
 }
 
 DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
@@ -47,11 +46,10 @@ def load_checkpoint(ckpt_path: Path, device):
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     cfg  = ckpt["config"]
     model = SoilMoistureModel(
-        n_depths            = cfg.get("n_depths", 3),
-        d_model             = cfg.get("d_model",  768),
-        n_heads             = cfg.get("n_heads",  12),
-        n_layers            = cfg.get("n_layers", 6),
-        predict_uncertainty = cfg.get("predict_uncertainty", True),
+        n_depths = cfg.get("n_depths", 3),
+        d_model  = cfg.get("d_model",  768),
+        n_heads  = cfg.get("n_heads",  12),
+        n_layers = cfg.get("n_layers", 6),
     ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
@@ -69,7 +67,7 @@ def run_station_year(model, dataset, station_key: str, year: int, device):
     if not indices:
         return None
 
-    doys, mu_list, sigma_list, label_list = [], [], [], []
+    doys, mu_list, label_list = [], [], []
 
     for idx in sorted(indices, key=lambda i: dataset.samples[i]["doy"]):
         s     = dataset.samples[idx]
@@ -77,17 +75,11 @@ def run_station_year(model, dataset, station_key: str, year: int, device):
         batch = {k: v.unsqueeze(0).to(device) if isinstance(v, torch.Tensor) else v
                  for k, v in batch.items()}
 
-        mu, log_var = model(batch)
+        mu    = model(batch)
         mu_pt = mu[0, :, model.STATION_ROW, model.STATION_COL].cpu().numpy()
-
-        if log_var is not None:
-            sigma_pt = (0.5 * log_var[0, :, model.STATION_ROW, model.STATION_COL]).exp().cpu().numpy()
-        else:
-            sigma_pt = np.zeros_like(mu_pt)
 
         doys.append(s["doy"])
         mu_list.append(mu_pt)
-        sigma_list.append(sigma_pt)
         label_list.append(batch["label"][0].cpu().numpy())
 
         # Also save the spatial map for the middle day
@@ -97,7 +89,6 @@ def run_station_year(model, dataset, station_key: str, year: int, device):
     return {
         "doys"   : np.array(doys),
         "mu"     : np.array(mu_list),     # (T, n_depths)
-        "sigma"  : np.array(sigma_list),  # (T, n_depths)
         "labels" : np.array(label_list),  # (T, n_depths)
         "spatial": spatial_mu,            # (n_depths, 224, 224)
         "station": station_key,
@@ -110,7 +101,6 @@ def plot_station(result: dict, out_dir: Path, epoch: int):
     year    = result["year"]
     doys    = result["doys"]
     mu      = result["mu"]
-    sigma   = result["sigma"]
     labels  = result["labels"]
     spatial = result["spatial"]
 
@@ -127,10 +117,8 @@ def plot_station(result: dict, out_dir: Path, epoch: int):
 
         obs  = labels[:, i]
         pred = mu[:, i]
-        sig  = sigma[:, i]
         obs_mask = ~np.isnan(obs)
 
-        ax.fill_between(doys, pred - sig, pred + sig, alpha=0.25, color=col, label="±1σ")
         ax.plot(doys, pred, color=col, lw=1.5, label="Predicted")
         if obs_mask.any():
             ax.scatter(doys[obs_mask], obs[obs_mask], s=8, color="k", zorder=5,

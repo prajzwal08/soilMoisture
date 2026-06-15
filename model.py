@@ -31,7 +31,7 @@ Full architecture:
     14×14 → 28×28 → 56×56 → 112×112 → 224×224
     → SM map (B, n_depths, 224, 224)
 
-  Loss: Huber or NLL masked to station pixel (centre: row=col=112 in 224×224 output)
+  Loss: Huber masked to station pixel (centre: row=col=112 in 224×224 output)
        + λ_tv * Total Variation on the full SM map (spatial smoothness)
 """
 
@@ -166,17 +166,15 @@ class UNetDecoder(nn.Module):
 
     def __init__(
         self,
-        in_ch:               int   = 768,
-        skip_ch:             int   = 768,
-        dec_ch:              tuple = (512, 256, 128, 64),
-        n_depths:            int   = 3,
-        predict_uncertainty: bool  = True,
-        d_context:           int   = 768,
+        in_ch:     int   = 768,
+        skip_ch:   int   = 768,
+        dec_ch:    tuple = (512, 256, 128, 64),
+        n_depths:  int   = 3,
+        d_context: int   = 768,
     ):
         super().__init__()
         c = dec_ch
-        self.n_depths            = n_depths
-        self.predict_uncertainty = predict_uncertainty
+        self.n_depths = n_depths
 
         self.bottle_proj = nn.Conv2d(in_ch, c[0], 1)
         self.skip_proj   = nn.ModuleList([
@@ -202,15 +200,7 @@ class UNetDecoder(nn.Module):
         self.up4   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.conv4 = _ConvBlock(c[3], c[3])
 
-        # When uncertainty=True: output 2×n_depths (mu then log_var per depth).
-        # log_var bias init -3.7 → σ² = exp(-3.7) ≈ 0.025, σ ≈ 0.16 m³/m³.
-        # Matches typical within-station SM variability, avoiding wasted early epochs
-        # with σ=1.0 (what zero-init would give).
-        out_ch    = 2 * n_depths if predict_uncertainty else n_depths
-        self.head = nn.Conv2d(c[3], out_ch, 1)
-        if predict_uncertainty:
-            nn.init.zeros_(self.head.bias)
-            nn.init.constant_(self.head.bias[n_depths:], -3.7)   # var channels only
+        self.head = nn.Conv2d(c[3], n_depths, 1)
 
     def forward(self, bottleneck, skip_L9, skip_L6, skip_L3, context):
         # context: (B, d_context) — temporal summary from the Transformer
@@ -230,13 +220,7 @@ class UNetDecoder(nn.Module):
 
         x = self.up4(x)
         x = self.conv4(x)
-        raw = self.head(x)                                              # (B, out_ch, 224, 224)
-
-        if self.predict_uncertainty:
-            mu      = raw[:, :self.n_depths]
-            log_var = torch.tanh(raw[:, self.n_depths:] / 10) * 10   # soft-clamp to (-10,10), σ ∈ (0.007,148) m³/m³
-            return mu, log_var
-        return raw, None                                                # None signals no uncertainty
+        return self.head(x)                                             # (B, n_depths, 224, 224)
 
 
 # ── Soil encoder ─────────────────────────────────────────────────────────────
@@ -304,16 +288,14 @@ class SoilMoistureModel(nn.Module):
 
     def __init__(
         self,
-        n_depths:            int  = 3,
-        d_model:             int  = 768,
-        n_heads:             int  = 12,
-        n_layers:            int  = 6,
-        predict_uncertainty: bool = True,
+        n_depths: int = 3,
+        d_model:  int = 768,
+        n_heads:  int = 12,
+        n_layers: int = 6,
     ):
         super().__init__()
-        self.d_model             = d_model
-        self.n_depths            = n_depths
-        self.predict_uncertainty = predict_uncertainty
+        self.d_model  = d_model
+        self.n_depths = n_depths
 
         # ── Encoders ──────────────────────────────────────────────────
         self.soil_encoder = SoilEncoder(d_model=d_model)
@@ -372,12 +354,11 @@ class SoilMoistureModel(nn.Module):
 
         # ── U-Net decoder ─────────────────────────────────────────────
         self.decoder = UNetDecoder(
-            in_ch               = d_model,
-            skip_ch             = d_model,
-            dec_ch              = (512, 256, 128, 64),
-            n_depths            = n_depths,
-            predict_uncertainty = predict_uncertainty,
-            d_context           = d_model,
+            in_ch     = d_model,
+            skip_ch   = d_model,
+            dec_ch    = (512, 256, 128, 64),
+            n_depths  = n_depths,
+            d_context = d_model,
         )
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -605,11 +586,9 @@ class SoilMoistureModel(nn.Module):
 
     # ── Forward ──────────────────────────────────────────────────────────────
 
-    def forward(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def forward(self, batch: dict) -> torch.Tensor:
         """
-        Returns (mu, var):
-          mu  : (B, n_depths, 224, 224)
-          var : (B, n_depths, 224, 224) variance σ², always > 0 (softplus+ε); None if predict_uncertainty=False
+        Returns mu: (B, n_depths, 224, 224) predicted soil moisture map.
         """
         B      = batch["era5"].shape[0]
         device = batch["era5"].device
@@ -703,33 +682,6 @@ def masked_huber_loss(
         return pred.sum() * 0.0
 
     return F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
-
-
-def masked_nll_loss(
-    mu:          torch.Tensor,   # (B, n_depths, 224, 224)
-    log_var:     torch.Tensor,   # (B, n_depths, 224, 224) — log-variance log(σ²), unbounded
-    label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
-    station_row: int   = SoilMoistureModel.STATION_ROW,
-    station_col: int   = SoilMoistureModel.STATION_COL,
-) -> torch.Tensor:
-    """
-    Numerically stable Gaussian NLL at the station pixel.
-    NLL = 0.5 * log_var + 0.5 * (y - μ)² * exp(-log_var)
-    Avoids dividing by near-zero variance; gradients stay bounded even at init.
-    """
-    mu_pt  = mu[:, :, station_row, station_col]                        # (B, n_depths)
-    lv_pt  = log_var[:, :, station_row, station_col]                   # (B, n_depths)
-    mask   = ~torch.isnan(label)
-
-    if not mask.any():
-        return mu_pt.sum() * 0.0
-
-    mu_m  = mu_pt[mask]
-    lv_m  = lv_pt[mask]
-    y_m   = label[mask]
-
-    nll = 0.5 * lv_m + 0.5 * (y_m - mu_m) ** 2 * torch.exp(-lv_m)
-    return nll.mean()
 
 
 def total_variation_loss(sm_map: torch.Tensor) -> torch.Tensor:
