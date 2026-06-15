@@ -12,6 +12,7 @@ W&B project: soil-moisture-phd
 """
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -165,8 +166,8 @@ CONFIG = {
     # Training
     "batch_size"      : 128,
     "num_workers"     : 8,
-    "val_num_workers" : 2,    # val uses 2w×pf2; train uses 8w×pf3
-    "prefetch_factor" : 3,
+    "val_num_workers" : 2,    # val uses 2w×pf2; train uses 8w×pf2
+    "prefetch_factor" : 2,
     "max_epochs"      : 100,
     "lr"              : 2e-4,
     "weight_decay"    : 0.05,
@@ -631,9 +632,23 @@ def main():
 
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
                                          max_stations=args.max_stations)
-
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank,
                                         shuffle=True, drop_last=True) if is_ddp else None
+
+    # Val dataset on all ranks — DistributedSampler splits it across GPUs
+    val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
+                                       max_stations=val_max_stations)
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
+                                      shuffle=False, drop_last=False) if is_ddp else None
+
+    # Freeze all Python objects before DataLoader forks workers.
+    # Prevents GC from scanning/dirtying CoW-shared cache pages in worker processes,
+    # which would cause the kernel to give each worker a private page copy → RSS blowup.
+    gc.freeze()
+
+    # IPC budget (pf=2): train 8w×pf2×bs128×~30MB×4r ≈ 240 GB
+    #                     val  2w×pf2×bs128×~30MB×4r ≈  60 GB
+    # Boundary peak: 145 (shm) + 159 (heaps) + 240 + 60 = 604 GB → 186 GB headroom vs 790G
     train_loader = DataLoader(
         train_dataset,
         batch_size         = CONFIG["batch_size"],
@@ -646,13 +661,6 @@ def main():
         persistent_workers = True,    # persistent avoids worker respawn race at epoch boundaries
         prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG["num_workers"] > 0 else None,
     )
-
-    # Val dataset on all ranks — DistributedSampler splits it across GPUs
-    # 2 workers × pf=2: IPC ~62 GB; safe even at val→train boundary (train IPC + 62 = 502 GB)
-    val_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
-                                       max_stations=val_max_stations)
-    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
-                                      shuffle=False, drop_last=False) if is_ddp else None
     val_loader = DataLoader(
         val_dataset,
         batch_size         = CONFIG["batch_size"],

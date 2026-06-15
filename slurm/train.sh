@@ -18,8 +18,8 @@ ulimit -n 65536   # memmap FDs: 612 stations × 3 keys × 8 workers ≈ 14k hand
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
-# L12 cache re-enabled: 600G budget covers ~91GB shared pages at init.
-# Eliminates zarr disk reads for L12 tokens during training, removing batch stalls.
+# /dev/shm L12 preload: ~145 GB measured (shared across 4 ranks as one physical copy).
+# Budget at val→train boundary: 145+159+242+61 = 607 GB → 183 GB headroom vs 790G.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export NCCL_TIMEOUT=7200   # 2 hours; covers cold-GPFS val on first epoch
