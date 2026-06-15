@@ -254,8 +254,9 @@ def _log_mem_snapshot(label: str, device, is_main: bool,
     print("\n".join(lines))
     if use_wandb and epoch is not None and log_dict is not None:
         tag = label.replace(" ", "_")
-        log_dict[f"mem/{tag}/ram_used_gb"]  = ram_used_gb
-        log_dict[f"mem/{tag}/cpu_pct"]      = cpu_pct
+        if psutil is not None:
+            log_dict[f"mem/{tag}/ram_used_gb"] = ram_used_gb
+            log_dict[f"mem/{tag}/cpu_pct"]     = cpu_pct
         log_dict[f"mem/{tag}/gpu0_peak_gb"] = torch.cuda.max_memory_allocated(device) / 1e9
 
 
