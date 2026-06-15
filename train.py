@@ -669,8 +669,8 @@ def main():
         num_workers        = CONFIG.get("val_num_workers", 2),
         pin_memory         = True,
         worker_init_fn     = worker_init_fn,
-        persistent_workers = True,
-        prefetch_factor    = 2,
+        persistent_workers = CONFIG.get("val_num_workers", 2) > 0,
+        prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG.get("val_num_workers", 2) > 0 else None,
     )
 
     # ── Model ─────────────────────────────────────────────────────────

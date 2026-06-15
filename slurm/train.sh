@@ -28,4 +28,4 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"
 echo "GPU:    $CUDA_VISIBLE_DEVICES"
 
-conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py --num-workers 8 "$@"
+conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py "$@"

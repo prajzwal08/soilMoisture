@@ -403,10 +403,11 @@ class SoilMoistureModel(nn.Module):
         flat_valid = valid.reshape(B * MAX_ACQ)                        # (B*MAX_ACQ,) bool
         flat_tm    = token_mask.reshape(B * MAX_ACQ, 196) if token_mask is not None else None
 
-        # Run on all rows including padded ones. Padded l12 tokens are zero so their
-        # output is zero regardless of attention weights — no NaN risk (scores use -1e4
-        # not -inf). Avoids .nonzero() which forces a GPU↔CPU sync and stalls the
-        # async pipeline, causing DDP rank imbalance when valid counts vary per sample.
+        # Run on all rows including padded ones. Avoids .nonzero() which forces a
+        # GPU↔CPU sync and stalls the async pipeline, causing DDP rank imbalance.
+        # INVARIANT: dataset zero-inits l12 for padded slots (torch.zeros in
+        # load_s2/s1_rolling_zarr), so pooled output for padded rows is zero before
+        # the flat_valid multiply. Do not replace torch.zeros with torch.empty there.
         pyr = spatial_pyramid_pool(flat_l12, flat_tm, attn=attn)       # (B*MAX_ACQ, 4, D)
         pyr = pyr * flat_valid[:, None, None]                          # zero padded slots
 
