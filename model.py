@@ -398,32 +398,19 @@ class SoilMoistureModel(nn.Module):
         Returns: (B, MAX_ACQ, 4, 768)
         """
         B, MAX_ACQ = valid.shape
-        device     = l12.device
-
-        pyramid    = torch.zeros(B, MAX_ACQ, 4, self.d_model, device=device)
 
         flat_l12   = l12.reshape(B * MAX_ACQ, 196, self.d_model)
-        flat_valid = valid.reshape(B * MAX_ACQ)
+        flat_valid = valid.reshape(B * MAX_ACQ)                        # (B*MAX_ACQ,) bool
+        flat_tm    = token_mask.reshape(B * MAX_ACQ, 196) if token_mask is not None else None
 
-        valid_idx  = flat_valid.nonzero(as_tuple=True)[0]
-        if valid_idx.numel() == 0:
-            return pyramid
+        # Run on all rows including padded ones. Padded l12 tokens are zero so their
+        # output is zero regardless of attention weights — no NaN risk (scores use -1e4
+        # not -inf). Avoids .nonzero() which forces a GPU↔CPU sync and stalls the
+        # async pipeline, causing DDP rank imbalance when valid counts vary per sample.
+        pyr = spatial_pyramid_pool(flat_l12, flat_tm, attn=attn)       # (B*MAX_ACQ, 4, D)
+        pyr = pyr * flat_valid[:, None, None]                          # zero padded slots
 
-        valid_l12 = flat_l12[valid_idx]                                # (N, 196, 768)
-
-        if token_mask is not None:
-            flat_tm  = token_mask.reshape(B * MAX_ACQ, 196)
-            valid_tm = flat_tm[valid_idx]
-        else:
-            valid_tm = None
-
-        pyr = spatial_pyramid_pool(valid_l12, valid_tm, attn=attn)     # (N, 4, 768)
-
-        batch_idx = valid_idx // MAX_ACQ
-        acq_idx   = valid_idx %  MAX_ACQ
-        pyramid[batch_idx, acq_idx] = pyr
-
-        return pyramid                                                   # (B, MAX_ACQ, 4, 768)
+        return pyr.reshape(B, MAX_ACQ, 4, self.d_model)                # (B, MAX_ACQ, 4, 768)
 
     def _static_pyramid(self, l12: torch.Tensor, attn: nn.Linear,
                         token_valid: torch.Tensor | None = None) -> torch.Tensor:
