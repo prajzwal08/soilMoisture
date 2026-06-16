@@ -18,6 +18,7 @@ import math
 import os
 import random
 import shutil
+import signal
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -41,6 +42,15 @@ import torch.multiprocessing
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel, masked_huber_loss, total_variation_loss
 
+# ── Preemption handling ───────────────────────────────────────────────────────
+_preempted = False
+
+def _handle_sigterm(signum, frame):
+    global _preempted
+    _preempted = True
+
+class _Preempted(Exception):
+    pass
 
 # ── CUDA prefetcher ───────────────────────────────────────────────────────────
 
@@ -461,6 +471,12 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
         if mid_ckpt_fn is not None and mid_ckpt_every > 0 and n_batches % mid_ckpt_every == 0:
             mid_ckpt_fn(skip_batches + n_batches)
 
+        # SIGTERM preemption: save immediately and exit so --requeue restarts cleanly
+        if _preempted:
+            if mid_ckpt_fn is not None:
+                mid_ckpt_fn(skip_batches + n_batches)
+            raise _Preempted()
+
         t_data_start = time.perf_counter()
 
     n = max(n_batches, 1)
@@ -598,6 +614,7 @@ def main():
         rank, world_size = 0, 1
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     is_main = (rank == 0)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     set_seed(CONFIG["seed"] + rank)
     if is_main:
@@ -812,15 +829,22 @@ def main():
             else:
                 _loader = train_loader
 
-            train_loss, train_tv, data_time, compute_time = train_one_epoch(
-                model, _loader, optimizer, device, CONFIG["grad_clip"],
-                lambda_tv=CONFIG["lambda_tv"],
-                lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
-                max_batches=args.max_train_batches, debug_nan=args.debug_nan,
-                skip_batches = _skip,
-                mid_ckpt_every = 500,
-                mid_ckpt_fn    = _save_mid_ckpt if is_main else None,
-            )
+            try:
+                train_loss, train_tv, data_time, compute_time = train_one_epoch(
+                    model, _loader, optimizer, device, CONFIG["grad_clip"],
+                    lambda_tv=CONFIG["lambda_tv"],
+                    lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
+                    max_batches=args.max_train_batches, debug_nan=args.debug_nan,
+                    skip_batches = _skip,
+                    mid_ckpt_every = 500,
+                    mid_ckpt_fn    = _save_mid_ckpt if is_main else None,
+                )
+            except _Preempted:
+                if is_main:
+                    print("[preempt] SIGTERM received — checkpoint saved, exiting for requeue")
+                if is_ddp:
+                    dist.destroy_process_group()
+                raise SystemExit(0)
             _log_mem_snapshot(f"epoch_{epoch:03d}_post_train", device, is_main)
 
             # Save post-training checkpoint before validation — epoch not lost if val crashes

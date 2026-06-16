@@ -2153,3 +2153,114 @@ Four additional fixes found and applied:
   4. After baseline_huber converges: submit baseline_nll (NLL with sigma clamping).
   5. (Carry-over) Distributed val across all 4 ranks (all_gather) deferred until
      baseline converges.
+
+================================================================================
+SESSION 9 — 2026-06-15
+================================================================================
+
+--- Summary ---
+
+Removed all NLL (Gaussian negative log-likelihood) references from the codebase.
+Ran multi-agent code review, fixed 4 confirmed bugs, passed smoke test, pushed to
+GitHub (commit fe49ced), and submitted the full baseline_huber production run.
+
+--- NLL removal (model.py, train.py, eval_stations.py, demo_plot.py) ---
+
+  model.py       — deleted masked_nll_loss(); removed predict_uncertainty param
+                   from UNetDecoder + SoilMoistureModel; head now outputs plain
+                   (B, n_depths, 224, 224) tensor instead of (mu, log_var) tuple
+  train.py       — removed --loss-fn CLI arg; _compute_loss Huber-only; TV loss
+                   now guarded by lambda_tv > 0 (was always computed); removed
+                   predict_uncertainty from CONFIG and model instantiation
+  eval_stations.py — fixed 3 crash bugs: stale kwargs (dropout/loss_fn/window_size),
+                     wrong config key (era5_stats_path → era5_stats)
+  demo_plot.py   — removed sigma band (fill_between ±1σ); mu = model(batch) single
+                   tensor; removed predict_uncertainty from load_checkpoint
+
+--- Memory math (gather fix REVERTED, current state) ---
+
+  Per-sample IPC  = ~30 MB (s2_l12 17.6 MB + s1_l12 11.8 MB, full tensors)
+  Train IPC       = 8w × pf2 × bs128 × 30MB × 4r = 242 GB
+  Val→Train peak  = 145 (shm) + 159 (heaps) + 242 (train) + 61 (val) = 607 GB
+  Headroom        = 113 GB vs 720G node  ← pf=2 is load-bearing, do not increase
+
+--- Smoke test 23888331 (20 stations, 3 epochs) ---
+
+  Epoch 1: train=0.0030  val=0.0039  peak_VRAM=50.2 GB
+  Epoch 2: train=0.0011  val=0.0037  peak_VRAM=50.2 GB
+  Epoch 3: train=0.0008  val=0.0036  peak_VRAM=50.2 GB
+  Clean exit, SHM cleaned up, checkpoint saved.
+
+--- Full run submitted ---
+
+  Job: 23888806  run-name: baseline_huber
+  ~661 train stations, ~74 val stations, sm_only, 120h wall time
+  Per-station val metrics appended each epoch to:
+    checkpoints/soilmoisture/phase1_sm_only/baseline_huber/val_station_metrics.csv
+
+--- Expected convergence ---
+
+  Phase 1 (~ep 1-15):  fast drop at lr=2e-4
+  Phase 2 (~ep 15-40): plateau → ReduceLROnPlateau fires (patience=10, factor=0.5)
+  Phase 3:             diminishing returns, LR cascades down, early stop at patience=20
+  Typical convergence: ep 40-80
+  Warning sign: train/val loss gap widening = overfitting → check val bias column
+
+--- Next steps ---
+
+  1. Check logs/train_23888806.out — confirm clean epoch lines, no OOM/NCCL timeout
+  2. If OOM: only lever left is gather-fix (L12 index→shm, cuts IPC 30MB→3MB)
+     or reduce num_workers (currently 8/rank)
+  3. Monitor W&B run smoke_nll_rm → baseline_huber: val/0-10/ubRMSE gate < 0.07
+  4. After convergence: run eval_stations.py on OOS split for honest evaluation
+  5. Deferred: distributed val (all_gather), skip-connection ablation
+
+
+=== 2026-06-16 (Session 10) ===
+
+--- Context ---
+
+Continued from Session 9. Job 23888806 (baseline_huber) was running with preemption-safe
+SIGTERM handler (implemented last session). Epoch 2 finished val_loss=0.0033 (new best).
+Epoch 3 in progress at batch ~641 when session started.
+
+--- QC=3 patch for out-of-range SNOTEL SM values ---
+
+Root cause (identified last session): 25 SNOTEL stations had SM observations with QC=0
+but values outside [0,1] — physically impossible (kg/m² reported as m³/m³). Dataset
+previously trained on these corrupted values.
+
+Solution: patch labels/qc in zarr, setting QC=3 for any day where qc==0 and SM∉[0,1].
+dataset.py already filters to qc==0 only, so no code change needed — QC=3 auto-excluded.
+
+Smoke test (ISMN_SNOTEL_UpperRioGrande):
+  BEFORE: 0-10cm has 2269 QC=0 days, 20 with SM>1 (max=280.9 m³/m³), QC unique=[0,1]
+  Applied patch_qc_out_of_range.py to single station
+  AFTER:  QC unique=[0,1,3], QC=3 count=20, still out-of-range(QC=0)=0 ✓
+
+Full patch run (all 25 stations from csvs/audit_sm_range.csv):
+  Total: 122 days patched to QC=3 across 24 stations
+  (UpperRioGrande counted as "clean" — already patched in smoke test)
+  No errors. Log saved to csvs/patch_qc_log.csv.
+
+Top affected stations by n_patched:
+  WindyPeak: 36 (0-10:26, 30-100:10)
+  LittleSnakeRiver: 19 (10-30:7, 30-100:12)
+  TresRitos: 10, CouchSummit: 10, UpperRioGrande: 20 (smoke)
+
+Full verification (all 842 sm_only stations, Pool(64)):
+  PASS — All 842 stations: no QC=0 SM outside [0,1]
+
+--- Training status ---
+
+Job 23888806 (baseline_huber) still running on gcn140:
+  Epoch 2: train=0.0006  val=0.0033  data=1745s  compute=2680s  gpu_util=61%  peak_VRAM=51.0 GB  ← NEW BEST
+  Epoch 3: in progress, batch ~641, loss ~0.0003
+
+--- Next steps ---
+
+  1. Monitor epoch 3 completion — check val_loss
+  2. QC=3 patch is in zarr — next training run auto-excludes 122 bad SNOTEL days
+  3. Send SURF helpdesk email about preemption (drafted last session)
+  4. After baseline_huber converges: run eval_stations.py on OOS split
+
