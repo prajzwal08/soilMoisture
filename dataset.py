@@ -848,9 +848,14 @@ class SoilMoistureDataset(Dataset):
                         l369: dict[str, np.ndarray] = {}
                         for _orbit in ("s2", "s1_asc", "s1_desc"):
                             for _layer in ("l3", "l6", "l9"):
-                                _p = sat_dir / f"{_orbit}_{_layer}.npy"
-                                if _p.exists():
-                                    l369[f"{_orbit}_{_layer}"] = np.load(_p, mmap_mode="r")
+                                _p  = sat_dir / f"{_orbit}_{_layer}.npy"
+                                _jp = sat_dir / f"{_orbit}_{_layer}.json"
+                                if _p.exists() and _jp.exists():
+                                    import json as _json
+                                    _shape = tuple(_json.loads(_jp.read_text())["shape"])
+                                    l369[f"{_orbit}_{_layer}"] = np.memmap(
+                                        str(_p), dtype="float16", mode="r", shape=_shape
+                                    )
                         if not l369:
                             print(f"[WARN] use_mmap=True but no .npy files found for {sat_dir} "
                                   f"— falling back to zarr (run convert_l369_to_npy.py first)")
