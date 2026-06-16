@@ -224,13 +224,17 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           max_acq: int = MAX_S2,
                           l12_np: np.ndarray | None = None,
                           date_cache: dict | None = None,
-                          cm_token_mask: np.ndarray | None = None):
+                          cm_token_mask: np.ndarray | None = None,
+                          training: bool = False):
     """
     Load S2 L12 tokens for the 365-day rolling window and compress to pyramid tokens.
 
     date_cache:    precomputed per-orbit date info from _zarr_date_cache (eliminates zarr date reads)
     cm_token_mask: precomputed (N_cm, 14, 14) bool quality array from _cm_token_mask_cache
     l12_np:        preloaded L12 tokens from RAM/shm (eliminates chunk reads for history tokens)
+    training:      if True, applies ContextFormer-style 50% random spatial token dropout to
+                   token_mask before pyramid pooling — restores the augmentation that was
+                   previously done in model.forward() before pyramid pooling moved to CPU.
 
     Returns (pyr, doys, valid, rel_pos) where pyr is (max_acq, 4, 768) fp32 — already
     pyramid-pooled on CPU so the full 196×768 tensors never cross the IPC barrier.
@@ -298,6 +302,8 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                 bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
                 token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
 
+    if training:
+        token_mask = token_mask & (torch.rand(max_acq, 14, 14) >= 0.5)
     pyr = _cpu_pyramid_pool(l12, token_mask)  # (max_acq, 4, 768) fp32
     return pyr, doys, doys > 0, rel_pos
 
@@ -307,12 +313,14 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           l12_asc_np: np.ndarray | None = None,
                           l12_desc_np: np.ndarray | None = None,
                           date_cache: dict | None = None,
-                          s1_token_mask_cache: dict | None = None):
+                          s1_token_mask_cache: dict | None = None,
+                          training: bool = False):
     """Load S1 L12 tokens (ASC + DESC merged) from zarr and compress to pyramid tokens.
 
     date_cache:          precomputed per-orbit date info (eliminates zarr date reads)
     s1_token_mask_cache: precomputed {orbit: (N,14,14) bool} from _s1_token_mask_cache
     l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates L12 chunk reads.
+    training:            if True, applies 50% random spatial token dropout before pooling.
     Returns (pyr, doys, valid, rel_pos) 4-tuple matching S2's signature.
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
@@ -385,6 +393,8 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
             token_mask[out_i] = torch.from_numpy(tm_np_map[orbit_key][src_i])
         out_i += 1
 
+    if training:
+        token_mask = token_mask & (torch.rand(max_acq, 14, 14) >= 0.5)
     pyr = _cpu_pyramid_pool(l12, token_mask)  # (max_acq, 4, 768) fp32
     return pyr, doys, doys > 0, rel_pos
 
@@ -952,14 +962,16 @@ class SoilMoistureDataset(Dataset):
                 load_s2_rolling_zarr(zg, year, doy,
                                      l12_np=_l12.get("s2"),
                                      date_cache=_dc,
-                                     cm_token_mask=_cm_tm)
+                                     cm_token_mask=_cm_tm,
+                                     training=self.training)
 
             s1_pyr, s1_doys, s1_valid, s1_rel_pos = \
                 load_s1_rolling_zarr(zg, year, doy,
                                      l12_asc_np=_l12.get("s1_asc"),
                                      l12_desc_np=_l12.get("s1_desc"),
                                      date_cache=_dc,
-                                     s1_token_mask_cache=_s1_tm)
+                                     s1_token_mask_cache=_s1_tm,
+                                     training=self.training)
 
             _static     = self._static_cache.get(sat_dir, {})
             _dem_l12         = _static.get("dem",            torch.zeros(196, 768, dtype=torch.float16))
