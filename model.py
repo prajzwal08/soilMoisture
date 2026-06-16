@@ -4,18 +4,18 @@ SoilMoistureModel
 Full architecture:
 
   Pre-computed TerraMind features (loaded from disk, see precompute_terramind.py):
-    S2:   L12 (MAX_S2, 196, 768) fp16 → s2_pyramid_attn   → 4×768 tokens per acquisition
-    S1:   L12 (MAX_S1, 196, 768) fp16 → s1_pyramid_attn   → 4×768 tokens per acquisition
-    DEM:  L12 (196, 768) fp16         → dem_pyramid_attn  → 4×768 static tokens
-    LULC: L12 (196, 768) fp16         → lulc_pyramid_attn → 4×768 static tokens
+    S2:   L12 (MAX_S2, 196, 768) fp16 → _cpu_pyramid_pool (dataset worker) → (MAX_S2, 4, 768)
+    S1:   L12 (MAX_S1, 196, 768) fp16 → _cpu_pyramid_pool (dataset worker) → (MAX_S1, 4, 768)
+    DEM:  L12 (196, 768) fp16         → _cpu_pyramid_pool (dataset worker) → (4, 768)
+    LULC: L12 (196, 768) fp16         → _cpu_pyramid_pool (dataset worker) → (4, 768)
     Skip: L3/L6/L9 (196, 768) fp16 for most-recent acquisition → U-Net decoder
 
   ERA5 MLP  :  (B, 365, 19) → (B, 365, 768)
 
   Sequence (per station-year):
     [DEM pyramid × 4]                        ← static prefix (pre-computed)
-    [S2 pyramid tokens × N_s2 × 4]           ← from stored L12 + s2_pyramid_attn
-    [S1 pyramid tokens × N_s1 × 4]           ← from stored L12 + s1_pyramid_attn
+    [S2 pyramid tokens × N_s2 × 4]           ← pre-pooled in dataset worker (CPU)
+    [S1 pyramid tokens × N_s1 × 4]           ← pre-pooled in dataset worker (CPU)
     [ERA5 tokens × 365]                      ← + circular DoY PE
     → Temporal Transformer (6L, 768D, 12H, bidirectional)
 
@@ -331,11 +331,7 @@ class SoilMoistureModel(nn.Module):
         # Learned relative position embedding: position within 365-day window
         self.rel_pos_emb = nn.Embedding(365, d_model)
 
-        # Modality-specific learned pyramid attention scorers
-        self.s2_pyramid_attn   = nn.Linear(d_model, 1)
-        self.s1_pyramid_attn   = nn.Linear(d_model, 1)
-        self.dem_pyramid_attn  = nn.Linear(d_model, 1)
-        self.lulc_pyramid_attn = nn.Linear(d_model, 1)
+        # All pyramid pooling (S2, S1, DEM, LULC) uses static masked-mean in dataset workers.
 
         # Target-day spatial tokens: 2D spatial PE
         self.spatial_row_emb = nn.Embedding(14, d_model)
@@ -593,40 +589,13 @@ class SoilMoistureModel(nn.Module):
         B      = batch["era5"].shape[0]
         device = batch["era5"].device
 
-        # ── 1. Token masks from batch (True = valid/clear patch) ─────
-        s2_tm   = batch["s2_token_mask"].to(device)    # (B, MAX_S2, 14, 14)
-        s1_tm   = batch["s1_token_mask"].to(device)    # (B, MAX_S1, 14, 14)
-        dem_tv  = batch["dem_token_mask"].to(device)   # (B, 14, 14)
-        lulc_tv = batch["lulc_token_mask"].to(device)  # (B, 14, 14)
-
-        # ContextFormer-style random token masking (training only, p=0.5).
-        # For each patch, independently mask with probability 0.5, AND'd with
-        # the real nodata mask so genuinely-bad patches remain masked.
-        if self.training:
-            s2_tm   = s2_tm   & (torch.rand_like(s2_tm.float())   >= 0.5)
-            s1_tm   = s1_tm   & (torch.rand_like(s1_tm.float())   >= 0.5)
-            dem_tv  = dem_tv  & (torch.rand_like(dem_tv.float())  >= 0.5)
-            lulc_tv = lulc_tv & (torch.rand_like(lulc_tv.float()) >= 0.5)
-
-        # ── 2. Pyramid tokens from pre-stored L12 (no TerraMind) ──────
-        s2_pyr = self._pyramid_from_l12(
-            batch["s2_l12"].to(device),
-            batch["s2_valid"].to(device),
-            s2_tm,
-            self.s2_pyramid_attn,
-        )
-        s1_pyr = self._pyramid_from_l12(
-            batch["s1_l12"].to(device),
-            batch["s1_valid"].to(device),
-            s1_tm,
-            self.s1_pyramid_attn,
-        )
-
-        # ── 3. Static pyramid tokens (DEM + LULC) ─────────────────────
-        dem_pyr  = self._static_pyramid(batch["dem_l12"].to(device),
-                                        self.dem_pyramid_attn, dem_tv)
-        lulc_pyr = self._static_pyramid(batch["lulc_l12"].to(device),
-                                        self.lulc_pyramid_attn, lulc_tv)
+        # ── 1-3. All pyramid tokens — pre-pooled in dataset workers (CPU) ───
+        # _cpu_pyramid_pool() runs static masked-mean in __getitem__ for all four
+        # modalities; no L12 tensors cross the DataLoader IPC barrier.
+        s2_pyr   = batch["s2_pyr"].to(device)    # (B, MAX_S2, 4, 768) fp32
+        s1_pyr   = batch["s1_pyr"].to(device)    # (B, MAX_S1, 4, 768) fp32
+        dem_pyr  = batch["dem_pyr"].to(device)   # (B, 4, 768) fp32
+        lulc_pyr = batch["lulc_pyr"].to(device)  # (B, 4, 768) fp32
 
         # ── 3b. Soil tokens ────────────────────────────────────────────
         soil_tok = self.soil_encoder(batch["soil_patch"].to(device))   # (B, 4, 768)

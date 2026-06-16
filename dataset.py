@@ -187,17 +187,53 @@ def _load_zarr_labels(zg: zarr.Group):
     return sm_np, depths, times, qc_np
 
 
+def _cpu_pyramid_pool(l12: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Masked spatial pyramid pooling on CPU inside dataset workers.
+
+    Compresses history L12 tokens from (M, 196, 768) → (M, 4, 768) before the
+    IPC barrier, cutting per-sample payload from ~30 MB to ~2 MB and eliminating
+    the ~437 GB DataLoader IPC queue that caused epoch-boundary OOM kills.
+
+    Uses the same 4-scale nested-window logic as model.spatial_pyramid_pool()
+    but with static masked-mean pooling (no learned attention weights) so it
+    can run on CPU without model access.
+
+    l12:        (M, 196, 768) fp16 — zero-padded for empty slots
+    token_mask: (M, 14, 14)   bool — True = valid/clear patch
+    returns:    (M, 4, 768)   fp32
+    """
+    M, N_tok, D = l12.shape
+    G    = int(N_tok ** 0.5)                        # 14 for 196 tokens
+    g    = l12.float().reshape(M, G, G, D)          # (M, 14, 14, 768)
+    v    = token_mask.float().unsqueeze(-1)          # (M, 14, 14, 1)
+
+    half   = G // 2
+    widths = [max(1, G * (i + 1) // 8) for i in range(4)]
+
+    def _pool(w):
+        rs, re = half - w, half + w
+        rg = g[:, rs:re, rs:re, :]                  # (M, 2w, 2w, 768)
+        rv = v[:, rs:re, rs:re, :]                  # (M, 2w, 2w, 1)
+        return (rg * rv).sum(dim=(1, 2)) / rv.sum(dim=(1, 2)).clamp(min=1)  # (M, 768)
+
+    return torch.stack([_pool(w) for w in widths], dim=1)   # (M, 4, 768)
+
+
 def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           max_acq: int = MAX_S2,
                           l12_np: np.ndarray | None = None,
                           date_cache: dict | None = None,
                           cm_token_mask: np.ndarray | None = None):
     """
-    Load S2 L12 tokens and cloud mask for the 365-day rolling window.
+    Load S2 L12 tokens for the 365-day rolling window and compress to pyramid tokens.
 
     date_cache:    precomputed per-orbit date info from _zarr_date_cache (eliminates zarr date reads)
     cm_token_mask: precomputed (N_cm, 14, 14) bool quality array from _cm_token_mask_cache
     l12_np:        preloaded L12 tokens from RAM/shm (eliminates chunk reads for history tokens)
+
+    Returns (pyr, doys, valid, rel_pos) where pyr is (max_acq, 4, 768) fp32 — already
+    pyramid-pooled on CPU so the full 196×768 tensors never cross the IPC barrier.
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
@@ -205,7 +241,8 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
     rel_pos    = torch.zeros(max_acq, dtype=torch.long)
 
     if "s2/l12" not in zg:
-        return l12, doys, doys > 0, token_mask, rel_pos
+        pyr = torch.zeros(max_acq, 4, 768, dtype=torch.float32)
+        return pyr, doys, doys > 0, rel_pos
 
     # Date arrays — use precomputed cache (no zarr read) or fall back to zarr
     if date_cache is not None and "s2" in date_cache:
@@ -261,7 +298,8 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                 bad_frac = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
                 token_mask[out_i] = torch.from_numpy(bad_frac <= 0.01)
 
-    return l12, doys, doys > 0, token_mask, rel_pos
+    pyr = _cpu_pyramid_pool(l12, token_mask)  # (max_acq, 4, 768) fp32
+    return pyr, doys, doys > 0, rel_pos
 
 
 def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
@@ -270,12 +308,12 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                           l12_desc_np: np.ndarray | None = None,
                           date_cache: dict | None = None,
                           s1_token_mask_cache: dict | None = None):
-    """Load S1 L12 tokens (ASC + DESC merged) from zarr.
+    """Load S1 L12 tokens (ASC + DESC merged) from zarr and compress to pyramid tokens.
 
     date_cache:          precomputed per-orbit date info (eliminates zarr date reads)
     s1_token_mask_cache: precomputed {orbit: (N,14,14) bool} from _s1_token_mask_cache
     l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates L12 chunk reads.
-    Returns (l12, doys, valid, token_mask, rel_pos) matching S2's 5-tuple signature.
+    Returns (pyr, doys, valid, rel_pos) 4-tuple matching S2's signature.
     """
     l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
@@ -322,7 +360,8 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
                     entries.append((d, tokens_src, i, orbit_key, None, None))
 
     if not entries:
-        return l12, doys, doys > 0, token_mask, rel_pos
+        pyr = torch.zeros(max_acq, 4, 768, dtype=torch.float32)
+        return pyr, doys, doys > 0, rel_pos
 
     entries.sort(key=lambda x: x[0])
     entries = entries[-max_acq:]
@@ -346,7 +385,8 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
             token_mask[out_i] = torch.from_numpy(tm_np_map[orbit_key][src_i])
         out_i += 1
 
-    return l12, doys, doys > 0, token_mask, rel_pos
+    pyr = _cpu_pyramid_pool(l12, token_mask)  # (max_acq, 4, 768) fp32
+    return pyr, doys, doys > 0, rel_pos
 
 
 def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
@@ -908,13 +948,13 @@ class SoilMoistureDataset(Dataset):
             _cm_tm   = self._cm_token_mask_cache.get(sat_dir)
             _s1_tm   = self._s1_token_mask_cache.get(sat_dir, {})
 
-            s2_l12, s2_doys, s2_valid, s2_token_mask, s2_rel_pos = \
+            s2_pyr, s2_doys, s2_valid, s2_rel_pos = \
                 load_s2_rolling_zarr(zg, year, doy,
                                      l12_np=_l12.get("s2"),
                                      date_cache=_dc,
                                      cm_token_mask=_cm_tm)
 
-            s1_l12, s1_doys, s1_valid, s1_token_mask, s1_rel_pos = \
+            s1_pyr, s1_doys, s1_valid, s1_rel_pos = \
                 load_s1_rolling_zarr(zg, year, doy,
                                      l12_asc_np=_l12.get("s1_asc"),
                                      l12_desc_np=_l12.get("s1_desc"),
@@ -922,10 +962,12 @@ class SoilMoistureDataset(Dataset):
                                      s1_token_mask_cache=_s1_tm)
 
             _static     = self._static_cache.get(sat_dir, {})
-            dem_l12          = _static.get("dem",            torch.zeros(196, 768, dtype=torch.float16))
-            lulc_l12         = _static.get("lulc",           torch.zeros(196, 768, dtype=torch.float16))
-            dem_token_mask   = _static.get("dem_token_mask", torch.ones(14, 14, dtype=torch.bool))
-            lulc_token_mask  = _static.get("lulc_token_mask",torch.ones(14, 14, dtype=torch.bool))
+            _dem_l12         = _static.get("dem",            torch.zeros(196, 768, dtype=torch.float16))
+            _lulc_l12        = _static.get("lulc",           torch.zeros(196, 768, dtype=torch.float16))
+            _dem_tm          = _static.get("dem_token_mask", torch.ones(14, 14, dtype=torch.bool))
+            _lulc_tm         = _static.get("lulc_token_mask",torch.ones(14, 14, dtype=torch.bool))
+            dem_pyr  = _cpu_pyramid_pool(_dem_l12.unsqueeze(0),  _dem_tm.unsqueeze(0)).squeeze(0)   # (4, 768)
+            lulc_pyr = _cpu_pyramid_pool(_lulc_l12.unsqueeze(0), _lulc_tm.unsqueeze(0)).squeeze(0)  # (4, 768)
 
             anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
                 select_anchor_zarr(zg, year, doy,
@@ -972,25 +1014,21 @@ class SoilMoistureDataset(Dataset):
                     label[i] = float(sm_np[d_idx, s["time_idx"]])
 
         return {
-            # S2 — pre-computed L12 features
-            "s2_l12"        : s2_l12,           # (MAX_S2, 196, 768) fp16
+            # S2 — pyramid-pooled on CPU (30 MB → ~2 MB per sample across IPC)
+            "s2_pyr"        : s2_pyr,            # (MAX_S2, 4, 768) fp32
             "s2_doys"       : s2_doys,           # (MAX_S2,) long
             "s2_valid"      : s2_valid,          # (MAX_S2,) bool
-            "s2_token_mask" : s2_token_mask,     # (MAX_S2, 14, 14) bool
             "s2_rel_pos"    : s2_rel_pos,        # (MAX_S2,) long
 
-            # S1 — pre-computed L12 features
-            "s1_l12"        : s1_l12,            # (MAX_S1, 196, 768) fp16
+            # S1 — pyramid-pooled on CPU
+            "s1_pyr"        : s1_pyr,            # (MAX_S1, 4, 768) fp32
             "s1_doys"       : s1_doys,           # (MAX_S1,) long
             "s1_valid"      : s1_valid,          # (MAX_S1,) bool
-            "s1_token_mask" : s1_token_mask,     # (MAX_S1, 14, 14) bool
             "s1_rel_pos"    : s1_rel_pos,        # (MAX_S1,) long
 
-            # Static
-            "dem_l12"       : dem_l12,           # (196, 768) fp16
-            "lulc_l12"      : lulc_l12,          # (196, 768) fp16
-            "dem_token_mask" : dem_token_mask,   # (14, 14) bool
-            "lulc_token_mask": lulc_token_mask,  # (14, 14) bool
+            # Static — pyramid-pooled on CPU (consistent with S2/S1)
+            "dem_pyr"       : dem_pyr,           # (4, 768) fp32
+            "lulc_pyr"      : lulc_pyr,          # (4, 768) fp32
 
             # Anchor (best clear + recent acquisition) — used for U-Net skip + spatial target
             "anchor_l3"       : anchor_l3,         # (196, 768) fp16
