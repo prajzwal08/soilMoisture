@@ -61,7 +61,7 @@ def circular_doy_pe(doys: torch.Tensor, dim: int = 768) -> torch.Tensor:
     return pe                                                          # (N, dim)
 
 
-# ── Spatial pyramid pooling ──────────────────────────────────────────────────
+# ── Spatial pyramid pooling — NOT USED (moved to _cpu_pyramid_pool in dataset.py) ──
 
 def spatial_pyramid_pool(tokens: torch.Tensor,
                          token_valid: torch.Tensor = None,
@@ -359,6 +359,7 @@ class SoilMoistureModel(nn.Module):
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
+    # NOT USED — pyramid pooling for S2/S1 moved to _cpu_pyramid_pool() in dataset.py
     def _pyramid_from_l12(self,
                           l12:        torch.Tensor,
                           valid:      torch.Tensor,
@@ -390,6 +391,7 @@ class SoilMoistureModel(nn.Module):
 
         return pyr.reshape(B, MAX_ACQ, 4, self.d_model)                # (B, MAX_ACQ, 4, 768)
 
+    # NOT USED — DEM/LULC pyramid pooling moved to _cpu_pyramid_pool() in dataset.py
     def _static_pyramid(self, l12: torch.Tensor, attn: nn.Linear,
                         token_valid: torch.Tensor | None = None) -> torch.Tensor:
         """l12: (B, 196, 768) fp16 → (B, 4, 768) fp32 pyramid.
