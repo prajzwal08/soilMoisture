@@ -28,4 +28,10 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node:   $SLURM_NODELIST"
 echo "GPU:    $CUDA_VISIBLE_DEVICES"
 
+# Remove stale /dev/shm L12 caches from previous killed/preempted runs.
+# Without this, old sm_l12_* dirs accumulate and double the ~145 GB SHM footprint → OOM.
+echo "Cleaning stale SHM caches..."
+rm -rf /dev/shm/sm_l12_* 2>/dev/null || true
+echo "SHM clean."
+
 conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py "$@"
