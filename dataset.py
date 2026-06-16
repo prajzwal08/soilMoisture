@@ -401,6 +401,7 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
 
 def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
                         l12_cache: dict | None = None,
+                        l369_cache: dict | None = None,
                         date_cache: dict | None = None,
                         cm_token_mask: np.ndarray | None = None,
                         s1_token_mask_cache: dict | None = None,
@@ -504,6 +505,13 @@ def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
 
     # ── Load L3 / L6 / L9 / L12 for chosen anchor ────────────────────────
     def _load_layer(layer: str) -> torch.Tensor:
+        # L3/L6/L9: prefer .npy memmap (flat binary, no decompression).
+        # On OS page-cache hit (epoch 2+) this is a pure RAM read.
+        if layer in ("l3", "l6", "l9") and l369_cache:
+            arr = l369_cache.get(f"{best_orbit}_{layer}")
+            if arr is not None and best_idx < len(arr):
+                return torch.from_numpy(np.asarray(arr[best_idx]))
+        # Fallback: zarr (compressed GPFS read)
         key = f"{best_orbit}/{layer}"
         if key not in zg or best_idx >= zg[key].shape[0]:
             return zeros.clone()
@@ -743,8 +751,10 @@ class SoilMoistureDataset(Dataset):
         training:        bool        = True,
         max_stations:    int | None  = None,
         shm_dir:         Path | None = None,
+        use_mmap:        bool        = False,
     ):
-        self.training  = training
+        self.training   = training
+        self._use_mmap  = use_mmap
         self.years     = years or list(range(2016, 2024))
 
         # ERA5 normalisation stats
@@ -792,6 +802,10 @@ class SoilMoistureDataset(Dataset):
         self._cm_token_mask_cache : dict[Path, np.ndarray | None] = {}
         self._s1_token_mask_cache : dict[Path, dict]               = {}
         self._zarr_date_cache     : dict[Path, dict]               = {}
+        # L3/L6/L9 memmap cache: sat_dir → {"s2_l3": memmap(N,196,768), ...}
+        # Populated when use_mmap=True; workers inherit via CoW fork (read-only, no duplication).
+        # OS page cache backs the memmaps — after epoch-1 warmup, reads serve from free RAM.
+        self._l369_cache          : dict[Path, dict[str, np.ndarray]] = {}
 
         for _, r in splits.iterrows():
             has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
@@ -830,19 +844,35 @@ class SoilMoistureDataset(Dataset):
                             for k in ("s2", "s1_asc", "s1_desc")
                             if f"{k}/l12" in zg
                         }
+                    # L3/L6/L9 memmap — opened lazily; OS page cache warms on epoch-1 access.
+                    # Files live at sat_dir/{orbit}_{layer}.npy (same tree as zarr, flat binary).
+                    if self._use_mmap:
+                        l369: dict[str, np.ndarray] = {}
+                        for _orbit in ("s2", "s1_asc", "s1_desc"):
+                            for _layer in ("l3", "l6", "l9"):
+                                _p = sat_dir / f"{_orbit}_{_layer}.npy"
+                                if _p.exists():
+                                    l369[f"{_orbit}_{_layer}"] = np.load(_p, mmap_mode="r")
+                        self._l369_cache[sat_dir] = l369
+                    _dem_l12  = (torch.from_numpy(zg["dem"][:])
+                                 if "dem" in zg
+                                 else torch.zeros(196, 768, dtype=torch.float16))
+                    _lulc_l12 = (torch.from_numpy(zg["lulc"][:])
+                                 if "lulc" in zg
+                                 else torch.zeros(196, 768, dtype=torch.float16))
+                    _dem_tm   = (torch.from_numpy(np.asarray(zg["dem_token_mask"][:]))
+                                 if "dem_token_mask" in zg
+                                 else torch.ones(14, 14, dtype=torch.bool))
+                    _lulc_tm  = (torch.from_numpy(np.asarray(zg["lulc_token_mask"][:]))
+                                 if "lulc_token_mask" in zg
+                                 else torch.ones(14, 14, dtype=torch.bool))
                     self._static_cache[sat_dir] = {
-                        "dem":            (torch.from_numpy(zg["dem"][:])
-                                           if "dem" in zg
-                                           else torch.zeros(196, 768, dtype=torch.float16)),
-                        "lulc":           (torch.from_numpy(zg["lulc"][:])
-                                           if "lulc" in zg
-                                           else torch.zeros(196, 768, dtype=torch.float16)),
-                        "dem_token_mask": (torch.from_numpy(np.asarray(zg["dem_token_mask"][:]))
-                                           if "dem_token_mask" in zg
-                                           else torch.ones(14, 14, dtype=torch.bool)),
-                        "lulc_token_mask":(torch.from_numpy(np.asarray(zg["lulc_token_mask"][:]))
-                                           if "lulc_token_mask" in zg
-                                           else torch.ones(14, 14, dtype=torch.bool)),
+                        "dem":            _dem_l12,
+                        "lulc":           _lulc_l12,
+                        "dem_token_mask": _dem_tm,
+                        "lulc_token_mask":_lulc_tm,
+                        "dem_pyr":  _cpu_pyramid_pool(_dem_l12.unsqueeze(0),  _dem_tm.unsqueeze(0)).squeeze(0),
+                        "lulc_pyr": _cpu_pyramid_pool(_lulc_l12.unsqueeze(0), _lulc_tm.unsqueeze(0)).squeeze(0),
                         "soil":           (torch.from_numpy(fill_soil_nans(zg["soil"][:]))
                                            if "soil" in zg
                                            else torch.zeros(21, 74, 74, dtype=torch.float32)),
@@ -937,6 +967,9 @@ class SoilMoistureDataset(Dataset):
 
         print(f"Dataset: {len(self.samples)} samples from "
               f"{len(set(s['station_key'] for s in self.samples))} stations")
+        if self._use_mmap:
+            n_mmap = sum(len(v) for v in self._l369_cache.values())
+            print(f"L369 memmap cache: {n_mmap} arrays opened (OS page cache; zero process heap cost)")
 
     def __len__(self):
         return len(self.samples)
@@ -973,17 +1006,20 @@ class SoilMoistureDataset(Dataset):
                                      s1_token_mask_cache=_s1_tm,
                                      training=self.training)
 
-            _static     = self._static_cache.get(sat_dir, {})
-            _dem_l12         = _static.get("dem",            torch.zeros(196, 768, dtype=torch.float16))
-            _lulc_l12        = _static.get("lulc",           torch.zeros(196, 768, dtype=torch.float16))
-            _dem_tm          = _static.get("dem_token_mask", torch.ones(14, 14, dtype=torch.bool))
-            _lulc_tm         = _static.get("lulc_token_mask",torch.ones(14, 14, dtype=torch.bool))
-            dem_pyr  = _cpu_pyramid_pool(_dem_l12.unsqueeze(0),  _dem_tm.unsqueeze(0)).squeeze(0)   # (4, 768)
-            lulc_pyr = _cpu_pyramid_pool(_lulc_l12.unsqueeze(0), _lulc_tm.unsqueeze(0)).squeeze(0)  # (4, 768)
+            _static  = self._static_cache.get(sat_dir, {})
+            dem_pyr  = _static.get("dem_pyr",  _cpu_pyramid_pool(
+                           _static.get("dem",  torch.zeros(196, 768, dtype=torch.float16)).unsqueeze(0),
+                           _static.get("dem_token_mask", torch.ones(14, 14, dtype=torch.bool)).unsqueeze(0)
+                       ).squeeze(0))   # (4, 768) — pre-computed at init, fallback for missing cache
+            lulc_pyr = _static.get("lulc_pyr", _cpu_pyramid_pool(
+                           _static.get("lulc", torch.zeros(196, 768, dtype=torch.float16)).unsqueeze(0),
+                           _static.get("lulc_token_mask", torch.ones(14, 14, dtype=torch.bool)).unsqueeze(0)
+                       ).squeeze(0))   # (4, 768)
 
             anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
                 select_anchor_zarr(zg, year, doy,
                                    l12_cache=_l12,
+                                   l369_cache=self._l369_cache.get(sat_dir),
                                    date_cache=_dc,
                                    cm_token_mask=_cm_tm,
                                    s1_token_mask_cache=_s1_tm)

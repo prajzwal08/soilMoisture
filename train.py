@@ -576,6 +576,9 @@ def main():
                         help="Limit batches during validation (trial/debug mode)")
     parser.add_argument("--debug-nan", action="store_true",
                         help="Scan inputs/outputs/grads/params for NaN/Inf each batch (slow)")
+    parser.add_argument("--use-memmap", action="store_true",
+                        help="Load anchor L3/L6/L9 from .npy memmaps instead of zarr "
+                             "(eliminates zstd decompress; OS page cache warms after epoch 1)")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
@@ -633,6 +636,7 @@ def main():
         years            = CONFIG["years"],
         category_filter  = CONFIG["category_filter"],
         shm_dir          = SHM_DIR,
+        use_mmap         = args.use_memmap,
     )
     val_max_stations = max(1, args.max_stations // 5) if args.max_stations is not None else None
     # file_system strategy avoids fd exhaustion with 32 workers; must be set before workers spawn

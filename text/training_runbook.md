@@ -1,6 +1,6 @@
 # Soil Moisture Training Runbook
 
-Last updated: 2026-06-17 (Session 11 — CPU pyramid pooling implemented)  
+Last updated: 2026-06-16 (Session 12 — GPFS anchor bottleneck; .npy memmap fix implemented; smoke test pending)  
 Author: Prajwal Khanal
 
 ---
@@ -543,6 +543,13 @@ sbatch slurm/train.sh --run-name baseline_huber
 # Smoke test (20 stations, 3 epochs; preload takes ~30s vs 17 min full)
 sbatch slurm/train.sh --run-name smoke_v2 --max-stations 20 --max-epochs 3
 
+# Mmap smoke test — validate flat data_time across epochs before full run
+sbatch slurm/train.sh --run-name smoke_anchor_mmap --max-stations 5 --max-epochs 3 --use-memmap
+# Pass: epoch 2 data_time ≤ epoch 1; losses match zarr smoke run
+
+# Full run with mmap (after smoke test confirms fix)
+sbatch slurm/train.sh --run-name baseline_mmap --use-memmap
+
 # Resume is automatic — just resubmit the same run-name
 sbatch slurm/train.sh --run-name baseline_huber
 
@@ -673,6 +680,48 @@ takes longer than `NCCL_TIMEOUT`. With 4 GPUs this is fine, but would break on m
 **Fix:** pad local prediction tensors to a fixed maximum size, use `dist.all_gather` (tensor,
 no pickle), slice off padding after. Already noted in deferred task memory.
 
+### 8.5b Anchor L3/L6/L9 → `.npy` memmap (HIGH priority — gpu_util 22%→~65%)
+
+**Root cause:** §3f. Zarr chunks=(32,196,768)+zstd force 9.6 MB GPFS read + decompression per
+`zg[key][best_idx]` call. 3 reads per sample → primary DataLoader bottleneck.
+
+**Fix:** convert L3/L6/L9 arrays to uncompressed `.npy` memmap files alongside zarr:
+```
+{station_dir}/s2_l3.npy      (N, 196, 768) fp16, flat binary, no compression
+{station_dir}/s2_l6.npy
+{station_dir}/s2_l9.npy
+{station_dir}/s1_asc_l3.npy  ...and so on for s1_asc, s1_desc
+{station_dir}/{orbit}_{layer}.json   shape metadata
+```
+
+Worker access: `np.memmap(path, dtype="float16", mode="r", shape=shape)[best_idx]`
+- Reads exactly 0.3 MB (one row) vs 9.6 MB zarr chunk — **32× less GPFS I/O**
+- Zero decompression (raw binary)
+- OS page cache: after first access, subsequent reads hit RAM (zero I/O from epoch 2+)
+- Inode count: 9 files/station × 661 stations = ~5,949 files (vs ~41k zarr chunks) — **fewer files**
+
+**Storage:** ~524 GB uncompressed (S2+S1_asc+S1_desc L3+L6+L9). Verified scratch has space.  
+**File count:** ~5,949 .npy + ~5,949 .json = ~12k new files — no inode concern.  
+**Memory:** less than zarr (no per-worker zarr chunk LRU cache; shared OS page cache instead).
+
+**Conversion script:** `convert_l369_to_npy.py` (64 workers, resume-safe, dry-run by default)
+```bash
+python convert_l369_to_npy.py                # dry run — prints what would be written
+python convert_l369_to_npy.py --execute      # actually write files (~2–4 hrs on thin node)
+```
+
+**Training integration:** `--use-memmap` flag in `train.py` → `use_mmap=True` in dataset.
+`_load_layer` checks memmap cache first, falls back to zarr if .npy absent. Both paths in
+one script — comparison smoke test: run with/without `--use-memmap`, compare `data_time`.
+
+**Expected improvement:** gpu_util 22% → ~50–65% (anchor reads eliminated; CPU pyramid
+pooling becomes new minor bottleneck; DDP barrier imbalance remains).
+
+**Status (2026-06-16): CONVERSION COMPLETE + IMPLEMENTED.**
+Job 23927829: 890 stations, 7818 files, ~525 GB, 0 errors.
+dataset.py: `_l369_cache` + `_load_layer` cache-first logic. train.py: `--use-memmap` flag.
+Smoke test before full run — see §3g for comparison strategy and pass criteria.
+
 ### 8.5 Lower-priority items (apply opportunistically)
 - Cache `torch.arange(365)` as a `register_buffer` for ERA5 rel_pos (avoids per-call alloc).
 - Cache `k` arange in `circular_doy_pe` as a module buffer.
@@ -683,6 +732,148 @@ no pickle), slice off padding after. Already noted in deferred task memory.
 Removing the `.nonzero()` sync (8.1) + SyncBN all_reduce chatter (8.2) is estimated to
 reclaim ~10–20% of the ~2.9 s/batch step time. Both are GPU-pipeline overhead, not genuine
 model FLOPs — the model itself is compute-heavy at bs=128, but these stalls are avoidable.
+
+---
+
+---
+
+## 3f. GPFS Anchor Bottleneck — Root Cause Analysis (Session 12, 2026-06-16)
+
+**Observed:** Epoch 1 (job 23921632): `data=1429s compute=405s gpu_util=22%`  
+DataLoader workers are 3.5× slower than GPU compute. Workers can't keep up.
+
+**What IS in RAM (no GPFS reads in `__getitem__`):**
+- `_era5_cache`, `_sif_cache`, `_twsa_cache`, `_label_cache` → fully in Python dicts at init
+- `_cm_token_mask_cache`, `_s1_token_mask_cache`, `_zarr_date_cache` → loaded at init
+- `_static_cache` (DEM/LULC/soil) → loaded at init
+- L12 tokens → `/dev/shm` memmaps (preloaded at job start)
+
+**The actual GPFS read path per `__getitem__`:**  
+`select_anchor_zarr._load_layer()` does `zg[key][best_idx]` for L3, L6, L9 — 3 reads per sample.
+
+**Smoking gun — zarr chunk layout:**
+```
+s2/l3: chunks=(32, 196, 768), dtype=float16, compressor=Blosc(zstd, clevel=3)
+s2/l6: chunks=(32, 196, 768)
+s2/l9: chunks=(32, 196, 768)
+```
+A single-index access `zg[key][best_idx]` must fetch the **entire 32-row chunk** (9.6 MB raw)
+from GPFS, then zstd-decompress it, to extract one row (0.3 MB). This happens 3× per sample.
+With 32 workers hammering GPFS simultaneously: **~28.9 MB GPFS read + 3 decompressions per sample**.
+
+**Time breakdown per `__getitem__` (estimated):**
+| Operation | Cost | Bottleneck? |
+|---|---|---|
+| ERA5/SIF/TWSA/label slicing (RAM) | ~0.1 ms | No |
+| L12 mmap reads (/dev/shm) | ~1–2 ms | Mild |
+| `_cpu_pyramid_pool` S2+S1 | ~5–10 ms | Moderate |
+| Anchor L3/L6/L9 GPFS+zstd | **~50–200 ms** | **PRIMARY BOTTLENECK** |
+
+At 50 ms/sample avg, 32,000 samples/worker/epoch → ~1,600 s data time. Matches observed 1429s.
+
+**Why workers/prefetch don't help:** more workers = more concurrent GPFS requests = more
+filesystem contention. 32 workers already saturate GPFS scratch for this access pattern.
+Prefetch_factor increases queue depth but not GPFS throughput.
+
+**Workers/prefetch reverted to 8/2** (previous values) after this analysis. The proposed
+12-worker / pf=4 change was based on wrong diagnosis and was reverted.
+
+**Minor fix applied (2026-06-16):** DEM/LULC pyramid (`_cpu_pyramid_pool`) moved from
+`__getitem__` to `__init__` — precomputed once per station, stored as `dem_pyr`/`lulc_pyr`
+in `_static_cache`. Zero RAM cost (~16 MB total). Saves ~10 ms per sample (small vs 50–200 ms
+anchor bottleneck, but correct). Fallback to on-the-fly computation if cache missing.
+
+**Options investigated:**
+1. Rechunk L3/L6/L9 to `(1,196,768)` → 32× fewer GPFS bytes but ~1.2M chunk files (inode explosion) ✗
+2. Preload S2 L3/L6/L9 to /dev/shm → 139 GB extra, total 520 GB (safe), but doesn't cover S1 anchors
+3. Preload ALL L3/L6/L9 → 524 GB extra, total 905 GB → OOM ✗
+4. **Convert to `.npy` memmap** → single file per array, no compression, OS page cache, 0.3 MB/read ✓
+
+**Chosen fix: `.npy` memmap conversion (see §8.5b). Conversion complete (job 23927829). Implementation wired via `--use-memmap` flag (dataset.py + train.py, 2026-06-16).**
+
+---
+
+## 3g. Cross-Epoch Data-Load Degradation — Mechanism & Fix (Session 12, 2026-06-16)
+
+**Observed pattern:** job 23921632 epoch timing: data=1429s → 1758s → 5200s (monotonically worsening).
+
+### Three compounding causes
+
+**Cause 1 — Zarr decompresses on every access, even on OS page-cache hits**
+
+`_load_layer("l3/l6/l9")` in `select_anchor_zarr` calls `zg[key][best_idx]` which must fetch
+a 9.6 MB compressed chunk (chunks=(32,196,768), Blosc/zstd) from GPFS to extract 0.3 MB.
+Even when the OS page cache holds the compressed bytes, zarr re-decompresses them in userspace
+on every call. The OS cache removes the GPFS I/O latency but cannot remove the CPU
+decompression step.
+
+**Cause 2 — GPFS contention accumulates over job lifetime**
+
+The longer the job runs, the more competing cluster jobs access shared GPFS scratch. Lock and
+metadata contention grows. Epoch 1 sees a quieter filesystem; epoch 3 runs at peak activity.
+
+**Cause 3 — Zarr's internal chunk cache cannot exploit the full free OS page cache**
+
+Zarr has a small in-process LRU chunk cache. With 32,015 samples in random order
+(DistributedSampler reshuffles each epoch), zarr's cache misses constantly. The full 540+ GB
+of free OS page cache on the node is invisible to zarr's cache layer.
+
+### How `.npy` memmap solves all three
+
+`np.load(path, mmap_mode='r')` creates a virtual memory mapping — no process heap growth
+(~200 bytes metadata per object). When `arr[best_idx]` is accessed:
+- **Page NOT in OS page cache:** kernel reads from GPFS, stores raw float16 in free RAM (OS
+  page cache, outside process RSS), returns data.
+- **Page IN OS page cache:** kernel returns bytes directly from RAM. No decompression. Zero
+  extra CPU work.
+
+After epoch 1, every anchor row in the training set has been accessed. The ~525 GB of L3/L6/L9
+data fits in the ~540 GB of free RAM (OS page cache). From epoch 2 onwards, all reads serve
+from RAM — no GPFS calls, no lock contention, no decompression.
+
+**Per-epoch timing after fix:**
+
+| | zarr (current) | .npy mmap |
+|---|---|---|
+| Epoch 1 | GPFS + zstd (slow) | GPFS flat read, no decompress (faster) |
+| Epoch 2 | GPFS + zstd + contention | OS page cache → pure RAM |
+| Epoch 3 | Much worse | ≈ epoch 2 (stable) |
+
+### RAM budget
+
+`mmap_mode='r'` does NOT grow process RSS — OS page cache is kernel-managed free RAM.
+
+| Component | RAM type | Approx |
+|---|---|---|
+| Process RSS (model + caches + IPC) | Process heap | ~80 GB |
+| `/dev/shm` L12 | tmpfs | 145 GB |
+| L3/L6/L9 .npy page cache (after epoch-1 warmup) | Kernel page cache (evictable) | up to 525 GB |
+| **Process RSS + /dev/shm (cgroup limit applies here)** | | **~225 GB → safe** |
+
+### Implementation
+
+`dataset.py`: `_l369_cache` dict; station-init loop opens `.npy` memmaps via
+`np.load(sat_dir / f"{orbit}_{layer}.npy", mmap_mode="r")`; `_load_layer` in
+`select_anchor_zarr` checks cache before zarr for l3/l6/l9; fallback to zarr if file absent.
+
+`train.py`: `--use-memmap` flag → `use_mmap=True` to dataset constructor.
+
+### Conversion status
+
+Job 23927829: 890 stations, 7818 files written, 0 errors, ~525 GB total at
+`/gpfs/scratch1/shared/pkhanal/zarr/{category}/{station}/{orbit}_{layer}.npy`.
+
+### Comparison strategy
+
+We already have zarr timing from job 23921632 (1429s / 1758s / 5200s epochs 1–3). No need to
+re-run zarr. Run mmap smoke test to validate:
+
+```bash
+sbatch slurm/train.sh --run-name smoke_anchor_mmap --max-stations 5 --max-epochs 3 --use-memmap
+```
+
+Pass criteria: epoch 2 data_time ≤ epoch 1; epoch 3 ≈ epoch 2; losses match zarr run.
+If smoke test passes → submit full run: `sbatch slurm/train.sh --run-name baseline_mmap --use-memmap`
 
 ---
 
@@ -711,3 +902,44 @@ launched fresh at `--mem=720G` (node max for a shared job; 790G never schedules)
 and recovered 6330→320 ms as `/dev/shm` warmed. At bs=128 the run is **compute-bound from
 batch 1** (GPUs 96–100%), so there is no IO slack to recover — ~2,880 ms is the real
 GPU-limited floor. Section 8 fixes are the path to lowering it.
+
+---
+
+## 10. Current Run — job 23921632 (baseline_huber, started 2026-06-16)
+
+Fresh start after OOM fix (CPU pyramid pooling, §3e). All old checkpoints cleared.
+
+**Config:** 661 train / 74 val stations, batch_size=128, 8 workers/rank, pf=2, Huber loss,
+lr=2e-4, lambda_tv=0.1
+
+| Snapshot | RAM used |
+|---|---|
+| job_start | ~217 GB |
+| epoch_001_start | ~217 GB |
+| epoch_001_post_train | **358.4 GB** |
+| epoch_002_start | **381.5 GB** (47% of 811 GB node RAM) |
+
+Note: script reports node physical RAM (811 GB base-10) not cgroup limit.
+Cgroup limit: 720 GiB = 773 GB base-10. Usage at epoch 2 start = 381.5 GB → 391 GB headroom.
+
+**Epoch 1 results:**
+
+| Metric | Value |
+|---|---|
+| train_loss | 0.0012 |
+| val_loss | 0.0022 (new best, checkpoint saved) |
+| 0-10cm ubRMSE | **0.0535** ✓ (target < 0.07) |
+| 10-30cm ubRMSE | 0.0491 |
+| 30-100cm ubRMSE | 0.0550 |
+| data_time | **1429 s** |
+| compute_time | 405 s |
+| gpu_util | **22%** ← DataLoader bottleneck (§3f) |
+| peak_vram | 38.6 GB / 96 GB |
+| epoch duration | ~80 min train + ~60 min val (cold first epoch) |
+
+**GPU util breakdown:** `data/compute = 3.5×` — DataLoader dominates. Root cause: zarr
+chunk reads for anchor L3/L6/L9 (§3f). Not DDP imbalance (data_time >> compute_time).
+Fix: `.npy` memmap wired via `--use-memmap` (§3g, §8.5b). Run smoke test before resubmitting.
+
+**VRAM:** 38.6 GB peak (40% of 96 GB) — comfortable. Batch size could be increased to 256
+to improve gpu_util (more compute per data fetch: 22%→~36%) while memmap fix is pending.

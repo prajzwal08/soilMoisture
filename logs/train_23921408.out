@@ -1,0 +1,984 @@
+Job ID: 23921408
+Node:   gcn112
+GPU:    0,1,2,3
+Cleaning stale SHM caches...
+SHM clean.
+[SHM] L12 preloaded for 20 stations → /dev/shm/sm_l12_23921408
+[SHM] Preload done in 25.1s  (/dev/shm/sm_l12_23921408)
+Device: cuda:0  |  world_size: 4
+Building datasets...
+Dataset: 32015 samples from 18 stations
+Dataset: 32015 samples from 18 stations
+Dataset: 32015 samples from 18 stations
+Dataset: 32015 samples from 18 stations
+Dataset: 4661 samples from 4 stations
+Dataset: 4661 samples from 4 stations
+Dataset: 4661 samples from 4 stationsDataset: 4661 samples from 4 stations
+
+Building model...
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/nn/modules/transformer.py:385: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+Trainable parameters: 50,049,408
+No checkpoint found — starting fresh
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/pkhanal/.netrc.
+wandb: Currently logged in as: prajzwal08 (prajzwal08-university-of-twente) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.27.0
+wandb: Run data is saved locally in /gpfs/work3/0/prjs1968/soilMoisture/wandb/run-20260616_084806-lfw3snx2
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run smoke_pyramid
+wandb: ⭐️ View project at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: 🚀 View run at https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/lfw3snx2
+
+=== Memory snapshot: job_start ===
+  RAM  used : 69.9 GB / 811.3 GB  (9%)
+  CPU  util : 33%
+  GPU 0 VRAM: 0.4 alloc / 0.4 rsv / 0.4 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+=== Memory snapshot: epoch_001_start ===
+  RAM  used : 70.6 GB / 811.3 GB  (9%)
+  CPU  util : 32%
+  GPU 0 VRAM: 0.4 alloc / 0.4 rsv / 0.4 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/autograd/graph.py:823: UserWarning: Grad strides do not match bucket view strides. This may indicate grad was not created according to the gradient layout contract, or that the param's strides changed since DDP was constructed.  This is not an error, but may impair performance.
+grad.sizes() = [3, 64, 1, 1], strides() = [64, 1, 64, 64]
+bucket_view.sizes() = [3, 64, 1, 1], strides() = [64, 1, 1, 1] (Triggered internally at /pytorch/torch/csrc/distributed/c10d/reducer.cpp:327.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/autograd/graph.py:823: UserWarning: Grad strides do not match bucket view strides. This may indicate grad was not created according to the gradient layout contract, or that the param's strides changed since DDP was constructed.  This is not an error, but may impair performance.
+grad.sizes() = [3, 64, 1, 1], strides() = [64, 1, 64, 64]
+bucket_view.sizes() = [3, 64, 1, 1], strides() = [64, 1, 1, 1] (Triggered internally at /pytorch/torch/csrc/distributed/c10d/reducer.cpp:327.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/autograd/graph.py:823: UserWarning: Grad strides do not match bucket view strides. This may indicate grad was not created according to the gradient layout contract, or that the param's strides changed since DDP was constructed.  This is not an error, but may impair performance.
+grad.sizes() = [3, 64, 1, 1], strides() = [64, 1, 64, 64]
+bucket_view.sizes() = [3, 64, 1, 1], strides() = [64, 1, 1, 1] (Triggered internally at /pytorch/torch/csrc/distributed/c10d/reducer.cpp:327.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+/gpfs/home5/pkhanal/miniforge3/envs/terramind/lib/python3.11/site-packages/torch/autograd/graph.py:823: UserWarning: Grad strides do not match bucket view strides. This may indicate grad was not created according to the gradient layout contract, or that the param's strides changed since DDP was constructed.  This is not an error, but may impair performance.
+grad.sizes() = [3, 64, 1, 1], strides() = [64, 1, 64, 64]
+bucket_view.sizes() = [3, 64, 1, 1], strides() = [64, 1, 1, 1] (Triggered internally at /pytorch/torch/csrc/distributed/c10d/reducer.cpp:327.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+  batch 0001  loss=0.0562  tv=0.07324  step=18449ms
+  batch 0001  loss=0.0589  tv=0.07520  step=18452ms
+  batch 0001  loss=0.0587  tv=0.07422  step=18452ms
+  batch 0001  loss=0.0593  tv=0.07617  step=15317ms
+  batch 0002  loss=0.0375  tv=0.05029  step=9352ms  batch 0002  loss=0.0373  tv=0.04736  step=9352ms  batch 0002  loss=0.0372  tv=0.04956  step=7784ms
+
+  batch 0002  loss=0.0379  tv=0.04907  step=9353ms
+
+  batch 0003  loss=0.0289  tv=0.03687  step=6301ms  batch 0003  loss=0.0280  tv=0.03809  step=5256ms
+  batch 0003  loss=0.0278  tv=0.03784  step=6302ms
+
+  batch 0003  loss=0.0284  tv=0.03857  step=6301ms
+  batch 0004  loss=0.0197  tv=0.02686  step=4776ms  batch 0004  loss=0.0205  tv=0.02881  step=3992ms
+  batch 0004  loss=0.0212  tv=0.03125  step=4776ms
+
+  batch 0004  loss=0.0217  tv=0.03027  step=4776ms
+  batch 0005  loss=0.0153  tv=0.02283  step=3860ms
+  batch 0005  loss=0.0156  tv=0.02039  step=3861ms
+  batch 0005  loss=0.0160  tv=0.02405  step=3233ms  batch 0005  loss=0.0160  tv=0.02380  step=3862ms
+
+  batch 0006  loss=0.0119  tv=0.02026  step=3250ms
+  batch 0006  loss=0.0122  tv=0.02100  step=3251ms
+  batch 0006  loss=0.0116  tv=0.01978  step=2728ms  batch 0006  loss=0.0114  tv=0.02075  step=3252ms
+
+  batch 0007  loss=0.0081  tv=0.01697  step=2815ms  batch 0007  loss=0.0093  tv=0.01831  step=2367ms
+  batch 0007  loss=0.0087  tv=0.01758  step=2814ms
+
+  batch 0007  loss=0.0084  tv=0.01782  step=2816ms
+  batch 0008  loss=0.0094  tv=0.01990  step=3138ms  batch 0008  loss=0.0069  tv=0.01575  step=3139ms
+  batch 0008  loss=0.0092  tv=0.01978  step=2746ms
+
+  batch 0008  loss=0.0071  tv=0.01575  step=3140ms
+  batch 0009  loss=0.0056  tv=0.01392  step=2812ms  batch 0009  loss=0.0056  tv=0.01416  step=2464ms
+  batch 0009  loss=0.0063  tv=0.01538  step=2812ms
+  batch 0009  loss=0.0056  tv=0.01440  step=2814ms
+
+  batch 0010  loss=0.0052  tv=0.01306  step=2551ms
+  batch 0010  loss=0.0053  tv=0.01349  step=2237ms  batch 0010  loss=0.0049  tv=0.01245  step=2551ms
+  batch 0010  loss=0.0050  tv=0.01202  step=2553ms
+
+  batch 0011  loss=0.0041  tv=0.01178  step=2337ms  batch 0011  loss=0.0044  tv=0.01208  step=2338ms
+
+  batch 0011  loss=0.0042  tv=0.01013  step=2052ms  batch 0011  loss=0.0045  tv=0.01221  step=2339ms
+
+  batch 0012  loss=0.0046  tv=0.01001  step=2159ms  batch 0012  loss=0.0037  tv=0.00977  step=2159ms  batch 0012  loss=0.0042  tv=0.01099  step=1898ms
+
+
+  batch 0012  loss=0.0037  tv=0.01099  step=2161ms
+  batch 0013  loss=0.0033  tv=0.00934  step=2008ms
+  batch 0013  loss=0.0038  tv=0.00964  step=1767ms  batch 0013  loss=0.0036  tv=0.01074  step=2009ms
+  batch 0013  loss=0.0035  tv=0.00977  step=2011ms
+
+  batch 0014  loss=0.0032  tv=0.00885  step=1880ms
+  batch 0014  loss=0.0038  tv=0.00909  step=1655ms  batch 0014  loss=0.0031  tv=0.00958  step=1879ms  batch 0014  loss=0.0031  tv=0.00867  step=1881ms
+
+
+  batch 0015  loss=0.0026  tv=0.00842  step=1768ms  batch 0015  loss=0.0027  tv=0.00793  step=1558ms
+  batch 0015  loss=0.0030  tv=0.00848  step=1767ms
+
+  batch 0015  loss=0.0026  tv=0.00861  step=1769ms
+  batch 0016  loss=0.0031  tv=0.00928  step=2129ms
+  batch 0016  loss=0.0026  tv=0.00735  step=2129ms  batch 0016  loss=0.0027  tv=0.00793  step=1933ms
+
+  batch 0016  loss=0.0026  tv=0.00775  step=2132ms
+  batch 0017  loss=0.0026  tv=0.00757  step=2015ms  batch 0017  loss=0.0025  tv=0.00748  step=1831ms
+  batch 0017  loss=0.0023  tv=0.00751  step=2016ms
+  batch 0017  loss=0.0026  tv=0.00806  step=2018ms
+
+  batch 0018  loss=0.0023  tv=0.00720  step=1915ms  batch 0018  loss=0.0024  tv=0.00729  step=1914ms
+
+  batch 0018  loss=0.0025  tv=0.00708  step=1741ms  batch 0018  loss=0.0022  tv=0.00690  step=1917ms
+
+  batch 0019  loss=0.0025  tv=0.00739  step=1825ms
+  batch 0019  loss=0.0026  tv=0.00757  step=1827ms  batch 0019  loss=0.0022  tv=0.00677  step=1660ms
+  batch 0019  loss=0.0026  tv=0.00818  step=1824ms
+
+  batch 0020  loss=0.0035  tv=0.00677  step=1744ms
+  batch 0020  loss=0.0026  tv=0.00616  step=1746ms  batch 0020  loss=0.0024  tv=0.00647  step=1743ms
+
+  batch 0020  loss=0.0025  tv=0.00690  step=1587ms
+  batch 0021  loss=0.0021  tv=0.00586  step=1669ms  batch 0021  loss=0.0024  tv=0.00705  step=1672ms  batch 0021  loss=0.0023  tv=0.00632  step=1670ms
+
+
+  batch 0021  loss=0.0021  tv=0.00647  step=1521ms
+  batch 0022  loss=0.0022  tv=0.00629  step=1603ms  batch 0022  loss=0.0021  tv=0.00586  step=1605ms
+
+  batch 0022  loss=0.0021  tv=0.00623  step=1604ms
+  batch 0022  loss=0.0023  tv=0.00610  step=1461ms
+  batch 0023  loss=0.0026  tv=0.00607  step=1544ms  batch 0023  loss=0.0021  tv=0.00592  step=1542ms  batch 0023  loss=0.0021  tv=0.00580  step=1543ms
+
+
+  batch 0023  loss=0.0023  tv=0.00671  step=1407ms
+  batch 0024  loss=0.0023  tv=0.00586  step=1793ms
+  batch 0024  loss=0.0027  tv=0.00647  step=1794ms
+  batch 0024  loss=0.0021  tv=0.00583  step=1664ms  batch 0024  loss=0.0020  tv=0.00592  step=1795ms
+
+  batch 0025  loss=0.0020  tv=0.00546  step=1729ms  batch 0025  loss=0.0018  tv=0.00562  step=1732ms
+
+  batch 0025  loss=0.0022  tv=0.00534  step=1605ms  batch 0025  loss=0.0021  tv=0.00629  step=1730ms
+
+  batch 0026  loss=0.0018  tv=0.00568  step=1671ms  batch 0026  loss=0.0021  tv=0.00568  step=1670ms
+
+  batch 0026  loss=0.0021  tv=0.00586  step=1673ms
+  batch 0026  loss=0.0020  tv=0.00580  step=1551ms
+  batch 0027  loss=0.0021  tv=0.00598  step=1617ms
+  batch 0027  loss=0.0020  tv=0.00562  step=1616ms  batch 0027  loss=0.0018  tv=0.00519  step=1618ms
+
+  batch 0027  loss=0.0021  tv=0.00516  step=1501ms
+  batch 0028  loss=0.0020  tv=0.00540  step=1566ms  batch 0028  loss=0.0018  tv=0.00543  step=1455ms
+  batch 0028  loss=0.0019  tv=0.00537  step=1568ms
+  batch 0028  loss=0.0017  tv=0.00528  step=1565ms
+
+  batch 0029  loss=0.0021  tv=0.00485  step=1659ms
+  batch 0029  loss=0.0017  tv=0.00476  step=1660ms
+  batch 0029  loss=0.0019  tv=0.00491  step=1553ms  batch 0029  loss=0.0021  tv=0.00519  step=1661ms
+
+  batch 0030  loss=0.0017  tv=0.00491  step=1611ms
+  batch 0030  loss=0.0018  tv=0.00504  step=1612ms
+  batch 0030  loss=0.0017  tv=0.00525  step=1613ms
+  batch 0030  loss=0.0021  tv=0.00491  step=1508ms
+  batch 0031  loss=0.0016  tv=0.00507  step=1565ms
+  batch 0031  loss=0.0017  tv=0.00470  step=1566ms
+  batch 0031  loss=0.0018  tv=0.00494  step=1567ms  batch 0031  loss=0.0018  tv=0.00488  step=1466ms
+
+  batch 0032  loss=0.0015  tv=0.00467  step=1614ms  batch 0032  loss=0.0016  tv=0.00452  step=1615ms
+  batch 0032  loss=0.0016  tv=0.00464  step=1616ms
+
+  batch 0032  loss=0.0018  tv=0.00449  step=1517ms
+  batch 0033  loss=0.0018  tv=0.00507  step=1571ms
+  batch 0033  loss=0.0019  tv=0.00488  step=1572ms
+  batch 0033  loss=0.0015  tv=0.00458  step=1573ms
+  batch 0033  loss=0.0019  tv=0.00482  step=1478ms
+  batch 0034  loss=0.0016  tv=0.00452  step=1531ms
+  batch 0034  loss=0.0016  tv=0.00470  step=1532ms
+  batch 0034  loss=0.0018  tv=0.00479  step=1533ms
+  batch 0034  loss=0.0017  tv=0.00458  step=1440ms
+  batch 0035  loss=0.0019  tv=0.00439  step=1493ms  batch 0035  loss=0.0016  tv=0.00482  step=1495ms
+  batch 0035  loss=0.0015  tv=0.00476  step=1493ms
+
+  batch 0035  loss=0.0018  tv=0.00464  step=1405ms
+  batch 0036  loss=0.0013  tv=0.00427  step=1459ms  batch 0036  loss=0.0020  tv=0.00424  step=1457ms  batch 0036  loss=0.0015  tv=0.00406  step=1458ms
+
+
+  batch 0036  loss=0.0016  tv=0.00446  step=1371ms
+  batch 0037  loss=0.0016  tv=0.00433  step=1541ms
+  batch 0037  loss=0.0017  tv=0.00439  step=1539ms
+  batch 0037  loss=0.0014  tv=0.00421  step=1456ms  batch 0037  loss=0.0016  tv=0.00439  step=1540ms
+
+  batch 0038  loss=0.0018  tv=0.00424  step=1504ms  batch 0038  loss=0.0015  tv=0.00403  step=1505ms
+
+  batch 0038  loss=0.0016  tv=0.00418  step=1506ms  batch 0038  loss=0.0017  tv=0.00430  step=1423ms
+
+  batch 0039  loss=0.0019  tv=0.00415  step=1471ms  batch 0039  loss=0.0015  tv=0.00388  step=1473ms
+  batch 0039  loss=0.0018  tv=0.00391  step=1471ms
+
+  batch 0039  loss=0.0016  tv=0.00421  step=1392ms
+  batch 0040  loss=0.0014  tv=0.00415  step=1503ms  batch 0040  loss=0.0015  tv=0.00421  step=1505ms  batch 0040  loss=0.0015  tv=0.00409  step=1504ms
+
+
+  batch 0040  loss=0.0015  tv=0.00403  step=1427ms
+  batch 0041  loss=0.0017  tv=0.00439  step=1472ms
+  batch 0041  loss=0.0016  tv=0.00409  step=1473ms
+  batch 0041  loss=0.0016  tv=0.00433  step=1474ms
+  batch 0041  loss=0.0016  tv=0.00433  step=1398ms
+  batch 0042  loss=0.0015  tv=0.00446  step=1442ms  batch 0042  loss=0.0018  tv=0.00397  step=1444ms
+
+  batch 0042  loss=0.0018  tv=0.00400  step=1443ms
+  batch 0042  loss=0.0018  tv=0.00449  step=1369ms
+  batch 0043  loss=0.0016  tv=0.00446  step=1413ms  batch 0043  loss=0.0015  tv=0.00397  step=1414ms  batch 0043  loss=0.0015  tv=0.00385  step=1415ms
+
+
+  batch 0043  loss=0.0016  tv=0.00369  step=1342ms
+  batch 0044  loss=0.0014  tv=0.00389  step=1387ms
+  batch 0044  loss=0.0014  tv=0.00397  step=1385ms
+  batch 0044  loss=0.0014  tv=0.00394  step=1386ms
+  batch 0044  loss=0.0014  tv=0.00421  step=1316ms
+  batch 0045  loss=0.0016  tv=0.00433  step=1465ms  batch 0045  loss=0.0015  tv=0.00366  step=1464ms  batch 0045  loss=0.0015  tv=0.00433  step=1396ms
+
+  batch 0045  loss=0.0018  tv=0.00473  step=1466ms
+
+  batch 0046  loss=0.0015  tv=0.00394  step=1436ms
+  batch 0046  loss=0.0014  tv=0.00363  step=1437ms
+  batch 0046  loss=0.0017  tv=0.00421  step=1438ms
+  batch 0046  loss=0.0015  tv=0.00421  step=1370ms
+  batch 0047  loss=0.0017  tv=0.00354  step=1410ms
+  batch 0047  loss=0.0016  tv=0.00372  step=1411ms
+  batch 0047  loss=0.0015  tv=0.00366  step=1412ms
+  batch 0047  loss=0.0013  tv=0.00359  step=1345ms
+  batch 0048  loss=0.0015  tv=0.00375  step=1438ms
+  batch 0048  loss=0.0015  tv=0.00409  step=1439ms
+  batch 0048  loss=0.0017  tv=0.00391  step=1440ms
+  batch 0048  loss=0.0015  tv=0.00391  step=1374ms
+  batch 0049  loss=0.0013  tv=0.00366  step=1413ms  batch 0049  loss=0.0013  tv=0.00383  step=1414ms
+
+  batch 0049  loss=0.0017  tv=0.00415  step=1414ms
+  batch 0049  loss=0.0015  tv=0.00359  step=1350ms
+  batch 0050  loss=0.0015  tv=0.00391  step=1388ms
+  batch 0050  loss=0.0018  tv=0.00400  step=1389ms
+  batch 0050  loss=0.0015  tv=0.00403  step=1390ms
+  batch 0050  loss=0.0012  tv=0.00378  step=1327ms
+  batch 0051  loss=0.0014  tv=0.00365  step=1366ms  batch 0051  loss=0.0013  tv=0.00378  step=1367ms  batch 0051  loss=0.0014  tv=0.00375  step=1365ms
+
+
+  batch 0051  loss=0.0014  tv=0.00369  step=1305ms
+  batch 0052  loss=0.0017  tv=0.00372  step=1343ms  batch 0052  loss=0.0014  tv=0.00354  step=1344ms
+
+  batch 0052  loss=0.0013  tv=0.00356  step=1343ms
+  batch 0052  loss=0.0014  tv=0.00360  step=1284ms
+  batch 0053  loss=0.0014  tv=0.00354  step=1407ms  batch 0053  loss=0.0013  tv=0.00357  step=1408ms
+  batch 0053  loss=0.0015  tv=0.00336  step=1350ms
+  batch 0053  loss=0.0014  tv=0.00372  step=1409ms
+
+  batch 0054  loss=0.0014  tv=0.00366  step=1384ms
+  batch 0054  loss=0.0021  tv=0.00525  step=1386ms
+  batch 0054  loss=0.0013  tv=0.00363  step=1328ms  batch 0054  loss=0.0014  tv=0.00354  step=1385ms
+
+  batch 0055  loss=0.0017  tv=0.00372  step=1363ms
+  batch 0055  loss=0.0015  tv=0.00374  step=1365ms
+  batch 0055  loss=0.0016  tv=0.00381  step=1308ms  batch 0055  loss=0.0013  tv=0.00351  step=1364ms
+
+  batch 0056  loss=0.0014  tv=0.00362  step=1386ms  batch 0056  loss=0.0012  tv=0.00333  step=1387ms  batch 0056  loss=0.0014  tv=0.00340  step=1332ms
+
+
+  batch 0056  loss=0.0016  tv=0.00354  step=1387ms
+  batch 0057  loss=0.0012  tv=0.00348  step=1367ms
+  batch 0057  loss=0.0016  tv=0.00336  step=1312ms  batch 0057  loss=0.0016  tv=0.00424  step=1365ms
+  batch 0057  loss=0.0014  tv=0.00340  step=1366ms
+
+  batch 0058  loss=0.0014  tv=0.00385  step=1345ms  batch 0058  loss=0.0012  tv=0.00330  step=1346ms  batch 0058  loss=0.0015  tv=0.00348  step=1293ms
+
+  batch 0058  loss=0.0013  tv=0.00339  step=1346ms
+
+  batch 0059  loss=0.0016  tv=0.00369  step=1325ms  batch 0059  loss=0.0019  tv=0.00534  step=1327ms
+  batch 0059  loss=0.0014  tv=0.00345  step=1274ms
+
+  batch 0059  loss=0.0013  tv=0.00320  step=1327ms
+  batch 0060  loss=0.0016  tv=0.00345  step=1256ms  batch 0060  loss=0.0014  tv=0.00348  step=1307ms  batch 0060  loss=0.0013  tv=0.00334  step=1308ms
+
+
+  batch 0060  loss=0.0014  tv=0.00343  step=1308ms
+  batch 0061  loss=0.0014  tv=0.00331  step=1351ms  batch 0061  loss=0.0014  tv=0.00348  step=1350ms
+  batch 0061  loss=0.0013  tv=0.00336  step=1300ms
+
+  batch 0061  loss=0.0011  tv=0.00351  step=1351ms
+  batch 0062  loss=0.0012  tv=0.00323  step=1331ms  batch 0062  loss=0.0014  tv=0.00336  step=1282ms  batch 0062  loss=0.0013  tv=0.00339  step=1333ms
+
+
+  batch 0062  loss=0.0013  tv=0.00334  step=1332ms
+
+=== Memory snapshot: epoch_001_post_train ===
+  RAM  used : 181.5 GB / 811.3 GB  (22%)
+  CPU  util : 8%
+  GPU 0 VRAM: 1.1 alloc / 39.9 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+=== Memory snapshot: epoch_001_post_val ===
+  RAM  used : 203.4 GB / 811.3 GB  (25%)
+  CPU  util : 5%
+  GPU 0 VRAM: 1.1 alloc / 41.0 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+Epoch 001  |  train_loss=0.0048  val_loss=0.0037  data=65s  compute=14s  gpu_util=18%  peak_vram=38.6GB
+      0-10  MSE=0.0132  MAE=0.0898  ubRMSE=0.0557  bias=0.0110
+     10-30  MSE=0.0121  MAE=0.0795  ubRMSE=0.0472  bias=0.0424
+    30-100  MSE=0.0244  MAE=0.1438  ubRMSE=0.0401  bias=0.1431
+
+  Per-station ubRMSE  [    0-10     10-30    30-100]
+        0-10  station-mean=0.0552  median=0.0522  pooled=0.0557
+       10-30  station-mean=0.0453  median=0.0450  pooled=0.0472
+      30-100  station-mean=0.0391  median=0.0398  pooled=0.0401
+
+    ISMN_Berlin_PSA1BerlinerStr                           0.0810    0.0660    0.0504
+    ISMN_COSMOS-UK_Balruddery                             0.0532       N/A       N/A
+    ISMN_COSMOS-UK_Fincham                                0.0513    0.0450    0.0398
+    ISMN_Berlin_PSA7Ruebezahl                             0.0351    0.0250    0.0272
+
+=== Memory snapshot: epoch_001_post_val ===
+  RAM  used : 203.4 GB / 811.3 GB  (25%)
+  CPU  util : 5%
+  GPU 0 VRAM: 1.1 alloc / 41.0 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  New best val_loss=0.0037 — checkpoint saved
+
+=== Memory snapshot: epoch_002_start ===
+  RAM  used : 203.4 GB / 811.3 GB  (25%)
+  CPU  util : 24%
+  GPU 0 VRAM: 1.1 alloc / 41.0 rsv / 1.1 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  batch 0001  loss=0.0013  tv=0.00320  step=12884ms
+  batch 0001  loss=0.0012  tv=0.00320  step=12074ms  batch 0001  loss=0.0012  tv=0.00313  step=12884ms
+  batch 0001  loss=0.0015  tv=0.00336  step=12886ms
+
+  batch 0002  loss=0.0013  tv=0.00366  step=6568ms  batch 0002  loss=0.0014  tv=0.00348  step=6569ms  batch 0002  loss=0.0014  tv=0.00317  step=6164ms
+
+
+  batch 0002  loss=0.0015  tv=0.00349  step=6571ms
+  batch 0003  loss=0.0012  tv=0.00340  step=4446ms  batch 0003  loss=0.0013  tv=0.00330  step=4447ms
+  batch 0003  loss=0.0012  tv=0.00330  step=4176ms
+  batch 0003  loss=0.0014  tv=0.00314  step=4448ms
+
+  batch 0004  loss=0.0016  tv=0.00378  step=3385ms
+  batch 0004  loss=0.0014  tv=0.00336  step=3386ms
+  batch 0004  loss=0.0013  tv=0.00327  step=3384ms
+  batch 0004  loss=0.0013  tv=0.00330  step=3182ms
+  batch 0005  loss=0.0014  tv=0.00333  step=2748ms
+  batch 0005  loss=0.0013  tv=0.00320  step=2749ms
+  batch 0005  loss=0.0012  tv=0.00323  step=2747ms
+  batch 0005  loss=0.0012  tv=0.00325  step=2586ms
+  batch 0006  loss=0.0014  tv=0.00348  step=2323ms
+  batch 0006  loss=0.0013  tv=0.00352  step=2324ms
+  batch 0006  loss=0.0015  tv=0.00360  step=2325ms  batch 0006  loss=0.0011  tv=0.00327  step=2189ms
+
+  batch 0007  loss=0.0014  tv=0.00327  step=2019ms  batch 0007  loss=0.0014  tv=0.00339  step=2020ms
+  batch 0007  loss=0.0014  tv=0.00351  step=1905ms
+  batch 0007  loss=0.0012  tv=0.00345  step=2021ms
+
+  batch 0008  loss=0.0011  tv=0.00323  step=2575ms  batch 0008  loss=0.0013  tv=0.00348  step=2675ms  batch 0008  loss=0.0012  tv=0.00305  step=2677ms
+
+  batch 0008  loss=0.0013  tv=0.00323  step=2984ms
+
+  batch 0009  loss=0.0013  tv=0.00330  step=2400ms  batch 0009  loss=0.0012  tv=0.00327  step=2674ms  batch 0009  loss=0.0014  tv=0.00311  step=2402ms
+
+
+  batch 0009  loss=0.0014  tv=0.00470  step=2311ms
+  batch 0010  loss=0.0013  tv=0.00337  step=2427ms  batch 0010  loss=0.0014  tv=0.00325  step=2180ms
+  batch 0010  loss=0.0012  tv=0.00333  step=2100ms
+  batch 0010  loss=0.0013  tv=0.00298  step=2182ms
+
+  batch 0011  loss=0.0013  tv=0.00296  step=2000ms  batch 0011  loss=0.0014  tv=0.00348  step=2224ms  batch 0011  loss=0.0010  tv=0.00308  step=1928ms
+
+
+  batch 0011  loss=0.0013  tv=0.00314  step=2002ms
+  batch 0012  loss=0.0010  tv=0.00311  step=1784ms  batch 0012  loss=0.0013  tv=0.00320  step=1850ms
+  batch 0012  loss=0.0012  tv=0.00296  step=2056ms
+
+  batch 0012  loss=0.0011  tv=0.00314  step=1852ms
+  batch 0013  loss=0.0015  tv=0.00301  step=1662ms  batch 0013  loss=0.0014  tv=0.00320  step=1913ms  batch 0013  loss=0.0014  tv=0.00308  step=1723ms
+
+
+  batch 0013  loss=0.0013  tv=0.00293  step=1725ms
+  batch 0014  loss=0.0011  tv=0.00313  step=1790ms
+  batch 0014  loss=0.0013  tv=0.00296  step=1557ms  batch 0014  loss=0.0013  tv=0.00288  step=1616ms
+  batch 0014  loss=0.0012  tv=0.00293  step=1614ms
+
+  batch 0015  loss=0.0013  tv=0.00301  step=1684ms  batch 0015  loss=0.0013  tv=0.00287  step=1467ms  batch 0015  loss=0.0013  tv=0.00287  step=1521ms
+
+  batch 0015  loss=0.0010  tv=0.00296  step=1519ms
+
+  batch 0016  loss=0.0011  tv=0.00299  step=1778ms
+  batch 0016  loss=0.0011  tv=0.00305  step=1674ms  batch 0016  loss=0.0010  tv=0.00296  step=1725ms
+  batch 0016  loss=0.0011  tv=0.00290  step=2036ms
+
+  batch 0017  loss=0.0011  tv=0.00323  step=1685ms  batch 0017  loss=0.0014  tv=0.00319  step=1929ms  batch 0017  loss=0.0011  tv=0.00307  step=1587ms
+
+  batch 0017  loss=0.0011  tv=0.00290  step=1635ms
+
+  batch 0018  loss=0.0012  tv=0.00275  step=1510ms  batch 0018  loss=0.0012  tv=0.00320  step=1603ms  batch 0018  loss=0.0012  tv=0.00282  step=1832ms
+
+
+  batch 0018  loss=0.0012  tv=0.00302  step=1555ms
+  batch 0019  loss=0.0014  tv=0.00296  step=1529ms  batch 0019  loss=0.0011  tv=0.00313  step=1747ms
+  batch 0019  loss=0.0010  tv=0.00307  step=1441ms
+  batch 0019  loss=0.0013  tv=0.00302  step=1484ms
+
+  batch 0020  loss=0.0013  tv=0.00278  step=1462ms  batch 0020  loss=0.0012  tv=0.00281  step=1379ms  batch 0020  loss=0.0012  tv=0.00296  step=1669ms
+
+  batch 0020  loss=0.0012  tv=0.00299  step=1420ms
+
+  batch 0021  loss=0.0012  tv=0.00305  step=1402ms
+  batch 0021  loss=0.0013  tv=0.00290  step=1599ms
+  batch 0021  loss=0.0012  tv=0.00328  step=1323ms  batch 0021  loss=0.0011  tv=0.00293  step=1362ms
+
+  batch 0022  loss=0.0014  tv=0.00314  step=1348ms  batch 0022  loss=0.0014  tv=0.00311  step=1536ms
+
+  batch 0022  loss=0.0011  tv=0.00308  step=1309ms
+  batch 0022  loss=0.0010  tv=0.00296  step=1272ms
+  batch 0023  loss=0.0014  tv=0.00293  step=1298ms  batch 0023  loss=0.0013  tv=0.00287  step=1478ms
+
+  batch 0023  loss=0.0012  tv=0.00296  step=1261ms  batch 0023  loss=0.0011  tv=0.00291  step=1226ms
+
+  batch 0024  loss=0.0013  tv=0.00284  step=1474ms
+  batch 0024  loss=0.0011  tv=0.00278  step=1404ms  batch 0024  loss=0.0013  tv=0.00279  step=1370ms
+  batch 0024  loss=0.0014  tv=0.00285  step=1719ms
+
+  batch 0025  loss=0.0011  tv=0.00284  step=1423ms  batch 0025  loss=0.0010  tv=0.00284  step=1659ms
+  batch 0025  loss=0.0012  tv=0.00308  step=1323ms
+  batch 0025  loss=0.0011  tv=0.00299  step=1356ms
+
+  batch 0026  loss=0.0011  tv=0.00314  step=1376ms  batch 0026  loss=0.0012  tv=0.00302  step=1603ms
+
+  batch 0026  loss=0.0010  tv=0.00302  step=1280ms  batch 0026  loss=0.0013  tv=0.00291  step=1312ms
+
+  batch 0027  loss=0.0011  tv=0.00293  step=1332ms
+  batch 0027  loss=0.0012  tv=0.00302  step=1551ms
+  batch 0027  loss=0.0014  tv=0.00298  step=1240ms  batch 0027  loss=0.0013  tv=0.00308  step=1270ms
+
+  batch 0028  loss=0.0011  tv=0.00285  step=1503ms  batch 0028  loss=0.0015  tv=0.00278  step=1203ms
+  batch 0028  loss=0.0016  tv=0.00275  step=1232ms
+  batch 0028  loss=0.0015  tv=0.00285  step=1292ms
+
+  batch 0029  loss=0.0012  tv=0.00269  step=1458ms
+  batch 0029  loss=0.0010  tv=0.00299  step=1169ms  batch 0029  loss=0.0011  tv=0.00305  step=1197ms  batch 0029  loss=0.0013  tv=0.00262  step=1254ms
+
+
+  batch 0030  loss=0.0014  tv=0.00278  step=1416ms  batch 0030  loss=0.0010  tv=0.00302  step=1163ms
+
+  batch 0030  loss=0.0012  tv=0.00299  step=1136ms  batch 0030  loss=0.0010  tv=0.00301  step=1219ms
+
+  batch 0031  loss=0.0014  tv=0.00294  step=1376ms
+  batch 0031  loss=0.0012  tv=0.00290  step=1132ms
+  batch 0031  loss=0.0014  tv=0.00301  step=1186ms
+  batch 0031  loss=0.0014  tv=0.00311  step=1106ms
+  batch 0032  loss=0.0012  tv=0.00296  step=1579ms
+  batch 0032  loss=0.0011  tv=0.00287  step=1245ms
+  batch 0032  loss=0.0013  tv=0.00308  step=1220ms  batch 0032  loss=0.0011  tv=0.00284  step=1394ms
+
+  batch 0033  loss=0.0013  tv=0.00270  step=1358ms
+  batch 0033  loss=0.0013  tv=0.00279  step=1189ms  batch 0033  loss=0.0012  tv=0.00294  step=1537ms  batch 0033  loss=0.0012  tv=0.00290  step=1214ms
+
+
+  batch 0034  loss=0.0015  tv=0.00262  step=1324ms
+  batch 0034  loss=0.0013  tv=0.00269  step=1498ms
+  batch 0034  loss=0.0012  tv=0.00267  step=1184ms
+  batch 0034  loss=0.0012  tv=0.00293  step=1160ms
+  batch 0035  loss=0.0015  tv=0.00298  step=1460ms  batch 0035  loss=0.0013  tv=0.00287  step=1292ms  batch 0035  loss=0.0012  tv=0.00302  step=1156ms
+
+
+  batch 0035  loss=0.0012  tv=0.00293  step=1133ms
+  batch 0036  loss=0.0014  tv=0.00311  step=1261ms  batch 0036  loss=0.0012  tv=0.00302  step=1129ms
+  batch 0036  loss=0.0015  tv=0.00287  step=1426ms
+
+  batch 0036  loss=0.0013  tv=0.00282  step=1107ms
+  batch 0037  loss=0.0012  tv=0.00272  step=1104ms  batch 0037  loss=0.0011  tv=0.00284  step=1392ms
+
+  batch 0037  loss=0.0011  tv=0.00282  step=1233ms
+  batch 0037  loss=0.0013  tv=0.00317  step=1083ms
+  batch 0038  loss=0.0013  tv=0.00275  step=1080ms  batch 0038  loss=0.0013  tv=0.00285  step=1361ms
+
+  batch 0038  loss=0.0014  tv=0.00284  step=1206ms
+  batch 0038  loss=0.0012  tv=0.00266  step=1059ms
+  batch 0039  loss=0.0012  tv=0.00264  step=1331ms
+  batch 0039  loss=0.0010  tv=0.00270  step=1058ms
+  batch 0039  loss=0.0013  tv=0.00287  step=1180ms
+  batch 0039  loss=0.0012  tv=0.00275  step=1037ms
+  batch 0040  loss=0.0012  tv=0.00281  step=1328ms
+  batch 0040  loss=0.0010  tv=0.00275  step=1136ms
+  batch 0040  loss=0.0012  tv=0.00273  step=1117ms  batch 0040  loss=0.0010  tv=0.00284  step=1475ms
+
+  batch 0041  loss=0.0010  tv=0.00290  step=1301ms
+  batch 0041  loss=0.0015  tv=0.00296  step=1094ms  batch 0041  loss=0.0013  tv=0.00294  step=1444ms  batch 0041  loss=0.0015  tv=0.00296  step=1114ms
+
+
+  batch 0042  loss=0.0013  tv=0.00279  step=1275ms  batch 0042  loss=0.0012  tv=0.00278  step=1415ms  batch 0042  loss=0.0014  tv=0.00307  step=1073ms
+
+  batch 0042  loss=0.0011  tv=0.00270  step=1092ms
+
+  batch 0043  loss=0.0011  tv=0.00284  step=1386ms  batch 0043  loss=0.0012  tv=0.00261  step=1071ms  batch 0043  loss=0.0010  tv=0.00267  step=1053ms
+
+  batch 0043  loss=0.0014  tv=0.00259  step=1250ms
+
+  batch 0044  loss=0.0012  tv=0.00287  step=1359ms  batch 0044  loss=0.0012  tv=0.00264  step=1033ms
+  batch 0044  loss=0.0013  tv=0.00253  step=1051ms
+  batch 0044  loss=0.0012  tv=0.00267  step=1226ms
+
+  batch 0045  loss=0.0011  tv=0.00269  step=1334ms  batch 0045  loss=0.0010  tv=0.00275  step=1032ms
+
+  batch 0045  loss=0.0012  tv=0.00262  step=1015ms  batch 0045  loss=0.0013  tv=0.00281  step=1203ms
+
+  batch 0046  loss=0.0014  tv=0.00302  step=1014ms  batch 0046  loss=0.0011  tv=0.00287  step=1309ms  batch 0046  loss=0.0014  tv=0.00266  step=997ms
+
+  batch 0046  loss=0.0011  tv=0.00279  step=1181ms
+
+  batch 0047  loss=0.0012  tv=0.00287  step=1285ms  batch 0047  loss=0.0011  tv=0.00287  step=980ms
+  batch 0047  loss=0.0012  tv=0.00299  step=997ms
+  batch 0047  loss=0.0015  tv=0.00285  step=1160ms
+
+  batch 0048  loss=0.0010  tv=0.00278  step=1284ms
+  batch 0048  loss=0.0011  tv=0.00269  step=1053ms  batch 0048  loss=0.0014  tv=0.00269  step=1069ms
+  batch 0048  loss=0.0012  tv=0.00278  step=1406ms
+
+  batch 0049  loss=0.0011  tv=0.00291  step=1261ms  batch 0049  loss=0.0012  tv=0.00296  step=1381ms
+
+  batch 0049  loss=0.0012  tv=0.00330  step=1035ms  batch 0049  loss=0.0011  tv=0.00288  step=1052ms
+
+  batch 0050  loss=0.0011  tv=0.00266  step=1019ms  batch 0050  loss=0.0015  tv=0.00278  step=1240ms  batch 0050  loss=0.0011  tv=0.00256  step=1358ms
+
+  batch 0050  loss=0.0011  tv=0.00259  step=1035ms
+
+  batch 0051  loss=0.0011  tv=0.00266  step=1220ms  batch 0051  loss=0.0011  tv=0.00290  step=1335ms  batch 0051  loss=0.0012  tv=0.00284  step=1003ms
+
+  batch 0051  loss=0.0012  tv=0.00287  step=1018ms
+
+  batch 0052  loss=0.0013  tv=0.00279  step=1200ms  batch 0052  loss=0.0010  tv=0.00293  step=1313ms
+
+  batch 0052  loss=0.0008  tv=0.00269  step=987ms  batch 0052  loss=0.0010  tv=0.00290  step=1002ms
+
+  batch 0053  loss=0.0011  tv=0.00262  step=1181ms  batch 0053  loss=0.0011  tv=0.00246  step=987ms
+  batch 0053  loss=0.0012  tv=0.00307  step=1292ms
+
+  batch 0053  loss=0.0011  tv=0.00256  step=972ms
+  batch 0054  loss=0.0011  tv=0.00272  step=1163ms  batch 0054  loss=0.0012  tv=0.00258  step=973ms  batch 0054  loss=0.0011  tv=0.00281  step=1272ms
+
+
+  batch 0054  loss=0.0011  tv=0.00273  step=958ms
+  batch 0055  loss=0.0009  tv=0.00262  step=1145ms  batch 0055  loss=0.0011  tv=0.00252  step=959ms  batch 0055  loss=0.0011  tv=0.00266  step=1252ms
+
+
+  batch 0055  loss=0.0012  tv=0.00249  step=944ms
+  batch 0056  loss=0.0011  tv=0.00264  step=1346ms  batch 0056  loss=0.0010  tv=0.00262  step=1020ms
+
+  batch 0056  loss=0.0011  tv=0.00278  step=1006ms  batch 0056  loss=0.0011  tv=0.00266  step=1241ms
+
+  batch 0057  loss=0.0011  tv=0.00275  step=1230ms  batch 0057  loss=0.0011  tv=0.00256  step=1000ms  batch 0057  loss=0.0011  tv=0.00247  step=1013ms
+
+
+  batch 0057  loss=0.0012  tv=0.00278  step=1333ms
+  batch 0058  loss=0.0009  tv=0.00253  step=1212ms
+  batch 0058  loss=0.0011  tv=0.00256  step=986ms  batch 0058  loss=0.0011  tv=0.00253  step=999ms
+
+  batch 0058  loss=0.0010  tv=0.00262  step=1314ms
+  batch 0059  loss=0.0009  tv=0.00262  step=1295ms  batch 0059  loss=0.0009  tv=0.00246  step=972ms  batch 0059  loss=0.0012  tv=0.00253  step=1195ms
+
+
+  batch 0059  loss=0.0011  tv=0.00269  step=986ms
+  batch 0060  loss=0.0010  tv=0.00259  step=1178ms
+  batch 0060  loss=0.0010  tv=0.00262  step=1276ms
+  batch 0060  loss=0.0010  tv=0.00256  step=973ms
+  batch 0060  loss=0.0009  tv=0.00255  step=960ms
+  batch 0061  loss=0.0010  tv=0.00250  step=1162ms  batch 0061  loss=0.0015  tv=0.00427  step=1259ms  batch 0061  loss=0.0011  tv=0.00284  step=960ms
+
+
+  batch 0061  loss=0.0012  tv=0.00270  step=947ms
+  batch 0062  loss=0.0016  tv=0.00421  step=1147ms
+  batch 0062  loss=0.0011  tv=0.00249  step=1242ms
+  batch 0062  loss=0.0011  tv=0.00269  step=948ms
+  batch 0062  loss=0.0012  tv=0.00267  step=935ms
+
+=== Memory snapshot: epoch_002_post_train ===
+  RAM  used : 204.4 GB / 811.3 GB  (25%)
+  CPU  util : 5%
+  GPU 0 VRAM: 1.1 alloc / 42.2 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+=== Memory snapshot: epoch_002_post_val ===
+  RAM  used : 203.6 GB / 811.3 GB  (25%)
+  CPU  util : 5%
+  GPU 0 VRAM: 1.1 alloc / 43.3 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+Epoch 002  |  train_loss=0.0012  val_loss=0.0033  data=46s  compute=12s  gpu_util=21%  peak_vram=38.6GB
+      0-10  MSE=0.0104  MAE=0.0783  ubRMSE=0.0553  bias=0.0236
+     10-30  MSE=0.0097  MAE=0.0718  ubRMSE=0.0443  bias=0.0414
+    30-100  MSE=0.0228  MAE=0.1396  ubRMSE=0.0358  bias=0.1364
+
+  Per-station ubRMSE  [    0-10     10-30    30-100]
+        0-10  station-mean=0.0537  median=0.0527  pooled=0.0553
+       10-30  station-mean=0.0407  median=0.0440  pooled=0.0443
+      30-100  station-mean=0.0346  median=0.0349  pooled=0.0358
+
+    ISMN_Berlin_PSA1BerlinerStr                           0.0808    0.0610    0.0481
+    ISMN_COSMOS-UK_Balruddery                             0.0534       N/A       N/A
+    ISMN_COSMOS-UK_Fincham                                0.0520    0.0440    0.0349
+    ISMN_Berlin_PSA7Ruebezahl                             0.0284    0.0170    0.0207
+
+=== Memory snapshot: epoch_002_post_val ===
+  RAM  used : 203.6 GB / 811.3 GB  (25%)
+  CPU  util : 4%
+  GPU 0 VRAM: 1.1 alloc / 43.3 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  New best val_loss=0.0033 — checkpoint saved
+
+=== Memory snapshot: epoch_003_start ===
+  RAM  used : 203.6 GB / 811.3 GB  (25%)
+  CPU  util : 23%
+  GPU 0 VRAM: 1.1 alloc / 43.3 rsv / 1.1 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  batch 0001  loss=0.0009  tv=0.00243  step=11917ms
+  batch 0001  loss=0.0011  tv=0.00262  step=11815ms  batch 0001  loss=0.0009  tv=0.00262  step=11918ms
+  batch 0001  loss=0.0009  tv=0.00266  step=11917ms
+
+  batch 0002  loss=0.0009  tv=0.00253  step=6077ms  batch 0002  loss=0.0011  tv=0.00253  step=6079ms
+  batch 0002  loss=0.0009  tv=0.00269  step=6025ms
+
+  batch 0002  loss=0.0010  tv=0.00266  step=6078ms
+  batch 0003  loss=0.0010  tv=0.00256  step=4118ms  batch 0003  loss=0.0010  tv=0.00261  step=4083ms
+  batch 0003  loss=0.0010  tv=0.00253  step=4119ms  batch 0003  loss=0.0010  tv=0.00272  step=4119ms
+
+
+  batch 0004  loss=0.0010  tv=0.00269  step=3139ms  batch 0004  loss=0.0008  tv=0.00259  step=3112ms
+  batch 0004  loss=0.0009  tv=0.00246  step=3138ms
+
+  batch 0004  loss=0.0010  tv=0.00266  step=3139ms
+  batch 0005  loss=0.0013  tv=0.00281  step=2551ms
+  batch 0005  loss=0.0011  tv=0.00269  step=2550ms
+  batch 0005  loss=0.0010  tv=0.00253  step=2530ms  batch 0005  loss=0.0009  tv=0.00269  step=2551ms
+
+  batch 0006  loss=0.0009  tv=0.00276  step=2159ms  batch 0006  loss=0.0011  tv=0.00253  step=2159ms
+
+  batch 0006  loss=0.0010  tv=0.00253  step=2158ms
+  batch 0006  loss=0.0010  tv=0.00253  step=2141ms
+  batch 0007  loss=0.0009  tv=0.00259  step=1879ms
+  batch 0007  loss=0.0009  tv=0.00241  step=1879ms
+  batch 0007  loss=0.0009  tv=0.00259  step=1864ms  batch 0007  loss=0.0012  tv=0.00262  step=1878ms
+
+  batch 0008  loss=0.0009  tv=0.00252  step=2598ms
+  batch 0008  loss=0.0010  tv=0.00275  step=2599ms
+  batch 0008  loss=0.0009  tv=0.00241  step=2586ms  batch 0008  loss=0.0013  tv=0.00258  step=2599ms
+
+  batch 0009  loss=0.0011  tv=0.00259  step=2331ms
+  batch 0009  loss=0.0010  tv=0.00253  step=2332ms
+  batch 0009  loss=0.0010  tv=0.00244  step=2332ms  batch 0009  loss=0.0008  tv=0.00250  step=2321ms
+
+  batch 0010  loss=0.0009  tv=0.00253  step=2118ms
+  batch 0010  loss=0.0009  tv=0.00250  step=2119ms
+  batch 0010  loss=0.0010  tv=0.00247  step=2109ms  batch 0010  loss=0.0012  tv=0.00287  step=2327ms
+
+  batch 0011  loss=0.0009  tv=0.00246  step=1944ms  batch 0011  loss=0.0009  tv=0.00269  step=1936ms
+  batch 0011  loss=0.0009  tv=0.00281  step=2134ms
+
+  batch 0011  loss=0.0009  tv=0.00250  step=1945ms
+  batch 0012  loss=0.0009  tv=0.00253  step=1798ms  batch 0012  loss=0.0011  tv=0.00258  step=1973ms  batch 0012  loss=0.0010  tv=0.00243  step=1791ms
+
+  batch 0012  loss=0.0009  tv=0.00247  step=1799ms
+
+  batch 0013  loss=0.0010  tv=0.00241  step=1836ms  batch 0013  loss=0.0011  tv=0.00262  step=1669ms
+  batch 0013  loss=0.0010  tv=0.00250  step=1676ms
+  batch 0013  loss=0.0011  tv=0.00241  step=1675ms
+
+  batch 0014  loss=0.0010  tv=0.00235  step=1571ms  batch 0014  loss=0.0011  tv=0.00235  step=1564ms
+  batch 0014  loss=0.0010  tv=0.00250  step=1719ms
+
+  batch 0014  loss=0.0011  tv=0.00250  step=1570ms
+  batch 0015  loss=0.0008  tv=0.00247  step=1479ms
+  batch 0015  loss=0.0011  tv=0.00272  step=1473ms  batch 0015  loss=0.0008  tv=0.00256  step=1618ms
+  batch 0015  loss=0.0008  tv=0.00241  step=1479ms
+
+  batch 0016  loss=0.0009  tv=0.00241  step=1714ms
+  batch 0016  loss=0.0011  tv=0.00250  step=1705ms  batch 0016  loss=0.0011  tv=0.00284  step=1715ms
+  batch 0016  loss=0.0010  tv=0.00238  step=1946ms
+
+  batch 0017  loss=0.0009  tv=0.00238  step=1843ms  batch 0017  loss=0.0009  tv=0.00246  step=1625ms  batch 0017  loss=0.0009  tv=0.00238  step=1617ms
+
+  batch 0017  loss=0.0010  tv=0.00241  step=1626ms
+
+  batch 0018  loss=0.0010  tv=0.00244  step=1546ms
+  batch 0018  loss=0.0011  tv=0.00247  step=1547ms  batch 0018  loss=0.0010  tv=0.00290  step=1538ms
+  batch 0018  loss=0.0008  tv=0.00237  step=1775ms
+
+  batch 0019  loss=0.0010  tv=0.00250  step=1475ms
+  batch 0019  loss=0.0009  tv=0.00250  step=1692ms
+  batch 0019  loss=0.0009  tv=0.00250  step=1468ms  batch 0019  loss=0.0009  tv=0.00237  step=1476ms
+
+  batch 0020  loss=0.0009  tv=0.00235  step=1411ms  batch 0020  loss=0.0008  tv=0.00237  step=1617ms  batch 0020  loss=0.0009  tv=0.00223  step=1405ms
+
+  batch 0020  loss=0.0010  tv=0.00244  step=1412ms
+
+  batch 0021  loss=0.0007  tv=0.00241  step=1550ms
+  batch 0021  loss=0.0009  tv=0.00233  step=1353ms  batch 0021  loss=0.0009  tv=0.00238  step=1354ms
+
+  batch 0021  loss=0.0009  tv=0.00238  step=1347ms
+  batch 0022  loss=0.0010  tv=0.00272  step=1301ms
+  batch 0022  loss=0.0011  tv=0.00264  step=1488ms  batch 0022  loss=0.0009  tv=0.00233  step=1302ms
+
+  batch 0022  loss=0.0009  tv=0.00247  step=1295ms
+  batch 0023  loss=0.0009  tv=0.00256  step=1432ms  batch 0023  loss=0.0010  tv=0.00247  step=1253ms
+  batch 0023  loss=0.0012  tv=0.00233  step=1254ms
+
+  batch 0023  loss=0.0011  tv=0.00226  step=1248ms
+  batch 0024  loss=0.0007  tv=0.00235  step=1422ms
+  batch 0024  loss=0.0008  tv=0.00238  step=1423ms
+  batch 0024  loss=0.0010  tv=0.00262  step=1412ms  batch 0024  loss=0.0009  tv=0.00238  step=1658ms
+
+  batch 0025  loss=0.0009  tv=0.00247  step=1373ms
+  batch 0025  loss=0.0008  tv=0.00253  step=1599ms  batch 0025  loss=0.0009  tv=0.00259  step=1363ms
+  batch 0025  loss=0.0007  tv=0.00246  step=1374ms
+
+  batch 0026  loss=0.0008  tv=0.00266  step=1328ms  batch 0026  loss=0.0009  tv=0.00235  step=1329ms
+
+  batch 0026  loss=0.0010  tv=0.00249  step=1556ms
+  batch 0026  loss=0.0009  tv=0.00261  step=1319ms
+  batch 0027  loss=0.0009  tv=0.00247  step=1286ms  batch 0027  loss=0.0010  tv=0.00237  step=1287ms
+  batch 0027  loss=0.0009  tv=0.00250  step=1506ms
+
+  batch 0027  loss=0.0008  tv=0.00235  step=1278ms
+  batch 0028  loss=0.0009  tv=0.00229  step=1459ms
+  batch 0028  loss=0.0012  tv=0.00241  step=1247ms
+  batch 0028  loss=0.0008  tv=0.00247  step=1248ms  batch 0028  loss=0.0008  tv=0.00250  step=1239ms
+
+  batch 0029  loss=0.0010  tv=0.00226  step=1416ms  batch 0029  loss=0.0009  tv=0.00227  step=1212ms
+  batch 0029  loss=0.0011  tv=0.00238  step=1211ms
+
+  batch 0029  loss=0.0009  tv=0.00241  step=1203ms
+  batch 0030  loss=0.0010  tv=0.00252  step=1178ms  batch 0030  loss=0.0009  tv=0.00256  step=1375ms  batch 0030  loss=0.0009  tv=0.00249  step=1177ms
+
+
+  batch 0030  loss=0.0008  tv=0.00244  step=1170ms
+  batch 0031  loss=0.0009  tv=0.00235  step=1337ms
+  batch 0031  loss=0.0009  tv=0.00241  step=1146ms
+  batch 0031  loss=0.0008  tv=0.00243  step=1139ms  batch 0031  loss=0.0009  tv=0.00226  step=1147ms
+
+  batch 0032  loss=0.0009  tv=0.00259  step=1289ms
+  batch 0032  loss=0.0009  tv=0.00232  step=1290ms
+  batch 0032  loss=0.0008  tv=0.00232  step=1282ms  batch 0032  loss=0.0009  tv=0.00226  step=1508ms
+
+  batch 0033  loss=0.0008  tv=0.00237  step=1256ms
+  batch 0033  loss=0.0010  tv=0.00214  step=1468ms
+  batch 0033  loss=0.0009  tv=0.00226  step=1257ms
+  batch 0033  loss=0.0009  tv=0.00320  step=1249ms
+  batch 0034  loss=0.0008  tv=0.00232  step=1225ms  batch 0034  loss=0.0009  tv=0.00224  step=1225ms
+
+  batch 0034  loss=0.0009  tv=0.00220  step=1218ms  batch 0034  loss=0.0008  tv=0.00227  step=1444ms
+
+  batch 0035  loss=0.0009  tv=0.00241  step=1408ms  batch 0035  loss=0.0008  tv=0.00227  step=1195ms  batch 0035  loss=0.0009  tv=0.00253  step=1189ms
+
+  batch 0035  loss=0.0009  tv=0.00226  step=1196ms
+
+  batch 0036  loss=0.0007  tv=0.00227  step=1168ms  batch 0036  loss=0.0008  tv=0.00247  step=1375ms
+  batch 0036  loss=0.0009  tv=0.00241  step=1162ms
+  batch 0036  loss=0.0009  tv=0.00240  step=1169ms
+
+  batch 0037  loss=0.0009  tv=0.00269  step=1141ms  batch 0037  loss=0.0008  tv=0.00238  step=1343ms
+
+  batch 0037  loss=0.0009  tv=0.00226  step=1136ms  batch 0037  loss=0.0009  tv=0.00241  step=1142ms
+
+  batch 0038  loss=0.0008  tv=0.00233  step=1118ms
+  batch 0038  loss=0.0008  tv=0.00223  step=1313ms  batch 0038  loss=0.0008  tv=0.00235  step=1117ms
+
+  batch 0038  loss=0.0010  tv=0.00240  step=1111ms
+  batch 0039  loss=0.0008  tv=0.00232  step=1284ms  batch 0039  loss=0.0009  tv=0.00223  step=1094ms  batch 0039  loss=0.0008  tv=0.00232  step=1093ms
+
+
+  batch 0039  loss=0.0009  tv=0.00232  step=1088ms
+  batch 0040  loss=0.0007  tv=0.00229  step=1215ms  batch 0040  loss=0.0010  tv=0.00308  step=1216ms
+
+  batch 0040  loss=0.0008  tv=0.00232  step=1209ms  batch 0040  loss=0.0008  tv=0.00235  step=1417ms
+
+  batch 0041  loss=0.0009  tv=0.00253  step=1190ms  batch 0041  loss=0.0010  tv=0.00229  step=1388ms
+  batch 0041  loss=0.0009  tv=0.00238  step=1191ms
+
+  batch 0041  loss=0.0008  tv=0.00244  step=1185ms
+  batch 0042  loss=0.0008  tv=0.00238  step=1167ms  batch 0042  loss=0.0010  tv=0.00232  step=1166ms
+  batch 0042  loss=0.0008  tv=0.00256  step=1161ms
+  batch 0042  loss=0.0008  tv=0.00218  step=1371ms
+
+  batch 0043  loss=0.0009  tv=0.00217  step=1145ms  batch 0043  loss=0.0010  tv=0.00223  step=1144ms
+  batch 0043  loss=0.0008  tv=0.00220  step=1139ms
+  batch 0043  loss=0.0011  tv=0.00211  step=1368ms
+
+  batch 0044  loss=0.0008  tv=0.00229  step=1122ms  batch 0044  loss=0.0008  tv=0.00220  step=1123ms
+
+  batch 0044  loss=0.0009  tv=0.00237  step=1341ms  batch 0044  loss=0.0009  tv=0.00224  step=1118ms
+
+  batch 0045  loss=0.0008  tv=0.00232  step=1102ms  batch 0045  loss=0.0009  tv=0.00217  step=1103ms  batch 0045  loss=0.0009  tv=0.00232  step=1316ms
+
+
+  batch 0045  loss=0.0008  tv=0.00230  step=1097ms
+  batch 0046  loss=0.0009  tv=0.00217  step=1082ms  batch 0046  loss=0.0009  tv=0.00223  step=1083ms  batch 0046  loss=0.0009  tv=0.00214  step=1292ms
+
+
+  batch 0046  loss=0.0009  tv=0.00226  step=1078ms
+  batch 0047  loss=0.0009  tv=0.00241  step=1063ms  batch 0047  loss=0.0009  tv=0.00229  step=1064ms
+  batch 0047  loss=0.0007  tv=0.00217  step=1269ms
+
+  batch 0047  loss=0.0009  tv=0.00233  step=1059ms
+  batch 0048  loss=0.0008  tv=0.00235  step=1146ms
+  batch 0048  loss=0.0010  tv=0.00250  step=1147ms
+  batch 0048  loss=0.0009  tv=0.00237  step=1141ms  batch 0048  loss=0.0008  tv=0.00241  step=1358ms
+
+  batch 0049  loss=0.0009  tv=0.00241  step=1127ms  batch 0049  loss=0.0010  tv=0.00230  step=1127ms
+
+  batch 0049  loss=0.0009  tv=0.00224  step=1122ms  batch 0049  loss=0.0009  tv=0.00226  step=1335ms
+
+  batch 0050  loss=0.0009  tv=0.00238  step=1108ms  batch 0050  loss=0.0008  tv=0.00226  step=1109ms
+
+  batch 0050  loss=0.0009  tv=0.00223  step=1104ms  batch 0050  loss=0.0009  tv=0.00229  step=1321ms
+
+  batch 0051  loss=0.0009  tv=0.00244  step=1090ms  batch 0051  loss=0.0007  tv=0.00244  step=1091ms
+
+  batch 0051  loss=0.0009  tv=0.00229  step=1341ms
+  batch 0051  loss=0.0009  tv=0.00233  step=1086ms
+  batch 0052  loss=0.0009  tv=0.00250  step=1073ms  batch 0052  loss=0.0009  tv=0.00243  step=1074ms  batch 0052  loss=0.0009  tv=0.00229  step=1319ms
+
+
+  batch 0052  loss=0.0009  tv=0.00232  step=1069ms
+  batch 0053  loss=0.0009  tv=0.00238  step=1057ms
+  batch 0053  loss=0.0009  tv=0.00238  step=1053ms  batch 0053  loss=0.0008  tv=0.00227  step=1298ms
+  batch 0053  loss=0.0009  tv=0.00262  step=1058ms
+
+  batch 0054  loss=0.0008  tv=0.00233  step=1041ms  batch 0054  loss=0.0009  tv=0.00250  step=1278ms  batch 0054  loss=0.0008  tv=0.00238  step=1042ms
+
+
+  batch 0054  loss=0.0010  tv=0.00247  step=1037ms
+  batch 0055  loss=0.0010  tv=0.00232  step=1025ms  batch 0055  loss=0.0011  tv=0.00232  step=1026ms  batch 0055  loss=0.0010  tv=0.00220  step=1258ms
+
+
+  batch 0055  loss=0.0009  tv=0.00217  step=1022ms
+  batch 0056  loss=0.0007  tv=0.00217  step=1073ms
+  batch 0056  loss=0.0008  tv=0.00223  step=1074ms
+  batch 0056  loss=0.0008  tv=0.00223  step=1065ms  batch 0056  loss=0.0009  tv=0.00247  step=1318ms
+
+  batch 0057  loss=0.0009  tv=0.00241  step=1058ms
+  batch 0057  loss=0.0008  tv=0.00229  step=1050ms  batch 0057  loss=0.0008  tv=0.00247  step=1299ms  batch 0057  loss=0.0009  tv=0.00220  step=1059ms
+
+
+  batch 0058  loss=0.0009  tv=0.00232  step=1043ms  batch 0058  loss=0.0009  tv=0.00229  step=1044ms
+  batch 0058  loss=0.0010  tv=0.00226  step=1035ms
+  batch 0058  loss=0.0010  tv=0.00232  step=1282ms
+
+  batch 0059  loss=0.0008  tv=0.00220  step=1029ms  batch 0059  loss=0.0008  tv=0.00214  step=1030ms
+  batch 0059  loss=0.0008  tv=0.00223  step=1021ms
+  batch 0059  loss=0.0007  tv=0.00220  step=1311ms
+
+  batch 0060  loss=0.0008  tv=0.00214  step=1015ms  batch 0060  loss=0.0007  tv=0.00226  step=1007ms
+  batch 0060  loss=0.0007  tv=0.00221  step=1016ms
+
+  batch 0060  loss=0.0010  tv=0.00211  step=1292ms
+  batch 0061  loss=0.0008  tv=0.00237  step=1001ms  batch 0061  loss=0.0008  tv=0.00229  step=1274ms  batch 0061  loss=0.0007  tv=0.00221  step=994ms
+
+  batch 0061  loss=0.0007  tv=0.00253  step=1002ms
+
+  batch 0062  loss=0.0008  tv=0.00223  step=1257ms  batch 0062  loss=0.0008  tv=0.00232  step=989ms  batch 0062  loss=0.0008  tv=0.00230  step=981ms
+
+  batch 0062  loss=0.0008  tv=0.00226  step=989ms
+
+
+=== Memory snapshot: epoch_003_post_train ===
+  RAM  used : 204.0 GB / 811.3 GB  (25%)
+  CPU  util : 4%
+  GPU 0 VRAM: 1.1 alloc / 44.5 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+=== Memory snapshot: epoch_003_post_val ===
+  RAM  used : 204.1 GB / 811.3 GB  (25%)
+  CPU  util : 5%
+  GPU 0 VRAM: 1.1 alloc / 45.6 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+
+Epoch 003  |  train_loss=0.0009  val_loss=0.0033  data=48s  compute=12s  gpu_util=20%  peak_vram=38.6GB
+      0-10  MSE=0.0101  MAE=0.0821  ubRMSE=0.0554  bias=0.0006
+     10-30  MSE=0.0095  MAE=0.0729  ubRMSE=0.0465  bias=0.0396
+    30-100  MSE=0.0185  MAE=0.1254  ubRMSE=0.0334  bias=0.1204
+
+  Per-station ubRMSE  [    0-10     10-30    30-100]
+        0-10  station-mean=0.0525  median=0.0543  pooled=0.0554
+       10-30  station-mean=0.0427  median=0.0483  pooled=0.0465
+      30-100  station-mean=0.0335  median=0.0306  pooled=0.0334
+
+    ISMN_Berlin_PSA1BerlinerStr                           0.0747    0.0582    0.0467
+    ISMN_COSMOS-UK_Fincham                                0.0563    0.0483    0.0306
+    ISMN_COSMOS-UK_Balruddery                             0.0523       N/A       N/A
+    ISMN_Berlin_PSA7Ruebezahl                             0.0267    0.0216    0.0230
+
+=== Memory snapshot: epoch_003_post_val ===
+  RAM  used : 204.1 GB / 811.3 GB  (25%)
+  CPU  util : 5%
+  GPU 0 VRAM: 1.1 alloc / 45.6 rsv / 38.6 peak / 100 GB total
+  GPU 1 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 2 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+  GPU 3 VRAM: 0.0 alloc / 0.0 rsv / 0.0 peak / 100 GB total
+wandb: updating run metadata
+wandb: uploading wandb-summary.json; uploading config.yaml; uploading output.log
+wandb: 
+wandb: Run history:
+wandb:                               epoch ▁▅█
+wandb:                                  lr ▁▁▁
+wandb:      mem/epoch_001_post_val/cpu_pct ▁
+wandb: mem/epoch_001_post_val/gpu0_peak_gb ▁
+wandb:  mem/epoch_001_post_val/ram_used_gb ▁
+wandb:      mem/epoch_002_post_val/cpu_pct ▁
+wandb: mem/epoch_002_post_val/gpu0_peak_gb ▁
+wandb:  mem/epoch_002_post_val/ram_used_gb ▁
+wandb:      mem/epoch_003_post_val/cpu_pct ▁
+wandb: mem/epoch_003_post_val/gpu0_peak_gb ▁
+wandb:                                 +27 ...
+wandb: 
+wandb: Run summary:
+wandb:                               epoch 3
+wandb:                                  lr 0.0002
+wandb:      mem/epoch_001_post_val/cpu_pct 4.7
+wandb: mem/epoch_001_post_val/gpu0_peak_gb 38.56372
+wandb:  mem/epoch_001_post_val/ram_used_gb 203.35662
+wandb:      mem/epoch_002_post_val/cpu_pct 4.5
+wandb: mem/epoch_002_post_val/gpu0_peak_gb 38.56372
+wandb:  mem/epoch_002_post_val/ram_used_gb 203.58205
+wandb:      mem/epoch_003_post_val/cpu_pct 4.7
+wandb: mem/epoch_003_post_val/gpu0_peak_gb 38.56372
+wandb:                                 +37 ...
+wandb: 
+wandb: 🚀 View run smoke_pyramid at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd/runs/lfw3snx2
+wandb: ⭐️ View project at: https://wandb.ai/prajzwal08-university-of-twente/soil-moisture-phd
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260616_084806-lfw3snx2/logs
+
+Training complete. Best val_loss: 0.0033
+Checkpoints: /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/smoke_pyramid
+[SHM] Cleaned up /dev/shm/sm_l12_23921408

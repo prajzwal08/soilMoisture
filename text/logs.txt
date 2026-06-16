@@ -2264,3 +2264,111 @@ Job 23888806 (baseline_huber) still running on gcn140:
   3. Send SURF helpdesk email about preemption (drafted last session)
   4. After baseline_huber converges: run eval_stations.py on OOS split
 
+=== 2026-06-17 (Session 11) ===
+
+--- Context ---
+
+Job 23888806 (baseline_huber) OOM'd at epoch 4 on gcn140. Root cause diagnosed this
+session: DataLoader IPC carried full L12 tensors (30 MB/sample), creating 437 GB of
+IPC traffic combined with 688 GB persistent worker base RAM, exceeding the 720 GB
+cgroup limit.
+
+--- OOM root cause ---
+
+Full memory accounting at OOM boundary:
+  /dev/shm L12 preload:  145 GB  (unchanged — workers still read L12 to pool it)
+  Rank heaps:            159 GB
+  Train IPC:             242 GB  (8w × pf2 × bs128 × 30 MB × 4r)
+  Val→Train boundary:    +61 GB  (val IPC overlaps with train worker startup)
+  TOTAL at boundary:     607 GB  → should be safe under 720 GB
+  ACTUAL at epoch 4:     >720 GB → OOM
+  Discrepancy: persistent DataLoader workers accumulate RSS over epochs; epoch 4
+    showed 688 GB already used before val phase, leaving no headroom for 61 GB val IPC.
+
+--- Fix: move all pyramid pooling from GPU to CPU (in DataLoader workers) ---
+
+Key insight: the 30 MB/sample IPC cost comes from transferring full L12 token arrays
+(s2_l12 [MAX_S2,196,768] + s1_l12 [MAX_S1,196,768]) through shared memory. If pyramid
+pooling is done in the worker before IPC, each sample sends only a pooled tensor
+(MAX_S2,4,768) + (MAX_S1,4,768), reducing per-sample IPC from 30 MB → ~2 MB (15×).
+
+New function: _cpu_pyramid_pool(l12, token_mask) → (M, 4, 768)
+  Static masked-mean over 4 nested spatial windows (widths [1,3,5,7]) on the 14×14
+  token grid. Runs in DataLoader worker on CPU before IPC, no GPU involved.
+
+S2/S1 random token dropout (ContextFormer augmentation):
+  Training only: 50% random dropout applied to token_mask before pooling for S2 and S1.
+  Simulates cloud cover and orbit gaps. Controlled by training: bool=False param in
+  load_s2_rolling_zarr / load_s1_rolling_zarr. DEM/LULC: no dropout (always available).
+
+Batch key changes:
+  BEFORE: s2_l12 (MAX_S2,196,768) + s2_token_mask (MAX_S2,196) — 30 MB total
+  AFTER:  s2_pyr (MAX_S2,4,768) + s1_pyr (MAX_S1,4,768) + dem_pyr (4,768) +
+          lulc_pyr (4,768) — ~2 MB total
+
+model.py changes:
+  - Removed s2/s1/dem/lulc_pyramid_attn from __init__ (learned attention weights)
+  - forward() reads pre-pooled tensors directly from batch
+  - spatial_pyramid_pool, _pyramid_from_l12, _static_pyramid marked NOT USED
+
+Architecture decision — learned attention dropped:
+  Previous: nn.Linear(768,1) attention weights per spatial window per modality.
+  New: simple masked mean (all valid patches weighted equally).
+  Rationale: minimal expressiveness difference vs transformer cross-attention already
+  present; avoids GPU-side computation that prevented CPU pre-pooling.
+
+--- Memory impact ---
+
+  Per-sample IPC:     30 MB → ~2 MB        (15× reduction)
+  Train IPC:         242 GB → ~16 GB
+  Val→Train boundary: 607 GB → 324 GB      (396 GB headroom vs 720G cgroup limit)
+  /dev/shm L12 preload: 145 GB unchanged   (workers still read L12 to pool it)
+
+--- Verification ---
+
+test_pyramid_equiv.py: 5 checks all passed
+  - shape: (M, 4, 768) correct for all modalities
+  - zero-slots: padded acquisitions produce zero output rows
+  - determinism: same input → same output
+  - finite: no NaN or Inf in output
+  - scale consistency: pooled values in expected range
+
+Agent code review (multi-agent ultra): no critical issues found.
+
+Smoke test (job 23921408, smoke_pyramid, 20 stations, 3 epochs): PASSED
+  val_loss: 0.0037 → 0.0033 → 0.0033  (better than previous smoke's 0.0036)
+  peak_vram: 38.6 GB  (vs 50.2 GB before pooling fix, −11.6 GB)
+  RAM at epoch start: 70.6 GB  (vs 688 GB that caused OOM)
+  Clean exit, no OOM, no NCCL timeout.
+
+--- Commits pushed ---
+
+  8947f9a — Move all pyramid pooling to CPU dataset workers
+  2f6581b — Mark dead GPU pyramid helpers as NOT USED
+  ec74775 — Restore ContextFormer token dropout in dataset workers (S2/S1 only)
+  a2cec06 — Update training_runbook.md
+
+--- Files modified ---
+
+  dataset.py             — _cpu_pyramid_pool(), load_s2_rolling_zarr (returns 4-tuple
+                           + training param), load_s1_rolling_zarr (same), __getitem__
+                           uses s2_pyr/s1_pyr/dem_pyr/lulc_pyr keys
+  model.py               — removed pyramid_attn modules; forward() reads pre-pooled
+                           tensors; GPU pyramid helpers marked NOT USED
+  test_pyramid_equiv.py  — new verification script (5 checks, all passed)
+  text/training_runbook.md — updated memory budget table
+
+--- Jobs ---
+
+  23921408: smoke_pyramid, 20 stations, 3 epochs — PASSED
+  23921632: baseline_huber, 661 stations, 120h — SUBMITTED (fresh start, old checkpoints cleared)
+
+--- Next steps ---
+
+  1. Check logs/train_23921632.out — confirm clean epoch lines, no OOM
+  2. Monitor W&B baseline_huber: val/0-10/ubRMSE gate < 0.07 m³/m³
+  3. After convergence: run eval_stations.py on OOS split for honest evaluation
+  4. Deferred: distributed val (all_gather across 4 ranks, §8.4 runbook)
+  5. Deferred: learned pyramid attention ablation (§8.3, post Phase 2 zarr pre-compute)
+  6. Deferred: skip connection ablation (§8.3, after baseline converges)
+
