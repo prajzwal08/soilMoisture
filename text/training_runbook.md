@@ -1,6 +1,6 @@
 # Soil Moisture Training Runbook
 
-Last updated: 2026-06-16 (Session 10 — pyramid pooling OOM analysis)  
+Last updated: 2026-06-17 (Session 11 — CPU pyramid pooling implemented)  
 Author: Prajwal Khanal
 
 ---
@@ -113,41 +113,41 @@ Author: Prajwal Khanal
 | S1 token mask cache | ~9 MB | Job lifetime | CoW fork |
 | Zarr date cache | ~4 MB | Job lifetime | CoW fork |
 | Static cache (DEM/LULC/soil) | ~2 GB | Job lifetime | CoW fork |
-| Train DataLoader IPC | **~242 GB** (8w×pf2×bs128×30MB×4r) | Epoch lifetime | NO — 4 × independent IPC per rank |
-| Val DataLoader IPC | **~61 GB** (2w×pf2×bs128×30MB×4r) | Val phase only | NO — 4 × independent |
+| Train DataLoader IPC | **~16 GB** (8w×pf2×bs128×2MB×4r) | Epoch lifetime | NO — 4 × independent IPC per rank |
+| Val DataLoader IPC | **~4 GB** (2w×pf2×bs128×2MB×4r) | Val phase only | NO — 4 × independent |
 | CUDA activations (peak) | ~56 GB (measured) | Per-batch | Per-GPU only |
 | Model params + Adam states | ~2 GB | Job lifetime | Per-GPU (replicated by DDP) |
 
 **SLURM budget: `--mem=720G` (shared node cap; 790G never schedules on shared nodes)**
-**New config (pf=2 + gc.freeze) is safe: boundary peak = 607 GB → 113 GB headroom vs 720G.**
+**Post pyramid-pool fix: boundary peak ≈ 324 GB → 396 GB headroom vs 720G.**
 
 ```
 During training epoch:
-  /dev/shm L12:          145 GB  (measured; shared across 4 ranks)
+  /dev/shm L12:          145 GB  (measured; shared across 4 ranks — still needed for pooling)
   4 × rank heaps:        159 GB  (CoW; stable with gc.freeze())
-  Train loader IPC:      242 GB  (8w × pf2 × bs128 × ~30 MB × 4r)
+  Train loader IPC:       16 GB  (8w × pf2 × bs128 × ~2 MB × 4r)
   ─────────────────────────────
-  Total:                 546 GB  ← 174 GB headroom vs 720 GB limit
+  Total:                 320 GB  ← 400 GB headroom vs 720 GB limit
 
 During validation:
   /dev/shm L12:          145 GB
   4 × rank heaps:        159 GB
-  Val loader IPC:         61 GB  (2w × pf2 × bs128 × ~30 MB × 4r)
+  Val loader IPC:          4 GB  (2w × pf2 × bs128 × ~2 MB × 4r)
   ─────────────────────────────
-  Total:                 365 GB  ← very safe
+  Total:                 308 GB  ← very safe
 
 Val→Train boundary (worst case, both IPCs resident):
   /dev/shm L12:          145 GB
   4 × rank heaps:        159 GB
-  Train IPC (filling):   242 GB
-  Val IPC (draining):     61 GB
+  Train IPC (filling):    16 GB
+  Val IPC (draining):      4 GB
   ─────────────────────────────
-  Total:                 607 GB  ← 113 GB headroom vs 720 GB limit
+  Total:                 324 GB  ← 396 GB headroom vs 720 GB limit
 ```
 
-**Note:** Old estimates used /dev/shm=91 GB (design-time) vs 145 GB measured, and pf=3 (440 GB IPC).
-With pf=3 + actual shm: boundary = 145+159+363+61 = 728 GB (only 8 GB headroom — too tight).
-pf=2 was chosen to restore safe margin after §9 measurement corrected the shm estimate.
+**Pre-fix history:** pf=2 with 30 MB/sample IPC gave 607 GB boundary (113 GB headroom — tight).
+Pyramid pooling fix cut IPC from ~242 GB to ~16 GB; headroom increased from 113 GB to 396 GB.
+Can now safely increase pf or batch size if GPU utilisation demands it.
 
 **Smoke test /dev/shm fix (2026-06-15, commit cdb3ef9):** `_preload_l12_to_shm` now accepts
 `max_stations` and stops after N stations are written. With `--max-stations 20` the preload
@@ -366,7 +366,7 @@ connections). All other acquisitions need only 4×768 summary tokens.
 
 ---
 
-## 3e. Planned Fix — Move Pyramid Pooling into `__getitem__`
+## 3e. IMPLEMENTED Fix — Move Pyramid Pooling into `__getitem__` (Session 11, 2026-06-17)
 
 **Why this is the right fix:**  
 The pyramid pooling for historical acquisitions does not require model weights to be
@@ -417,6 +417,46 @@ fine-tunes within each scale.
 | Train IPC (8w×pf2×128×4r) | 437 GB | ~13 GB |
 | Total training RAM | ~660 GB (OOM) | ~240 GB |
 | /dev/shm preload | 145 GB unchanged | 145 GB unchanged |
+
+**Implementation — commits 8947f9a, 2f6581b, ec74775 (2026-06-17):**
+
+- `_cpu_pyramid_pool(l12, token_mask)` added to `dataset.py`: compresses `(M,196,768) fp16` →
+  `(M,4,768) fp32` using static masked mean over 4 nested square windows (widths `[1,3,5,7]`,
+  same formula as old `spatial_pyramid_pool` in model.py)
+- `load_s2_rolling_zarr` + `load_s1_rolling_zarr`: return 4-tuple `(pyr, doys, valid, rel_pos)`
+  instead of old 5-tuple. Added `training: bool = False` param — when True, applies 50%
+  random spatial token dropout to `token_mask` BEFORE pooling (restores ContextFormer
+  augmentation that was previously in `model.forward()`)
+- `__getitem__`: DEM and LULC also pooled via `_cpu_pyramid_pool` (no random dropout —
+  DEM/LULC are always available at inference, masking them trains on unrealistic scenarios)
+- Batch keys changed: `s2_l12/s2_token_mask → s2_pyr`, `s1_l12/s1_token_mask → s1_pyr`,
+  `dem_l12/dem_token_mask/lulc_l12/lulc_token_mask → dem_pyr/lulc_pyr`
+- `model.py`: removed `s2_pyramid_attn`, `s1_pyramid_attn`, `dem_pyramid_attn`,
+  `lulc_pyramid_attn` from `__init__`. `forward()` reads pyramid tokens directly from batch.
+  `spatial_pyramid_pool`, `_pyramid_from_l12`, `_static_pyramid` kept but marked NOT USED.
+- Random token masking in `forward()` removed entirely (moved to workers for S2/S1; DEM/LULC
+  not masked by design)
+
+**Consistency:** all four modalities now use identical static masked-mean pyramid pooling.
+Previously S2/S1 used learned attention (GPU) while DEM/LULC also used learned attention.
+Now all four use static mean (CPU). Learned attention (`nn.Linear(768,1)` per modality) had
+minimal expressiveness over 196 patches; the temporal transformer does real spatial reasoning.
+
+**Verification:** `test_pyramid_equiv.py` — 5 checks all pass (shape, zero-slots, determinism,
+finite values, center-patch scale consistency). Agent code review: no critical issues.
+
+**New memory budget (pyramid pooling fix):**
+
+| | Before fix | After fix |
+|---|---|---|
+| Per-sample IPC | ~30 MB | ~2 MB |
+| Train IPC (8w×pf2×bs128×4r) | 242 GB | ~16 GB |
+| Val IPC (2w×pf2×bs128×4r) | 61 GB | ~4 GB |
+| Val→Train boundary | 607 GB (113 GB headroom) | **~324 GB (396 GB headroom)** |
+| `/dev/shm` L12 preload | 145 GB | **145 GB unchanged** (workers still read L12 to pool it) |
+
+The `/dev/shm` preload is still needed — workers read L12 from there and pool it CPU-side
+before IPC. Only the IPC payload shrinks.
 
 **Phase 2 (after baseline converges): Pre-compute pyramid tokens in zarr**  
 Run a one-time offline script: read each station's L12, apply `_cpu_pyramid_pool`, write
@@ -555,24 +595,11 @@ These are **speed-only** changes intentionally NOT applied to the first baseline
 so a future optimized run can be compared against a clean reference. Apply these *after*
 the baseline converges, then measure speedup (and any quality delta) against this run.
 
-### 8.1 `_pyramid_from_l12` — eliminate the `.nonzero()` GPU sync  (HIGH priority)
+### 8.1 `_pyramid_from_l12` `.nonzero()` GPU sync — RESOLVED (pyramid moved to CPU)
 
-**Where:** `model.py:409` inside `_pyramid_from_l12()`, called twice per forward
-(`model.py:644` for S2, `model.py:650` for S1):
-```python
-valid_idx = flat_valid.nonzero(as_tuple=True)[0]
-```
-
-**Why it's slow:** GPU and CPU normally run asynchronously — the CPU queues GPU work and
-races ahead, which is what keeps the GPU fed at 96–100%. `.nonzero()` returns a tensor
-whose *size depends on the data* (how many entries are non-zero), so the CPU must STOP and
-wait for the GPU to finish all queued work and report that size back. That forced
-host↔device sync drains the pipeline; for those ms the GPU has nothing queued ahead and can
-briefly starve. It fires 2× per forward × 2,051 batches × every epoch.
-
-**Fix:** rewrite the masking so the output size is static — multiply by a 0/1 mask
-(`x * mask`) instead of gathering valid indices via `.nonzero()`. Removes the sync entirely
-while keeping the math identical.
+~~This was HIGH priority~~ — now moot. `_pyramid_from_l12` is dead code since pyramid pooling
+moved to `_cpu_pyramid_pool()` in `dataset.py`. The `.nonzero()` GPU sync no longer fires.
+`_pyramid_from_l12` and `_static_pyramid` are kept in `model.py` marked NOT USED.
 
 ### 8.2 SyncBatchNorm → GroupNorm  (MEDIUM priority)
 
@@ -625,11 +652,32 @@ counts into the same batch so per-step compute is balanced across ranks. Bigger 
 this symptom than 8.1/8.2. Alternative: pad/truncate to a fixed acquisition count (simpler,
 wastes some compute on padding).
 
-### 8.3 Lower-priority items (apply opportunistically)
-- `all_gather_object` (pickle) for val predictions → tensor `dist.all_gather` (avoids pickle overhead).
+### 8.3 Learned pyramid attention ablation (after baseline converges)
+
+Current state: all four modalities use static masked-mean pyramid pooling (CPU-side). The
+original design used `nn.Linear(768,1)` learned attention for pooling. After baseline
+converges, run an ablation: restore learned spatial attention for S2/S1 by pre-computing
+pyramid tokens in zarr (Phase 2), then the pooling runs offline and the learned attention
+can be applied in the model without any IPC cost. If learned attention improves val metrics
+meaningfully (expected small: the temporal transformer does the real spatial reasoning),
+adopt it in Phase 2. If not, static mean is simpler and confirmed adequate.
+
+### 8.4 `dist.all_gather_object` → tensor `dist.all_gather` (MEDIUM priority)
+
+**Where:** `evaluate()` in `train.py` — collects variable-length numpy predictions to rank 0
+using `dist.all_gather_object` (Python pickle under the hood).
+
+**Why it matters:** Pickle is slow and fragile; NCCL watchdog timeouts can occur if collection
+takes longer than `NCCL_TIMEOUT`. With 4 GPUs this is fine, but would break on multi-node.
+
+**Fix:** pad local prediction tensors to a fixed maximum size, use `dist.all_gather` (tensor,
+no pickle), slice off padding after. Already noted in deferred task memory.
+
+### 8.5 Lower-priority items (apply opportunistically)
 - Cache `torch.arange(365)` as a `register_buffer` for ERA5 rel_pos (avoids per-call alloc).
 - Cache `k` arange in `circular_doy_pe` as a module buffer.
 - S1 load: `np.asarray()` → direct `tokens_z[src_i]` indexing.
+- GPU timing: add `torch.cuda.synchronize()` before perf_counter for accurate step benchmarks.
 
 ### 8.4 Expected payoff
 Removing the `.nonzero()` sync (8.1) + SyncBN all_reduce chatter (8.2) is estimated to
