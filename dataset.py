@@ -518,9 +518,7 @@ def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
         return torch.from_numpy(np.asarray(zg[key][best_idx]))
 
     # Use preloaded L12 RAM cache (zero disk I/O) when available
-    l12_np_for_orbit = (l12_cache or {}).get(
-        best_orbit if best_orbit == "s2" else best_orbit   # "s2"|"s1_asc"|"s1_desc"
-    )
+    l12_np_for_orbit = (l12_cache or {}).get(best_orbit)
     if l12_np_for_orbit is not None and best_idx < len(l12_np_for_orbit):
         anchor_l12 = torch.from_numpy(np.asarray(l12_np_for_orbit[best_idx]))
     else:
@@ -853,6 +851,9 @@ class SoilMoistureDataset(Dataset):
                                 _p = sat_dir / f"{_orbit}_{_layer}.npy"
                                 if _p.exists():
                                     l369[f"{_orbit}_{_layer}"] = np.load(_p, mmap_mode="r")
+                        if not l369:
+                            print(f"[WARN] use_mmap=True but no .npy files found for {sat_dir} "
+                                  f"— falling back to zarr (run convert_l369_to_npy.py first)")
                         self._l369_cache[sat_dir] = l369
                     _dem_l12  = (torch.from_numpy(zg["dem"][:])
                                  if "dem" in zg
