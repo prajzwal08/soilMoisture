@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel
 from train import CudaPrefetcher
+from ckpt_utils import load_checkpoint
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
@@ -45,23 +46,6 @@ META_COLS = [
 def worker_init_fn(worker_id):
     np.random.seed(os.getpid() + worker_id)
 
-
-def load_checkpoint(ckpt_path: Path, device):
-    print(f"Loading checkpoint: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    cfg  = ckpt["config"]
-    model = SoilMoistureModel(
-        n_depths      = cfg.get("n_depths", 3),
-        d_model       = cfg.get("d_model",  768),
-        n_heads       = cfg.get("n_heads",  12),
-        n_layers      = cfg.get("n_layers", 6),
-        drop_path_rate= cfg.get("drop_path_rate", 0.0),
-        use_cls_depth = cfg.get("use_cls_depth", False),
-    ).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    print(f"  Epoch {ckpt['epoch']}  best_val_loss={ckpt.get('best_val_loss', 'N/A')}")
-    return model, cfg, ckpt["epoch"]
 
 
 @torch.no_grad()
@@ -210,7 +194,7 @@ def main():
             pin_memory         = True,
             worker_init_fn     = worker_init_fn,
             persistent_workers = False,
-            prefetch_factor    = 2,
+            prefetch_factor    = 2 if args.num_workers > 0 else None,
         )
 
         preds, targets, keys = run_eval(model, loader, device)

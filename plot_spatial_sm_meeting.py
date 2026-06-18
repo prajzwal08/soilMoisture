@@ -36,6 +36,7 @@ except ImportError:
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel
+from ckpt_utils import load_checkpoint
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
@@ -52,21 +53,6 @@ SM_VMIN, SM_VMAX = 0.0, 0.5
 SROW = SoilMoistureModel.STATION_ROW
 SCOL = SoilMoistureModel.STATION_COL
 
-
-def load_checkpoint(ckpt_path: Path, device):
-    ckpt  = torch.load(ckpt_path, map_location=device, weights_only=False)
-    cfg   = ckpt["config"]
-    model = SoilMoistureModel(
-        n_depths       = cfg.get("n_depths", 3),
-        d_model        = cfg.get("d_model",  768),
-        n_heads        = cfg.get("n_heads",  12),
-        n_layers       = cfg.get("n_layers", 6),
-        drop_path_rate = cfg.get("drop_path_rate", 0.0),
-        use_cls_depth  = cfg.get("use_cls_depth", False),
-    ).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    return model, cfg, ckpt["epoch"]
 
 
 @torch.no_grad()
@@ -206,28 +192,54 @@ def plot_spatial_grid(station_key: str, rank_label: str, meta_row: dict,
     print(f"  Saved: {fname}")
 
 
+def resolve_stations(args, ds) -> list[dict]:
+    """Return list of {station_key, _rank, ...meta} dicts from three sources:
+    1. --station names given on CLI (no CSV needed)
+    2. best/worst from per_station_oos.csv if it exists
+    3. random sample from dataset if no CSV
+    """
+    if args.station:
+        # Standalone mode — user specified stations directly
+        all_keys = sorted({s["station_key"] for s in ds.samples})
+        selected = []
+        for name in args.station:
+            matches = [k for k in all_keys if name in k]
+            if not matches:
+                print(f"  Warning: no station matching '{name}' — skipping")
+                continue
+            selected.append({"station_key": matches[0], "_rank": ""})
+        return selected
+
+    csv_path = Path("meeting_output/per_station_oos.csv")
+    if csv_path.exists():
+        rank_df  = pd.read_csv(csv_path).dropna(subset=["ubRMSE_0_10"]).sort_values("ubRMSE_0_10")
+        best_df  = rank_df.head(args.n).assign(_rank="BEST")
+        worst_df = rank_df.tail(args.n).iloc[::-1].assign(_rank="WORST")
+        return pd.concat([best_df, worst_df], ignore_index=True).to_dict("records")
+
+    # No CSV — sample random stations from dataset
+    print(f"No CSV found — sampling {args.n} random stations from dataset")
+    all_keys = sorted({s["station_key"] for s in ds.samples})
+    rng      = np.random.default_rng(42)
+    sampled  = rng.choice(all_keys, size=min(args.n, len(all_keys)), replace=False)
+    return [{"station_key": k, "_rank": ""} for k in sampled]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-name", default="baseline_huber")
     parser.add_argument("--ckpt",     default="best.pt")
     parser.add_argument("--n",        type=int, default=5,
-                        help="Number of best + worst stations")
+                        help="Number of best + worst stations (CSV mode) or random stations")
     parser.add_argument("--year",     type=int, default=None,
                         help="Force specific year (default: median available year)")
+    parser.add_argument("--station",  nargs="+", default=None,
+                        help="One or more station name substrings — skips CSV lookup")
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-
-    csv_path = Path("meeting_output/per_station_oos.csv")
-    if not csv_path.exists():
-        raise FileNotFoundError(f"{csv_path} not found — run evaluate_splits.py first")
-
-    rank_df  = pd.read_csv(csv_path).dropna(subset=["ubRMSE_0_10"]).sort_values("ubRMSE_0_10")
-    best_df  = rank_df.head(args.n).assign(_rank="BEST")
-    worst_df = rank_df.tail(args.n).iloc[::-1].assign(_rank="WORST")
-    selected = pd.concat([best_df, worst_df], ignore_index=True)
 
     ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
     model, cfg, epoch = load_checkpoint(ckpt_path, device)
@@ -237,16 +249,21 @@ def main():
         era5_stats_path = str(ERA5_STATS),
         years           = list(range(2016, 2024)),
         category_filter = cfg.get("category_filter", ["sm_only"]),
-        split_filter    = None,
+        split_filter    = ["oos"],    # OOS only — avoids loading 577 stations
         training        = False,
         use_mmap        = True,
     )
     print(f"Dataset: {len(ds):,} samples")
 
-    for _, row in selected.iterrows():
+    selected = resolve_stations(args, ds)
+    if not selected:
+        print("No stations to plot — exiting")
+        return
+
+    for row in selected:
         station    = row["station_key"]
-        rank_label = row["_rank"]
-        print(f"\n[{rank_label}] {station}")
+        rank_label = row.get("_rank", "")
+        print(f"\n[{rank_label or 'USER'}] {station}")
 
         if args.year is not None:
             target_year = args.year
@@ -255,7 +272,6 @@ def main():
             if not yrs:
                 print("  No samples — skipping")
                 continue
-            # Prefer OOS years (2016-2022)
             oos_yrs = [y for y in yrs if 2016 <= y <= 2022]
             pool    = oos_yrs if oos_yrs else yrs
             target_year = pool[len(pool) // 2]
@@ -267,7 +283,7 @@ def main():
         n_valid = sum(1 for r in date_results if r is not None)
         print(f"  Valid dates: {n_valid}/{len(SAMPLE_DOYS)}")
 
-        plot_spatial_grid(station, rank_label, row.to_dict(), date_results, OUT_DIR)
+        plot_spatial_grid(station, rank_label or "USER", row, date_results, OUT_DIR)
 
     print(f"\nAll spatial figures saved to {OUT_DIR}/")
 

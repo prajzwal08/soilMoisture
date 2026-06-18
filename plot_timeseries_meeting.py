@@ -36,6 +36,7 @@ except ImportError:
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel
+from ckpt_utils import load_checkpoint
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
@@ -49,21 +50,6 @@ DEPTH_LABELS = {"0-10": "0–10 cm", "10-30": "10–30 cm", "30-100": "30–100 
 def worker_init_fn(wid):
     np.random.seed(os.getpid() + wid)
 
-
-def load_checkpoint(ckpt_path: Path, device):
-    ckpt  = torch.load(ckpt_path, map_location=device, weights_only=False)
-    cfg   = ckpt["config"]
-    model = SoilMoistureModel(
-        n_depths      = cfg.get("n_depths", 3),
-        d_model       = cfg.get("d_model",  768),
-        n_heads       = cfg.get("n_heads",  12),
-        n_layers      = cfg.get("n_layers", 6),
-        drop_path_rate= cfg.get("drop_path_rate", 0.0),
-        use_cls_depth = cfg.get("use_cls_depth", False),
-    ).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    return model, cfg, ckpt["epoch"]
 
 
 @torch.no_grad()
@@ -198,32 +184,56 @@ def plot_timeseries(result: dict, meta_row: dict, out_dir: Path, epoch: int,
     print(f"  Saved: {fname}")
 
 
+def resolve_stations(args, ds) -> list[dict]:
+    """Return list of {station_key, _rank, ...meta} dicts from three sources:
+    1. --station names given on CLI (no CSV needed)
+    2. best/worst from per_station_{split}.csv if it exists
+    3. random sample from dataset if no CSV
+    """
+    if args.station:
+        all_keys = sorted({s["station_key"] for s in ds.samples})
+        selected = []
+        for name in args.station:
+            matches = [k for k in all_keys if name in k]
+            if not matches:
+                print(f"  Warning: no station matching '{name}' — skipping")
+                continue
+            selected.append({"station_key": matches[0], "_rank": ""})
+        return selected
+
+    csv_path = Path("meeting_output") / f"per_station_{args.split}.csv"
+    if csv_path.exists():
+        rank_df  = pd.read_csv(csv_path).dropna(subset=["ubRMSE_0_10"]).sort_values("ubRMSE_0_10")
+        best_df  = rank_df.head(args.n).assign(_rank="BEST")
+        worst_df = rank_df.tail(args.n).iloc[::-1].assign(_rank="WORST")
+        combined = pd.concat([best_df, worst_df], ignore_index=True)
+        print(f"\nBest {args.n}:")
+        print(best_df[["station_key", "ubRMSE_0_10"]].to_string(index=False))
+        print(f"\nWorst {args.n}:")
+        print(worst_df[["station_key", "ubRMSE_0_10"]].to_string(index=False))
+        return combined.to_dict("records")
+
+    print(f"No CSV found — sampling {args.n} random stations from dataset")
+    all_keys = sorted({s["station_key"] for s in ds.samples})
+    rng      = np.random.default_rng(42)
+    sampled  = rng.choice(all_keys, size=min(args.n, len(all_keys)), replace=False)
+    return [{"station_key": k, "_rank": ""} for k in sampled]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-name", default="baseline_huber")
     parser.add_argument("--ckpt",     default="best.pt")
     parser.add_argument("--split",    default="oos")
     parser.add_argument("--n",        type=int, default=5,
-                        help="Number of best + worst stations to plot")
+                        help="Number of best + worst stations (CSV mode) or random stations")
+    parser.add_argument("--station",  nargs="+", default=None,
+                        help="One or more station name substrings — skips CSV lookup")
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-
-    csv_path = Path("meeting_output") / f"per_station_{args.split}.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"{csv_path} not found — run evaluate_splits.py first")
-
-    rank_df  = pd.read_csv(csv_path).dropna(subset=["ubRMSE_0_10"]).sort_values("ubRMSE_0_10")
-    best_df  = rank_df.head(args.n).assign(_rank="BEST")
-    worst_df = rank_df.tail(args.n).iloc[::-1].assign(_rank="WORST")
-    selected = pd.concat([best_df, worst_df], ignore_index=True)
-
-    print(f"\nBest {args.n}:")
-    print(best_df[["station_key", "ubRMSE_0_10", "IGBP", "koppen_geiger"]].to_string(index=False))
-    print(f"\nWorst {args.n}:")
-    print(worst_df[["station_key", "ubRMSE_0_10", "IGBP", "koppen_geiger"]].to_string(index=False))
 
     ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
     model, cfg, epoch = load_checkpoint(ckpt_path, device)
@@ -233,21 +243,26 @@ def main():
         era5_stats_path = str(ERA5_STATS),
         years           = list(range(2016, 2024)),
         category_filter = cfg.get("category_filter", ["sm_only"]),
-        split_filter    = None,
+        split_filter    = ["oos"],    # OOS only — avoids loading all 577 stations
         training        = False,
         use_mmap        = True,
     )
     print(f"Dataset: {len(ds):,} total samples")
 
-    for _, row in selected.iterrows():
+    selected = resolve_stations(args, ds)
+    if not selected:
+        print("No stations to plot — exiting")
+        return
+
+    for row in selected:
         station = row["station_key"]
-        rank    = row["_rank"]
-        print(f"\n[{rank}] {station}")
+        rank    = row.get("_rank", "")
+        print(f"\n[{rank or 'USER'}] {station}")
         result = infer_station(model, ds, station, device)
         if result is None:
             print("  No samples — skipping")
             continue
-        plot_timeseries(result, row.to_dict(), OUT_DIR, epoch, rank_label=rank)
+        plot_timeseries(result, row, OUT_DIR, epoch, rank_label=rank)
 
     print(f"\nAll time series saved to {OUT_DIR}/")
 
