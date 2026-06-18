@@ -12,6 +12,7 @@
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
 set -eo pipefail
+exec 2>&1
 echo "=== evaluate_meeting  job ${SLURM_JOB_ID}  started $(date) ==="
 echo "Node: $(hostname)"
 
