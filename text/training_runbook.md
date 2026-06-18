@@ -1,6 +1,6 @@
 # Soil Moisture Training Runbook
 
-Last updated: 2026-06-16 (Session 12 — GPFS anchor bottleneck; .npy memmap fix implemented; smoke test pending)  
+Last updated: 2026-06-18 (Session 16 — §14 spatial resolution roadmap added)  
 Author: Prajwal Khanal
 
 ---
@@ -943,3 +943,618 @@ Fix: `.npy` memmap wired via `--use-memmap` (§3g, §8.5b). Run smoke test befor
 
 **VRAM:** 38.6 GB peak (40% of 96 GB) — comfortable. Batch size could be increased to 256
 to improve gpu_util (more compute per data fetch: 22%→~36%) while memmap fix is pending.
+
+---
+
+## 11. Current Run — job 23936932 (full run, started 2026-06-16, ongoing)
+
+Fresh run using `.npy` memmap (§3g/§8.5b). `--use-memmap` confirmed active: log shows
+`L369 memmap cache: 5142 arrays opened (OS page cache; zero process heap cost)`.
+
+**Config:** 577 train / 74 val stations, 1,049,917 train samples, batch_size=128, 8 workers/rank,
+pf=2, Huber loss, lr=2e-4, lambda_tv=0.1
+
+### Epoch results (epochs 1–10, epoch 11 in progress as of 2026-06-17)
+
+| Epoch | train_loss | val_loss | 0-10 ubRMSE | 10-30 ubRMSE | 30-100 ubRMSE | gpu_util | data_time | Best? |
+|-------|-----------|---------|------------|-------------|--------------|----------|-----------|-------|
+| 1  | 0.0012 | 0.0023 | 0.0525 | 0.0487 | 0.0554 | 25% | 1256s | ✓ |
+| 2  | 0.0005 | 0.0021 | 0.0538 | 0.0505 | 0.0566 | 70% | 176s  | ✓ |
+| 3  | 0.0003 | 0.0021 | 0.0520 | 0.0484 | 0.0561 | 91% | 41s   | ✓ |
+| 4  | 0.0003 | 0.0021 | 0.0527 | 0.0477 | 0.0554 | 86% | 69s   | ✓ |
+| 5  | 0.0002 | 0.0021 | 0.0526 | 0.0483 | 0.0566 | 27% | 1131s | — |
+| 6  | 0.0002 | 0.0021 | 0.0532 | 0.0482 | 0.0554 | 51% | 396s  | — |
+| 7  | 0.0002 | 0.0022 | 0.0530 | 0.0491 | 0.0579 | 35% | 777s  | — |
+| 8  | 0.0001 | 0.0021 | 0.0539 | 0.0488 | 0.0565 | 47% | 470s  | — |
+| 9  | 0.0001 | 0.0021 | 0.0529 | 0.0482 | 0.0571 | 39% | 629s  | ✓ |
+| 10 | 0.0001 | 0.0021 | 0.0527 | 0.0486 | 0.0567 | 58% | 304s  | ✓ |
+
+Peak VRAM: stable at **38.6 GB / 100 GB** every epoch. No OOM.  
+Compute time: **constant ~410s/epoch** — GPU not the bottleneck.  
+Best val_loss: **0.0021** (plateaued from epoch 2).  
+Train loss still descending (0.0012 → 0.0001) while val is flat → early overfitting onset.
+
+### RAM analysis — not a leak
+
+| Snapshot | RAM used |
+|---|---|
+| epoch_001_start | 257.8 GB |
+| epoch_001_post_train | 366.6 GB |
+| epoch_001_post_val | **387.8 GB** ← +130 GB jump |
+| epoch_002_start | 387.8 GB |
+| epoch_002_post_train | 394.1 GB |
+| epoch_003–010 | ~391–403 GB (essentially flat, ±5 GB noise) |
+| epoch_011_post_train | 400.7 GB |
+
+The +130 GB jump in epoch 1 is **OS page cache filling** as the 5142 memmap arrays are read
+from GPFS scratch for the first time — expected, not a leak. From epoch 2 onward, RAM is
+flat at ~400 GB. The cgroup limit (720 GB) has 320 GB headroom — safe for the full run.
+
+### VRAM reserved creep — real risk
+
+GPU 0 **reserved** (not allocated) memory grows exactly +1.1 GB/epoch:
+
+| Epoch | allocated | reserved |
+|---|---|---|
+| 1 | 1.1 GB | 41.1 GB |
+| 5 | 1.1 GB | 50.2 GB |
+| 10 | 1.1 GB | 61.5 GB |
+| **~34** | — | **~100 GB → OOM** |
+
+This is the PyTorch CUDA allocator caching allocator holding its high-water mark. At the
+current rate the run OOMs at ~epoch 34.
+
+**Fix applied (train.py):** `torch.cuda.empty_cache()` added after each epoch's post-val
+snapshot. **Caveat:** `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (set in train.sh)
+prevents `empty_cache()` from unmapping segments by design — the call is harmless but may not
+fully stop the creep. Monitor `rsv` in the next run. If growth continues, either:
+1. Remove `expandable_segments:True` temporarily to test if it's pure fragmentation
+2. Profile with `torch.cuda.memory._snapshot()` to find any live allocations growing each epoch
+   (likely candidate: `all_gather_object` in `evaluate()` building a larger prediction list)
+
+### GPU utilisation / I/O jitter — root cause and fix
+
+`data_time` varies wildly (41–1256s) because competing Snellius jobs evict the memmap OS page
+cache between epochs. When pages are warm: data=41s, gpu_util=91%. When evicted: data=1256s,
+gpu_util=25%. Compute is constant at 410s — GPU is never the bottleneck.
+
+**Fix applied (train.py):** `_advise_l369_willneed(train_dataset, val_dataset)` called at the
+top of each epoch loop. Calls `arr._mmap.madvise(mmap.MADV_WILLNEED)` on all 5142 open memmap
+objects — non-blocking, returns in ~ms, kernel async-prefetches evicted pages in background
+during epoch setup.
+
+**Important caveats:**
+- `posix_fadvise` was originally considered but is **silently ignored by GPFS** — returns 0
+  but is a no-op. `madvise(MADV_WILLNEED)` on the mmap region goes through the Linux VM layer
+  and IS honoured on most GPFS (Spectrum Scale) versions, but this is version-dependent.
+- Effectiveness must be verified empirically: if `data_time` jitter persists in the next run,
+  GPFS on this version may be silently ignoring madvise too.
+
+### Loss calculation — how three depths are combined
+
+`_compute_loss` calls `masked_huber_loss(pred, label)` where:
+- `pred = sm_map[:, :, STATION_ROW, STATION_COL]` — extracts the single station pixel from the
+  `(B, 3, 224, 224)` output map → shape `(B, 3)`
+- `mask = ~torch.isnan(label)` — True where a depth has a valid label (not all samples have
+  all 3 depths present)
+- `F.huber_loss(pred[mask], label[mask], delta=0.05, reduction="mean")` — **flattens all valid
+  (batch × depth) pairs into one vector and takes a single mean**
+
+The three depths are **not weighted or averaged separately** — they are pooled into one scalar.
+A sample with 2 valid depths contributes 2 pairs; a sample with 3 valid depths contributes 3.
+The logged `train_loss` and `val_loss` are this single scalar. TV and boundary penalties are
+added on top but do not change the per-depth weighting.
+
+**Should we weight depths separately?** See §12 below.
+
+---
+
+## 12. Pending Design Decisions (post-baseline)
+
+### 12.1 Per-depth loss weighting
+
+**Current:** all valid (batch × depth) pairs are flattened into one vector, single mean Huber.
+Surface (0–10 cm) has the most observations per batch and dominates the gradient signal.
+
+**Problem:** 30–100 cm ubRMSE is consistently ~0.006 higher than 0–10 cm (observed across all
+10 epochs of job 23936932). Deeper layers receive proportionally less gradient signal because
+they appear in fewer samples.
+
+**Proposed fix:** compute separate Huber loss per depth, then mean across depths:
+```python
+depth_losses = []
+for d in range(pred.shape[1]):
+    mask = ~torch.isnan(label[:, d])
+    if mask.any():
+        depth_losses.append(F.huber_loss(pred[mask,d], label[mask,d],
+                                          delta=0.05, reduction="mean"))
+loss = torch.stack(depth_losses).mean()   # equal weight per depth
+```
+This gives each of the 3 depths equal optimization pressure regardless of observation count.
+
+**When to apply:** after job 23936932 converges (use that as the flat-pool baseline).
+The two approaches are not numerically comparable — track as a separate run.
+
+**Implementation status (2026-06-17):**
+- `model.py`: `masked_huber_loss` already accepts `per_depth: bool = False` — backward compatible
+- `train.py` CONFIG: `"per_depth_loss": False` added
+- `train.py` `_compute_loss` + `train_one_epoch`: already wired
+
+**Remaining wiring (3 edits in train.py — defer until after baseline):**
+
+1. `evaluate()` — thread `per_depth` through signature and its `_compute_loss` call:
+```python
+def evaluate(model, loader, device, world_size=1, rank=0,
+             max_batches=None, per_depth=False):
+    ...
+    loss, _ = _compute_loss(mu, batch["label"], per_depth=per_depth)
+```
+
+2. argparse — add `--per-depth-loss` flag:
+```python
+parser.add_argument("--per-depth-loss", action="store_true",
+                    help="Equal-weight Huber per depth (vs. pooled baseline)")
+if args.per_depth_loss: CONFIG["per_depth_loss"] = True
+```
+
+3. Main loop — pass to both callers:
+```python
+train_one_epoch(..., per_depth=CONFIG["per_depth_loss"], ...)
+evaluate(...,        per_depth=CONFIG["per_depth_loss"])
+```
+
+**Validation (before full run):**
+
+Step 1 — unit test (seconds, no GPU):
+```python
+# quick_test_perdepth.py
+import torch
+from model import SoilMoistureModel, masked_huber_loss
+pred = torch.rand(4, 3, 224, 224)
+label = torch.rand(4, 3)
+label[0, 2] = float('nan')   # simulate missing deep layer
+loss = masked_huber_loss(pred, label, per_depth=True)
+assert loss.isfinite()
+loss.backward()
+print(f"per-depth loss={loss.item():.5f}  ok")
+```
+
+Step 2 — smoke test (~10 min):
+```bash
+sbatch slurm/train.sh --run-name smoke_perdepth --max-stations 5 --max-epochs 3 --per-depth-loss
+```
+Pass criteria: 3 epochs complete, no NaN loss.
+
+**Full run (after smoke only):**
+```bash
+sbatch slurm/train.sh --run-name perdepth_huber --per-depth-loss
+```
+Fresh start — do NOT resume from 23936932's checkpoint (loss landscape changed).
+
+---
+
+### 12.2 Depth-specific CLS token architecture (run: `cls_perdepth_huber`)
+
+Run **after** `perdepth_huber` converges. If the 30–100 cm gap narrows with per-depth loss
+alone, this is optional upside. If gap persists, this is the next motivated step.
+
+Always use `--per-depth-loss` with this — there is no reason to do CLS tokens without it.
+
+**Problem:** All 3 depths share one temporal context vector from `TemporalTransformer`. The
+model cannot learn that deeper layers correlate with different temporal patterns (e.g., slower
+seasonal response vs. fast event response at the surface).
+
+**Design: minimal CLS insertion**
+
+Keep the shared U-Net decoder path. Only diverge at the final output stage. Each depth gets
+its own FiLM layer just before its own 1×1 head — conditioned on its depth-specific CLS
+context vector. The shared conv path is unchanged.
+
+```
+TemporalTransformer input:
+  [cls_0, cls_1, cls_2, S2_pyr..., S1_pyr..., ERA5..., SIF, TWSA, DEM, LULC, soil]
+               ↓ transformer (all tokens attend to all others)
+  [ctx_0, ctx_1, ctx_2, ...]   ← per-depth CLS outputs (B, n_depths, d_model)
+        ↓ mean ↓
+    global_ctx                 ← still used for skip FiLM (unchanged)
+
+UNetDecoder:
+  shared bottle→up1/2/3/4 path (global_ctx for FiLM — unchanged)
+  ↓
+  for d in range(n_depths):
+      x_d = depth_film[d](x, ctx_d)   ← per-depth final FiLM
+      out[d] = heads[d](x_d)           ← per-depth 1×1 conv
+  return stack(out)  → (B, n_depths, 224, 224)
+```
+
+**File changes (all in `model.py`):**
+
+`TemporalTransformer.__init__`:
+- Add `self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))`
+
+`TemporalTransformer.forward`:
+- Prepend depth tokens to sequence; extend padding mask with 3 False columns
+- After transformer, extract `out[:, :n_depths, :]` as `depth_ctx`
+- Return both `depth_ctx (B, n_depths, d_model)` and existing `(bottleneck, context)` outputs
+
+`UNetDecoder.__init__`:
+- Add `self.depth_film = nn.ModuleList([FiLMLayer(d_context, c[3]) for _ in range(n_depths)])`
+- Replace `self.head = nn.Conv2d(c[3], n_depths, 1)` with
+  `self.heads = nn.ModuleList([nn.Conv2d(c[3], 1, 1) for _ in range(n_depths)])`
+
+`UNetDecoder.forward`:
+- Accept `depth_ctx: (B, n_depths, d_context)` in addition to `context`
+- At output stage: loop over depths applying `depth_film[d]` then `heads[d]`
+
+`SoilMoistureModel.forward`:
+- Pass `depth_ctx` from transformer output to decoder
+- Pass `context` (global pool, unchanged) for skip FiLM
+
+**Parameter cost:**
+- 3 CLS tokens: 3 × 768 = ~2.3 K params (negligible)
+- 3 FiLM layers (d=768, c[3]=64): 3 × 2 × 64 × 768 ≈ 295 K params (small)
+- 3 heads vs 1 head: 2 extra Conv2d(64,1,1) = ~128 params (negligible)
+- **Total delta: ~300 K params** on top of existing model
+
+**Validation (before full run):**
+
+Step 1 — unit test (seconds, CPU-only):
+```python
+# quick_test_cls.py
+import torch
+from model import SoilMoistureModel
+model = SoilMoistureModel(n_depths=3, d_model=768, use_cls_depth=True)
+# ... synthetic batch with dummy tensors ...
+out = model(batch)
+assert out.shape == (2, 3, 224, 224)
+assert not torch.allclose(out[:, 0], out[:, 1]), "All depths identical — CLS not working"
+loss = out.mean()
+loss.backward()
+assert model.temporal_transformer.depth_tokens.grad is not None
+print("CLS forward + backward ok")
+```
+
+Step 2 — smoke test (~10 min):
+```bash
+sbatch slurm/train.sh --run-name smoke_cls --max-stations 5 --max-epochs 3 --per-depth-loss --use-cls-depth
+```
+Pass criteria: 3 epochs complete, no NaN loss, loss ≤ smoke_perdepth.
+
+**Full run (after smoke only):**
+```bash
+sbatch slurm/train.sh --run-name cls_perdepth_huber --per-depth-loss --use-cls-depth
+```
+
+---
+
+### 12.3 Overfitting audit (2026-06-17)
+
+**Symptom:** train_loss=0.0001, val_loss=0.0021 — 21× gap, stable since epoch 2 across 14
+epochs of job 23936932. An external critique prompted a full audit of every suggested fix.
+
+**Verdict on each suggestion:**
+
+| Suggestion | Verdict | Reason |
+|---|---|---|
+| Weight decay → 0.1 | Low impact | Already 0.05 with correct AdamW (bias/norm excluded). Gap stable 14 epochs — more decay won't move it. |
+| Stochastic depth (drop path) | **Missing — highest priority** | Completely absent. 6-layer 768-dim transformer (~85M params). Linear drop-path schedule is the standard ViT regularizer. |
+| More dropout | Partial | Transformer has 0.1. UNetDecoder has **zero** dropout. ERA5/SIF/TWSA MLPs have **zero** dropout between linear layers. |
+| Early stopping | Already done | patience=20 wired and functional. |
+| Spatial/temporal split leakage | **Not the cause** | Agent confirmed: zero location-group overlap between train and val. Split is correctly isolated. 21× gap is genuine overfitting, not data contamination. |
+| ERA5 temporal masking | Missing | S2/S1 token dropout already active. ERA5 has all 365 days always visible — no masking. Masking 10–15% of ERA5 timesteps would force generalization. |
+| Augmentation (noise/crops) | Low priority | Token dropout covers spatial; temporal masking (ERA5) is the highest-value addition. Gaussian noise on ERA5/SIF/TWSA is secondary. |
+
+**Decision: apply all fixes + CLS depth tokens together in `cls_perdepth_huber`** — since
+baseline_huber is the clean reference point, the next run is the full package. Attribution
+of individual components is deferred; getting the best model matters more right now.
+
+---
+
+### 12.4 All fixes for `cls_perdepth_huber`
+
+`cls_perdepth_huber` = per-depth loss (§12.1) + all regularization fixes below + CLS depth
+tokens (§12.2). Fresh start — do NOT resume from 23936932's checkpoint.
+
+**Fix 1 — Stochastic depth in transformer** (`model.py`)
+
+Replace `nn.TransformerEncoder` with a custom stack using `timm`'s `DropPath` or a manual
+implementation. Linear schedule: layer `i` gets `drop_path_rate * i / (n_layers - 1)`.
+
+```python
+from timm.models.layers import DropPath
+
+class DropPathTransformerLayer(nn.Module):
+    def __init__(self, layer, drop_path_rate=0.0):
+        super().__init__()
+        self.layer = layer
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0 else nn.Identity()
+
+    def forward(self, x, src_key_padding_mask=None):
+        residual = x
+        x = self.layer(x, src_key_padding_mask=src_key_padding_mask)
+        return residual + self.drop_path(x - residual)
+```
+
+CONFIG: `"drop_path_rate": 0.1` (linear schedule, 0 at layer 0 → 0.1 at layer 5).
+
+**Fix 2 — Dropout in UNetDecoder** (`model.py`)
+
+Add `nn.Dropout(0.15)` after the second ReLU in each `_ConvBlock`, and a `nn.Dropout(0.1)`
+just before the final `self.head` conv in `UNetDecoder.forward`.
+
+**Fix 3 — Dropout in ERA5/SIF/TWSA MLPs** (`model.py`)
+
+Each auxiliary MLP (`era5_mlp`, `sif_mlp`, `twsa_mlp`) currently has no dropout between
+linear layers. Add `nn.Dropout(0.1)` between each pair of linear layers.
+
+**Fix 4 — ERA5 temporal masking** (`dataset.py`)
+
+In `__getitem__`, after loading ERA5 features, randomly zero out 10–15% of time steps
+during training (skip at val/test time):
+
+```python
+if self.split == "train":
+    mask = torch.rand(era5.shape[0]) < 0.15   # 15% of days
+    era5[mask] = 0.0
+    era5_pad[mask] = True   # mark as padding so transformer ignores them
+```
+
+**Validation before full run:**
+
+Step 1 — smoke test (5 stations, 3 epochs, ~10 min):
+```bash
+sbatch slurm/train.sh --run-name smoke_perdepth --max-stations 5 --max-epochs 3 --per-depth-loss
+```
+Pass: 3 epochs complete, no NaN loss, train_loss > baseline_huber smoke (regularization
+should raise training loss slightly — that is expected and correct).
+
+Step 2 — smoke test (~10 min):
+```bash
+sbatch slurm/train.sh --run-name smoke_cls --max-stations 5 --max-epochs 3 --per-depth-loss --use-cls-depth
+```
+Pass: 3 epochs complete, no NaN, train_loss slightly higher than baseline smoke (regularization raises training loss — expected).
+
+Step 3 — full run:
+```bash
+sbatch slurm/train.sh --run-name cls_perdepth_huber --per-depth-loss --use-cls-depth
+```
+
+---
+
+### 12.5 GPFS Checkpoint Buffering Bug — Post-Mortem (Session 14, 2026-06-17)
+
+**Symptom:** Job 23936932 ran 14 epochs and printed "New best val_loss — checkpoint saved" 7 times, but `last.pt` and `best.pt` on disk both contained epoch=3 state. `val_station_metrics.csv` also froze at epoch 3.
+
+**Diagnosis:** GPFS write buffering. `torch.save` on gcn128 writes into the GPFS client cache synchronously (returns immediately), but the data is only flushed to the storage servers asynchronously. When `scancel` terminated the job, ~1.2 GB of dirty checkpoint data per epoch (2 files × 600 MB) was in the cache and discarded. Epoch 3's data happened to survive because the initial cold-write of a 600 MB file triggered a flush due to cache pressure.
+
+**Confirming evidence:**
+- Direct I/O (`dd iflag=direct`) still read epoch=3 — rules out login-node page cache; the storage server genuinely had epoch=3.
+- `mid_epoch.pt` mtime 17:48 — GPFS writes worked fine for other files during the run; only the periodic 600 MB checkpoint *overwrites* were unbuffered late.
+- `val_station_metrics.csv` (58 KB) also froze at epoch=3 — the entire `if is_main:` block was running but I/O wasn't reaching storage.
+
+**Fix:** `_fsync_save(obj, path)` in `train.py` — calls `torch.save` then opens the file and calls `os.fsync(fd)` before returning. Overhead: ~6 s per 600 MB file (98.7 MB/s measured). Three saves per epoch (mid-epoch, pre-val, post-val) → ~18 s overhead on a ~480 s epoch (<4%).
+
+**Impact on 23936932 results:** val_loss plateaued at epoch 2 (0.0021); epoch 3 was already the best checkpoint. Loss of epochs 4–14 is immaterial.
+
+---
+
+### 12.6 Train / Val / OOS Split Audit (Session 14, 2026-06-17)
+
+**Station inventory (sm_only, Phase 1):**
+
+| Split | Count | Purpose |
+|---|---|---|
+| train | 587 | gradient updates |
+| val | 74 | early stopping, LR scheduling |
+| oos | 181 | final paper metrics, spatial maps |
+| **total sm_only** | **842** | — |
+
+`category_filter: ["sm_only"]` is hardcoded in CONFIG. The remaining 151 stations (sm_and_flux + flux_only) are excluded from Phase 1.
+
+**Distribution balance:**
+
+| Climate (kg_macro) | train | val | oos |
+|---|---|---|---|
+| A (tropical) | 4 | 1 | 0 |
+| B (arid) | 147 | 13 | 45 |
+| C (temperate) | 166 | 21 | 60 |
+| D (continental) | 267 | 39 | 76 |
+| E (polar) | 3 | 0 | 0 |
+
+| Land cover (IGBP macro) | train | val | oos |
+|---|---|---|---|
+| Forest | 257 (43.8%) | 36 (48.6%) | 76 (42.0%) |
+| Grass-Crop | 258 (43.9%) | 32 (43.2%) | 78 (43.1%) |
+| Shrub-Savanna | 38 (6.5%) | 4 (5.4%) | 16 (8.8%) |
+| Other | 34 (5.8%) | 2 (2.7%) | 11 (6.1%) |
+
+Climate and land cover fractions are proportional — no category is over/under-represented in any split.
+
+Elevation: val is slightly Low-heavy (49% vs 36% in train). Minor; not a concern.
+
+**Spatial stratification:** All 783 location groups fall entirely within one split — no nearby stations leak across train/val/oos. Val and OOS metrics are not inflated by spatial autocorrelation. This is the critical property for defensible paper results.
+
+**Planned evaluation workflow:**
+1. Train → early stop on val loss
+2. Best checkpoint → OOS inference → ubRMSE / MAE / bias per depth
+3. OOS predictions → spatial maps (predicted vs observed SM)
+4. Potentially: demo_plot.py for visual results
+
+OOS (181 stations, 21.5% of sm_only) is the number that goes in the paper. Val is internal only.
+
+---
+
+### 12.7 Smoke Test — smoke_cls (job 23956770, 2026-06-17)
+
+**Command:** `sbatch slurm/train.sh --run-name smoke_cls --max-stations 5 --max-epochs 3 --per-depth-loss --use-cls-depth`
+
+**Result: PASSED**
+
+- 3 epochs completed, no NaN, finite loss throughout
+- `_fsync_save` worked: "New best val_loss=0.0045 — checkpoint saved" at epoch 3
+- VRAM: 42.3 GB peak (vs 38.6 GB baseline — +3.7 GB from CLS FiLM layers, acceptable)
+- RAM: 177.8 GB / 811 GB (22%) — healthy
+
+Code is ready for full `cls_perdepth_huber` run.
+
+---
+
+### 12.8 Experiment sequence
+
+| Step | Action | Time | Purpose |
+|---|---|---|---|
+| 1 | `quick_test_perdepth.py` | seconds | catch NaN/shape bugs in per-depth loss |
+| 2 | `quick_test_cls.py` | seconds | catch shape/grad bugs in CLS arch |
+| 3 | smoke `smoke_cls` (5 stations, 3 epochs) | ~10 min | confirm all fixes together |
+| 4 | **full run `cls_perdepth_huber`** | ~85 h | full model vs `baseline_huber` |
+
+Steps 1–3 gate step 4.
+
+| Run | Changes vs baseline | Compares to |
+|---|---|---|
+| `baseline_huber` (23936932) | — | — |
+| `cls_perdepth_huber` | per-depth loss + stochastic depth + decoder/MLP dropout + ERA5 masking + CLS depth tokens | `baseline_huber` |
+
+---
+
+## 13. Meeting Evaluation & Visualization Plan (Session 15, 2026-06-18)
+
+Comprehensive evaluation and figure generation for the `baseline_huber` best checkpoint. Four new scripts, one SLURM job.
+
+### 13.1 Split Definitions
+
+| Split | `split_filter` | `years` | Purpose |
+|-------|---------------|---------|---------|
+| OOS  | `["oos"]` | 2016–2022 | Spatial generalization (181 held-out stations) |
+| OOT  | `["train","val"]` | `[2023]` | Temporal generalization (2023 is fully held-out year) |
+| OOST | `["oos"]` | `[2023]` | Spatial + temporal (hardest condition, 128 stations) |
+
+### 13.2 Scripts
+
+**`evaluate_splits.py`** — GPU inference across all 3 splits.
+- Reuses `evaluate()` + `compute_metrics()` from `train.py`
+- Adds Pearson R per station (computed from per-station preds/targets post-gather)
+- Outputs to `meeting_output/`:
+  - `metrics_summary.csv` — split × depth × {ubRMSE, RMSE, MAE, R, bias}
+  - `per_station_{oos|oot|oost}.csv` — per-station metrics joined with station metadata (IGBP, climate, lat/lon)
+
+**`plot_timeseries_meeting.py`** — GPU; needs inference.
+- Selects 5 best + 5 worst OOS stations by surface ubRMSE from step above
+- Per-station multi-panel figure: time series all 3 depths (all available years) + world map inset + metadata table + ERA5 precip bar
+
+**`plot_breakdown_meeting.py`** — CPU only; reads CSVs.
+- Violin plots: surface ubRMSE by IGBP macro and Koppen macro
+- Grouped bar: mean ubRMSE for OOS vs OOT vs OOST by IGBP macro
+- Depth comparison bar: 0-10 / 10-30 / 30-100 ubRMSE per split
+- Scatter predicted vs observed (3 depths, OOS, coloured by IGBP macro)
+
+**`plot_satellite_sm_meeting.py`** — GPU; uses zarr L3 tokens.
+- Applies to the same best-5 + worst-5 OOS stations
+- Loads `s2/l3` + `s1_asc/l3` tokens from zarr → PCA(3) → pseudo-RGB at 14×14 → bicubic 224×224
+- Runs inference → (n_depths, 224, 224) SM map
+- Figure per station: [S2 pseudo-RGB | S1 pseudo-SAR | SM 0-10 | SM 10-30 | SM 30-100]
+
+**`slurm/evaluate_meeting.sh`** — 1 GPU, 16 CPUs, 90 min.
+- Runs evaluate_splits.py → plot_timeseries_meeting.py → plot_satellite_sm_meeting.py sequentially
+
+### 13.3 Publication-Quality Plot Standards
+
+All figures use `plt.style.use(["science", "nature"])` (scienceplots), DPI=300, constrained layout.
+- Depth colours: `#e74c3c` (0-10), `#2980b9` (10-30), `#27ae60` (30-100) — consistent across all plots
+- Split colours: `#1a6faf` (OOS), `#e8851a` (OOT), `#9b59b6` (OOST)
+- SM spatial maps: `viridis` or `YlOrBr_r`, 0–0.5 m³/m³
+- All axes labelled with units; N annotated on box/violin plots
+
+### 13.4 Execution
+
+```bash
+# Step 1 — GPU job (~40 min)
+sbatch slurm/evaluate_meeting.sh
+
+# Step 2 — CPU, after step 1 completes (~5 min)
+conda activate terramind && python plot_breakdown_meeting.py
+
+# All outputs in meeting_output/
+```
+
+### 13.5 Sanity Checks
+
+After `evaluate_splits.py` completes:
+- OOT ubRMSE ≈ val ubRMSE (model saw these stations — temporal shift only)
+- OOS ubRMSE > val ubRMSE (novel stations — expected degradation)
+- OOST ubRMSE ≥ OOS (hardest: novel stations + novel year)
+- `metrics_summary.csv` should have 9 rows (3 splits × 3 depths)
+
+---
+
+## §14. Spatial Resolution Roadmap (future work)
+
+### 14.1 Current Limitation
+
+The model is **point-supervised**: the loss is computed only at the station pixel (112, 112).
+The output is `(n_depths, 224, 224)` but the effective spatial resolution is **14×14 tokens**
+(one TerraMind ViT token covers 16×16 pixels = 160m×160m at 10m/px).
+
+Consequences:
+- All 196 tokens receive the same gradient signal (from the single center pixel)
+- Global self-attention homogenises predictions → nearly uniform SM maps
+- The spatial decoder produces no meaningful spatial variation
+- Current `plot_spatial_sm_meeting.py` shows this: SM panels look like a flat colour
+
+### 14.2 What's Needed for 10m Spatial Maps
+
+Two changes are required simultaneously:
+
+**A. Spatial decoder (architecture change)**
+
+Replace the current output head with a U-Net-style decoder using the L3/L6/L9 skip connections
+already stored in zarr:
+
+```
+TerraMind L3 (14×14×768) ──► ConvTranspose 2× ──► 28×28×384  ──┐
+TerraMind L6 (14×14×768) ──► ConvTranspose 2× ──► 28×28×384  ──┤ FPN merge
+TerraMind L9 (14×14×768) ──► ConvTranspose 2× ──► 28×28×384  ──┘
+                              ConvTranspose 2× ──► 56×56×192
+                              ConvTranspose 2× ──► 112×112×96
+                              ConvTranspose 2× ──► 224×224×n_depths  (SM map)
+```
+
+The station point still anchors the absolute SM value; the decoder learns spatial variation.
+
+**B. Spatial supervision signals**
+
+One point per station cannot teach spatial variation. Options (weakest → strongest):
+
+| Signal | Resolution | Notes |
+|--------|-----------|-------|
+| SMAP L4 | 9 km, daily | Coarse; constrains patch-average SM |
+| S1 VV/VH backscatter | 10 m | Physically correlated with surface SM; self-supervised spatial regularisation |
+| S2 optical indices (NDVI, EVI, BSI) | 10 m | Vegetation/bare-soil proxies for SM retention |
+| Multiple ISMN stations in same tile | point | Rare; but exists for dense networks (e.g. SCAN, OzNet) |
+
+### 14.3 Recommended Approach (Phase 2)
+
+1. **Add lightweight U-Net decoder** to `model.py` (reuse L3/L6/L9 tokens already in zarr)
+2. **Keep point loss** at (112, 112) — stations still anchor absolute values
+3. **Add spatial regularisation loss**: for each sample, penalise large SM gradients in areas
+   where S2 spectral similarity is high (similar reflectance → similar SM)
+   `L_spatial = mean(|∇SM| * spectral_similarity_mask)`
+4. **Weak SMAP constraint**: compute patch-mean predicted SM and penalise deviation from
+   nearest SMAP L4 pixel (after bias correction)
+
+This is a meaningful PhD contribution — going from point-supervised SM estimation to
+spatially-resolved 10m SM mapping using only freely available satellite data.
+
+### 14.4 Expected Outcome
+
+- SM maps will show land-cover-driven spatial structure (crops vs. forest vs. urban)
+- Validation: compare spatial patterns against airborne / drone SM surveys (if available)
+  or use SMAP spatial correlation as a proxy metric
+- Model SROW/SCOL centre-pixel metrics will remain the primary accuracy benchmark
+
+### 14.5 Current Workaround (for meeting)
+
+The spatial figure (`plot_spatial_sm_meeting.py`) has been updated to show:
+- Real S2 true-colour RGB, S1 VV SAR, DEM, LULC (from `/projects/prjs1968/satellite_zarr/`)
+- SM panels show model output but spatial variation is limited — frame as point estimate
+- Future figures will replace flat SM panels with spatially-resolved maps once Phase 2 is done
