@@ -21,10 +21,10 @@ fuses frozen TerraMind vision-transformer embeddings of Sentinel-2 optical, Sent
 aperture-radar, elevation and land-cover imagery with ERA5-Land meteorological reanalysis,
 solar-induced chlorophyll fluorescence, GRACE terrestrial water-storage anomalies and static soil
 properties. A temporal transformer encodes irregularly sampled satellite time series through
-attention over acquisition dates, and a FiLM-modulated U-Net decoder reconstructs high-resolution
-224 × 224-pixel fields from sparse point labels, supervised on nearly 990 ISMN soil-moisture
-stations co-located with ICOS and AmeriFlux eddy-covariance towers that provide latent-heat
-(evapotranspiration) flux. On a fully held-out validation set of 74 stations, the converged model
+attention over acquisition dates, and a FiLM-modulated U-Net decoder reconstructs daily,
+10–100 m-resolution 224 × 224-pixel fields from sparse point labels, supervised on nearly 990
+ISMN soil-moisture stations co-located with 61 ICOS and 84 AmeriFlux eddy-covariance towers that
+provide latent-heat (evapotranspiration) flux. On a fully held-out validation set of 74 stations, the converged model
 retrieves daily volumetric soil moisture at three depths with unbiased RMSEs of 0.053, 0.049 and
 0.057 m³ m⁻³ (0–10, 10–30 and 30–100 cm) — each below the 0.07 m³ m⁻³ benchmark for satellite
 soil-moisture products — remaining stable across a 15-epoch optimisation, with initial
@@ -44,8 +44,9 @@ retrievals stay coarse and surface-limited. We present a multimodal model that f
 TerraMind vision-transformer embeddings (Sentinel-2, Sentinel-1, elevation, land cover) with
 ERA5-Land, solar-induced fluorescence, GRACE water-storage anomalies and soil properties. A
 temporal transformer plus a FiLM-modulated U-Net decoder downscales sparse point labels — from
-~990 ISMN soil-moisture stations co-located with ICOS/AmeriFlux latent-heat flux towers — into
-high-resolution, multi-depth maps. On a fully held-out validation set, surface unbiased RMSE
+~990 ISMN soil-moisture stations co-located with 61 ICOS and 84 AmeriFlux latent-heat flux towers
+— into daily, 10–100 m-resolution, multi-depth maps. On a fully held-out validation set, surface
+unbiased RMSE
 reaches 0.053 m³ m⁻³ (0.049–0.057 across depths), below the 0.07 m³ m⁻³ benchmark, with
 out-of-sample correlations up to R ≈ 0.69 — supporting drought monitoring, irrigation and
 water-resource management, and land-surface-model evaluation.
@@ -66,4 +67,8 @@ water-resource management, and land-surface-model evaluation.
 - **Correlation R ≈ 0.69 is still preliminary:** from a 10-station OOS smoke (`text/logs.txt`
   session 18). The full OOS eval (job 23992292) was **cancelled and never ran** — rerun it for a
   converged OOS table (ubRMSE/R over ~180 stations) and replace the R figure when available.
+- **Site counts** (`csvs/station_splits.csv`): 842 ISMN, 90 AmeriFlux, 61 ICOS = 993 total.
+  Flux-providing (`has_flux=True`): 61 ICOS + 84 AmeriFlux = 145 towers (6 AmeriFlux lack the flux
+  flag) — abstract cites 61 ICOS / 84 AmeriFlux for the flux co-location claim.
+- **Resolution:** 10–100 m spatial (Sentinel native ground sample distance), daily temporal.
 - "~990 stations" = 993 active ISMN; Phase-1 split 587 train / 74 val / 181 OOS (sm_only).
