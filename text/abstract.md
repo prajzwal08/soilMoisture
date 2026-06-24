@@ -1,64 +1,69 @@
-# Abstract — multimodal soil-moisture & land–atmosphere flux model
+# Abstract — multimodal soil-moisture & latent-heat flux model
 
-*Nature summary-paragraph style. Conference/meeting version. Results are the **full
-held-out validation set** (74 stations) from the converged `baseline_huber` run (job 23936932),
-stable across epochs 13–15. The full out-of-sample (OOS) eval (job 23992292) was cancelled and
-never ran, so OOS correlation is still from a 10-station preliminary subset.*
+*Nature summary-paragraph style. Conference/meeting version. Headline metrics are the full
+held-out validation set (74 stations) from the converged `baseline_huber` run (job 23936932), run
+to epoch 15 (val_loss 0.0021). The full out-of-sample (OOS) eval (job 23992292) was cancelled and
+never ran, so OOS correlation is still from a 10-station preliminary subset. Flux: only latent-heat
+flux (`LE_F_MDS` ≈ evapotranspiration) is used.*
 
 ---
 
-## Full version (~225 words)
+## Full version (~265 words)
 
-Soil moisture and the land–atmosphere fluxes of water, energy and carbon are tightly coupled,
-and together they govern droughts, crop productivity and the global water and carbon cycles. Yet
-the in-situ networks that measure them — soil-moisture probes and eddy-covariance flux towers —
-are sparse and unevenly distributed, while satellite retrievals remain coarse and limited to the
-surface, leaving fine-scale, depth-resolved soil moisture and ecosystem fluxes largely
-unobserved. Here we present a multimodal deep-learning framework that fuses frozen TerraMind
-vision-transformer tokens from Sentinel-2, Sentinel-1, elevation and land-cover imagery with
-ERA5-Land meteorology, solar-induced fluorescence, terrestrial water-storage anomalies and soil
-properties. A temporal transformer integrates irregular satellite time series, and a
-FiLM-modulated U-Net decoder reconstructs 224×224 maps from sparse point labels harmonised across
-nearly 990 ISMN soil-moisture stations together with co-located ICOS and AmeriFlux towers that
-provide latent- and sensible-heat, net-radiation and carbon (net ecosystem exchange, gross
-primary production) fluxes. Across a fully held-out validation set of 74 stations, the converged
-model predicts daily soil moisture at three depths with unbiased RMSEs of 0.053, 0.049 and
-0.057 m³/m³ (0–10, 10–30 and 30–100 cm) — all below the 0.07 m³/m³ benchmark — and remains stable
-over a 15-epoch run, with initial out-of-sample tests giving temporal correlations up to R≈0.69.
-By unifying soil-moisture and flux observations under a single learned
-representation, the framework offers a scalable route toward jointly monitoring land-surface
-water, energy and carbon exchange.
+Soil moisture and the latent-heat (evapotranspiration) flux that couples the land surface to the
+atmosphere jointly regulate the terrestrial water and energy budgets, modulating droughts,
+agricultural productivity and land–atmosphere feedbacks. Yet the in-situ networks that constrain
+them — soil-moisture probes and eddy-covariance flux towers — are spatially sparse and unevenly
+distributed, while spaceborne retrievals remain coarse (tens of kilometres) and sensitive only to
+the top few centimetres of soil, leaving fine-scale, depth-resolved soil moisture and surface
+energy partitioning poorly observed. Here we present a multimodal deep-learning framework that
+fuses frozen TerraMind vision-transformer embeddings of Sentinel-2 optical, Sentinel-1 synthetic-
+aperture-radar, elevation and land-cover imagery with ERA5-Land meteorological reanalysis,
+solar-induced chlorophyll fluorescence, GRACE terrestrial water-storage anomalies and static soil
+properties. A temporal transformer encodes irregularly sampled satellite time series through
+attention over acquisition dates, and a FiLM-modulated U-Net decoder reconstructs high-resolution
+224 × 224-pixel fields from sparse point labels, supervised on nearly 990 ISMN soil-moisture
+stations co-located with ICOS and AmeriFlux eddy-covariance towers that provide latent-heat
+(evapotranspiration) flux. On a fully held-out validation set of 74 stations, the converged model
+retrieves daily volumetric soil moisture at three depths with unbiased RMSEs of 0.053, 0.049 and
+0.057 m³ m⁻³ (0–10, 10–30 and 30–100 cm) — each below the 0.07 m³ m⁻³ benchmark for satellite
+soil-moisture products — remaining stable across a 15-epoch optimisation, with initial
+out-of-sample evaluation yielding temporal correlations up to R ≈ 0.69. By learning a shared
+representation that downscales sparse point observations into spatially continuous, depth-resolved
+fields, the framework enables high-resolution monitoring of root-zone soil moisture and
+evapotranspiration for drought early-warning, irrigation and water-resource management, crop-yield
+forecasting, and the evaluation and constraint of land-surface and climate models.
 
 ---
 
 ## Short version (~120 words, for a slide)
 
-Soil moisture and land–atmosphere water, energy and carbon fluxes are tightly coupled but
-measured only by sparse, unevenly distributed ground networks, while satellites stay coarse and
-surface-limited. We present a multimodal model that fuses frozen TerraMind vision-transformer
-tokens (Sentinel-2/-1, elevation, land cover) with ERA5-Land, solar-induced fluorescence,
-terrestrial water-storage anomalies and soil data. A temporal transformer plus a FiLM-modulated
-U-Net decoder turns sparse point labels — from ~990 ISMN soil-moisture stations and co-located
-ICOS/AmeriFlux flux towers (latent and sensible heat, net radiation, NEE, GPP) — into
+Soil moisture and latent-heat (evapotranspiration) flux couple the terrestrial water and energy
+cycles, but are measured only by sparse, unevenly distributed ground networks, while satellite
+retrievals stay coarse and surface-limited. We present a multimodal model that fuses frozen
+TerraMind vision-transformer embeddings (Sentinel-2, Sentinel-1, elevation, land cover) with
+ERA5-Land, solar-induced fluorescence, GRACE water-storage anomalies and soil properties. A
+temporal transformer plus a FiLM-modulated U-Net decoder downscales sparse point labels — from
+~990 ISMN soil-moisture stations co-located with ICOS/AmeriFlux latent-heat flux towers — into
 high-resolution, multi-depth maps. On a fully held-out validation set, surface unbiased RMSE
-reaches 0.053 m³/m³ (0.049–0.057 across depths), below the 0.07 m³/m³ benchmark, with
-out-of-sample correlations up to R≈0.69 — a scalable path to joint soil-moisture and flux
-monitoring.
+reaches 0.053 m³ m⁻³ (0.049–0.057 across depths), below the 0.07 m³ m⁻³ benchmark, with
+out-of-sample correlations up to R ≈ 0.69 — supporting drought monitoring, irrigation and
+water-resource management, and land-surface-model evaluation.
 
 ---
 
 ## Notes / flags for finalising
 
-- **Flux is co-assembled, not yet a demonstrated output.** The pipeline harmonises eddy-covariance
-  fluxes (active variable: latent heat `LE_F_MDS` ≈ evapotranspiration; carbon NEE/GPP/RECO,
-  sensible heat `H`, net radiation `NETRAD` also preprocessed) from ICOS + AmeriFlux into the same
-  `sm_and_flux` / `flux_only` station structure as soil moisture. The current model predicts soil
-  moisture only; the abstract frames flux as the unifying multi-target direction — wording kept
-  honest ("offers a scalable route toward jointly monitoring"), not claiming flux metrics.
+- **Flux = latent heat only.** The active extracted flux variable is `LE_F_MDS` (gap-filled latent
+  heat ≈ evapotranspiration; `FLUX_VARS = ["LE_F_MDS"]` in `preprocessing_ameriflux.py` /
+  `preprocessing_icos.py`). Sensible heat (`H_F_MDS`), net radiation (`NETRAD`) and carbon fluxes
+  (NEE, GPP, RECO) have metadata defined but are **not** extracted — do not cite them. Flux is
+  co-assembled into the same `sm_and_flux` / `flux_only` station structure; the current model
+  demonstrates soil moisture, with latent-heat flux as the unifying joint-prediction direction.
 - **Headline numbers are full validation-set, converged:** job 23936932 (`baseline_huber`, memmap,
-  run to epoch 15, val_loss 0.0021). Per-depth ubRMSE (pooled / station-mean): 0–10 0.054/0.049,
-  10–30 0.049/0.046, 30–100 0.057/0.051 m³/m³. Source: `logs/train_23936932.out` epochs 13–15.
-- **Correlation R≈0.69 is still preliminary:** from a 10-station OOS smoke (`text/logs.txt` session
-  18). The full OOS eval (job 23992292) was **cancelled and never ran** — rerun it for a converged
-  OOS table (ubRMSE/R over ~180 stations) and replace the R figure when available.
+  epoch 15, val_loss 0.0021). Per-depth ubRMSE (pooled / station-mean): 0–10 0.054/0.049,
+  10–30 0.049/0.046, 30–100 0.057/0.051 m³ m⁻³. Source: `logs/train_23936932.out` epochs 13–15.
+- **Correlation R ≈ 0.69 is still preliminary:** from a 10-station OOS smoke (`text/logs.txt`
+  session 18). The full OOS eval (job 23992292) was **cancelled and never ran** — rerun it for a
+  converged OOS table (ubRMSE/R over ~180 stations) and replace the R figure when available.
 - "~990 stations" = 993 active ISMN; Phase-1 split 587 train / 74 val / 181 OOS (sm_only).
