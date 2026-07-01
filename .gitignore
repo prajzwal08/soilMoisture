@@ -15,4 +15,5 @@ old_*.py
 plots/
 latex/
 *.md
+!architecture.md
 wandb/
