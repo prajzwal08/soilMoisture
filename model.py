@@ -41,6 +41,35 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+class DropPath(nn.Module):
+    """Stochastic depth: drop the entire layer residual with probability drop_prob."""
+    def __init__(self, drop_prob: float = 0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.training or self.drop_prob == 0.0:
+            return x
+        keep = 1.0 - self.drop_prob
+        noise = x.new_empty(x.shape[0], *([1] * (x.ndim - 1))).bernoulli_(keep).div_(keep)
+        return x * noise
+
+
+class DropPathTransformerLayer(nn.Module):
+    """nn.TransformerEncoderLayer wrapped with stochastic depth on the combined residual."""
+    def __init__(self, layer: nn.TransformerEncoderLayer, drop_prob: float = 0.0):
+        super().__init__()
+        self.layer = layer
+        self.drop_path = DropPath(drop_prob)
+
+    def forward(self, x: torch.Tensor, src_key_padding_mask=None) -> torch.Tensor:
+        y = self.layer(x, src_key_padding_mask=src_key_padding_mask)
+        if self.drop_path.drop_prob > 0.0:
+            return x + self.drop_path(y - x)
+        return y
+
+
 # ── Positional encoding ──────────────────────────────────────────────────────
 
 def circular_doy_pe(doys: torch.Tensor, dim: int = 768) -> torch.Tensor:
@@ -149,6 +178,7 @@ class _ConvBlock(nn.Module):
             nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(0.15),
         )
 
     def forward(self, x):
@@ -166,15 +196,17 @@ class UNetDecoder(nn.Module):
 
     def __init__(
         self,
-        in_ch:     int   = 768,
-        skip_ch:   int   = 768,
-        dec_ch:    tuple = (512, 256, 128, 64),
-        n_depths:  int   = 3,
-        d_context: int   = 768,
+        in_ch:         int   = 768,
+        skip_ch:       int   = 768,
+        dec_ch:        tuple = (512, 256, 128, 64),
+        n_depths:      int   = 3,
+        d_context:     int   = 768,
+        use_cls_depth: bool  = False,
     ):
         super().__init__()
         c = dec_ch
-        self.n_depths = n_depths
+        self.n_depths      = n_depths
+        self.use_cls_depth = use_cls_depth
 
         self.bottle_proj = nn.Conv2d(in_ch, c[0], 1)
         self.skip_proj   = nn.ModuleList([
@@ -200,10 +232,17 @@ class UNetDecoder(nn.Module):
         self.up4   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.conv4 = _ConvBlock(c[3], c[3])
 
-        self.head = nn.Conv2d(c[3], n_depths, 1)
+        self.pre_head_drop = nn.Dropout(0.1)
 
-    def forward(self, bottleneck, skip_L9, skip_L6, skip_L3, context):
-        # context: (B, d_context) — temporal summary from the Transformer
+        if use_cls_depth:
+            self.depth_film = nn.ModuleList([FiLMLayer(d_context, c[3]) for _ in range(n_depths)])
+            self.heads      = nn.ModuleList([nn.Conv2d(c[3], 1, 1) for _ in range(n_depths)])
+        else:
+            self.head = nn.Conv2d(c[3], n_depths, 1)
+
+    def forward(self, bottleneck, skip_L9, skip_L6, skip_L3, context, depth_ctx=None):
+        # context:   (B, d_context) — global temporal summary for skip FiLM
+        # depth_ctx: (B, n_depths, d_context) — per-depth CLS context (optional)
         x   = self.bottle_proj(bottleneck)
         s9  = self.film_s9(self.skip_proj[0](skip_L9), context)
         s6  = self.film_s6(self.skip_proj[1](skip_L6), context)
@@ -220,7 +259,15 @@ class UNetDecoder(nn.Module):
 
         x = self.up4(x)
         x = self.conv4(x)
-        return self.head(x)                                             # (B, n_depths, 224, 224)
+        x = self.pre_head_drop(x)
+
+        if self.use_cls_depth and depth_ctx is not None:
+            depth_maps = []
+            for d in range(self.n_depths):
+                x_d = self.depth_film[d](x, depth_ctx[:, d, :])
+                depth_maps.append(self.heads[d](x_d))
+            return torch.cat(depth_maps, dim=1)                        # (B, n_depths, 224, 224)
+        return self.head(x)                                            # (B, n_depths, 224, 224)
 
 
 # ── Soil encoder ─────────────────────────────────────────────────────────────
@@ -288,14 +335,17 @@ class SoilMoistureModel(nn.Module):
 
     def __init__(
         self,
-        n_depths: int = 3,
-        d_model:  int = 768,
-        n_heads:  int = 12,
-        n_layers: int = 6,
+        n_depths:      int   = 3,
+        d_model:       int   = 768,
+        n_heads:       int   = 12,
+        n_layers:      int   = 6,
+        drop_path_rate: float = 0.1,
+        use_cls_depth:  bool  = False,
     ):
         super().__init__()
-        self.d_model  = d_model
-        self.n_depths = n_depths
+        self.d_model       = d_model
+        self.n_depths      = n_depths
+        self.use_cls_depth = use_cls_depth
 
         # ── Encoders ──────────────────────────────────────────────────
         self.soil_encoder = SoilEncoder(d_model=d_model)
@@ -303,12 +353,13 @@ class SoilMoistureModel(nn.Module):
         self.era5_mlp = nn.Sequential(
             nn.Linear(19, 256),
             nn.GELU(),
+            nn.Dropout(0.1),
             nn.Linear(256, d_model),
         )
 
         # SIF and TWSA MLP encoders (scalar → token)
-        self.sif_mlp  = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Linear(256, d_model))
-        self.twsa_mlp = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Linear(256, d_model))
+        self.sif_mlp  = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
+        self.twsa_mlp = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
 
         # ── Modality type embeddings ───────────────────────────────────
         # Soil tokens
@@ -337,24 +388,36 @@ class SoilMoistureModel(nn.Module):
         self.spatial_row_emb = nn.Embedding(14, d_model)
         self.spatial_col_emb = nn.Embedding(14, d_model)
 
-        # ── Temporal transformer ──────────────────────────────────────
-        enc_layer = nn.TransformerEncoderLayer(
-            d_model         = d_model,
-            nhead           = n_heads,
-            dim_feedforward = d_model * 4,
-            dropout         = 0.1,
-            batch_first     = True,
-            norm_first      = True,
-        )
-        self.transformer = nn.TransformerEncoder(enc_layer, num_layers=n_layers)
+        # ── Temporal transformer with stochastic depth ────────────────
+        dpr = [drop_path_rate * i / max(n_layers - 1, 1) for i in range(n_layers)]
+        self.transformer_layers = nn.ModuleList([
+            DropPathTransformerLayer(
+                nn.TransformerEncoderLayer(
+                    d_model         = d_model,
+                    nhead           = n_heads,
+                    dim_feedforward = d_model * 4,
+                    dropout         = 0.1,
+                    batch_first     = True,
+                    norm_first      = True,
+                ),
+                drop_prob = dpr[i],
+            )
+            for i in range(n_layers)
+        ])
+        self.transformer_norm = nn.LayerNorm(d_model)
+
+        # ── Depth-specific CLS tokens (one per depth, attend across all tokens) ──
+        if use_cls_depth:
+            self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
 
         # ── U-Net decoder ─────────────────────────────────────────────
         self.decoder = UNetDecoder(
-            in_ch     = d_model,
-            skip_ch   = d_model,
-            dec_ch    = (512, 256, 128, 64),
-            n_depths  = n_depths,
-            d_context = d_model,
+            in_ch          = d_model,
+            skip_ch        = d_model,
+            dec_ch         = (512, 256, 128, 64),
+            n_depths       = n_depths,
+            d_context      = d_model,
+            use_cls_depth  = use_cls_depth,
         )
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -619,22 +682,42 @@ class SoilMoistureModel(nn.Module):
             spatial_tokens,
         )
 
-        ctx = self.transformer(seq, src_key_padding_mask=key_mask)    # (B, T, 768)
+        # ── 6b. Prepend depth CLS tokens if enabled ───────────────────
+        depth_offset = 0
+        if self.use_cls_depth:
+            depth_offset = self.n_depths
+            depth_tok = self.depth_tokens.unsqueeze(0).expand(B, -1, -1)  # (B, n_depths, 768)
+            seq      = torch.cat([depth_tok, seq], dim=1)
+            cls_pad  = torch.zeros(B, self.n_depths, device=seq.device, dtype=torch.bool)
+            key_mask = torch.cat([cls_pad, key_mask], dim=1)
 
-        # ── 7. Extract spatially-structured bottleneck ─────────────────
-        spatial_ctx = ctx[:, spatial_start : spatial_start + 196, :]  # (B, 196, 768)
+        # ── 6c. Run transformer (manual loop for stochastic depth) ────
+        x = seq
+        for layer in self.transformer_layers:
+            x = layer(x, src_key_padding_mask=key_mask)
+        ctx = self.transformer_norm(x)                                 # (B, T, 768)
+
+        # ── 7. Extract depth CLS context and spatial bottleneck ───────
+        depth_ctx   = None
+        if self.use_cls_depth:
+            depth_ctx = ctx[:, :self.n_depths, :]                     # (B, n_depths, 768)
+
+        sp_start    = spatial_start + depth_offset
+        spatial_ctx = ctx[:, sp_start : sp_start + 196, :]            # (B, 196, 768)
         bottleneck  = spatial_ctx.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
                                                                        # (B, 768, 14, 14)
 
         # ── 8. Temporal context for FiLM: mean-pool non-spatial tokens ─
-        # Excludes the spatial tokens (used as bottleneck) and padding tokens.
+        # Excludes depth CLS tokens, spatial tokens, and padding tokens.
         ctx_mask  = (~key_mask).clone()                                # True = valid
-        ctx_mask[:, spatial_start:spatial_start + 196] = False        # exclude spatial
+        if self.use_cls_depth:
+            ctx_mask[:, :self.n_depths] = False                        # exclude depth CLS
+        ctx_mask[:, sp_start : sp_start + 196] = False                 # exclude spatial
         ctx_float = ctx_mask.float().unsqueeze(-1)                     # (B, T, 1)
         context   = (ctx * ctx_float).sum(1) / ctx_float.sum(1).clamp(min=1)  # (B, 768)
 
-        # ── 9. U-Net decoder → SM map (+ optional var) ────────────────
-        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3, context)
+        # ── 9. U-Net decoder → SM map ─────────────────────────────────
+        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3, context, depth_ctx)
 
 
 # ── Loss ─────────────────────────────────────────────────────────────────────
@@ -645,13 +728,30 @@ def masked_huber_loss(
     station_row: int   = SoilMoistureModel.STATION_ROW,
     station_col: int   = SoilMoistureModel.STATION_COL,
     delta:       float = 0.05,
+    per_depth:   bool  = False,
 ) -> torch.Tensor:
     pred = sm_map[:, :, station_row, station_col]                      # (B, n_depths)
-    mask = ~torch.isnan(label)
 
+    if per_depth:
+        # Equal gradient weight per depth: compute Huber separately for each depth,
+        # then mean across depths that have at least one valid observation.
+        # Prevents the high-variance surface layer from dominating deeper layers.
+        depth_losses = []
+        for d in range(pred.shape[1]):
+            mask_d = ~torch.isnan(label[:, d])
+            if mask_d.any():
+                depth_losses.append(
+                    F.huber_loss(pred[mask_d, d], label[mask_d, d], delta=delta, reduction="mean")
+                )
+        if not depth_losses:
+            return pred.sum() * 0.0
+        return torch.stack(depth_losses).mean()
+
+    # Default: pool all valid (batch × depth) pairs into one mean — preserves
+    # backward compatibility with baseline runs.
+    mask = ~torch.isnan(label)
     if not mask.any():
         return pred.sum() * 0.0
-
     return F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
 
 

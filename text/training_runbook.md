@@ -1558,3 +1558,377 @@ The spatial figure (`plot_spatial_sm_meeting.py`) has been updated to show:
 - Real S2 true-colour RGB, S1 VV SAR, DEM, LULC (from `/projects/prjs1968/satellite_zarr/`)
 - SM panels show model output but spatial variation is limited — frame as point estimate
 - Future figures will replace flat SM panels with spatially-resolved maps once Phase 2 is done
+
+---
+
+## §15. TerraMind Embedding Diagnostic (Tier-0) — Session 17, 2026-07-01
+
+**Motivation.** §14 shows SM maps are nearly flat and §12.3 shows a persistent 21× train/val
+gap. Before investing in a spatial decoder (§14) or more regularization (§12.4), we must answer
+a prior question: **do the frozen TerraMind L12 tokens actually carry scene-tracking,
+land-cover-discriminative structure, or do they wash out to a near-constant embedding?** The
+answer forks the roadmap:
+
+- **Rich, scene-tracking tokens → Tier 1** — the information exists; the problem is downstream
+  flattening (pyramid mean-pool §3e, global attention homogenisation §14.1). Fix the decoder.
+- **Flat wash → Tier 2** — the tokenization/input itself is uninformative. No decoder can
+  recover signal that isn't there; fix inputs/tokenization first.
+
+Deliverable: a per-station figure (raw scene → token L2 norm → PCA→RGB) read against a Tier-0
+checklist, for 4 land-cover-contrasting held-out stations.
+
+### 15.1 Verified data facts (recon 2026-07-01)
+
+Token store: `/gpfs/scratch1/shared/pkhanal/zarr/{category}/{station}/`
+(`/scratch-shared/pkhanal` is a symlink to the same path). **Open with
+`zarr.open_consolidated(path)`** — plain `open_group` returns empty (store uses `.zmetadata`).
+993 stores on disk (sm_only 842, sm_and_flux 48, flux_only 103); no `.complete` sentinels —
+treat "dir opens via open_consolidated" as completeness.
+
+Per-station structure (verified on `ISMN_AMMA-CATCH_Banizoumbou`):
+
+| path | shape | dtype | notes |
+|---|---|---|---|
+| `s2/{l3,l6,l9,l12}` | `(N,196,768)` | fp16 | 196 = 14×14 tokens |
+| `s2/dates` | `(N,)` | U8 | `YYYYMMDD` |
+| `s1_asc/{l3,l6,l9,l12}` + `dates` + `token_mask (M,14,14) bool` | `(M,196,768)` | fp16 | |
+| `s1_desc/*` | — | — | **present only if orbit exists** (absent for this station) |
+| `cm/masks` | `(N,224,224)` | uint8 | **0 = clear, nonzero = cloud/shadow** |
+| `cm/dates` | `(N,)` | U8 | **index-aligned 1:1 with `s2/dates`** (verified N∩N = N) |
+| `dem`, `lulc` | `(196,768)` | fp16 | single static L12 embedding (not replicated over T) |
+| `dem_token_mask`, `lulc_token_mask` | `(14,14)` | bool | |
+
+Both original recon blockers are resolved by the data itself: cloud masks are inline and
+index-aligned (no external store / SCL fallback), and every modality carries explicit `dates`
+(token index → date mapping is guaranteed). Written by `create_token_zarr.py`.
+
+Raw imagery (for the "raw scene" column): `/projects/prjs1968/satellite_zarr/<Network>_<station>.zarr`
+— `s2/data (T,12,224,224)` int16 + `s2/dates`; attrs `pixel_size_m=10`, `patch_size_px=224`
+→ 2.24 km patch; lat/lon/epsg present.
+
+Station metadata: `csvs/station_splits.csv` (993 rows). On-disk dir name =
+`ISMN_{network}_{station_name}` (ISMN) / `{source_network}_{station_id}` (else) — matches 993/993.
+sm_only held-out land cover (from §12.6): **oos** Forest 76 / Grass-Crop 78 / Shrub-Savanna 16 /
+Other 11; climate B 45 / C 60 / D 76 / A 0 / E 0. **val** has the only tropical-A held-out station.
+
+### 15.2 Decisions (locked with user)
+
+1. **Seasons: climate-aware.** Temperate → DJF/MAM/JJA/SON with Southern-Hemisphere 6-month
+   flip; Köppen A/B (tropical/arid) → wet/dry. Derived from latitude + `kg_macro`.
+2. **Station pool: held-out only** — `split ∈ {val, oos}`.
+3. **Cloud-free: whole-patch fraction** — acquisition qualifies if `mean(cm_mask != 0) < 0.08`
+   over the full 224×224 patch.
+
+### 15.3 Procedure
+
+Script `visualize_embeddings.py` (env `terramind` — zarr/torch/rasterio). Output → `embed_viz_output/`.
+SLURM wrapper `slurm/visualize_embeddings.sh` (CPU-only; include
+`--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhanal@gmail.com`).
+
+**Phase 1 — station selection (4 contrasting, held-out).** From `split ∈ {val, oos}` with an
+openable store, pick 4 contrasting IGBP×Köppen classes: Forest (C/D), Grass-Crop (D),
+Shrub-Savanna (B arid), and a tropical-A/wetland/"Other" station. Keep only candidates with
+(a) ≥1 whole-patch cloud-free S2 acquisition per climate-aware season, (b) raw+token stores
+present, (c) geographic spread; prefer stations with `s1_desc` (degrade gracefully if absent).
+Print the 4 for sign-off.
+
+**Phase 2 — date selection.** S2: per season, the acquisition minimizing whole-patch cloud
+fraction (<0.08); `s2/dates[i]` → token slice `i` directly; skip ~all-zero slices
+(`abs(tok).max()<1e-6`) or mostly-false `token_mask`. S1 (asc + desc if present): no cloud
+filter; 4 dates spanning the year, matched to S2 where possible. DEM/LULC: one static embedding.
+
+**Phase 3 — visualization (L12 only).** Per station: rows = modality (S2×4 seasons, S1 asc,
+S1 desc if present, DEM, LULC); columns = raw scene → per-token L2 norm (14×14) → PCA→RGB (14×14).
+Raw S2 RGB from B4/B3/B2 of the 12-band int16 stack (~/10000, clip; confirm band indices vs
+attrs). Reshape `[196]→[14,14]` row-major; verify orientation vs raw scene, transpose/flip if
+mirrored. Grey out invalid tokens via `token_mask`/`*_token_mask`. Shared norm/colormap across
+the 4 S2 seasons; PCA sign/rotation arbitrary — compare boundaries, not hues. Per-panel metrics:
+off-diagonal mean cosine, PCA top-3 variance ratio, neighbor autocorrelation.
+
+**Phase 4 — verdict.** Read each figure against the Tier-0 checklist; record per-station verdict
++ aggregate call (Tier 1 vs Tier 2) here.
+
+### 15.4 Verification checklist
+
+1. Phase 1 dry-run prints 4 stations + per-season cloud-free dates; every season has a qualifying
+   acquisition.
+2. Assert `s2/dates == cm/dates` element-wise per station at load.
+3. Render one station first; fix raw-vs-PCA orientation and S2 RGB band mapping before batching all 4.
+4. DEM/LULC panels non-degenerate; S1 asc ≠ desc where both exist.
+5. Inspect `embed_viz_output/*.png`; write the Tier verdict in this section.
+
+### 15.5 Notes
+
+- `graphify` CLI is not installed on this host (`command not found`) despite the repo hook;
+  code questions answered by reading source directly.
+
+### 15.6 Verdict — spatial structure collapses at L12 (Session 17, 2026-07-01)
+
+`visualize_embeddings.py` written and run on the 4 selected held-out stations (figures in
+`embed_viz_output/embed_<station>.png`): PSA7Ruebezahl (Forest, Dfb), Balruddery (Grass-Crop,
+Cfb), YucaipaValley (Shrub-Savanna, BSk), DWDBerlin-Spaeth (Other, Dfb). Figure = per-layer
+PCA→RGB sweep (raw scene → L3 → L6 → L9 → L12), one modality-acquisition per row.
+
+**Quantitative Tier-0 metrics** — `neighbor_ac` = spatial autocorrelation of the per-token L2
+norm map (higher ⇒ tokens vary smoothly like the scene), averaged over the 4 cloud-free S2
+seasons per station:
+
+| Station (IGBP) | L3 | L6 | L9 | **L12** |
+|---|---|---|---|---|
+| PSA7 (Forest) | +0.92 | +0.89 | +0.86 | **+0.10** |
+| Balruddery (Grass-Crop) | +0.54 | +0.53 | +0.48 | **−0.01** |
+| Yucaipa (Shrub-Savanna) | +0.72 | +0.73 | +0.72 | **+0.23** |
+| Berlin-Späth (Other) | +0.59 | +0.53 | +0.51 | **+0.02** |
+
+`offdiag_cos` stays ~0.4–0.65 across layers (tokens are distinct, NOT collapsed to identical);
+`pca_top3` captures 0.29–0.65 of variance at L3 (shallow maps are genuine structure, not noise).
+
+**Verdict: Tier 1, not Tier 2.** Scene structure is richly present and spatially coherent through
+L3/L6/L9 (autocorr +0.47…+0.92) and **collapses to ~0 at L12** in all 4 stations — deep global
+attention scrambles token locality (classic ViT behaviour; matches §14.1). Tokenization/input is
+fine. The problem is downstream: the temporal transformer is fed **L12 pyramid tokens** (§3e) —
+the layer where spatial structure is gone — while the spatially-rich L3/L6/L9 enter only as U-Net
+decoder skips (§8.5b, §14.2). This is the mechanism behind §14's flat SM maps.
+
+**Recommended next step (Phase 2 / Tier-1 fix):** route L3/L6/L9 spatial structure more directly
+into the prediction path (e.g. pool/attend over L9 instead of L12 for the transformer, or a
+stronger FPN over the L3/L6/L9 skips), rather than relying on L12 for the main representation.
+
+**Caveat on the figure:** per-panel PCA with 2–98% per-channel percentile stretch makes L3–L9
+maps *look* like high-frequency "confetti" in thumbnails despite high autocorrelation — trust the
+`neighbor_ac` numbers over the RGB appearance. A norm-map column (or smoothed PCA) would show the
+coherence more directly if the figure is used for a talk.
+
+- Status: Phases 0–4 complete. Verdict recorded above; Tier-1 routing change deferred to Phase 2.
+
+### 15.7 How the metrics are computed & what we actually did
+
+**What we did (procedure that produced §15.6).**
+1. Selected 4 held-out (`split ∈ {val, oos}`) stations with contrasting IGBP×Köppen and 4
+   cloud-free climate-aware seasons each (Phase 1 of `visualize_embeddings.py`).
+2. For each station, per S2 season, pulled the token grid at **each layer L3/L6/L9/L12**
+   (`s2/l{3,6,9,12}[i]`, shape `(196, 768)` = 14×14 tokens × 768 dims).
+3. Rendered `embed_<station>.png` (raw scene → per-layer PCA→RGB), and separately dumped the
+   three scalar metrics below, **averaged over the 4 seasons** per (station, layer) → the §15.6
+   table. Metrics live in `panel_metrics()` / `pca_rgb()` in `visualize_embeddings.py`.
+
+**Metric definitions** (per panel = one acquisition at one layer; N=196 tokens, each 768-d;
+padded tokens excluded via `token_mask` where present):
+
+- **`cos` — mean off-diagonal cosine similarity.** L2-normalise every token vector, form the
+  196×196 cosine matrix, average the strict upper triangle (all distinct token pairs).
+  `cos→1` ⇒ tokens near-identical (collapsed embedding); lower ⇒ tokens distinct.
+  Measures *content diversity*, not spatial layout.
+
+- **`ac` — neighbour autocorrelation of the token-norm map.** Reshape the per-token L2 norm to
+  14×14; take the Pearson correlation between horizontally-adjacent cells
+  (`nm[:, :-1]` vs `nm[:, 1:]`) over finite pairs. High positive ⇒ neighbouring tokens have
+  similar magnitude ⇒ smooth, scene-tracking spatial structure; ≈0 ⇒ spatially incoherent.
+  NOTE: (a) computed on the scalar **norm**, not the full 768-d vector — it is a *proxy* for
+  spatial locality; (b) **horizontal neighbours only** (vertical not yet included).
+
+- **`pca` — top-3 PCA variance ratios.** Center the 196 valid tokens, SVD; report
+  `S[k]²/ΣS²` for k=0,1,2. These are the fractions of total token variance shown as R/G/B in the
+  PCA→RGB image. Small values ⇒ the RGB shows only a sliver of the structure (looks noisy even
+  when tokens are structured — the "confetti" artifact of per-panel PCA + 2–98% percentile
+  stretch).
+
+**Measured vs. interpreted (calibration of the §15.6 verdict).**
+- *Directly measured:* (i) `cos(L12) ≈ 0.57–0.63` ≈ `cos(L3)` → L12 is **no more collapsed** than
+  shallow layers (tokens stay mutually distinct); (ii) `ac(L12) ≈ 0` vs `ac(L3/L6/L9) ≈ +0.5…+0.9`
+  → L12's **norm field** loses the spatial autocorrelation the shallow layers have; (iii) decent
+  `pca` at L3 → shallow structure is real signal, not noise.
+- *Interpretation (not proven by these numbers):* "L12 is spatially **scrambled by global
+  attention**." The scramble is inferred from the norm-map proxy; attention was not measured.
+  L12 could in principle retain spatial structure in vector directions the norm does not capture.
+
+**Direct test to remove the proxy (recommended before paper claims).** Per panel, compare mean
+cosine of **spatially-adjacent** token pairs vs **random** token pairs, on the full 768-d vectors:
+shallow layers should show adjacent ≫ random; if L12 shows adjacent ≈ random it *directly*
+demonstrates lost spatial locality (no norm proxy, no attention assumption). At scale, corroborate
+with **CKA across L3→L12** and a **land-cover linear probe per layer** on the 220 feasible stations.
+
+## §16. Tier-1 Diagnostic — where does spatial variance die downstream? (Session 18, 2026-07-01)
+
+**Goal.** Tier-0 (§15) measured the *frozen tokens* (no model). Tier-1 loads the **trained downstream
+weights** and asks which stage of the prediction path flattens the signal, using one forward pass per
+station. Checklist:
+- 1.1 Are target-day tokens still distinct after the temporal transformer, or homogenised by attention?
+- 1.2 Does the 14×14×768 bottleneck have spatial variance, or is it flat before the U-Net starts?
+- 1.3 If the bottleneck has variance but the 224² output is smooth → is the **decoder** smoothing?
+- 1.4 Net call: loss at **attention** (upstream) vs **conv upsampling** (downstream)?
+
+**Model probed.** `baseline_huber_memmap/best.pt` — the final full-train run (epoch 11, best_val≈0.00209,
+`use_cls_depth=False`). Loaded via `ckpt_utils.load_checkpoint` (remaps legacy keys, reads config).
+
+**Pipeline & taps** (all external hooks — `model.py` unchanged):
+```
+raw scene (S2 RGB / S1 VV)     ← recovered by matching anchor_l12 back to the token zarr
+  → L12 anchor tokens [196,768]   batch["anchor_l12"]                       (tap 1)
+  → temporal transformer + transformer_norm
+  → 196 spatial tokens reshaped = bottleneck [768,14,14]                    (tap 2)
+       = forward-PRE-hook input to model.decoder.bottle_proj
+  → U-Net decoder conv1/conv2/conv3  feature maps 28²/56²/112² (channel-mean) (taps 3–5)
+  → SM map [n_depths,224,224]      model forward return                     (tap 6)
+```
+Key structural facts confirmed while building the probe:
+- **Loss is single-pixel:** `masked_huber_loss` supervises only the station centre pixel (112,112);
+  `total_variation_loss` regularises the whole map toward smoothness.
+- **Decoder upsampling is BILINEAR, not transposed conv:** all four up-stages are
+  `nn.Upsample(mode="bilinear") → _ConvBlock` (`model.py:223-233`) — bilinear interpolation is an
+  intrinsically *smoothing* operator, so "distinct bottleneck → smooth output" is the expected decoder-side
+  failure mode.
+- The **transformer-output** and **bottleneck** taps are the *same tensor* (spatial slice reshaped), so the
+  genuine taps are L12 → bottleneck → decoder stages → output. This still cleanly separates the attention
+  side (L12→bottleneck) from the decoder side (bottleneck→output).
+- Continuity with Tier-0: the L12 fed to the transformer already lost norm-autocorrelation (`neighbor_ac`≈0,
+  §15.6) while staying content-distinct (`offdiag_cos`≈0.6). Spatially-rich L3/L6/L9 still enter as decoder
+  skips, so output structure (if any) may come from the skips, not the transformer path.
+
+**Metrics** (`tier1_probe.py`, reuses `panel_metrics`/`pca_rgb` from `visualize_embeddings.py`):
+- `offdiag_cos`, `neighbor_ac` — Tier-0-comparable token metrics on L12 and bottleneck.
+- `rel_spatial_std` — scale-free spatial dispersion of a token grid (per-feature std across the 196 cells /
+  per-feature magnitude, averaged).
+- `pc1_var_ratio` — fraction of token variance in PC1.
+- `norm_std` — normalised spatial std (std/|mean|) of each decoder-stage map and the output SM map.
+
+**Decision table (1.4):**
+
+| Observation | Culprit |
+|---|---|
+| bottleneck `cos` jumps toward ~0.9 (was ~0.6 at L12) AND `rel_spatial_std` drops sharply | **attention homogenises** — upstream |
+| bottleneck stays distinct but decoder-stage `norm_std` collapses toward the output | **decoder smooths** (bilinear + single-pixel loss) — downstream |
+| bottleneck already flat despite distinct L12 | reshape/projection between them |
+
+`verdict()` auto-applies this: attention-side if `cos_jump > 0.15` or `disp_ratio < 0.5`, else decoder-side.
+
+**Run.** Same 4 stations as Tier-0. Dataset built on **only those 4 stations** (subset splits CSV → ~4 not
+255). GPU SLURM job `slurm/tier1_probe.sh` (`conda run -n terramind`, mail flags). Outputs:
+`tier1_output/tier1_probe.png` (row per station: raw scene → L12 → transformer-out → decoder 28/56/112 →
+output) + `tier1_output/tier1_metrics.json` + printed verdict. First run: job **24349182**.
+
+**Snags fixed to get the run green** (job 24349536 = final):
+- The 4 held-out stores lack the `.complete` marker `dataset._open_zarr` requires (every group is
+  actually present). `tier1_probe.patch_open_zarr_no_marker()` bypasses ONLY the marker — no data changed.
+- `anchor_l3/l6/l9/l12` are fp16; decoder convs are fp32 → cast all floating batch tensors to fp32 in
+  the probe (`_prep`; training used autocast). Integer/bool tensors left untouched.
+
+### §16.1 Result — DECODER-SIDE collapse (Session 18, 2026-07-01)
+
+Job **24349536** COMPLETED. Four stations, anchor = most-recent clear acquisition nearest doy 180
+(2× S2, 2× S1_DESC — all dated 2023-06-27 / 2018-06-26). Averaged taps:
+
+| Tap | cos ↓ | rel_spatial_std | note |
+|---|---|---|---|
+| **L12 in** | 0.561 | 1.164 | distinct tokens, full spatial dispersion |
+| **Bottleneck (post-transformer)** | 0.329 | 1.106 | cos **drops** (tokens *more* distinct), dispersion preserved |
+| Decoder 28² / 56² / 112² (n-std) | — | 0.089 / 0.095 / 0.034 | structure survives to 56², collapses by 112² |
+| **Output SM 224²** (n-std) | — | **0.0065** | essentially uniform |
+
+**1.1** Tokens stay distinct after the transformer — `cos` *falls* 0.56→0.33 and `neighbor_ac` mostly
+*rises* (e.g. Yucaipa 0.006→0.236). Attention does **not** homogenise; if anything it re-sharpens.
+**1.2** Bottleneck has full spatial variance (`rel_spatial_std` 1.11 ≈ L12's 1.16). Not flat.
+**1.3** Decoder feature maps keep structure at 28²/56² (n-std ~0.09) then collapse: 112²→0.034,
+output→0.0065 (~14× drop from the mid-decoder to the head). The figure shows a bright **central
+hotspot** at the supervised pixel in the decoder maps while the rest goes flat — the network learned
+the (112,112) pixel and paints the surround uniform.
+**1.4 NET CALL → DECODER-SIDE.** The loss of spatial variance is at **conv upsampling**, not attention.
+Bilinear `Upsample`→conv (no transposed conv) + single-pixel (112,112) Huber supervision + TV
+smoothness give the decoder neither the mechanism nor the incentive to paint off-centre detail.
+
+**Recommended fix (Phase 2):** add spatial supervision so the whole 224² map is trained, not just the
+centre pixel — e.g. multi-pixel / patch loss around the station, an auxiliary dense target (ERA5-Land
+SM or a coarse SM product resampled to the tile), and/or replace bilinear upsampling with
+learned upsampling. Note this is complementary to §15.6's routing fix (feed L3/L6/L9 structure into the
+main path): §15 addresses *what enters*, §16 addresses *what the decoder does with it*.
+
+- Artefacts: `tier1_probe.py`, `slurm/tier1_probe.sh`, `tier1_output/{tier1_probe.png,tier1_metrics.json}`.
+- Status: Tier-1 complete. Verdict = decoder-side. Fix deferred to Phase 2.
+
+### §16.2 How to read the figure (`tier1_output/tier1_probe.png`)
+
+4 rows (one per Tier-0 station) × 7 columns = the input→output spatial progression. Each column is
+rendered **differently** — do not compare colours across column *types*:
+
+| # | Column | Rendering | Colour means | Units / scale |
+|---|---|---|---|---|
+| 1 | **Raw scene** | true imagery — S2 RGB (B04/B03/B02) or S1 VV grey | reflectance / backscatter | stretched 2–98% |
+| 2 | **L12 in** | **PCA→RGB** of the 196 tokens | token's position in its top-3 PCA space | arbitrary (per-panel PCA) |
+| 3 | **Transformer out** | **PCA→RGB** of the 196 tokens | same as col 2 | arbitrary (per-panel PCA) |
+| 4–6 | **Decoder 28²/56²/112²** | **channel-mean** of the conv feature map, `viridis` | mean activation at that pixel | real activation (colorbar shown) |
+| 7 | **Output SM 224²** | the **actual SM prediction** (0–10 cm), `YlOrBr_r` | soil moisture | m³/m³, fixed `vmin0–vmax0.5` |
+
+Rendering details & caveats:
+- **PCA→RGB** (`pca_rgb`, cols 2–3): center the 196×768 tokens, SVD, project onto the top 3 PCs → an
+  (R,G,B) per cell, reshaped 14×14, per-channel 2–98% stretch. It makes 768-D structure *visible*.
+  Two caveats: (a) **PCA is fit per-panel**, so a red cell in col 2 is NOT the same feature as red in
+  col 3 — compare *structure*, not hue; (b) the percentile stretch exaggerates faint structure into
+  "confetti", so trust the title numbers (`cos`, `disp`) over vividness.
+- **Channel-mean** (cols 4–6): `fmap = tap.mean(axis=0)` over feature channels — a literal activation
+  map, no PCA, no stretch. Chosen because the decoder question is "is spatial variance still present?",
+  which the mean map answers directly. Title `n-std = std/|mean|` is computed on that exact map.
+- **Output** (col 7): not a visualisation of features — the real physical prediction. Near-uniform
+  orange = the predicted SM really is ~spatially constant.
+- Only cols 2–3 are PCA. Token panels (arbitrary PCA units) and decoder/output panels (real units) are
+  not on a shared scale → compare *within* a type; the `n-std` numbers give the quantitative
+  cross-stage comparison of flatness.
+- **What to look for:** structured cols 2–6 (especially a bright dot at the centre station pixel in the
+  decoder maps) next to a flat col 7 = the decoder-side collapse. That contrast IS the result.
+
+### §16.3 Architecture note — why the bottleneck is 14×14, not 4 (clarification)
+
+Common confusion: "we feed 4 levels, so how do we get 14×14×768 out?" Two separate token paths:
+- **Target-day anchor** (`anchor_l12` `[196,768]`) enters the transformer at **full 14×14 = 196 tokens,
+  un-pooled** (`_get_target_spatial_tokens`). These are *the* spatial tokens.
+- **History + static context** (DEM, LULC, soil, every *past* S2/S1 acquisition) is compressed
+  `[196,768] → [4,768]` by `_cpu_pyramid_pool` (`dataset.py:190`) — 4 nested concentric masked-mean
+  windows centred on the station pixel (a spatial *pyramid*, NOT the L3/L6/L9/L12 transformer layers).
+  Reason is purely payload: many history dates × 196 tokens blew up the DataLoader IPC queue (~30 MB→2 MB
+  per sample); history needs multi-scale context, not per-pixel detail.
+
+The transformer sequence is `[DEM×4 | LULC×4 | Soil×4 | anchor×196 | S2hist×(N·4) | S1hist×(N·4) |
+ERA5×365 | SIF | TWSA]` with `spatial_start = 12` (4+4+4). The bottleneck is recovered by slicing those
+196 anchor positions back out and reshaping — nothing is "un-summarised": the 196 rode through the
+transformer intact, attention just contextualised them, and `ctx[:, 12:12+196].reshape(14,14,768)` puts
+them back on the grid the U-Net expects.
+
+### §16.4 Decoder-side fix — plan (Session 18, 2026-07-01; NOT yet run)
+
+**Decision (with user): the 224² map is a genuine deliverable** (10 m dense SM maps, §14 roadmap), so we
+commit to adding real spatial supervision.
+
+**Reframe — the root cause is supervision, not the conv layers.** The map is 224² but trained on exactly
+ONE pixel (station at 112,112); ISMN is a *point* measurement, so there is no ground truth anywhere else
+on the tile. The bilinear decoder is doing the only rational thing under the loss: nail the supervised
+pixel, paint the rest flat to satisfy the TV penalty. **No architecture change creates structure the loss
+never asks for.** Encouraging: §15.6 shows the spatially-rich L3/L6/L9 already reach the decoder as skips —
+the information is present, the decoder just isn't rewarded for using it.
+
+**Step 0 — capacity check (cheap, do first, ~minutes).** Overfit ONE station for a few hundred steps
+against a *synthetic structured* dense target (S1- or NDVI-shaped field), re-run `tier1_probe.py`.
+- produces structure ⇒ decoder capacity is fine, supervision is the only lever (expected) → green-light Step 1.
+- still flat ⇒ bilinear layers are limiting → architecture (Step 2) must come first.
+(The TV-loss ablation is NOT a standalone Step-0 test — it needs retraining, so it lives in Step 1.)
+
+**Step 1 — proxy-consistency spatial supervision (the real work).** Keep point loss, add structure loss,
+relax the smoother:
+1. **Point loss (unchanged):** Huber at (112,112) vs ISMN — pins the *absolute level*.
+2. **Structure loss (new):** build a physical wetness proxy field `W(x)` at 224² from data we already have,
+   penalise the predicted map for not matching its *normalised spatial pattern*
+   (e.g. `1 − spatial_corr(pred_norm, W_norm)`, or gradient-matching). Proxies, priority order:
+   - **S1 VV/VH backscatter** (moisture-sensitive) — anchor S1 scene in `RAW_ROOT`.
+   - **Topographic Wetness Index** from DEM (`TWI = ln(a/tanβ)`, static; valleys wetter).
+   - NDVI from S2 (optional; vegetation proxy, use with care).
+3. **Cut the TV weight** (it currently rewards flatness) — this is where the TV ablation lives.
+4. **Fine-tune from `baseline_huber_memmap`** (cheaper than scratch; the probe becomes the before/after test).
+
+**Caveats (on the record):** the proxy is a *weak structural prior*, not truth — S1↔SM is confounded by
+vegetation/roughness; TWI is static, no dynamics; and S1 is already a model input (mild circularity).
+Validation, since we lack dense truth: (a) point-station ubRMSE must not degrade; (b) qualitative map
+inspection via the same probe; (c) COSMOS-UK stations (cosmic-ray, ~hundreds-of-m footprint) give a
+semi-areal check.
+
+**Step 2 — architecture, only if Step 1 underperforms.** Swap bilinear → learned upsampling
+(transposed conv / pixel-shuffle). Secondary — never instead of Step 1.
+
+- Status: plan agreed, **not started**. Next action = Step 0 capacity check.

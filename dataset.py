@@ -1044,6 +1044,14 @@ class SoilMoistureDataset(Dataset):
         era5     = torch.from_numpy(era5_np)
         era5_doys = torch.from_numpy(era5_doys_np)
 
+        # Mask 15% of ERA5 timesteps during training — forces temporal generalisation.
+        # Only masks non-padded slots (era5_doys > 0); never applied at val/test time.
+        if self.training:
+            valid_slots = era5_doys > 0
+            mask = (torch.rand(era5.shape[0]) < 0.15) & valid_slots
+            era5[mask] = 0.0
+            era5_doys[mask] = 0   # treated as padding by the transformer
+
         # ── SIF — optional sparse modality, numpy slice from cache ───
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy

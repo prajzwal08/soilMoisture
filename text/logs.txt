@@ -2372,3 +2372,439 @@ Smoke test (job 23921408, smoke_pyramid, 20 stations, 3 epochs): PASSED
   5. Deferred: learned pyramid attention ablation (§8.3, post Phase 2 zarr pre-compute)
   6. Deferred: skip connection ablation (§8.3, after baseline converges)
 
+================================================================================
+SESSION 12 — 2026-06-16
+================================================================================
+
+--- Context ---
+
+Job 23921632 (baseline_huber, pyramid pooling fix, 661 stations) was submitted at the
+end of Session 11. This session focused on two code review agents running in parallel,
+fixing the memmap load bug discovered by those agents, and comparing zarr vs memmap
+data-loading throughput via smoke tests.
+
+--- Agent-based code review (two parallel agents) ---
+
+Bug review agent findings:
+  - Tautological ternary in dataset.py: `best_orbit if best_orbit == "s2" else best_orbit`
+    always evaluates to best_orbit regardless of branch — dead code.
+  - Silent zarr fallback: when use_mmap=True but no .npy files are found for a station,
+    the code silently falls back to zarr with no warning — hard to diagnose in production.
+  - All other correctness checks passed: index alignment, fork safety, key format,
+    use_mmap plumbing to val dataset.
+
+Performance review agent findings:
+  - Memmap fix is theoretically sound: zarr page cache stores compressed bytes; .npy mmap
+    is zero-copy after warmup, giving a real throughput advantage.
+  - Red flags: page cache margin tight (~95 GB shortfall for 525 GB of L3/L6/L9 data on
+    an 811 GB node), GPFS+fork mmap behaviour uncertain.
+  - step_time growth across epochs (27 → 30 s/batch) is a secondary co-cause of
+    data_time degradation, independent of the memmap fix. Root cause: sequence length
+    grows in the TemporalTransformer as more acquisitions accumulate across epochs (more
+    unique dates sampled → longer attention sequences).
+
+--- Bug fixes committed ---
+
+Commit 67f1635 — Two fixes in dataset.py:
+  1. Tautological ternary removed: `best_orbit if best_orbit == "s2" else best_orbit`
+     replaced with just `best_orbit`.
+  2. Init-time warning added: when use_mmap=True but no .npy files are found for a
+     station, a UserWarning is emitted (was previously silent zarr fallback).
+
+Commit 229148f — Critical memmap load bug fixed:
+  convert_l369_to_npy.py creates raw binary files via np.memmap (no .npy header),
+  but dataset.py was calling np.load(..., mmap_mode="r") which expects a .npy header.
+  This caused an immediate crash on any station that had .npy files.
+  Fix: read the array shape from the .json sidecar file and use
+  np.memmap(dtype="float16", mode="r", shape=shape) directly, bypassing np.load
+  entirely.
+
+--- Job history ---
+
+Job 23921632 (baseline_huber, zarr, no memmap): ran 9+ hours, reached epoch 3.
+  Epoch 3 data_time=5200s, gpu_util=7% — data loading dominated and GPU nearly idle.
+  Cancelled to avoid wasting SBUs.
+
+Job 23888806 (baseline_huber, previous): OOM-killed at 1h33m (pre-pyramid-pooling-fix).
+
+SBU used so far: ~8,400 on L2 GPU budget (out of 800,000 total).
+
+--- Smoke tests comparing zarr vs memmap ---
+
+Smoke test zarr (job 23936317, 20 stations, 3 epochs):
+  Completed cleanly.
+  data=22s/epoch, compute=3-6s, gpu_util=12-21%.
+
+Smoke test memmap — first attempt (job 23936316):
+  Crashed immediately on the np.load mmap_mode bug (commit 229148f fixes this).
+
+Smoke test memmap fixed (job 23936647, 20 stations, 3 epochs):
+  Completed cleanly.
+  data=10-11s/epoch, compute=3-6s, gpu_util=23-35%.
+  Result: 2× faster data loading confirmed vs zarr smoke.
+
+--- Key insight discussed ---
+
+GPU util dropping (22% → 7%) and data_time growing are the same problem viewed
+differently — both reflect the GPU waiting for data. However step_time also grew
+across epochs (27 → 30 s/batch) in job 23921632, suggesting sequence length growth
+in the TemporalTransformer is a secondary co-cause that memmap alone will not fix.
+
+--- Full baseline with memmap submitted ---
+
+Job 23936932 (run name: baseline_huber_memmap):
+  Fresh start (no checkpoint), memmap fix applied (commit 229148f), 661 stations,
+  120h wall time. Status: pending in queue at end of session.
+
+--- Next steps ---
+
+  1. Wait for job 23936932 to start and report epoch 1 data_time and gpu_util.
+  2. If step_time still grows across epochs, investigate sequence length bucketing
+     or attention complexity growth in the TemporalTransformer.
+  3. After convergence: run eval_stations.py on OOS split for honest evaluation.
+  4. Deferred: distributed val (all_gather across 4 ranks).
+  5. Deferred: skip connection ablation (after baseline converges).
+
+================================================================================
+SESSION 14 — 2026-06-17
+================================================================================
+
+--- Context ---
+
+Job 23936932 (baseline_huber, memmap fix) is running on gcn128 with epoch 14
+completed. val_loss has been flat at 0.0021 since epoch 2, while train_loss is
+at 0.0001 (21× gap). VRAM is stable at 38.6 GB (empty_cache() fix confirmed
+working, zero creep). GPU util jitter persists due to GPFS, but madvise helps.
+Early stopping is expected to fire at epoch 22 (~2-3 hours from session end).
+
+--- Job status ---
+
+  Job: 23936932  run-name: baseline_huber  node: gcn128
+  Epoch 14:
+    train_loss=0.0001  val_loss=0.0021  (21× gap — overfitting)
+    0-10 cm:   ubRMSE=0.0530
+    10-30 cm:  ubRMSE=0.0486
+    30-100 cm: ubRMSE=0.0570
+  VRAM: 38.6 GB (stable — no creep between epochs)
+  Early stopping: fires at epoch 22 (~2-3 h from session end)
+
+--- Overfitting audit (agent-verified) ---
+
+An external critique of the training curves prompted a full audit of all
+regularisation levers. Findings:
+
+  Spatial/temporal split — CLEAN. Zero location-group overlap between train
+    and val splits. Spatial leakage is not the cause of the train/val gap.
+
+  Stochastic depth (drop path) — ABSENT. Identified as the highest-priority
+    missing regulariser. Not in model.py at all; timm's DropPath was the
+    natural choice but not yet added.
+
+  UNetDecoder dropout — ABSENT. Transformer had Dropout(0.1) but the
+    UNetDecoder _ConvBlock had zero dropout.
+
+  ERA5 temporal masking — ABSENT. All 365 days of ERA5 always visible to the
+    model during training; easy data augmentation that forces robustness.
+
+  Weight decay — ALREADY at 0.05 (sufficient; no need to increase).
+
+--- Decision: combine all fixes into cls_perdepth_huber ---
+
+Rather than incremental runs (perdepth_huber → cls_perdepth_huber), all
+regularisation and architecture improvements are folded into a single new run:
+  - Per-depth loss: equal-weight Huber loss per depth (not mean across depths)
+  - Stochastic depth: drop_path_rate=0.1, linear schedule across 6 transformer layers
+  - Dropout in UNetDecoder _ConvBlock: nn.Dropout2d(0.15) after second ReLU
+  - Dropout in ERA5/SIF/TWSA MLPs: nn.Dropout(0.1) between linear layers
+  - ERA5 temporal masking: 15% of valid timesteps zeroed during training only
+  - CLS depth tokens: 3 learnable tokens (one per depth), prepended to transformer
+    sequence; per-depth FiLM + heads in UNetDecoder
+
+--- Code changes implemented ---
+
+model.py:
+  - Added DropPath + DropPathTransformerLayer classes (no timm dependency)
+  - _ConvBlock: added nn.Dropout2d(0.15) after second ReLU
+  - era5_mlp, sif_mlp, twsa_mlp: added nn.Dropout(0.1) between linear layers
+  - SoilMoistureModel: new params drop_path_rate=0.1, use_cls_depth=False;
+    replaced nn.TransformerEncoder with nn.ModuleList of DropPathTransformerLayer
+    + nn.LayerNorm; added self.depth_tokens when use_cls_depth=True
+  - UNetDecoder: use_cls_depth param; pre_head_drop; per-depth depth_film + heads
+    when use_cls_depth=True
+  - forward(): prepends depth tokens, manual transformer loop, extracts depth_ctx,
+    passes to decoder
+  - Param delta with CLS enabled: +297,600 params (50.05M → 50.35M)
+
+train.py:
+  - CONFIG: added drop_path_rate: 0.1, use_cls_depth: False
+  - evaluate(): per_depth=False param wired through
+  - Model instantiation: passes drop_path_rate and use_cls_depth
+  - argparse: --per-depth-loss and --use-cls-depth flags
+  - Main loop: per_depth=CONFIG["per_depth_loss"] in both train_one_epoch and
+    evaluate calls
+
+dataset.py:
+  - ERA5 temporal masking: 15% of valid timesteps zeroed (training only)
+
+text/training_runbook.md:
+  - Added §12.3 overfitting audit table (verdict on all 6 external suggestions)
+  - Added §12.4 all fixes for cls_perdepth_huber (4 implementation details)
+  - Added §12.5 updated experiment sequence (2-run table)
+
+--- Verification ---
+
+All tests passed:
+  - model.py imports clean
+  - Per-depth loss: finite, backward ok
+  - depth_tokens.grad ok
+  - DropPath eval identity ok
+  - Param delta: +297,600 as expected
+
+--- Next steps ---
+
+  1. Wait for job 23936932 to stop at epoch 22 (early stopping fires)
+  2. Run smoke: sbatch slurm/train.sh --run-name smoke_cls --max-stations 5
+       --max-epochs 3 --per-depth-loss --use-cls-depth
+  3. Full run: sbatch slurm/train.sh --run-name cls_perdepth_huber
+       --per-depth-loss --use-cls-depth
+
+================================================================================
+SESSION 14 — 2026-06-17
+================================================================================
+
+--- Context ---
+
+Job 23936932 (baseline_huber, memmap, 661 stations) was cancelled at epoch 14.
+val_loss had been flat at 0.0021 since epoch 2; best checkpoint was epoch 3.
+This session diagnosed why checkpoints appeared stuck at epoch 3 despite 7 "New
+best val_loss" log lines, fixed the root cause, audited the train/val/oos split,
+and passed a smoke test with the CLS per-depth architecture.
+
+--- Checkpoint stalling root cause: GPFS write buffering ---
+
+Symptom: last.pt and best.pt both reported epoch=3 even though the training log
+showed "New best val_loss — checkpoint saved" at epochs 1, 2, 3, 4, 9, 10, 11.
+Also: val_station_metrics.csv (58 KB) stopped updating after epoch 3.
+
+Ruled out:
+  - GPFS login-node page cache: direct I/O (dd iflag=direct) still read epoch=3.
+  - Preemption/requeue: log showed "No checkpoint found — starting fresh" and no
+    SIGTERM events.
+
+Root cause confirmed: GPFS client-side write buffering. torch.save writes ~600 MB
+synchronously from Python's perspective (returns immediately), but the GPFS client
+on gcn128 buffers the data in its local page cache and flushes to storage servers
+asynchronously. Epoch 3's write happened to flush due to cold-write cache pressure;
+epochs 4–14 were accumulating in the buffer and were lost when scancel terminated
+the job. Evidence: val_station_metrics.csv (written in the same is_main block)
+also froze at epoch 3 — confirming that the entire is_main checkpoint/CSV block
+stopped producing visible filesystem side effects after epoch 3.
+
+--- Fix: _fsync_save() helper in train.py (~line 262) ---
+
+Added _fsync_save(obj, path) that wraps torch.save() + os.fsync(fd) to force the
+GPFS client to flush from its buffer to the storage servers before returning.
+Overhead: ~6 s per 600 MB file, ~18 s/epoch total (<4% overhead at ~7 min/epoch).
+
+All 4 checkpoint save sites replaced:
+  - Mid-epoch save (every 500 batches)
+  - Pre-val save (val_pending=True)
+  - Post-val last.pt
+  - Post-val best.pt
+
+--- Train/val/oos split audit ---
+
+Phase 1 (category_filter: ["sm_only"]):
+  587 train / 74 val / 181 oos stations
+
+Distributions balanced: climate zones and IGBP land cover proportional across
+all three splits.
+
+Spatial stratification confirmed clean: all 783 location groups fall entirely
+within one split — zero spatial autocorrelation leakage between train and val.
+
+OOS (181 stations) is reserved for paper metrics and spatial maps.
+Val is internal-only (early stopping signal). Neither set is touched during training.
+
+--- Smoke test (job 23956770, smoke_cls) ---
+
+Config: --max-stations 5, --max-epochs 3, --per-depth-loss, --use-cls-depth
+Result: PASSED
+  - 3 epochs completed cleanly, no NaN, finite loss
+  - Checkpoint saved; _fsync_save() confirmed working (epoch written to disk correctly)
+  - VRAM: 42.3 GB peak (vs 38.6 GB baseline — +3.7 GB from CLS FiLM layers)
+
+--- Runbook updates (text/training_runbook.md) ---
+
+  §12.5 — GPFS checkpoint buffering bug post-mortem + _fsync_save() fix
+  §12.6 — Train/val/oos split audit (numbers, distributions, spatial stratification)
+  §12.7 — Smoke test results (job 23956770, VRAM budget)
+
+--- Files modified ---
+
+  train.py                   — _fsync_save() helper; all 4 checkpoint save sites
+  text/training_runbook.md   — §12.5, §12.6, §12.7 added
+
+--- Next steps ---
+
+  1. Full run: sbatch slurm/train.sh --run-name cls_perdepth_huber
+       --per-depth-loss --use-cls-depth
+  2. Monitor W&B cls_perdepth_huber: val/0-10/ubRMSE gate < 0.07 m³/m³
+  3. Confirm best.pt updates correctly past epoch 3 (checkpoint stalling is fixed)
+  4. After convergence: run eval_stations.py on 181 OOS stations for paper metrics
+  5. Deferred: distributed val (all_gather across 4 ranks)
+  6. Deferred: skip connection ablation (after cls_perdepth_huber converges)
+
+=== 2026-06-18 (meeting evaluation pipeline — smoke pass + full run submitted) ===
+
+Goal: build 4 publication-quality figure scripts for PhD meeting presentation
+using baseline_huber best.pt (epoch 3, best_val_loss=0.0022146597).
+
+--- Checkpoint compatibility (ckpt_utils.py) ---
+
+Checkpoint was saved before two architecture changes:
+  1. nn.TransformerEncoder → ModuleList of DropPathTransformerLayer
+     Key remap: transformer.layers.X.FIELD → transformer_layers.X.layer.FIELD
+  2. {era5,sif,twsa}_mlp: Dropout inserted at index 2, shifting old index 2 → 3
+     Key remap: {prefix}.2.* → {prefix}.3.*
+  3. transformer_norm (new) — loads as identity LayerNorm (weight=1, bias=0); fine for eval
+
+Created ckpt_utils.py with remap_checkpoint_keys() + strict=False load.
+All 4 scripts import from ckpt_utils; no inline load_checkpoint anywhere.
+
+--- Scripts created ---
+
+  evaluate_splits.py           — OOS/OOT/OOST metrics (ubRMSE/RMSE/MAE/R/bias per depth)
+  plot_timeseries_meeting.py   — clean predicted vs observed time series, 3 depths
+  plot_spatial_sm_meeting.py   — spatial SM maps, depth rows × 6 DOY columns per station
+  plot_breakdown_meeting.py    — IGBP violin, climate violin, grouped bar, depth bar, heatmap
+  slurm/smoke_meeting.sh       — smoke: 10 stations, n=2 stations per plot script
+  slurm/evaluate_meeting.sh    — full run: all stations, n=5
+
+--- Bugs fixed (3 rounds of debugging) ---
+
+  1. prefetch_factor=2 with num_workers=0 → ValueError
+     Fix: prefetch_factor=2 if args.num_workers > 0 else None
+
+  2. plot_spatial_sm_meeting.py: inline load_checkpoint at line 57 shadowed
+     the ckpt_utils import → used strict=True with no key remap → crash
+     Fix: removed the inline function entirely
+
+  3. plot_timeseries_meeting.py + plot_spatial: split_filter=None loaded all 577
+     stations → OOM kill (memory exceeded 80G SLURM limit)
+     Fix: split_filter=["oos"] → 180 stations, ~352K samples; no OOM
+
+--- Smoke test results (job 23991956, passed at 09:59 CEST) ---
+
+  Step 1 — evaluate_splits (10 stations):
+    OOS  0-10: ubRMSE=0.0595  RMSE=0.1077  R=0.693  bias=-0.074  n=10
+    OOT  0-10: ubRMSE=0.0472  RMSE=0.0609  R=0.511  bias=-0.033  n=6
+    OOST 0-10: ubRMSE=0.0519  RMSE=0.0894  R=0.611  bias=-0.050  n=4
+
+  Step 2 — timeseries (2 best + 2 worst OOS):
+    Best:  ISMN_Berlin_DWDBerlin-Spaeth (ubRMSE=0.039), ISMN_ARM_Omega (0.044)
+    Worst: ISMN_COSMOS-UK_Loddington (0.081), ISMN_COSMOS-UK_CwmGarw (0.074)
+    4 PNGs saved to meeting_output/timeseries/
+
+  Step 3 — spatial (same 4 stations, 6 DOYs each):
+    4 PNGs saved to meeting_output/spatial/
+
+  Step 4 — breakdown (full 180 OOS stations from CSV):
+    5 PNGs saved to meeting_output/breakdown/
+    (igbp_violin, climate_violin, oos_oot_oost_bar, depth_bar, metrics_heatmap)
+
+--- Full run ---
+
+  Submitted: sbatch slurm/evaluate_meeting.sh → job 23992292
+  Config: --n 5 (5 best + 5 worst), all OOS stations (~180), all OOT (~414)
+  Email on completion: ktm.prajwalkhanal@gmail.com
+
+--- Files committed ---
+
+  ckpt_utils.py              — new; key remap + strict=False checkpoint loader
+  evaluate_splits.py         — new; OOS/OOT/OOST evaluation
+  plot_timeseries_meeting.py — new; timeseries figures
+  plot_spatial_sm_meeting.py — new; spatial SM figures
+  plot_breakdown_meeting.py  — new; breakdown figures
+  slurm/smoke_meeting.sh     — new; smoke test SLURM script
+  slurm/evaluate_meeting.sh  — new; full evaluation SLURM script
+  Commits: 991b668, 35049c3
+
+
+================================================================================
+SESSION 15 — 2026-08-01
+================================================================================
+
+--- Goal ---
+
+Remove the TV (total-variation) regularizer from the loss and launch a run.
+Rationale (user): TV smooths the 224x224 output map. This matches the Tier-1
+verdict (2026-07-01) and the Step-0 capacity check (job 24352962, 2026-07-02,
+"CAPACITY CONFIRMED"): the decoder CAN paint structure under dense supervision,
+so the flat maps are a SUPERVISION problem, and TV actively rewards flatness.
+
+--- Change made ---
+
+train.py:211  lambda_tv default 0.1 -> 0.0  (TV disabled by default).
+  _compute_loss already gates on `if lambda_tv > 0.0`, so loss is now pure
+  masked_huber_loss (+ lambda_boundary=0.1 clamp, unchanged). The --lambda-tv
+  CLI flag still lets any run re-enable it. Loss is Huber-only going forward.
+
+Caveat recorded (Tier-1 verdict): removing TV stops the map being pushed flat
+but does NOT by itself create structure — only pixel (112,112) is supervised.
+The real fix is the Step-1 proxy-consistency structure loss (S1 VV/VH or TWI),
+per training_runbook §16.4. Deferred; user chose "just remove TV and run for now".
+
+--- Smoke-test saga + queue workaround ---
+
+gpu_h100 was 100% saturated (84->76 nodes allocated over the session, 0 idle);
+the H100 smoke (job 25136830) sat PENDING >1h on (Resources). gpu_a100 had 26
+idle nodes, so cancelled the H100 smoke and resubmitted on A100:
+  - New script slurm/train_a100_smoke.sh (partition=gpu_a100, mem=240G).
+  - A100 = 40 GB VRAM (vs H100 80 GB), so batch cut to 32 (--batch-size 32).
+  - Job 25138313 started instantly on gcn29.
+
+--- ROOT CAUSE: scratch ZARR_ROOT was purged ---
+
+A100 smoke COMPLETED in 62 s but was INVALID: "Dataset: 0 samples from 0
+stations", "[SHM] L12 preloaded for 0 stations", peak_vram=0.4 GB, val_loss=0.0.
+Nothing trained. Investigation (this is NOT a TV/A100/batch issue):
+  - _preload_l12_to_shm (train.py:139) skips any store lacking a .complete marker.
+  - ZARR_ROOT = /gpfs/scratch1/shared/pkhanal/zarr (scratch, dataset.py:39).
+  - Scratch: 842 sm_only dirs present but 0 .complete markers; each station is a
+    5 KB empty skeleton (chunk data gone). Scratch was purged since Jun 17.
+  - Backup /projects/prjs1968/zarr_tokens INTACT: 842/842 .complete, ~352 MB/station.
+
+Consolidated store layout confirmed — ONE per-station zarr holds all three:
+  tokens  : s2(+l3/l6/l9), s1_asc/s1_desc(+l3/l6/l9), dem, lulc, *_token_mask
+  inputs  : era5, sif, twsa, soil, cm (cloud mask)
+  labels  : labels/{sm,dates,depths,qc}
+So the purge wiped tokens + inputs + labels together for every station; the
+/projects backup is the only surviving complete copy.
+
+Caveat: scratch era5/labels dirs were dated Jul 19 (newer than backup's Jun 29).
+If era5/labels were regenerated Jul 19, those edits were purged and are NOT in
+the backup (unrecoverable). Backup's Jun 29 version is what gets restored.
+
+--- Action: restore backup -> scratch ---
+
+slurm/restore_zarr.sh (new; partition=staging, rsync -a, no --delete) restoring
+all 3 categories (sm_only 842, sm_and_flux 48, flux_only 103) to scratch.
+  Submitted: job 25138456 on staging node srv7 (RUNNING at session log time).
+  Verifies .complete counts per category on completion.
+
+--- New files ---
+
+  slurm/train_a100_smoke.sh  — new; A100 smoke variant (40 GB VRAM, reduced mem)
+  slurm/restore_zarr.sh      — new; staging-partition rsync backup->scratch restore
+
+--- Status / next actions ---
+
+  * TV removed (committed). Full-run cmd ready:
+      sbatch slurm/train.sh --run-name baseline_huber_notv   (H100, batch 128)
+  * BLOCKED on data restore (job 25138456). Once .complete markers are back:
+      1. Re-run smoke on real data (A100 batch 32, or straight to H100).
+      2. If clean -> launch full baseline_huber_notv on H100.
+  * Then (deferred): Step-1 proxy-consistency structure loss to actually build
+    spatial structure (training_runbook §16.4).
+

@@ -198,14 +198,17 @@ CONFIG = {
     "early_stop_patience": 20,
 
     # Model
-    "n_depths": 3,
-    "d_model" : 768,
-    "n_heads" : 12,
-    "n_layers": 6,
+    "n_depths"      : 3,
+    "d_model"       : 768,
+    "n_heads"       : 12,
+    "n_layers"      : 6,
+    "drop_path_rate": 0.1,
+    "use_cls_depth" : False,    # if True: per-depth CLS tokens in transformer
 
     # Loss
-    "loss_fn" : "huber",
-    "lambda_tv"       : 0.1,    # TV regularization weight (0 = disabled)
+    "loss_fn"   : "huber",
+    "per_depth_loss" : False,   # if True: equal-weight Huber per depth (vs. pooled)
+    "lambda_tv"       : 0.0,    # TV regularization weight (0 = disabled; disabled — TV smooths the 224² map, see Tier-1 verdict)
     "lambda_boundary" : 0.1,    # penalty for SM outside [0, 1]
 
     # W&B
@@ -234,6 +237,33 @@ def worker_init_fn(worker_id: int):
     seed = (torch.initial_seed() + worker_id) % (2 ** 32)
     np.random.seed(seed)
     random.seed(seed)
+
+
+def _advise_l369_willneed(*datasets) -> None:
+    # Non-blocking: ask the kernel to async-prefetch all L369 memmap pages back into the
+    # OS page cache.  Called at every epoch start so pages evicted by competing Snellius
+    # jobs between epochs are re-warmed before DataLoader workers start consuming them.
+    # NOTE: posix_fadvise is silently ignored by GPFS; madvise(MADV_WILLNEED) on the
+    # existing mmap region goes through the Linux VM layer and IS honoured on most GPFS
+    # versions — verify empirically if jitter persists.
+    # ValueError covers the closed-mmap edge case; OSError covers EINVAL from some GPFS
+    # striping configurations.
+    import mmap as _mmap
+    for ds in datasets:
+        for arr_dict in ds._l369_cache.values():
+            for arr in arr_dict.values():
+                if hasattr(arr, '_mmap') and arr._mmap is not None:
+                    try:
+                        arr._mmap.madvise(_mmap.MADV_WILLNEED)
+                    except (OSError, ValueError):
+                        pass
+
+
+def _fsync_save(obj, path):
+    """torch.save + fsync: forces GPFS client to flush to storage server immediately."""
+    torch.save(obj, path)
+    with open(path, "rb") as f:
+        os.fsync(f.fileno())
 
 
 def _log_mem_snapshot(label: str, device, is_main: bool,
@@ -321,9 +351,9 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0):
+def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0, per_depth=False):
     import torch.nn.functional as F
-    loss = masked_huber_loss(pred, label)
+    loss = masked_huber_loss(pred, label, per_depth=per_depth)
     if lambda_tv > 0.0:
         tv = total_variation_loss(pred)
         loss = loss + lambda_tv * tv
@@ -400,8 +430,9 @@ def make_resume_loader(full_loader, skip_batches, epoch):
 
 
 def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
-                     lambda_boundary=0.0, max_batches=None, debug_nan=False,
-                     skip_batches=0, mid_ckpt_every=500, mid_ckpt_fn=None):
+                     lambda_boundary=0.0, per_depth=False, max_batches=None,
+                     debug_nan=False, skip_batches=0, mid_ckpt_every=500,
+                     mid_ckpt_fn=None):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -440,7 +471,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
                 if bad_out:
                     _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-            loss, tv = _compute_loss(mu, batch["label"], lambda_tv, lambda_boundary)
+            loss, tv = _compute_loss(mu, batch["label"], lambda_tv, lambda_boundary, per_depth)
 
         optimizer.zero_grad()
         loss.backward()
@@ -484,7 +515,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None):
+def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False):
     """Distributed-aware evaluation.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
@@ -507,7 +538,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None):
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu = model(batch)
-            loss, _ = _compute_loss(mu, batch["label"])
+            loss, _ = _compute_loss(mu, batch["label"], per_depth=per_depth)
         total_loss += loss.item()
         n_batches  += 1
 
@@ -579,6 +610,10 @@ def main():
     parser.add_argument("--use-memmap", action="store_true",
                         help="Load anchor L3/L6/L9 from .npy memmaps instead of zarr "
                              "(eliminates zstd decompress; OS page cache warms after epoch 1)")
+    parser.add_argument("--per-depth-loss", action="store_true",
+                        help="Equal-weight Huber per depth (vs. pooled baseline)")
+    parser.add_argument("--use-cls-depth", action="store_true",
+                        help="Add per-depth CLS tokens to transformer for depth-specific representations")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
@@ -590,6 +625,8 @@ def main():
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
     if args.lambda_tv       is not None: CONFIG["lambda_tv"]       = args.lambda_tv
     if args.lambda_boundary is not None: CONFIG["lambda_boundary"] = args.lambda_boundary
+    if args.per_depth_loss: CONFIG["per_depth_loss"] = True
+    if args.use_cls_depth:  CONFIG["use_cls_depth"]  = True
 
     # ── L12 shared memory preloading (before DDP init to avoid TCPStore timeout) ──
     # Rank 0 reads ~120 GB from GPFS — can take several minutes. Doing this before
@@ -689,10 +726,12 @@ def main():
     if is_main:
         print("Building model...")
     model = SoilMoistureModel(
-        n_depths = CONFIG["n_depths"],
-        d_model  = CONFIG["d_model"],
-        n_heads  = CONFIG["n_heads"],
-        n_layers = CONFIG["n_layers"],
+        n_depths       = CONFIG["n_depths"],
+        d_model        = CONFIG["d_model"],
+        n_heads        = CONFIG["n_heads"],
+        n_layers       = CONFIG["n_layers"],
+        drop_path_rate = CONFIG.get("drop_path_rate", 0.1),
+        use_cls_depth  = CONFIG.get("use_cls_depth", False),
     ).to(device)
 
     if is_ddp:
@@ -734,7 +773,13 @@ def main():
         if is_main:
             print(f"Checkpoint found — resuming from {ckpt_last}")
         ckpt = torch.load(ckpt_last, map_location=device, weights_only=False)
-        raw_model.load_state_dict(ckpt["model"])
+        try:
+            raw_model.load_state_dict(ckpt["model"])
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Checkpoint key mismatch — architecture likely changed. "
+                f"Delete {ckpt_last} to start fresh.\nOriginal error: {e}"
+            ) from None
         optimizer.load_state_dict(ckpt["optimizer"])
         for pg in optimizer.param_groups:  # honour CONFIG lr even when resuming
             pg["lr"] = CONFIG["lr"]
@@ -803,6 +848,7 @@ def main():
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
+        _advise_l369_willneed(train_dataset, val_dataset)
         torch.cuda.reset_peak_memory_stats(device)
         _log_mem_snapshot(f"epoch_{epoch:03d}_start", device, is_main)
 
@@ -814,7 +860,7 @@ def main():
         else:
             # Mid-epoch checkpoint callback (rank 0 only)
             def _save_mid_ckpt(batches_done):
-                torch.save({
+                _fsync_save({
                     "epoch"       : epoch,
                     "model"       : raw_model.state_dict(),
                     "optimizer"   : optimizer.state_dict(),
@@ -838,6 +884,7 @@ def main():
                     model, _loader, optimizer, device, CONFIG["grad_clip"],
                     lambda_tv=CONFIG["lambda_tv"],
                     lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
+                    per_depth=CONFIG["per_depth_loss"],
                     max_batches=args.max_train_batches, debug_nan=args.debug_nan,
                     skip_batches = _skip,
                     mid_ckpt_every = 500,
@@ -853,7 +900,7 @@ def main():
 
             # Save post-training checkpoint before validation — epoch not lost if val crashes
             if is_main:
-                torch.save({
+                _fsync_save({
                     "epoch"           : epoch,
                     "model"           : raw_model.state_dict(),
                     "optimizer"       : optimizer.state_dict(),
@@ -876,8 +923,14 @@ def main():
             val_loader, device,
             world_size=world_size, rank=rank,
             max_batches=args.max_val_batches,
+            per_depth=CONFIG["per_depth_loss"],
         )
         _log_mem_snapshot(f"epoch_{epoch:03d}_post_val", device, is_main)
+        # Release cached-but-free VRAM each epoch.  With expandable_segments:True this
+        # cannot unmap segments (by design), so reserved memory will still grow if the
+        # driver is fragmenting.  If growth continues, profile with
+        # torch.cuda.memory._snapshot() or disable expandable_segments to isolate.
+        torch.cuda.empty_cache()
         if is_ddp and epoch != val_pending_epoch:
             # Reduce train_loss and train_tv to rank 0 for accurate global average logging
             t_loss = torch.tensor(train_loss, device=device)
@@ -988,12 +1041,12 @@ def main():
                 "wandb_run_id"    : wandb.run.id if use_wandb else None,
                 "val_pending"     : False,
             }
-            torch.save(state, ckpt_last)
+            _fsync_save(state, ckpt_last)
             if mid_ckpt_path.exists():
                 mid_ckpt_path.unlink()
 
             if no_improve_count == 0:
-                torch.save(state, ckpt_dir / "best.pt")
+                _fsync_save(state, ckpt_dir / "best.pt")
                 print(f"  New best val_loss={best_val_loss:.4f} — checkpoint saved")
 
         # Broadcast early-stop decision to all ranks so none hang at next DDP sync
