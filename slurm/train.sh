@@ -20,7 +20,7 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 
 # /dev/shm L12 preload: ~145 GB measured (shared across 4 ranks as one physical copy).
 # Budget at val→train boundary (post CPU-pooling fix): ~324 GB → ~396 GB headroom vs 720G.
-# Workers: 12 train + 4 val per rank (48+16=64 total), prefetch_factor=4.
+# Workers: 12 train + 4 val per rank (48+16=64 total), prefetch_factor=4 — set in train.py CONFIG.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export NCCL_TIMEOUT=7200   # 2 hours; covers cold-GPFS val on first epoch
@@ -35,4 +35,9 @@ echo "Cleaning stale SHM caches..."
 rm -rf /dev/shm/sm_l12_* 2>/dev/null || true
 echo "SHM clean."
 
-conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py "$@"
+# --use-memmap is always correct on GPFS: the zarr l3/l6/l9 arrays are chunked [32,196,768]
+# with blosc, so reading ONE anchor index pulls a 7.8 MB compressed chunk and decompresses
+# 9.6 MB to use 294 KB — 32x read amplification, x3 layers. The flat .npy memmaps on scratch
+# read exactly 294 KB with no decompression. Omitting this flag is what made 25141399 IO-bound
+# (all dataloader workers in D-state, GPU util 28%).
+conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py --use-memmap "$@"

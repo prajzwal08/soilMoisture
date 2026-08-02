@@ -186,9 +186,9 @@ CONFIG = {
 
     # Training
     "batch_size"      : 128,
-    "num_workers"     : 8,
-    "val_num_workers" : 2,    # val uses 2w×pf2; train uses 8w×pf2
-    "prefetch_factor" : 2,
+    "num_workers"     : 12,
+    "val_num_workers" : 4,    # val uses 4w×pf4; train uses 12w×pf4 → (12+4)×4 ranks = 64 CPUs
+    "prefetch_factor" : 4,
     "max_epochs"      : 100,
     "lr"              : 2e-4,
     "weight_decay"    : 0.05,
@@ -207,7 +207,9 @@ CONFIG = {
 
     # Loss
     "loss_fn"   : "huber",
-    "per_depth_loss" : False,   # if True: equal-weight Huber per depth (vs. pooled)
+    "per_depth_loss" : True,    # equal-weight Huber per depth (default since 2026-08-02;
+                                # pooled let the obs-rich 0-10 layer dominate the gradient —
+                                # 30-100 barely moved across epochs 1-2 of baseline_huber_notv)
     "lambda_tv"       : 0.0,    # TV regularization weight (0 = disabled; disabled — TV smooths the 224² map, see Tier-1 verdict)
     "lambda_boundary" : 0.1,    # penalty for SM outside [0, 1]
 
