@@ -1,6 +1,6 @@
 # Soil Moisture Training Runbook
 
-Last updated: 2026-06-18 (Session 16 — §14 spatial resolution roadmap added)  
+Last updated: 2026-08-03 (Session 19 — §17 UNetDecoder reference, §18 per-depth dynamics plan)  
 Author: Prajwal Khanal
 
 ---
@@ -1932,3 +1932,357 @@ semi-areal check.
 (transposed conv / pixel-shuffle). Secondary — never instead of Step 1.
 
 - Status: plan agreed, **not started**. Next action = Step 0 capacity check.
+
+---
+
+## §17. `UNetDecoder` — line-by-line reference (Session 19, 2026-08-03)
+
+Reference: `model.py:188-270`, plus `model.py:499-510` (`_get_skip_connections`) and
+`model.py:700-720` (`SoilMoistureModel.forward`).
+
+### 17.1 What it does
+
+Takes the transformer's 14×14 spatial bottleneck and upsamples to a 224×224 map with
+`n_depths` channels, re-injecting TerraMind L9/L6/L3 on the way up, each FiLM-modulated by
+the temporal context vector.
+
+### 17.2 Flow
+
+```
+ INPUTS (from SoilMoistureModel.forward, model.py:700-720)
+ ┌──────────────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌──────────────┐ ┌────────────────────┐
+ │ bottleneck           │ │ skip_L9       │ │ skip_L6       │ │ skip_L3       │ │ context      │ │ depth_ctx (opt.)   │
+ │ (B,768,14,14)  L707  │ │ (B,768,14,14) │ │ (B,768,14,14) │ │ (B,768,14,14) │ │ (B,768)      │ │ (B,n_depths,768)   │
+ │ transformer output   │ │ TerraMind raw │ │ TerraMind raw │ │ TerraMind raw │ │ mean of non- │ │ depth CLS tokens   │
+ │ reshaped             │ │ L505-510      │ │               │ │               │ │ spatial toks │ │ L703               │
+ └──────────┬───────────┘ └───────┬───────┘ └───────┬───────┘ └───────┬───────┘ └──┬───┬───┬───┘ └─────────┬──────────┘
+            ▼ L246                ▼ L247            ▼ L248            ▼ L249       │   │   │              │
+   ┌─────────────────┐   ┌──────────────┐   ┌──────────────┐  ┌──────────────┐     │   │   │              │
+   │ bottle_proj     │   │ skip_proj[0] │   │ skip_proj[1] │  │ skip_proj[2] │     │   │   │              │
+   │ 1×1 768→512     │   │ 1×1 768→512  │   │ 1×1 768→256  │  │ 1×1 768→128  │     │   │   │              │
+   │ (L211)          │   │ (L213)       │   │ (L214)       │  │ (L215)       │     │   │   │              │
+   └────────┬────────┘   └──────┬───────┘   └──────┬───────┘  └──────┬───────┘     │   │   │              │
+            │                   ▼                  ▼                 ▼             │   │   │              │
+            │            ┌──────────────┐   ┌──────────────┐  ┌──────────────┐     │   │   │              │
+            │            │ film_s9 L219 │◄──┤ film_s6 L220 │◄─┤ film_s3 L221 │◄────┘   │   │              │
+            │            │ scale*x+shift│   │              │  │              │◄────────┘   │              │
+            │            └──────┬───────┘   └──────┬───────┘  └──────┬───────┘◄────────────┘              │
+            ▼ x (B,512,14,14)   │ s9               │ s6              │ s3                                 │
+   ┌─────────────────┐          │                  │                 │                                    │
+   │ up1  bilinear×2 │ L251     │                  │                 │                                    │
+   │ → (B,512,28,28) │          │                  │                 │                                    │
+   └────────┬────────┘          │                  │                 │                                    │
+            │      ┌────────────▼───────────┐      │                 │                                    │
+            └─────►│ cat( x, interp(s9→28) )│ L252 │                 │                                    │
+                   │ → (B,1024,28,28)       │      │                 │                                    │
+                   └────────────┬───────────┘      │                 │                                    │
+                   ┌────────────▼───────────┐      │                 │                                    │
+                   │ conv1 1024→256  L224   │      │                 │                                    │
+                   └────────────┬───────────┘      │                 │                                    │
+                   ┌────────────▼───────────┐      │                 │                                    │
+                   │ up2 → (B,256,56,56)    │ L254 │                 │                                    │
+                   └────────────┬───────────┘      │                 │                                    │
+                   ┌────────────▼───────────┐      │                 │                                    │
+                   │ cat( x, interp(s6→56) )│◄─────┘  L255           │                                    │
+                   │ → (B,512,56,56)        │                        │                                    │
+                   └────────────┬───────────┘                        │                                    │
+                   ┌────────────▼───────────┐                        │                                    │
+                   │ conv2 512→128   L227   │                        │                                    │
+                   └────────────┬───────────┘                        │                                    │
+                   ┌────────────▼───────────┐                        │                                    │
+                   │ up3 → (B,128,112,112)  │ L257                   │                                    │
+                   └────────────┬───────────┘                        │                                    │
+                   ┌────────────▼───────────┐                        │                                    │
+                   │ cat( x, interp(s3→112))│◄───────────────────────┘  L258                              │
+                   │ → (B,256,112,112)      │                                                             │
+                   └────────────┬───────────┘                                                             │
+                   ┌────────────▼───────────┐                                                             │
+                   │ conv3 256→64    L230   │                                                             │
+                   └────────────┬───────────┘                                                             │
+                   ┌────────────▼───────────┐  L260  (no skip left — L12 grid exhausted)                  │
+                   │ up4 → (B,64,224,224)   │                                                             │
+                   └────────────┬───────────┘                                                             │
+                   ┌────────────▼───────────┐                                                             │
+                   │ conv4 64→64     L261   │                                                             │
+                   └────────────┬───────────┘                                                             │
+                   ┌────────────▼───────────┐                                                             │
+                   │ pre_head_drop   L262   │                                                             │
+                   └────────────┬───────────┘                                                             │
+                   ┌────────────▼───────────────────────────┐                                             │
+                   │  use_cls_depth AND depth_ctx not None? │  L264                                       │
+                   └───────┬──────────────────────┬─────────┘                                             │
+                      NO   │                      │  YES  loop d = 0..n_depths-1 (L266)                    │
+              ┌────────────▼───────┐   ┌──────────▼───────────────────┐                                   │
+              │ head: 1×1 64→3     │   │ depth_film[d](x, ────────────────────────────────────────────────┘
+              │ (L241, L270)       │   │            depth_ctx[:,d,:]) │ L267
+              │ ONE shared feature │   │  then heads[d]: 1×1 64→1     │ L268
+              │ map, 3 biased      │   └──────────────┬───────────────┘
+              │ slices             │                  ▼ cat over dim=1 (L269)
+              └─────────┬──────────┘   ┌──────────────────────────────┐
+                        └──────────────┴──────────────┬───────────────┘
+                                                      ▼
+                                      OUTPUT  (B, n_depths, 224, 224)
+```
+
+### 17.3 `__init__` (L197-241)
+
+| Line | What |
+|---|---|
+| L199-204 | `in_ch=768`, `skip_ch=768`, `dec_ch=(512,256,128,64)`, `n_depths=3`, `d_context=768` |
+| L211 | `bottle_proj` — 1×1, channel squeeze 768→512, no spatial mixing |
+| L212-216 | 1×1 convs projecting each skip to the channel count of its target stage (512/256/128) |
+| L219-221 | One `FiLMLayer` per skip. `FiLMLayer` (L150-168) maps `context (B,768)` → `(B,2C)`, splits into per-channel scale/shift. Zero-init weights, (1,0)-init bias (L158-160) → **identity at step 0**, so training starts from a plain U-Net |
+| L223-233 | Four `Upsample(bilinear ×2)` + `_ConvBlock` pairs. `_ConvBlock` (L171-185) = Conv3×3→BN→ReLU ×2 → `Dropout2d(0.15)`. `c[i]+c[i]` in-channels = concat of upsampled `x` and skip. `conv4` has no skip |
+| L235 | `Dropout(0.1)` before the head — element-wise, not channel-wise |
+| L237-241 | Two head modes. Default (L241): single 1×1 64→`n_depths` = **195 depth-specific params**. `use_cls_depth=True` (L238-239): per-depth FiLM + per-depth 1×1 head |
+
+### 17.4 `forward` (L243-270)
+
+| Line | What |
+|---|---|
+| L246 | Bottleneck 768→512, still 14×14 |
+| L247-249 | Each skip: 1×1 project → FiLM with global `context`. Skips are the **raw** TerraMind L3/L6/L9 of the anchor acquisition (L505-510) — never pass through the transformer, so FiLM is what makes them time-aware |
+| L251-252 | 14→28, concat FiLM'd **L9** (deepest skip → coarsest stage), conv → 256 ch |
+| L254-255 | 28→56, concat **L6**, conv → 128 ch |
+| L257-258 | 56→112, concat **L3** (shallowest skip → finest stage), conv → 64 ch |
+| L260-261 | 112→224, conv only |
+| L264-269 | Per-depth: FiLM the shared 224² map with that depth's CLS vector, apply that depth's head, concat |
+| L270 | Shared: one 1×1 conv emits all depths |
+
+### 17.5 Two structural facts
+
+**(a) Every skip is 14×14 — the `F.interpolate` calls do real work.**
+`_get_skip_connections` (L505-510) reshapes 196 tokens → 14×14, so L3/L6/L9 are all at the
+same resolution and get bilinearly stretched ×8/×4/×2 (L258/255/252). TerraMind is a *plain*
+ViT: patchify once (16×16 → 196 tokens), then every block keeps the same token count. Depth
+in a ViT buys **semantic abstraction**, not spatial density.
+
+Contrast with a classic U-Net, where the skip at 112×112 was *computed from the image at
+112×112* and carries 12,544 independent spatial measurements. Here the 112×112 skip is
+`interp(s3)` — stored as 12,544 numbers but with **spatial rank ≤ 14 per axis, i.e. 196
+degrees of freedom**. Same tensor shape, 64× less information.
+
+At 224×224 @ 10 m = 2.24 km (`download_s2_mpc.py:15,57-58`), one token = **160 m × 160 m**.
+Effective smoothing length ≈ 2 tokens ≈ 320 m.
+
+Note this is *not* an information bound on the model — bilinear upsampling is injective and
+sub-patch structure survives in the 768 channels. `196 × 768 = 224² × 3 = 150,528` exactly
+(since `16² × 3 = 768`), so the budget is balanced 1:1 and `PixelShuffle(16)` is the exact
+bijection. The problem is that bilinear-then-3×3-conv makes *smooth* the zero-effort default
+and nothing in the loss rewards deviating from it.
+
+**(b) 195 depth-specific parameters.** With `use_cls_depth=False`, `64×3+3 = 195` params out
+of the whole model distinguish one depth from another. See §18.
+
+### 17.6 Why bilinear+conv rather than transposed conv
+
+Checkerboard artifacts (Odena et al. 2016): `ConvTranspose2d(k=3,s=2)` gives uneven output
+overlap → periodic grid pattern. Invisible after `argmax` in segmentation; a visible
+artifact in a continuous physical field, compounded over 4 stages (16× total upsampling).
+Resize-then-conv is the prescribed fix. Secondary: bilinear is parameter-free, is a fixed
+smooth operator so the decoder starts as a sensible interpolator, and decouples geometry
+from feature mixing.
+
+Counterpoint on the record: bilinear *is* a strong smoothness prior. But swapping the
+upsampler cannot fix smoothness while the loss supervises one pixel — see §18.4.
+
+### 17.7 Reference point — how TerraMind's own decoder gets sharp output
+
+Verified against the installed package
+(`site-packages/terratorch/models/backbones/terramind/`), not the paper.
+
+Generation path (`model/terramind_generation.py:278, 364`; `model/generate.py:64-98`):
+image → tokenizer `.encode()` → FSQ tokens → transformer predicts target-modality tokens
+(MaskGIT-style cosine schedule) → target tokenizer `.decode_tokens()` → pixels.
+
+S2L2A tokenizer (`tokenizer/tokenizer_register.py:157`, authors' recorded training args):
+
+| | |
+|---|---|
+| Type | `divae` — **diffusion** VQ-VAE (`tokenizer/vqvae.py:545`) |
+| Quantizer | `fsq`, `codebook_size="8-8-8-6-5"` = 15,360 codes ≈ **13.9 bits/token** |
+| Decoder | `unet_patched`, `patch_size_dec=4` |
+| Objective | per-pixel MSE, 1000 timesteps; DDIM 50 steps at inference |
+
+**It is synthesis, not reconstruction.** 196 × 13.9 bits ≈ **341 bytes** vs ~1.2 MB raw —
+~3,500× compression. `decode_quant` states generations are stochastic by default
+(`vqvae.py:707`); same tokens twice → different images. Detail is sampled from a learned
+prior. **Do not route SM through a generative decoder** — publishing spatial structure drawn
+from a landscape prior rather than measured is a liability.
+
+`unet_patched` (`tokenizer/models/unet/unet.py:680-740`) — what it actually does:
+1. patchify `(B,C,224,224) → (B,C·16,56,56)` — space→depth, **lossless**, = `PixelUnshuffle(4)` (L715)
+2. `F.interpolate(tokens, (56,56), mode="nearest")`, concat as extra channels (L721-722)
+3. UNet at 56×56, `num_res_blocks=3`, `channel_mult=(1,2,2,2)` (L725)
+4. depatchify → `(B,C,224,224)` = `PixelShuffle(4)` (L728)
+
+Correction to an earlier reading: TerraMind **does** interpolate its 14×14 token grid, same
+as us. The real difference is that its UNet's *main input* is a full-resolution noisy image
+— a carrier with independent values at all 50,176 pixels — which the coarse tokens merely
+condition. We have no carrier; the 14×14 grid is simultaneously our signal and our only
+source of spatial variation.
+
+| | full-res carrier | coarse conditioner | detail is |
+|---|---|---|---|
+| TerraMind DiVAE | diffusion latent @224 | 14×14 tokens, nearest-upsampled | hallucinated |
+| Our `UNetDecoder` | **none** | 14×14 tokens, bilinear-upsampled | absent (smooth) |
+| Proposed (§16 Step 1/2) | raw 10 m S1 pixels @224 | 14×14 tokens, upsampled | **measured** |
+
+Ranked constraints on map sharpness:
+1. **single-pixel supervision** — decisive, architecture-independent
+2. **no full-resolution carrier** — structural; carrier must be measured pixels, not noise
+3. bilinear vs PixelShuffle — real but smaller; rearranges what exists, cannot create a carrier
+
+This supersedes §16 Step 2 ("swap bilinear → learned upsampling") as the *primary*
+architectural lever: the carrier matters more than the upsampler.
+
+---
+
+## §18. Planned change — per-depth dynamics (Session 19, 2026-08-03)
+
+### 18.1 Problem
+
+`use_cls_depth=False` (`train.py:206`). All three depths share everything and differ by
+**195 parameters** (§17.5b). The decoder gets one `context` vector, mean-pooled identically
+for all depths (`model.py:712-717`), so no depth can learn a different temporal response.
+Symptom: surface fits, 30–100 cm regresses (run 25150428, stopped e6).
+
+The model never sees soil moisture as an *input* — the sequence is
+`[DEM×4 | LULC×4 | Soil×4 | spatial×196 | satellite | era5×365]` (`model.py:519`), confirmed
+by the batch keys. Depth dynamics can therefore only be learned from the **loss**, which
+means there must be a per-depth parameter for that gradient to land on. Today there is
+almost none.
+
+(Excluding SM history is the right call — it would make the model useless at ungauged
+locations, which is the point of the work. The cost is a harder learning problem.)
+
+### 18.2 Change 1 — turn on `use_cls_depth`
+
+CLI `--use-cls-depth` (`train.py:617`). Prepends `n_depths` learned tokens to the sequence
+(`model.py:411, 689`).
+
+Mechanism, in Q/K/V terms: `W_q`, `W_k`, `W_v` are **shared**; `q_d = W_q · depth_tokens[d]`
+differs because `depth_tokens[d]` differs. Keys are unchanged. So
+`softmax(q_d · Kᵀ)` gives each depth its **own** weighting over the 365-day ERA5 history.
+Attention weights over a time axis are a learnable convolution kernel → a per-depth impulse
+response. Depth 0 can concentrate on recent days; depth 2 on a long damped window.
+
+`depth_tokens[d]` is trained by `L_d` via `heads[d]`/`depth_film[d]`, so the *target*
+teaches the query where to look — no SM input needed.
+
+Depth-specific params: **195 → ~295 k**. Cost: +3 tokens, ~1–3 % compute.
+
+Bookkeeping already handled correctly in the code: `cls_pad` marks the depth slots valid
+(L691-692); `sp_start` shifts by `depth_offset` so the bottleneck slice stays correct
+(L705); depth CLS excluded from the `context` mean-pool (L713-714).
+
+Known asymmetry: because the depth tokens are attendable keys, `depth_tokens[d]` also
+receives gradient from *all* depths via its effect on the spatial tokens. Isolating that
+would need an attention mask. Defensible as-is (cf. DINOv2 register tokens) — noting it so
+it isn't rediscovered as a bug.
+
+### 18.3 Change 2 — break the depth-token symmetry
+
+```python
+# model.py:411
+self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
+nn.init.trunc_normal_(self.depth_tokens, std=0.02)          # ADD
+```
+
+Zero-init → all three queries numerically identical at step 0. No positional encoding is
+added to those slots (L690), so attention is permutation-equivariant over them and
+`depth_ctx[:,0,:] == depth_ctx[:,1,:] == depth_ctx[:,2,:]` **exactly**. They separate only
+because `depth_film[d]`/`heads[d]` random inits differ. One line removes an unnecessary
+handicap on the mechanism being tested.
+
+### 18.4 Change 3 — star residual across depths
+
+Replace `model.py:264-269`:
+
+```python
+base = self.heads[0](self.depth_film[0](x, depth_ctx[:, 0, :]))
+out  = [base]
+for d in range(1, self.n_depths):
+    out.append(base + self.heads[d](self.depth_film[d](x, depth_ctx[:, d, :])))
+return torch.cat(out, dim=1)
+```
+
+Depth 0 predicts SM absolutely; deeper depths predict an **offset from the surface**.
+Zero-init the `d ≥ 1` heads so training starts from "all depths = surface prediction".
+
+**Star (all offsets from depth 0), not chain (each offset from the depth above):** the ≥95 %
+coverage filter drops depths per station, so a sparsely-observed middle depth would become a
+weak link corrupting everything below it. Star isolates that.
+
+Effects:
+- base carries the **common** signal (site wetness); deltas carry the **depth-specific**
+  signal (attenuation, lag) — cleaner factorisation, and the deltas are smaller/lower-variance
+  than absolute values, so easier to fit.
+- `heads[0]` now receives gradient from all three losses. The surface becomes a shared
+  baseline — watch for slight degradation in the surface metric.
+- Loss unchanged: still Huber on absolute values per depth. Pure output reparameterisation.
+
+Rationale: the depth tokens have no idea the depths are *ordered* or physically coupled —
+`depth_tokens[0]` means "surface" only because row 0's gradient always comes from the 0–10 cm
+error. Deep SM is roughly a lagged, damped integral of shallow SM; the star residual injects
+that prior rather than hoping it's discovered.
+
+### 18.5 Explicitly NOT doing yet — 3×3 per-depth heads
+
+A 1×1 head can only mix the 64 shared channel maps: `y_d = Σ_c (W_d[c]·s_d[c])·x[c,h,w]`.
+Different depths *can* get different patterns (different points in that 64-map span), but no
+**neighbourhood** operation is possible — no shift, blur, or spatial gradient. A depth offset
+field is physically exactly that (lateral flow, diffusion), so a 3×3 is well-motivated in
+principle.
+
+Deferred because the loss reads **one pixel** (`model.py:733`): per-depth spatial patterns are
+completely unsupervised, so a 3×3 head adds capacity nothing trains and no way to measure it.
+Revisit with the §16 Step 1 dense-supervision work.
+
+### 18.6 Run
+
+```bash
+sbatch slurm/train.sh --run-name cls_depth_star --use-cls-depth
+```
+
+`per_depth_loss` already `True` (`train.py:210`); `lambda_tv` already `0.0` (L213);
+`lambda_boundary` `0.1` (L214).
+
+### 18.7 What to watch
+
+| Signal | Expect |
+|---|---|
+| Per-depth val loss, 30–100 cm | should move across epochs instead of flat-lining |
+| Surface val loss | small degradation acceptable (shared baseline); large ⇒ star residual hurting |
+| Epoch of overfit | previously e3; more depth-specific capacity may pull this earlier |
+| Depth-token divergence | cosine similarity between the 3 rows should drop below 1.0 early |
+
+### 18.8 Scope note
+
+Everything in §18 is on the **depth** axis. Map smoothness is the **spatial** axis (§16, §17.7)
+and is untouched by any of it. Order there is unchanged: dense supervision first, carrier
+second, upsampler third.
+
+### 18.9 Status
+
+**Implemented 2026-08-03.** Changes landed in `model.py`:
+
+| Change | Location |
+|---|---|
+| `trunc_normal_(std=0.02)` on `depth_tokens` | `model.py:411-417` |
+| Zero-init offset heads (`heads[1:]`) | `model.py:237-247` |
+| Star residual in `UNetDecoder.forward` | `model.py:270-281` |
+
+The `use_cls_depth=False` path is untouched, so existing checkpoints still load.
+
+Smoke test (decoder + model instantiation, dummy tensors):
+
+| Check | Result |
+|---|---|
+| Output shape | `(2, 3, 224, 224)` — unchanged |
+| All depths identical at step 0 (star residual + zero-init offsets) | True |
+| `depth_tokens` std | 0.0199 |
+| `cos(depth_tokens[0], depth_tokens[1])` | **−0.024** (was exactly 1.0) |
+| Depth-specific params | **297,795** (was 195) |
+
+Next action = launch `sbatch slurm/train.sh --run-name cls_depth_star --use-cls-depth`.
