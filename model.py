@@ -237,6 +237,12 @@ class UNetDecoder(nn.Module):
         if use_cls_depth:
             self.depth_film = nn.ModuleList([FiLMLayer(d_context, c[3]) for _ in range(n_depths)])
             self.heads      = nn.ModuleList([nn.Conv2d(c[3], 1, 1) for _ in range(n_depths)])
+            # Star residual (see forward): heads[0] predicts SM directly, heads[1:] predict
+            # an offset from it. Zero-init the offset heads so training starts from
+            # "all depths = surface prediction" instead of from noise.
+            for h in self.heads[1:]:
+                nn.init.zeros_(h.weight)
+                nn.init.zeros_(h.bias)
         else:
             self.head = nn.Conv2d(c[3], n_depths, 1)
 
@@ -262,10 +268,16 @@ class UNetDecoder(nn.Module):
         x = self.pre_head_drop(x)
 
         if self.use_cls_depth and depth_ctx is not None:
-            depth_maps = []
-            for d in range(self.n_depths):
+            # Star residual: depth 0 predicts SM absolutely; every deeper depth predicts an
+            # offset from it. Star (all offsets from depth 0) rather than chain (each offset
+            # from the depth above) so a sparsely-observed middle depth cannot corrupt the
+            # ones below it — the >=95% coverage filter drops depths per station.
+            # See training_runbook.md §18.4.
+            base       = self.heads[0](self.depth_film[0](x, depth_ctx[:, 0, :]))
+            depth_maps = [base]
+            for d in range(1, self.n_depths):
                 x_d = self.depth_film[d](x, depth_ctx[:, d, :])
-                depth_maps.append(self.heads[d](x_d))
+                depth_maps.append(base + self.heads[d](x_d))
             return torch.cat(depth_maps, dim=1)                        # (B, n_depths, 224, 224)
         return self.head(x)                                            # (B, n_depths, 224, 224)
 
@@ -409,6 +421,11 @@ class SoilMoistureModel(nn.Module):
         # ── Depth-specific CLS tokens (one per depth, attend across all tokens) ──
         if use_cls_depth:
             self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
+            # Zero-init would make all depth queries numerically identical, and no positional
+            # encoding is added to these slots — attention is permutation-equivariant over
+            # them, so depth_ctx[:,0,:] == depth_ctx[:,1,:] == ... exactly at step 0. Random
+            # init gives each depth a distinct query from the first step.
+            nn.init.trunc_normal_(self.depth_tokens, std=0.02)
 
         # ── U-Net decoder ─────────────────────────────────────────────
         self.decoder = UNetDecoder(

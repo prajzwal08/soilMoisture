@@ -2263,4 +2263,26 @@ Everything in §18 is on the **depth** axis. Map smoothness is the **spatial** a
 and is untouched by any of it. Order there is unchanged: dense supervision first, carrier
 second, upsampler third.
 
-- Status: planned, **not implemented**. Next action = apply changes 1-3 to `model.py`.
+### 18.9 Status
+
+**Implemented 2026-08-03.** Changes landed in `model.py`:
+
+| Change | Location |
+|---|---|
+| `trunc_normal_(std=0.02)` on `depth_tokens` | `model.py:411-417` |
+| Zero-init offset heads (`heads[1:]`) | `model.py:237-247` |
+| Star residual in `UNetDecoder.forward` | `model.py:270-281` |
+
+The `use_cls_depth=False` path is untouched, so existing checkpoints still load.
+
+Smoke test (decoder + model instantiation, dummy tensors):
+
+| Check | Result |
+|---|---|
+| Output shape | `(2, 3, 224, 224)` — unchanged |
+| All depths identical at step 0 (star residual + zero-init offsets) | True |
+| `depth_tokens` std | 0.0199 |
+| `cos(depth_tokens[0], depth_tokens[1])` | **−0.024** (was exactly 1.0) |
+| Depth-specific params | **297,795** (was 195) |
+
+Next action = launch `sbatch slurm/train.sh --run-name cls_depth_star --use-cls-depth`.
