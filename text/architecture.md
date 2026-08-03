@@ -10,7 +10,7 @@ We present a multimodal neural land surface model that predicts daily soil moist
 
 **Input encoding.** The model ingests observations across a range of spatial and temporal resolutions. High-resolution surface state is captured through Sentinel-2 Level-2A multispectral imagery (12 bands, ~10 m) and Sentinel-1 RTC synthetic aperture radar backscatter (VH/VV, ~10 m), both acquired within a rolling 365-day window ending at T. All Sentinel-2 acquisitions are cloud-masked at the 16×16 pixel token level using a pre-trained CloudSEN12 model applied offline. Static landscape context is provided by the Copernicus GLO-30 Digital Elevation Model, ESA WorldCover land use/land cover map, and soil physical and chemical properties from the OpenLandMap-soildb dataset at 30 m resolution. Meteorological forcing is drawn from the ERA5-Land reanalysis at ~9 km resolution, providing 19 daily variables (temperature, dewpoint, skin temperature, wind components, surface pressure, and total precipitation, each as daily mean, minimum, and maximum where applicable) for all 365 days in the rolling window. Two coarse-scale auxiliary inputs are optionally incorporated: Solar-Induced Fluorescence from TROPOMI (~3.5 km, sparse daily) and Terrestrial Water Storage Anomalies from GRACE (~300 km, monthly).
 
-**Feature extraction.** Sentinel-1, Sentinel-2, DEM, and LULC imagery are processed through TerraMind Base, a frozen Vision Transformer pre-trained on multi-modal Earth observation data (12 layers, 768-dim, 12 heads). TerraMind produces a 14×14 grid of 768-dimensional spatial tokens per acquisition (196 tokens, each representing a 160 m patch). Intermediate features at layers 3, 6, 9, and 12 (L3, L6, L9, L12) are extracted via forward hooks. For each historical S2 or S1 acquisition, the 196 L12 tokens are compressed into four summary tokens through a Latent Cross-Attention bottleneck: four learnable query vectors attend over all 196 spatial tokens as keys and values, with cloud-contaminated tokens suppressed via a key padding mask. This content-adaptive compression replaces the fixed geometric spatial pyramid, allowing the model to dynamically focus on informationally rich, cloud-free regions regardless of their spatial position. Static DEM and LULC tokens are produced analogously without cloud masking. Soil physical properties are encoded through a lightweight depthwise-separable convolutional network applied to the 74×74 pixel (30 m) soil patch, followed by a four-level spatial pyramid producing four 768-dimensional static tokens representing scales from 30 m to 1.1 km. ERA5-Land variables are first normalised using a Yeo-Johnson Power Transform fitted on the training split to correct for scale differences spanning eight orders of magnitude and distributional skewness in precipitation, and then projected to 768 dimensions through a two-layer MLP. SIF and TWSA observations are each encoded through separate single-variable MLPs with sparse token injection on observation days only, with mid-month day-of-year assignment for TWSA.
+**Feature extraction.** Sentinel-1, Sentinel-2, DEM, and LULC imagery are processed through TerraMind Base, a frozen Vision Transformer pre-trained on multi-modal Earth observation data (12 layers, 768-dim, 12 heads). TerraMind produces a 14×14 grid of 768-dimensional spatial tokens per acquisition (196 tokens, each representing a 160 m patch). Intermediate features at layers 3, 6, 9, and 12 (L3, L6, L9, L12) are extracted via forward hooks. For each historical S2 or S1 acquisition, the 196 L12 tokens are compressed into four summary tokens by masked spatial pyramid pooling: four nested, centre-aligned windows of 2×2, 6×6, 10×10 and 14×14 tokens (320 m, 960 m, 1.6 km and 2.24 km) are mean-pooled, with cloud-contaminated or otherwise invalid tokens excluded from each mean through a validity mask. The pooling weights are fixed and geometric rather than learned, and the operation is performed on CPU inside the DataLoader workers (`_cpu_pyramid_pool`, `dataset.py:190`), which reduces the per-sample inter-process payload from roughly 30 MB to 2 MB. Static DEM and LULC tokens are produced analogously without cloud masking. Soil physical properties are encoded through a lightweight depthwise-separable convolutional network applied to the 74×74 pixel (30 m) soil patch, followed by a four-level spatial pyramid producing four 768-dimensional static tokens representing scales from 150 m to 2.2 km (receptive field). ERA5-Land variables are first normalised using a Yeo-Johnson Power Transform fitted on the training split to correct for scale differences spanning eight orders of magnitude and distributional skewness in precipitation, and then projected to 768 dimensions through a two-layer MLP. SIF and TWSA observations are each encoded through separate single-variable MLPs with sparse token injection on observation days only, with mid-month day-of-year assignment for TWSA.
 
 **Temporal Transformer.** All encoded tokens are assembled into a single sequence of approximately 680–730 tokens and processed by a six-layer bidirectional Transformer encoder (768-dim, 12 heads, pre-norm, MLP ratio 4). Causality is enforced by masking ERA5 tokens for days after T via key padding mask, while all visible tokens attend freely to one another without autoregressive masking. Three positional signals are additively combined per token: a sinusoidal encoding of the absolute calendar day-of-year for season awareness; a learned relative position embedding (indices 0 to 364) encoding the token's temporal order within the rolling window and resolving the year-boundary ambiguity; and a unified learned modality type embedding (10 entries) that distinguishes all token types, including ERA5, SIF, TWSA, historical S2 and S1 compressed tokens, target-day spatial tokens, DEM, LULC, and soil. Satellite history tokens additionally receive a learned scale embedding distinguishing the four latent query levels. Modality dropout is applied during training (50% for SIF and TWSA; 20% for S1 or S2 individually; 10% for S1 and S2 together) to enable inference-time ablations and graceful degradation when modalities are unavailable.
 
@@ -107,9 +107,18 @@ Hook extraction (forward hooks on encoder blocks):
   L12 (block 11) → (B, 196, 768)  semantic           → Latent CA bottleneck
 ```
 
-### 3a. Latent Cross-Attention Bottleneck (historical S2/S1)
+### 3a. Latent Cross-Attention Bottleneck (historical S2/S1) — ⚠ NOT IMPLEMENTED
 
-Replaces spatial pyramid pooling. Applied per acquisition to L12 tokens.
+> **Status (2026-08-03): design only — this module does not exist in the code.**
+> `grep` for `MultiheadAttention` / `cross_attn` / latent queries returns nothing in
+> `model.py` or `dataset.py`. What actually runs is fixed geometric masked pyramid
+> pooling (`_cpu_pyramid_pool`, `dataset.py:190`) — nested 2×2 / 6×6 / 10×10 / 14×14
+> centre windows, static masked mean, **no learned weights**. It was moved to CPU inside
+> the DataLoader workers to cut per-sample IPC payload from ~30 MB to ~2 MB, which is
+> presumably why the learned bottleneck below was not adopted. Kept here as a design
+> record; do not cite it as the implemented method.
+
+Proposed design (would replace spatial pyramid pooling). Applied per acquisition to L12 tokens.
 
 ```
 LatentCrossAttention:
@@ -290,11 +299,14 @@ Lightweight CNN (weights learned during training):
   Block 2 — spatial compression (stride 2):
     DWConv(32, 3×3, s=2) → PWConv(32→64) → BN → GELU  # (B, 64, 37, 37)
 
-Spatial pyramid — 4 centre-crop scales → 4 × 768 static tokens:
-  centre 1×1  → mean → Linear(64→768) + scale_emb[0]  # ~30 m   station pixel
-  centre 3×3  → mean → Linear(64→768) + scale_emb[1]  # ~90 m   neighbourhood
-  centre 7×7  → mean → Linear(64→768) + scale_emb[2]  # ~210 m  field scale
-  full  37×37 → mean → Linear(64→768) + scale_emb[3]  # ~1.1 km landscape
+Spatial pyramid — 4 centre-crop scales → 4 × 768 static tokens.
+NOTE: after Block 2 (stride 2) each cell is 60 m, not 30 m, and has a 5-input-px
+receptive field. A k×k window therefore spans k×60 m and sees (5+2(k-1))×30 m of
+input. Scales below are window span / receptive field:
+  centre 1×1  → mean → Linear(64→768) + scale_emb[0]  # 60 m  / RF 150 m  station
+  centre 3×3  → mean → Linear(64→768) + scale_emb[1]  # 180 m / RF 270 m  neighbourhood
+  centre 7×7  → mean → Linear(64→768) + scale_emb[2]  # 420 m / RF 510 m  field scale
+  full  37×37 → mean → Linear(64→768) + scale_emb[3]  # 2.22 km = full patch, landscape
 
   + learned modality type  nn.Embedding(10, 768)  (index 9)
   → 4 × 768 static soil tokens

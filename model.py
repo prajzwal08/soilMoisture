@@ -322,10 +322,13 @@ class SoilEncoder(nn.Module):
         x  = self.block1(x)                                         # (B, 32, 74, 74)
         x  = self.block2(x)                                         # (B, 64, 37, 37)
         cy = cx = 18                                                 # centre of 37×37
-        t0 = x[:, :, cy:cy+1,   cx:cx+1  ].mean(dim=(-2, -1))     # 1×1  ~30 m
-        t1 = x[:, :, cy-1:cy+2, cx-1:cx+2].mean(dim=(-2, -1))     # 3×3  ~90 m
-        t2 = x[:, :, cy-3:cy+4, cx-3:cx+4].mean(dim=(-2, -1))     # 7×7  ~210 m
-        t3 = x.mean(dim=(-2, -1))                                   # 37×37 ~1.1 km
+        # Scales: input is 30 m/px, but block2 has stride 2 → cells here are 60 m, and each
+        # cell has a 5-input-px receptive field. So a k×k window spans k×60 m and sees
+        # (5 + 2(k-1))×30 m of input. (Earlier comments assumed 30 m cells — 2× too small.)
+        t0 = x[:, :, cy:cy+1,   cx:cx+1  ].mean(dim=(-2, -1))     # 1×1   win 60 m,  RF 150 m
+        t1 = x[:, :, cy-1:cy+2, cx-1:cx+2].mean(dim=(-2, -1))     # 3×3   win 180 m, RF 270 m
+        t2 = x[:, :, cy-3:cy+4, cx-3:cx+4].mean(dim=(-2, -1))     # 7×7   win 420 m, RF 510 m
+        t3 = x.mean(dim=(-2, -1))                                   # 37×37 win 2.22 km = full patch
         return torch.stack(
             [self.proj[i](t) for i, t in enumerate([t0, t1, t2, t3])], dim=1
         )                                                            # (B, 4, 768)
