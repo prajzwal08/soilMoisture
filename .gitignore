@@ -16,5 +16,4 @@ plots/
 latex/
 *.md
 !text/architecture.md
-!text/unet_decoder_explained.md
 wandb/
