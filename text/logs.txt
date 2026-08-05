@@ -3020,3 +3020,151 @@ That number is NOT comparable to this session's 0.002182 — that run POOLED all
 per-depth Huber then averages. Different quantities. Compare per-depth
 ubRMSE/MAE/bias (m3/m3) across runs instead, never the loss scalar.
 
+
+================================================================================
+SESSION 20 — 2026-08-05
+================================================================================
+
+(Numbering follows text/training_runbook.md §19. logs.txt has no entries for
+sessions 17-19; §19 was built across those, this entry closes it out.)
+
+--- Goal ---
+
+Get the bundled run cls_depth_star_reg launched. It had been paused since S16
+to combine three changes: per-depth loss reporting, use_cls_depth=True + star
+residual, and heavier regularisation. Ended with the run live, the code
+reviewed, committed and merged to main.
+
+--- What happened, in order ---
+
+1. Five smoke runs on H100 x4 to validate the bundled changes end to end:
+     25234282  smoke_cls_star_reg    20 stations, 2 epochs  best_val 0.0038
+     25234340  smoke_cls_star_reg2    6 stations, 1 epoch   best_val 0.0042
+     25234719  smoke_cls_star_reg3    6 stations, 1 epoch   best_val 0.0043
+     25235250  smoke_paramgroups      6 stations, 1 epoch   best_val 0.0041
+     25235660  smoke_reviewfixes      6 stations, 2 epochs  best_val 0.0042
+   Jobs 25234370 and 25234753 were cancelled during SHM preload to fold in
+   fixes before they burned compute. No checkpoints written, nothing wasted.
+
+2. Adversarial review of train.py, model.py and dataset.py BEFORE committing
+   H100 hours. Nine real defects surfaced — two introduced by this branch,
+   seven pre-existing and shipping in every run to date. Written up as
+   runbook §19.12; the two that mattered most:
+
+   - nan poisoned the per-depth diagnostic (model.py:783). `elem * valid`, and
+     nan*False is nan, not 0. A non-finite prediction at an UNLABELLED depth
+     cannot affect training (the scalar loss only ever sees pred[mask]) but it
+     made depth_sum nan, survived all_reduce(SUM) to all four ranks, and
+     silently nan'd train/{depth}/loss, huber_pooled and huber_depth_mean —
+     while train_loss still printed a healthy number. That is precisely the
+     signal §19.1 added the breakdown to obtain. This defect was introduced by
+     c66eb52, i.e. it broke the branch's own headline feature.
+
+   - Every resume reset the learning rate (train.py:943). ReduceLROnPlateau
+     .load_state_dict is a bare __dict__.update and never writes back to
+     param_groups, so the decayed LR lives only in the optimizer — and an
+     unconditional `pg["lr"] = CONFIG["lr"]` loop overwrote it. train.sh sets
+     --requeue and --time=120:00:00, so any preemption after the first LR drop
+     jumped LR from e.g. 5e-5 back to 2e-4 while the restored scheduler.best
+     and num_bad_epochs still believed the decay had happened. No crash, no log
+     line — the run simply re-diverges, days in. This was the single most
+     likely way this run could have been silently corrupted.
+
+   Also fixed: non-atomic 600 MB checkpoint writes over the live last.pt
+   (SIGKILL 30 s after SIGTERM leaves a truncated file that torch.load rejects
+   on all four ranks -> crash-loop on requeue); weight decay hitting 10 decoder
+   BatchNorm scales because the split was name-based and nn.Sequential names
+   them positionally (decoder.conv1.net.1.weight — no "norm" substring), which
+   §19.5 had just doubled the effect of; --weight-decay/--lr-patience silently
+   reverting on resume; a bare ValueError crash-loop from the changed group
+   sizes; mid-epoch resume reverting the LR; and endswith(".bias") dropping
+   protection from six MultiheadAttention in_proj_bias tensors — the exact
+   mirror of the BatchNorm bug, caught while fixing it.
+
+   The mechanism diagnostic was also pointed at the wrong tensor:
+   diag/depth_token_cos measured the learned INPUT parameters, but
+   use_cls_depth going inert manifests in the transformer OUTPUTS, which can
+   collapse while the inputs stay near-orthogonal. forward() now stashes
+   batch-mean depth_ctx and training logs diag/depth_ctx_cos_*.
+
+3. dataset.py came back with NO defects — verified against the data on disk,
+   not just read: depth strings across all 993 stores, the 513-station QC
+   realign (surplus proved entirely leading), 0 labels >1.0 at qc==0 out of
+   5,192,395, ERA5 right-alignment across 1,598,711 observed label days, all
+   8,667 memmap slots. Two guards added anyway, both against burning
+   120 h x 4 H100s: _load_l12_shm now requires both .bin and .meta.json, and
+   the SHM sentinel wait is bounded at 3 h instead of spinning for the full
+   walltime if rank 0 died during preload.
+
+4. test_per_depth_loss.py gained section 8 (optimiser param groups), including
+   a regression witness that demonstrates the old name-based filter leaking 10
+   norm scales. Full suite re-run in the terramind env: all pass.
+
+5. Committed, pushed, merged.
+     b81faf7  Pre-launch bug hunt: fix 9 defects across the three files
+     5a5c271  Runbook §19.12: record the pre-launch bug hunt
+   origin/main fast-forwarded ef31bcc -> 5a5c271. Done as
+   `git push origin feat/per-depth-loss-reporting:main` + `git branch -f main`
+   rather than checkout+merge, deliberately: job 25235976 was already live and
+   re-reads train.py/dataset.py from this checkout on requeue, so a checkout to
+   main would have exposed a window where those files held pre-fix code.
+
+--- Run launched ---
+
+sbatch slurm/train.sh --run-name cls_depth_star_reg --use-cls-depth \
+  --weight-decay 0.1 --drop-path-rate 0.2 --early-stop-patience 6 --lr-patience 3
+
+Job 25235976, node gcn89, H100 x4, 120 h limit. Fresh run name — no checkpoint
+dir existed, and one was required regardless because use_cls_depth changes the
+parameter set. Expect Trainable parameters: 50,348,544 (was 50,050,944).
+At sign-off the job was RUNNING, still in SHM preload (~145 GB, up to ~30 min),
+no epoch line yet.
+
+--- What to watch, in priority order ---
+
+1. diag/depth_ctx_cos_* — NOT depth_token_cos. Both smokes that logged it read
+   0.999, which is the inert-use_cls_depth signature. Not conclusive at 6
+   stations x 2 epochs, but if it is still ~0.999 by epoch 3-4 at full scale
+   then the CLS mechanism is not differentiating and the whole premise of the
+   run has failed. The parameter cosine (0.087 / -0.039) will keep looking
+   healthy throughout — ignore it.
+2. train/30-100/loss — high and flat means capacity or information ceiling;
+   falling while val/30-100/loss rises means label scarcity. Opposite fixes.
+3. val/30-100/ubRMSE and bias — should stop the monotonic wet drift that was
+   the S16 failure mode (+.0146 -> +.0245 across e3->e6).
+
+Stated confound, accepted to save a run cycle: this run changes architecture
+AND regularisation together. Mitigation is the per-depth TRAIN loss —
+regularisation lifts all three depths together, architecture moves them apart.
+
+If depth_ctx_cos says the CLS mechanism is inert, the next lever is a CASCADE
+(10-30 as a residual on 0-10, 30-100 on 10-30), NOT more parameters.
+
+--- Known and accepted, not fixed (§19.12.7) ---
+
+  * evaluate() omits lambda_boundary, so val_loss optimises a slightly
+    different objective than train_loss. Left unchanged to preserve
+    comparability with pg7mw3xb; huber_pooled is boundary-free on both sides
+    and is the honest cross-run metric. Flagged for a deliberate decision
+    rather than changed silently.
+  * One epoch of per-depth TRAIN loss logs nan after a val-crash resume.
+  * depth_film[1:] receives zero gradient at step 0, self-resolving after one
+    AdamW step — worth knowing if the first ~100 batches look flat.
+
+--- Untested at scale ---
+
+The full SHM preload path (~145 GB, worst observed 1901 s) including its new
+3 h timeout guard. --max-stations makes the preloader and the train dataset
+select different station subsets, so no smoke run exercises it. First real
+exercise is this launch.
+
+--- Comparison baseline ---
+
+baseline_huber_notv_perdepth (W&B pg7mw3xb), compared on per-depth ubRMSE /
+MAE / bias in m3/m3. Never compare the val_loss scalar across runs with
+different loss definitions.
+
+--- Still deferred, unchanged ---
+
+Dense spatial supervision / Step-1 proxy-consistency structure loss
+(runbook §16.4); distributed validation; skip-connection ablation.
