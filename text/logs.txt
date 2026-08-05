@@ -3361,3 +3361,140 @@ Commits: b81faf7 5a5c271 0313f25 9f08b34 1dc75a9 c805f75 a6c259c db8c94a
   4. Deferred: real oos/oot/oost evaluation (meeting_output/ is a 10-station
      smoke run). OOT = same stations, 2023 — the counterfactual that decides
      whether the offset is a transfer limit or a representation limit.
+
+--- SESSION 20 addendum: SMAP result (evening) ---
+
+§21.2 ceiling test COMPLETE. GEE auth recovered (see the auth pattern above),
+NASA/SMAP/SPL3SMP_E/006 extracted for all 661 stations, 2016-2022, per-year
+means then averaged. 651/661 with retrieval, 0 missing for brightness
+temperature. Job: interactive, ~25 min. Ladder re-run = job 25250245.
+
+RESULT (best RMSE on 74 held-out stations, ridge/GBM):
+
+  block            0-10             10-30            30-100
+  B6 +latlon       0.0647/0.0597    0.0599/0.0604    0.0836/0.0819
+  B7 +smap_sm      0.0631/0.0607    0.0597/0.0604    0.0812/0.0782
+  B8 +smap_tb      0.0627/0.0576    0.0603/0.0576    0.0806/0.0795
+  network                  0.0618           0.0611           0.0875
+  null                     0.0752           0.0763           0.0877
+
+  1. SMAP does NOT break the wall. Gains 3.5%/2.0%/4.5% over the SMAP-free
+     best. Level still only 23/25/11% over null. Worth ~3% on total RMSE — not
+     worth a new acquisition pipeline plus reframing the thesis as downscaling.
+     VERDICT: drop the SMAP integration.
+  2. B8 > B7 CONFIRMED at both shallow depths — TB-derived features beat SMAP's
+     own retrieval by 5.1% (0-10) and 4.6% (10-30). Raw brightness temperature
+     normalised by ERA5 skin temperature predicts station mean better than the
+     L3 product does. That is evidence the retrieval's climatological tau-omega
+     assumptions (vegetation optical depth, albedo, roughness, effective soil
+     temperature) discard information the observable retains. Holds regardless
+     of whether SMAP is ever ingested — worth writing up independently.
+  3. 30-100 flipped to Branch B on the pre-registered rule, correctly this time:
+     best 0.0782 vs network 0.0875 vs null 0.0877. The network is AT NULL there
+     and misses 10.6% that is demonstrably extractable. Interestingly the
+     RETRIEVAL beats TB at depth (0.0782 vs 0.0795) — the reverse of the
+     surface — consistent with vegetation/roughness corrections mattering more
+     where the surface signal is weakest.
+  4. Coefficients confirm SMAP contributes rather than rides along: smap_sm_am
+     is the LARGEST single coefficient at 10-30 and third-largest at the other
+     two depths.
+
+  Practical note recorded: TB_h ranges down to 76.8 K, implausible for land
+  (typical L-band land TB is 200-280 K). Those are water-contaminated pixels —
+  coastal/lake cells. Noise in B8, not a blocker, but do not treat raw TB
+  extremes as physical.
+
+--- Run cls_depth_star_reg continued to e15 ---
+
+  e11 0.002212 NEW BEST   e12 0.002208 NEW BEST   e13 0.002187 NEW BEST
+  e14 0.002207            e15 0.002213
+
+  I called this run converged at e5 and again at e9. WRONG BOTH TIMES — it
+  found three consecutive new bests at e11-e13 after four flat epochs. Do not
+  predict this run's stopping point from a short plateau.
+
+  At e12 the network's implied per-station offset reached ~0.0569 (0-10) and
+  ~0.0586 (10-30) — BETTER than the SMAP-augmented probe's 0.0576. So at the
+  two shallow depths the network has now caught up with and passed everything
+  the probe could extract. Strongest form of the negative result, and it only
+  became visible because the run kept improving.
+
+  Overfitting is now 21x (train 0.000103 vs val 0.002213) and val turned at
+  e14-e15. But this is station memorisation, structural — §19.5 proved
+  regularisation cannot touch it. The fix is anomaly retargeting (§20.7-A1),
+  which removes the memorisable quantity from the target.
+
+  10-30 crossed below ubRMSE 0.05 for the first time (0.0497 at e12) and is now
+  the BEST depth, better than 0-10. Counterintuitive since satellites sense the
+  surface — likely physical: 0-10 responds sharply to rain events and dries in
+  days (high temporal variance), 10-30 is damped. The depth easiest to predict
+  is not the one best observed.
+
+--- GEE auth: the pattern that worked (headless HPC) ---
+
+  Default `earthengine authenticate` wants gcloud (absent). notebook auth_mode
+  needs interactive paste-back, which a FIFO cannot deliver (the write blocks).
+  Solution: split the flow across two processes using ee.oauth.Flow —
+    p1: flow = oauth.Flow(auth_mode="notebook"); persist flow.code_verifier
+    p2: oauth._obtain_and_write_token(code, verifier, scopes)
+  Also: EE point extraction fails on globally-scattered chunks with "User memory
+  limit exceeded". Sort stations by coarse lat/lon cell first so each chunk is
+  spatially compact. And do NOT ask EE for collection.mean() before sampling —
+  reducing ~4000 images server-side stalls; sample per year and average locally.
+  getInfo on a FeatureCollection aborts past 5000 elements.
+
+--- State at sign-off ---
+
+  * Run 25235976 CANCELLED at e16 (2026-08-05 20:57, 10h13m elapsed).
+    Rule agreed with user beforehand: cancel unless e16 beat e13's 0.002187 by
+    >=1%. e16 came in at 0.002177 — a NEW BEST but only 0.46% better, i.e.
+    below threshold, so the rule fired and the run was stopped.
+
+    FINAL best.pt = epoch 16, val_loss 0.00217653, verified loadable
+    (use_cls_depth=True, per_depth_loss=True). mid_epoch.pt cleaned up on exit.
+
+      Epoch 016  train=0.000099  val=0.002177
+         0-10  ubRMSE=0.0539  bias=0.0025   RMS per-station offset=0.0585
+        10-30  ubRMSE=0.0500  bias=0.0056   RMS per-station offset=0.0584
+       30-100  ubRMSE=0.0552  bias=0.0125   RMS per-station offset=0.0851
+
+    CORRECTION to the e12 note above: I wrote that the network had "caught up
+    with and passed" the SMAP-augmented probe on level. That compared my
+    SAMPLE-weighted algebraic estimate sqrt(MSE - ubRMSE^2) against the probe's
+    STATION-equally-weighted RMSE. Measured consistently at e16 the network is
+    0.0585/0.0584 vs the probe's 0.0576/0.0576 — essentially TIED, probe
+    marginally ahead. Conclusion unchanged (nothing meaningful left at those
+    depths) but "passed" was wrong. Always compare like-for-like weighting.
+
+    At 30-100 the gap HOLDS: network 0.0851 vs probe 0.0782 = 8.1% the model
+    is not using. That remains the one live Branch-B pocket.
+  * Deferred to tomorrow: real oos/oot/oost evaluation
+    (`sbatch slurm/evaluate_meeting.sh cls_depth_star_reg best.pt`, ~2h GPU).
+    meeting_output/ currently holds a 10-STATION SMOKE RUN, not real numbers.
+    OOT = same stations, 2023 — the counterfactual deciding whether the level
+    failure is transfer or representation.
+  * Deferred: SMAP daily series. Needs ee.batch.Export.table.toDrive, NOT
+    getInfo — 661 stations x ~2500 days is past what getInfo returns.
+  * ECOSTRESS deferred by user decision. ECO_L2T_LSTE starts 2018-07-09, so it
+    covers at most 5 of 7 training years and zero of 2016-2017.
+
+--- Priorities agreed ---
+
+  1. Retarget to per-station standardised anomaly (§20.7-A1). Hits all three
+     problems at once: removes the unlearnable level component, removes the
+     memorisable quantity driving the 21x gap, and frees capacity for dynamics.
+     Testable prediction: ubRMSE IMPROVES.
+  2. Dense spatial supervision (§16.4 Step 1). Step 0 already PASSED 13 months
+     ago (job 24352962: decoder norm-std 0.0061 -> 0.2504, corr 1.000). Only 1
+     of 50,176 pixels is supervised. Use the S1/NDVI proxy already at 224 x 224
+     in satellite_zarr — no new download.
+  3. Reality-check the 0.04 ubRMSE bar. It is SMAP's requirement against CORE
+     validation sites, not broad ISMN point-scale validation (typically
+     0.05-0.06). If that holds, 0.0535/0.0497 at UNSEEN stations may already be
+     competitive and the framing changes from shortfall to result.
+  4. Cheap: 30-100 post-hoc offset correction via the fitted GBM (no retrain).
+
+--- Ruled out with evidence this session — do not re-attempt ---
+
+  regularisation strength (§19.5) | depth capacity / cascade (§20.2) |
+  Huber delta (§20.13) | SMAP integration (§21.2) | FiLM fixes (§20.12.1)

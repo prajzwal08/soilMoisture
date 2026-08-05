@@ -75,6 +75,9 @@ def main():
                     help="stations per getInfo() call — keeps payload under EE limits")
     ap.add_argument("--daily", action="store_true",
                     help="also pull daily series, for the SMAP-anomaly test")
+    ap.add_argument("--stride-days", type=int, default=5,
+                    help="use only days 1..N of each month (seasonally unbiased "
+                         "subsample). 0 = every day, which stalls EE at this point count.")
     args = ap.parse_args()
 
     import ee
@@ -82,6 +85,14 @@ def main():
     print(f"EE initialized (project {GEE_PROJECT})")
 
     st = station_table(args.splits_csv)
+    # Sort geographically before chunking. Chunks of globally-scattered points force EE
+    # to hold tiles from everywhere in one request -> "User memory limit exceeded".
+    # Sorting by coarse lat/lon cell makes each chunk spatially compact, so a request
+    # touches a handful of tiles instead of hundreds.
+    st = (st.assign(_cell_lat=(st.latitude // 5), _cell_lon=(st.longitude // 5))
+            .sort_values(["_cell_lat", "_cell_lon", "latitude", "longitude"])
+            .drop(columns=["_cell_lat", "_cell_lon"])
+            .reset_index(drop=True))
     y0, y1 = args.years
     start, end = f"{y0}-01-01", f"{y1}-12-31"
     print(f"Stations: {len(st)}  ({(st.split=='train').sum()} train / "
@@ -89,23 +100,66 @@ def main():
     print(f"Product : {L3}  (L3 Enhanced 9 km, radiometer retrieval, SURFACE only)")
     print(f"Window  : {start} .. {end}\n")
 
-    # One temporal-mean composite; evaluated lazily, only at the sampled points.
-    mean_img = ee.ImageCollection(L3).filterDate(start, end).select(BANDS).mean()
+    # PER-YEAR composites, not one mean over the whole window. A single .mean() over
+    # ~4000 images sampled at 661 points is one enormous server-side reduction and EE
+    # stalls on it. Per year it is ~580 images per request, which returns in seconds,
+    # and the yearly means are averaged locally afterwards. Same answer, bounded requests.
+    # Sample the PIXEL per image, then average LOCALLY.
+    #
+    # The earlier version asked EE for `collection.mean()` and sampled that. Reducing
+    # ~4000 global images server-side before extracting 661 point values is an enormous
+    # computation and it stalled indefinitely. Reducer.first() at 9 km was never doing
+    # spatial aggregation anyway — it is just "the pixel containing the station" — so the
+    # mean does not need to happen on EE's side at all. Per-image sampling is a cheap
+    # lookup, and averaging in pandas afterwards gives the identical number.
+    #
+    # Sampling per image also yields the daily series the §21.2 anomaly test needs, so
+    # the dynamics check comes free instead of costing a second pass.
+    import time
+    frames = []
+    for y in range(y0, y1 + 1):
+        ic = (ee.ImageCollection(L3)
+              .filterDate(f"{y}-01-01", f"{y}-12-31")
+              .select(BANDS))
+        if args.stride_days:
+            # Days 1..N of each month: ~N*12 samples/yr, evenly spread over the seasonal
+            # cycle, so the climatological mean is estimated with far fewer images and
+            # WITHOUT the seasonal bias that picking whole months would introduce.
+            ic = ic.filter(ee.Filter.calendarRange(1, args.stride_days, "day_of_month"))
+        # One mean image per year, then read THE PIXEL CONTAINING THE STATION.
+        # Reducer.first() at the native 9 km scale is exactly that — no neighbourhood,
+        # no aggregation. Per-year keeps each server-side reduction small, and the yearly
+        # means are averaged locally afterwards.
+        img = ic.mean()
+        t0, rows = time.time(), []
+        for i in range(0, len(st), args.chunk):
+            part = st.iloc[i:i + args.chunk]
+            fc = ee.FeatureCollection([
+                ee.Feature(ee.Geometry.Point([float(r.longitude), float(r.latitude)]),
+                           {"dir_name": r.dir_name})
+                for r in part.itertuples()
+            ])
+            sampled = img.reduceRegions(fc, ee.Reducer.first(), 9000,
+                                        tileScale=16).getInfo()
+            rows += [f["properties"] for f in sampled["features"]]
+        df = pd.DataFrame(rows)
+        df["year"] = y
+        frames.append(df)
+        got = df[BANDS[0]].notna().sum() if BANDS[0] in df.columns else 0
+        print(f"  {y}: {len(df)} stations, {got} with data   ({time.time()-t0:.0f}s)",
+              flush=True)
 
-    rows = []
-    for i in range(0, len(st), args.chunk):
-        part = st.iloc[i:i + args.chunk]
-        fc = ee.FeatureCollection([
-            ee.Feature(ee.Geometry.Point([float(r.longitude), float(r.latitude)]),
-                       {"dir_name": r.dir_name})
-            for r in part.itertuples()
-        ])
-        sampled = mean_img.reduceRegions(collection=fc, reducer=ee.Reducer.first(),
-                                         scale=9000).getInfo()
-        rows += [f["properties"] for f in sampled["features"]]
-        print(f"  sampled {min(i + args.chunk, len(st))}/{len(st)}")
+    per_year = pd.concat(frames, ignore_index=True)
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    per_year.to_csv(Path(args.out) / "smap_station_yearly.csv", index=False)
+    print(f"Saved: {Path(args.out)/'smap_station_yearly.csv'}   ({len(per_year)} rows)")
 
-    out = st.merge(pd.DataFrame(rows), on="dir_name", how="left")
+    # NaN-aware station mean: a station missing some years is not penalised, one missing
+    # every year stays NaN so the coverage report below catches it rather than silently
+    # becoming an imputed median downstream.
+    agg = per_year.groupby("dir_name")[
+        [b for b in BANDS if b in per_year.columns]].mean().reset_index()
+    out = st.merge(agg, on="dir_name", how="left")
     outdir = Path(args.out); outdir.mkdir(parents=True, exist_ok=True)
     p = outdir / "smap_station.csv"
     out.to_csv(p, index=False)

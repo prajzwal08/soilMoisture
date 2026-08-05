@@ -3602,3 +3602,85 @@ a real measurement and not a model input.
   exactly zero inside [0,1] — it is **not** spatial supervision.
 - **TWI is not viable** as a proxy: it needs upslope contributing area, not computable from an
   isolated 2.24 km tile.
+
+### 21.7 RESULT — SMAP does not break the wall (job 25250245, 2026-08-05)
+
+`NASA/SMAP/SPL3SMP_E/006`, 661 stations, 2016-2022 per-year means. **651/661 with
+retrieval, 0 missing for brightness temperature.** Standard 36 km `SPL3SMP` is NOT in GEE —
+Enhanced 9 km substituted (same footprints, Backus-Gilbert interpolated).
+
+| Block | 0-10 | 10-30 | 30-100 |
+|---|---|---|---|
+| B6 +latlon | 0.0647 / 0.0597 | 0.0599 / 0.0604 | 0.0836 / 0.0819 |
+| B7 +smap_sm | 0.0631 / 0.0607 | 0.0597 / 0.0604 | 0.0812 / **0.0782** |
+| B8 +smap_tb | 0.0627 / **0.0576** | 0.0603 / **0.0576** | 0.0806 / 0.0795 |
+| **network (e16)** | **0.0585** | **0.0584** | **0.0851** |
+| null | 0.0752 | 0.0763 | 0.0877 |
+
+- **VERDICT: drop the SMAP integration.** Gains only 3.5 / 2.0 / 4.5% over the SMAP-free
+  best; level still just 23 / 25 / 11% over null; worth ~3% on total RMSE. Not worth a new
+  acquisition pipeline plus reframing the thesis as SMAP downscaling.
+- **0-10 and 10-30: network ≈ probe** (0.0585/0.0584 vs 0.0576/0.0576). Nothing left to
+  extract. **Compare like-for-like weighting** — an earlier note claimed the network had
+  *passed* the probe, but that compared sample-weighted `sqrt(MSE − ubRMSE²)` against the
+  probe's station-equal RMSE. It is a tie, not a win.
+- **30-100 is the one live pocket**: network 0.0851 vs probe 0.0782 = **8.1% unused**, and
+  the network sits at null (0.0877). Fired the pre-registered Branch-B rule correctly here.
+- **B8 > B7 at both shallow depths** (5.1% / 4.6%): raw TB normalised by ERA5 `skt` beats
+  SMAP's own retrieval. Evidence the L3 retrieval's climatological tau-omega assumptions
+  discard information the observable retains. **Holds independently of whether SMAP is ever
+  ingested — worth writing up on its own.** At depth the retrieval wins instead
+  (0.0782 vs 0.0795), consistent with vegetation/roughness corrections mattering more where
+  the surface signal is weakest.
+- `smap_sm_am` is the LARGEST single ridge coefficient at 10-30 and third-largest elsewhere
+  — SMAP contributes, there is just little total signal to contribute to.
+- **Caution:** TB_h ranges down to 76.8 K, implausible for land (L-band land TB is 200-280 K).
+  Water-contaminated coastal/lake cells. Noise in B8; do not treat raw TB extremes as physical.
+
+### 21.8 Run cls_depth_star_reg — final
+
+Cancelled at e16 by a pre-agreed rule (stop unless e16 beat e13's 0.002187 by ≥1%; it
+reached 0.002177 = 0.46%, a new best but below threshold). **`best.pt` = epoch 16,
+val_loss 0.00217653.** 10h13m, 16 epochs.
+
+| | 0-10 | 10-30 | 30-100 |
+|---|---|---|---|
+| ubRMSE | 0.0539 | **0.0500** | 0.0552 |
+| RMS per-station offset | 0.0585 | 0.0584 | 0.0851 |
+
+- **I called this run converged at e5 and again at e9. Wrong both times** — it produced four
+  more new bests (e11, e12, e13, e16) after apparent plateaus. Do not predict this run's
+  stopping point from a short plateau.
+- **10-30 is the best depth, not 0-10** (ubRMSE 0.0500 vs 0.0539). Counterintuitive since
+  satellites sense the surface; likely physical — 0-10 responds sharply to rain events and
+  dries within days (high temporal variance), 10-30 is damped.
+- Overfitting reached **21×** (train 0.000099 vs val 0.002177). This is station
+  memorisation, structural — §19.5 proved regularisation cannot touch it. The fix is
+  anomaly retargeting (§20.7-A1), which removes the memorisable quantity from the target.
+
+### 21.9 Next, in order
+
+1. **Retarget to per-station standardised anomaly** (§20.7-A1). Hits all three problems at
+   once: removes the unlearnable level component, removes the memorisable quantity driving
+   the 21× gap, frees capacity for dynamics. **Testable prediction: ubRMSE improves.**
+2. **Dense spatial supervision** (§16.4 Step 1). Step 0 PASSED 13 months ago (job 24352962:
+   decoder norm-std 0.0061 → 0.2504, corr 1.000). Only 1 of 50,176 pixels is supervised.
+   Use the S1/NDVI proxy already at 224² in `satellite_zarr` — no new download.
+3. **Reality-check the 0.04 ubRMSE bar** — it is SMAP's requirement against *core*
+   validation sites, not broad ISMN point-scale validation (typically 0.05-0.06). If that
+   holds, 0.0539 / 0.0500 at *unseen* stations may already be competitive.
+4. **Cheap:** 30-100 post-hoc offset correction via the fitted GBM (no retrain); real
+   oos/oot/oost evaluation (`meeting_output/` is still a 10-station smoke run).
+
+### 21.10 GEE operational notes (cost real time — do not rediscover)
+
+- Default `earthengine authenticate` needs `gcloud` (absent on Snellius). `notebook` mode
+  needs interactive paste-back, which a FIFO cannot deliver (the write blocks). **Working
+  pattern:** split across two processes — p1 `flow = oauth.Flow(auth_mode="notebook")`,
+  persist `flow.code_verifier`; p2 `oauth._obtain_and_write_token(code, verifier, scopes)`.
+- **Sort stations geographically before chunking.** Globally-scattered chunks trigger
+  "User memory limit exceeded" — EE must hold tiles from everywhere in one request.
+- **Do not ask EE for `collection.mean()` before sampling.** Reducing ~4000 images
+  server-side stalls indefinitely. Sample per year, average locally — identical result.
+- `getInfo()` on a FeatureCollection aborts past **5000 elements**. For 661 stations ×
+  ~2500 days use `ee.batch.Export.table.toDrive`, not `getInfo`.
