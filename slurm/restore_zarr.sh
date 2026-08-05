@@ -3,41 +3,49 @@
 #SBATCH --partition=staging
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=32G
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/restore_zarr_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
 # Restore the consolidated per-station zarr stores (tokens + input features + labels)
-# from the permanent backup on /projects back to scratch ZARR_ROOT, which was purged.
-# All three categories: sm_only (842), sm_and_flux (48), flux_only (103).
-# Trailing slash on SRC copies its CONTENTS into DEST (merges the three category dirs).
+# from the /projects backup back to scratch ZARR_ROOT after a scratch purge.
+# 64-way PARALLEL: one rsync per station dir, 64 in flight (xargs -P 64). Staging
+# nodes cap at 32 cores, but rsync is I/O-bound so 64 streams oversubscribe fine.
+# Single-stream rsync is metadata-bound on ~993 small-file dirs;
+# parallelising per-station is far faster. rsync -a is idempotent, so any stores
+# already restored by a prior run are skipped instantly.
 
-set -euo pipefail
+set -uo pipefail
 
-SRC=/projects/prjs1968/zarr_tokens/
-DST=/gpfs/scratch1/shared/pkhanal/zarr/
+export SRC=/projects/prjs1968/zarr_tokens
+export DST=/gpfs/scratch1/shared/pkhanal/zarr
 
 echo "Job ID:  $SLURM_JOB_ID"
 echo "Node:    $SLURM_NODELIST"
 echo "Started: $(date)"
-echo "SRC: $SRC"
-echo "DST: $DST"
+echo "SRC: $SRC  ->  DST: $DST   (64-way parallel)"
 
-mkdir -p "$DST"
+for c in sm_only sm_and_flux flux_only; do mkdir -p "$DST/$c"; done
 
-# -a archive (perms/times/symlinks), --info=progress2 overall progress,
-# --human-readable. No --delete: scratch only has empty skeletons, so a plain
-# overlay fills in chunk data + .complete markers without touching anything else.
-rsync -a --info=progress2 --human-readable "$SRC" "$DST"
+copy_one() {
+  local rel="$1"                       # e.g. sm_only/ISMN_ARM_Omega
+  mkdir -p "$DST/$rel"
+  rsync -a "$SRC/$rel/" "$DST/$rel/"
+}
+export -f copy_one
 
-echo "rsync exit: $?"
-echo "Finished: $(date)"
+# List every station dir (category/station) and fan out 64 rsyncs at a time.
+find "$SRC" -mindepth 2 -maxdepth 2 -type d -printf '%P\n' \
+  | xargs -P 64 -I{} bash -c 'copy_one "$@"' _ {}
+
+echo "All rsyncs dispatched/completed at $(date)"
 
 # Verify: count restored .complete markers per category
 for c in sm_only sm_and_flux flux_only; do
-  n=$(find "$DST$c" -maxdepth 2 -name .complete 2>/dev/null | wc -l)
+  n=$(find "$DST/$c" -maxdepth 2 -name .complete 2>/dev/null | wc -l)
   echo "  $c: $n stores with .complete"
 done
+echo "Finished: $(date)"

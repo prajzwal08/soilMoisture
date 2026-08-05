@@ -11,6 +11,9 @@ __pycache__/
 data/
 .claude/
 test_*.py
+# Whitelisted: not a throwaway probe. It is the only coverage for the m=None print
+# branch and the DDP sum-reduction, neither of which a smoke run reliably exercises.
+!test_per_depth_loss.py
 old_*.py
 plots/
 latex/

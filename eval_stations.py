@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel, masked_huber_loss, total_variation_loss
-from train import compute_metrics, evaluate
+from train import compute_metrics, evaluate, _per_depth_mean, _loss_aggregates
 
 CKPT_ROOT = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 
@@ -67,12 +67,14 @@ def main():
     model.eval()
 
     # Run evaluation
-    val_loss, metrics, per_station, depth_loss = evaluate(
+    val_loss, metrics, per_station, depth_sum, depth_cnt = evaluate(
         model, val_loader, device
     )
+    depth_loss     = _per_depth_mean(depth_sum, depth_cnt)
+    pooled, dmean  = _loss_aggregates(depth_sum, depth_cnt)
 
     print(f"\n=== Global metrics (epoch {ckpt['epoch']}) ===")
-    print(f"val_loss = {val_loss:.6f}")
+    print(f"val_loss = {val_loss:.6f}   pooled_huber = {pooled:.6f}   depth_mean = {dmean:.6f}")
     for depth, m in metrics.items():
         print(f"  {depth:>8s}  loss={depth_loss[depth]:.6f}  "
               f"MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "

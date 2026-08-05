@@ -2552,12 +2552,104 @@ still not hit live — both smoke subsets happened to carry all three depths in 
 covered only by the offline unit test. It is a `.get()` fallback, so the risk is a cosmetic print,
 not a crash.
 
-**Full run — job 25234370**, launched 2026-08-05. Fresh start (no prior `cls_depth_star_reg`
-checkpoint dir). Command:
+**Full run — job 25234370**, launched then **cancelled** 2026-08-05 at 12 min elapsed, still
+inside the SHM preload with no checkpoint written. Cancelled deliberately to fold in §19.10
+before spending H100 hours. Nothing was lost.
+
+---
+
+## §19.10 Two gaps closed before the real launch (Session 20, 2026-08-05)
+
+Reviewing §19.9 surfaced three weaknesses. Two are code and are fixed here; the third is
+experimental design and is §19.11.
+
+### 19.10.1 Gap A — a branch with no execution evidence
+
+`compute_metrics` **drops** a depth from `metrics` when val has no samples for it
+(`train.py:324-325`). The per-depth print therefore needs an `m is None` fallback. Both smokes
+(25234282, 25234340) happened to carry all three depths in val, so that fallback never ran.
+
+It matters because train and val are different station sets: a depth with ample training data but
+no val stations is exactly when the train number is most wanted, and it was the only line in the
+change with zero execution evidence.
+
+**Fix:** extract the line into `_format_depth_line(depth, train_loss, val_loss, m)`
+(`train.py:407`), so the branch is reachable from a test instead of from a rare data layout.
+
+### 19.10.2 Gap B — no scalar in the log is comparable across runs
+
+Pre-existing, and it has already cost us. `val_loss` changes **meaning** with `per_depth_loss`:
+
+| `per_depth_loss` | `val_loss` means |
+|---|---|
+| `False` | pool all (sample × depth) pairs, one Huber mean |
+| `True` | Huber per depth, then average the depths |
+
+So `baseline_huber_memmap` 0.00209 and `baseline_huber_notv_perdepth` 0.002182 are different
+quantities. §19.7's "never compare val_loss across runs" is a workaround for a missing metric, not
+a fix. The per-depth losses added a third definition (sample-weighted, Huber-only, boundary
+excluded) — hence epoch 1's `train_loss=0.047413` against a per-depth mean of 0.02722, the 0.0202
+gap being `lambda_boundary=0.1 × ~0.2`.
+
+**Fix:** `_loss_aggregates(depth_sum, depth_cnt)` (`train.py:387`) returns two scalars, both free
+from the sums already accumulated — no extra compute, no extra GPU sync:
+
+| Key | Formula | Purpose |
+|---|---|---|
+| `{split}/huber_pooled` | `Σsum / Σcnt` | One Huber mean over every valid (sample, depth) pair. Definition is independent of `per_depth_loss`, `lambda_tv`, `lambda_boundary` — **this is the cross-run comparable scalar** |
+| `{split}/huber_depth_mean` | unweighted mean over observed depths | Exactly the average of the printed per-depth lines, so the block reconciles on its face |
+
+They differ under uneven coverage, and the difference is itself informative: `pooled` weights each
+observation equally (dominated by 0-10 cm, which has the most stations), `depth_mean` weights each
+depth equally (30-100 cm counts as much as the surface). Measured on the test fixture:
+pooled 0.014915 vs depth_mean 0.015142.
+
+`evaluate` now returns the raw `(depth_sum, depth_cnt)` rather than a pre-derived dict, so the
+caller can compute both. `eval_stations.py` updated to match and now prints all three scalars.
+
+**`val_loss` itself is unchanged** — same formula, same value, still what drives `best.pt`, early
+stopping and the LR scheduler. These are metrics, not objective changes.
+
+### 19.10.3 These cannot affect training
+
+Verified, not assumed:
+
+| Check | Result |
+|---|---|
+| `loss.requires_grad` | True (unchanged — this is what `backward()` runs on) |
+| `depth_sum.requires_grad` / `.grad_fn` | False / None — the breakdown uses `pred.detach()` |
+| `_loss_aggregates` return type | Python `float`, not tensor |
+| Gradient w.r.t. input, with vs without `return_breakdown` | **bit-identical** (`torch.equal`) |
+
+### 19.10.4 `test_per_depth_loss.py` — 24 CPU checks, no GPU/data/DDP needed
 
 ```bash
-sbatch slurm/train.sh --run-name cls_depth_star_reg --use-cls-depth \
-  --weight-decay 0.1 --drop-path-rate 0.2 --early-stop-patience 6 --lr-patience 3
+python test_per_depth_loss.py
 ```
 
-Record the W&B run ID and per-epoch results here as they land.
+Covers: scalar-loss identity in both loss modes; the breakdown being detached and the gradient
+bit-identical; absent depth → `nan` never `0.0`; all-NaN batch not crashing; **DDP sum-reduction
+reproducing a single-pass computation to 1e-6 across 4 simulated ranks with uneven depth
+coverage**; both aggregates including the no-data and skip-absent-depth cases; and the
+`m=None` print branch, which now demonstrably yields:
+
+```
+30-100  train_loss=0.027312  val_loss=nan  no val samples
+```
+
+Why sums and not means, restated because it is the easiest thing to get wrong: means cannot be
+averaged across ranks when per-rank sample counts differ, and with sparse deep coverage they
+always differ. Accumulate sums, `all_reduce(SUM)`, divide once at the end.
+
+### 19.11 Open — the confound is NOT fixed by code
+
+§19.5 changes architecture **and** regularisation together. No code change resolves that; it needs
+a second run. With the existing baseline that gives a clean three-point design:
+
+| Run | `use_cls_depth` | Regularisation | Isolates |
+|---|---|---|---|
+| `baseline_huber_notv_perdepth` (W&B `pg7mw3xb`) | off | baseline (wd 0.05, dp 0.1) | reference |
+| `cls_depth_star_noreg` — **to launch** | **on** | baseline | the architecture |
+| `cls_depth_star_reg` — **to launch** | **on** | wd 0.1, dp 0.2, patience 6/3 | the regularisation, given the row above |
+
+Compare all three on `val/huber_pooled` (§19.10.2) and per-depth ubRMSE — never on `val_loss`.

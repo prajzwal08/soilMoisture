@@ -390,6 +390,38 @@ def _per_depth_mean(depth_sum, depth_cnt) -> dict:
     return {d: (mean[i] if cnt[i] > 0 else float("nan")) for i, d in enumerate(SM_DEPTHS)}
 
 
+def _loss_aggregates(depth_sum, depth_cnt):
+    """Two flag-independent aggregates of the per-depth Huber sums -> (pooled, depth_mean).
+
+    pooled     = Σsum / Σcnt — one Huber mean over every valid (sample, depth) pair.
+                 Its definition does NOT depend on per_depth_loss, lambda_tv or
+                 lambda_boundary, so it is comparable across every run, including
+                 finished ones.  `val_loss` is not: it means pooled-Huber when
+                 per_depth_loss=False and mean-of-depth-means when True, which is why
+                 the runbook forbids comparing val_loss across runs (§19.3).
+    depth_mean = unweighted mean over observed depths — exactly the average of the
+                 per-depth numbers printed above it, so the log reconciles on its face.
+
+    The two differ when depth coverage is uneven: pooled weights each observation
+    equally (dominated by 0-10 cm, which has the most stations), depth_mean weights
+    each depth equally.  pooled for cross-run comparison, depth_mean for balance.
+    """
+    tot_s, tot_c = depth_sum.sum().item(), depth_cnt.sum().item()
+    pooled = tot_s / tot_c if tot_c > 0 else float("nan")
+    per_d  = [s / c for s, c in zip(depth_sum.tolist(), depth_cnt.tolist()) if c > 0]
+    depth_mean = sum(per_d) / len(per_d) if per_d else float("nan")
+    return pooled, depth_mean
+
+
+def _format_depth_line(depth: str, train_loss: float, val_loss: float, m: dict | None) -> str:
+    """One per-depth log line.  Extracted so the m=None path — a depth that was trained
+    but has no val samples, which compute_metrics drops entirely (L324-325) — is
+    reachable from a test instead of only from a rare data layout."""
+    stats = (f"MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
+             f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}") if m else "no val samples"
+    return f"  {depth:>8s}  train_loss={train_loss:.6f}  val_loss={val_loss:.6f}  {stats}"
+
+
 def _scan_for_nan(tensors: dict, exclude=()) -> dict:
     """Return {key: [bad sample indices]} for float tensors containing NaN/Inf."""
     bad = {}
@@ -625,7 +657,9 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         targets = np.concatenate(all_targets, axis=0)
         metrics, per_station = compute_metrics(preds, targets, all_station_keys)
 
-    return mean_loss, metrics, per_station, _per_depth_mean(depth_sum_acc, depth_cnt_acc)
+    # Raw sums, not derived means: the caller needs them for both _per_depth_mean and
+    # _loss_aggregates, and only sums stay correct under further reduction.
+    return mean_loss, metrics, per_station, depth_sum_acc, depth_cnt_acc
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -992,7 +1026,7 @@ def main():
         # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
         # averages the loss across ranks; all_gather_object collects preds to rank 0.
         # No NCCL timeout risk: all GPUs stay active throughout validation.
-        val_loss, metrics, per_station, val_depth_loss = evaluate(
+        val_loss, metrics, per_station, val_depth_sum, val_depth_cnt = evaluate(
             model if not is_ddp else model.module,
             val_loader, device,
             world_size=world_size, rank=rank,
@@ -1019,6 +1053,9 @@ def main():
                 train_loss = t_loss.item()
                 train_tv   = t_tv.item()
         train_depth_loss = _per_depth_mean(train_depth_sum, train_depth_cnt)
+        val_depth_loss   = _per_depth_mean(val_depth_sum,   val_depth_cnt)
+        train_pooled, train_depth_mean = _loss_aggregates(train_depth_sum, train_depth_cnt)
+        val_pooled,   val_depth_mean   = _loss_aggregates(val_depth_sum,   val_depth_cnt)
         # val_loss already all_reduced inside evaluate() — same on all ranks, no broadcast needed
 
         scheduler.step(val_loss)
@@ -1036,11 +1073,13 @@ def main():
             # a depth can be trained and not validated. Printing from metrics would hide
             # that depth's train loss altogether.
             for depth in SM_DEPTHS:
-                m = metrics.get(depth)
-                stats = (f"MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
-                         f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}") if m else "no val samples"
-                print(f"  {depth:>8s}  train_loss={train_depth_loss[depth]:.6f}  "
-                      f"val_loss={val_depth_loss[depth]:.6f}  {stats}")
+                print(_format_depth_line(depth, train_depth_loss[depth],
+                                         val_depth_loss[depth], metrics.get(depth)))
+            # pooled is the only scalar whose definition is flag-independent — compare
+            # runs on this, never on val_loss.  depth_mean is the plain average of the
+            # three lines above, so the block reconciles without mental arithmetic.
+            print(f"  {'pooled':>8s}  train={train_pooled:.6f}  val={val_pooled:.6f}"
+                  f"   |  depth_mean  train={train_depth_mean:.6f}  val={val_depth_mean:.6f}")
 
             # Per-station ubRMSE — all stations, all depths, sorted by surface ubRMSE
             surface_depth = SM_DEPTHS[0]
@@ -1106,6 +1145,12 @@ def main():
                 _finite_val = [v for v in val_depth_loss.values() if math.isfinite(v)]
                 if _finite_val:
                     log_dict["val/worst_depth_loss"] = max(_finite_val)
+                # Flag-independent aggregates — see _loss_aggregates. huber_pooled is the
+                # cross-run comparable scalar; val/loss is not.
+                log_dict["train/huber_pooled"]     = train_pooled
+                log_dict["train/huber_depth_mean"] = train_depth_mean
+                log_dict["val/huber_pooled"]       = val_pooled
+                log_dict["val/huber_depth_mean"]   = val_depth_mean
                 # Mechanism check (§18.7 / §19.4): if the depth tokens stay mutually
                 # identical, each depth is asking the same attention question and
                 # use_cls_depth is inert.  Cosine should sit near -0.02 at init.

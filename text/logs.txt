@@ -2808,3 +2808,215 @@ all 3 categories (sm_only 842, sm_and_flux 48, flux_only 103) to scratch.
   * Then (deferred): Step-1 proxy-consistency structure loss to actually build
     spatial structure (training_runbook §16.4).
 
+================================================================================
+SESSION 16 — 2026-08-02
+================================================================================
+
+--- Goal ---
+
+Check on the baseline_huber_notv_perdepth run, understand why the deeper depth
+was not improving, and decide what to change. Ended with the run stopped and a
+concrete architecture finding.
+
+--- Run outcome: job 25150428 (W&B pg7mw3xb) ---
+
+Launched 2026-08-02 11:58:53 on gcn130, H100 x4, batch 128, lr 2e-4.
+Data: 1,049,917 train samples / 577 stations; 127,721 val / 74 stations.
+Trainable parameters: 50,050,944.
+STOPPED by scancel at 04:47:50 elapsed, after epoch 6 (state CANCELLED).
+
+  Epoch  train_loss  val_loss   data(s)  compute(s)  gpu_util
+    1      0.0019     0.0023      691       439        39%
+    2      0.0007     0.0023       77       447        85%
+    3      0.0005     0.0022       34       440        93%   <- last "New best"
+    4      0.0005     0.0022      583       438        43%
+    5      0.0004     0.0022      295       438        60%
+    6      0.0004     0.0022       27       437        94%
+
+The 4-decimal printout hides the real story. From the checkpoints:
+    best.pt  epoch 3  val_loss = 0.002182277
+    last.pt  epoch 6  val_loss = 0.002230212
+Val loss did NOT plateau after epoch 3 — it ROSE, and "New best" never fired
+again. Meanwhile train_loss fell 0.0019 -> 0.0004 (5x). Classic overfit onset
+by epoch 3-4, at which point the run had nothing left to give.
+
+IO note: compute is rock-steady ~438s/epoch; data time swings 27s..691s on the
+same node. All wall-clock variance is GPFS/scratch contention, not the model.
+The L3/L6/L9 memmap fix (commit 3079a89) works when the page cache is warm
+(94% GPU util, epoch 6) but is not stable across epochs.
+
+--- Per-depth val metrics: the deeper depth is REGRESSING ---
+
+              ubRMSE                          bias
+        e1     e3     e4     e5     e6 |   e1      e3      e4      e5      e6
+  0-10  .0540  .0531  .0529  .0531  .0527 | -.0161  -.0019  +.0070  +.0030  +.0065
+ 10-30  .0488  .0486  .0486  .0494  .0489 | -.0066  +.0028  +.0107  +.0076  +.0137
+30-100  .0541  .0559  .0561  .0568  .0566 | +.0185  +.0146  +.0190  +.0234  +.0245
+
+0-10 and 10-30 are flat. 30-100 drifts WORSE from epoch 3 on (ubRMSE .0559 ->
+.0566) and its wet bias grows monotonically (+.0146 -> +.0245). The depth-
+averaged val_loss completely masked this — the scalar looked "converged" while
+one depth was actively degrading.
+
+Val station coverage per depth (val_station_metrics.csv, epoch 6):
+    0-10   74 stations  127,625 samples
+   10-30   51 stations   92,911 samples
+   30-100  43 stations   74,384 samples
+So deep coverage is ~58% of surface — thinner, but not catastrophically sparse.
+
+Also note pooled vs station-mean ubRMSE for 30-100 at epoch 6: pooled .0566 vs
+station-mean .0491, median .0474. Large gap => strong heterogeneity; a minority
+of stations carry most of the deep error.
+
+--- ROOT-CAUSE FINDING: only 195 parameters are depth-specific ---
+
+train.py CONFIG never sets use_cls_depth, so it falls through to the default
+False (model.py:204). That selects the else-branch of the decoder head:
+
+    model.py:241    self.head = nn.Conv2d(c[3], n_depths, 1)
+    with dec_ch = (512, 256, 128, 64)  ->  Conv2d(64, 3, 1)
+
+    depth-specific params:        195   (192 weights + 3 biases)
+    shared by all three depths: 50,050,749
+    => 99.9996% of the network receives ONE summed gradient.
+
+All three depths are three linear read-outs of the SAME shared 64-channel
+feature map. A depth difference can only be expressed as a different linear
+projection of one representation.
+
+Corroborated independently by the DDP warning already in the job log:
+    "grad.sizes() = [3, 64, 1, 1]"
+which is exactly this head.
+
+Interpretation: train_loss falling to 0.0004 while 30-100 val DEGRADES is not
+an underfitting signature. The shared trunk is being fit to the abundant
+surface labels and is dragging the deep read-out along with it. That is what
+195 depth-specific parameters would predict.
+
+--- Why per-depth LOSS cannot fix this (settled this session) ---
+
+per_depth_loss=True (train.py:210) computes Huber separately per depth then
+takes the mean (model.py:735-748). That gives each depth EQUAL WEIGHT in one
+shared gradient. It does NOT produce separate updates per depth.
+
+"Train each depth separately" is not actually available here:
+  - L0.backward(); L1.backward(); L2.backward(); step()
+    PyTorch accumulates grads, so this computes grad(L0+L1+L2) — mathematically
+    IDENTICAL to the current mean, up to the 1/3 scale. Just slower.
+  - Stepping between each backward makes the result order-dependent and triples
+    the effective LR. Strictly worse, and still moves all 50M shared params.
+Separate training requires separate PARAMETERS. The lever is architecture, not
+the loss function.
+
+--- Planned changes (DESIGNED, NOT YET IMPLEMENTED) ---
+
+1. Per-depth train + val loss reporting.
+   masked_huber_loss (model.py:725) gains return_breakdown=False -> returns
+   (loss, depth_loss, depth_count), both (n_depths,), detached and kept
+   on-device (counts[d] = mask_d.sum(), no .item(), so no new GPU syncs; the
+   existing `if mask_d.any():` already syncs once per depth per batch).
+   _compute_loss (train.py:356) forwards them; train_one_epoch (L434) and
+   evaluate (L520) accumulate sample-weighted sums and return the RAW SUMS so
+   the DDP reduction is correct (all_reduce SUM, then divide).
+   Sample-weighting, not mean-of-batch-means: deep coverage is sparse, so batch
+   -mean would over-weight batches holding two deep samples.
+   CONSEQUENCE to document in code: the mean of the new per-depth losses will
+   NOT exactly equal val/loss (val_loss is mean-of-batch-means-of-depth-means).
+   val_loss must stay byte-identical for baseline comparability.
+   EDGE CASE: the DDP reduce block (train.py:936) is guarded by
+   `epoch != val_pending_epoch`, and the val-pending path (L857) skips training
+   entirely — initialise the vectors so that path cannot NameError.
+   New W&B keys: train/{depth}/loss, val/{depth}/loss, val/{depth}/MSE (printed
+   today but never logged), val/worst_depth_loss.
+
+2. use_cls_depth=True — the real lever, and it is ALREADY WRITTEN, just never
+   switched on. It gives each depth its own learned CLS token into the
+   transformer (model.py:411, 689, 703) plus its own FiLM modulation and its
+   own head (model.py:237-239, 264-269):
+
+       depth_tokens    3 x 768              =   2,304
+       depth_film      3 x Linear(768,128)  = 295,296
+       heads           3 x Conv2d(64,1,1)   =     195
+       depth-specific     195 -> 297,795   (1,527x)
+       total model  50,050,944 -> 50,348,544  (+0.59%)
+
+   KEY SAFETY PROPERTY: FiLMLayer is identity-initialised (proj.weight zeroed,
+   scale bias=1, shift bias=0 — model.py:158-160), so at step 0 x_d == x for
+   every depth and the model is behaviourally IDENTICAL to the current
+   baseline. It cannot regress at init; it can only learn to differentiate.
+
+   ONE FIX TO MAKE ALONGSIDE: depth_tokens is torch.zeros(3, 768)
+   (model.py:411) — all three tokens identical, so they are symmetric and must
+   break symmetry purely through gradient differences. Use
+   nn.init.trunc_normal_(std=0.02) (standard ViT CLS init). One line.
+
+   Requires a FRESH RUN: the parameter set changes, so last.pt will not load.
+
+--- Open caveat: information ceiling vs capacity limit ---
+
+More depth capacity only helps if the deep signal is present but unextracted.
+Physically:
+  - S2 optical  -> surface reflectance, nothing below ~1 cm
+  - S1 SAR      -> C-band, a few cm at most
+  - 30-100 cm information can ONLY come from ERA5-Land, soil texture, and
+    temporal memory.
+No head architecture can pull deep moisture out of satellite tokens. If the
+ERA5/soil/temporal pathway is the bottleneck, use_cls_depth buys a better
+read-out of information the trunk never encoded, and it will plateau again.
+
+Per-depth TRAIN loss is the diagnostic that separates the two:
+   train 30-100 high & flat + val high  -> underfitting: capacity or info ceiling
+   train 30-100 low        + val high   -> label scarcity / generalisation
+These need opposite fixes, and today we cannot tell which we have.
+
+If use_cls_depth does NOT move it, the next lever is physically motivated
+rather than more parameters: CASCADE the depths — predict 10-30 as a residual
+on 0-10, and 30-100 as a residual on 10-30 — so deep predictions inherit the
+well-constrained surface representation instead of learning independently.
+Premature until the diagnostic says capacity was the problem.
+
+--- Artifacts (permanent storage, NOT scratch) ---
+
+/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/baseline_huber_notv_perdepth/
+    best.pt                 epoch 3, val_loss 0.002182277   (600,785,884 B)
+    last.pt                 epoch 6, val_loss 0.002230212   (600,785,884 B)
+    mid_epoch.pt            epoch 7 partial, batches_done=500 — discardable
+    val_station_metrics.csv per-station x per-depth, all 6 epochs
+All three verified loadable with torch.load; config confirms use_cls_depth=False,
+per_depth_loss=True, lambda_tv=0.0, lr=2e-4, batch=128, wandb_run_id=pg7mw3xb.
+Log: logs/train_25150428.out
+
+--- Status / next actions ---
+
+  * Run 25150428 STOPPED (CANCELLED, 04:47:50). Nothing running.
+  * NEXT: single fresh run combining BOTH changes — per-depth loss logging AND
+    use_cls_depth=True (+ trunc_normal depth_tokens init). use_cls_depth needs
+    a fresh run regardless, so there is no extra cost to bundling them, and the
+    diagnostic then covers the new architecture from epoch 1.
+    The stopped run's per-depth ubRMSE/MAE/bias in W&B pg7mw3xb is the baseline
+    for comparison.
+  * Verification before launching: import check; single-GPU smoke
+    (--max-stations 4 --max-epochs 1 --max-train-batches 5 --max-val-batches 5
+    --use-memmap); confirm per-depth loss lines print finite values and a depth
+    absent from the smoke subset reports cleanly rather than nan.
+  * Still deferred: dense spatial supervision / Step-1 proxy-consistency
+    structure loss (training_runbook §16.4) — only pixel (112,112) is supervised,
+    so the 224x224 map has no structural signal. Unchanged from S15.
+  * Still deferred: distributed validation, skip-connection ablation.
+
+--- Addendum: the use_cls_depth path was already smoke-tested ---
+
+Found in prior session notes after the above was written: the combination
+"per-depth loss + CLS depth tokens" was already code-complete and SMOKE-PASSED
+as run name cls_perdepth_huber (smoke job 23956770, 2026-06-17). It was never
+launched as a full run. So use_cls_depth=True is not new/untested code — it is
+a switched-off path that has already run end-to-end. This materially de-risks
+the next run.
+
+Related caveat on comparing runs: the previous full run baseline_huber_memmap
+(job 23936932) reached best_val ~0.00209 at epoch 11 with use_cls_depth=False.
+That number is NOT comparable to this session's 0.002182 — that run POOLED all
+(sample x depth) pairs into one Huber mean, whereas per_depth_loss=True means
+per-depth Huber then averages. Different quantities. Compare per-depth
+ubRMSE/MAE/bias (m3/m3) across runs instead, never the loss scalar.
+

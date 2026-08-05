@@ -31700,3 +31700,1190 @@ Epoch 003  |  train_loss=0.0003  val_loss=0.0022  data=5200s  compute=404s  gpu_
 
 
   batch 1670  loss=0.0002  tv=0.00051  step=3057ms
+  batch 1671  loss=0.0002  tv=0.00050  step=3071ms
+  batch 1671  loss=0.0002  tv=0.00049  step=3072ms
+  batch 1671  loss=0.0002  tv=0.00050  step=851ms  batch 1671  loss=0.0003  tv=0.00051  step=3798ms
+
+  batch 1672  loss=0.0002  tv=0.00049  step=3796ms  batch 1672  loss=0.0002  tv=0.00053  step=3070ms
+
+  batch 1672  loss=0.0003  tv=0.00051  step=851ms  batch 1672  loss=0.0004  tv=0.00051  step=3069ms
+
+  batch 1673  loss=0.0003  tv=0.00050  step=3793ms  batch 1673  loss=0.0002  tv=0.00051  step=850ms  batch 1673  loss=0.0002  tv=0.00050  step=3068ms
+
+  batch 1673  loss=0.0002  tv=0.00051  step=3068ms
+
+  batch 1674  loss=0.0002  tv=0.00049  step=850ms  batch 1674  loss=0.0002  tv=0.00051  step=3791ms
+  batch 1674  loss=0.0003  tv=0.00050  step=3066ms
+
+  batch 1674  loss=0.0002  tv=0.00049  step=3067ms
+  batch 1675  loss=0.0002  tv=0.00050  step=3789ms
+  batch 1675  loss=0.0003  tv=0.00050  step=849ms  batch 1675  loss=0.0003  tv=0.00049  step=3064ms
+
+  batch 1675  loss=0.0002  tv=0.00050  step=3065ms
+  batch 1676  loss=0.0003  tv=0.00048  step=3063ms  batch 1676  loss=0.0002  tv=0.00050  step=3787ms
+  batch 1676  loss=0.0003  tv=0.00050  step=849ms
+  batch 1676  loss=0.0003  tv=0.00048  step=3063ms
+
+  batch 1677  loss=0.0003  tv=0.00052  step=3061ms  batch 1677  loss=0.0002  tv=0.00048  step=849ms
+  batch 1677  loss=0.0003  tv=0.00049  step=3061ms
+  batch 1677  loss=0.0002  tv=0.00049  step=3785ms
+
+  batch 1678  loss=0.0003  tv=0.00052  step=3060ms
+  batch 1678  loss=0.0002  tv=0.00048  step=3783ms  batch 1678  loss=0.0002  tv=0.00050  step=848ms
+  batch 1678  loss=0.0002  tv=0.00049  step=3059ms
+
+  batch 1679  loss=0.0003  tv=0.00050  step=3075ms
+  batch 1679  loss=0.0002  tv=0.00048  step=3075ms
+  batch 1679  loss=0.0003  tv=0.00048  step=848ms  batch 1679  loss=0.0002  tv=0.00048  step=3798ms
+
+  batch 1680  loss=0.0002  tv=0.00049  step=3074ms  batch 1680  loss=0.0002  tv=0.00047  step=847ms
+  batch 1680  loss=0.0003  tv=0.00050  step=3073ms
+
+  batch 1680  loss=0.0003  tv=0.00049  step=3796ms
+  batch 1681  loss=0.0003  tv=0.00050  step=3794ms  batch 1681  loss=0.0002  tv=0.00049  step=847ms
+  batch 1681  loss=0.0002  tv=0.00050  step=3071ms
+
+  batch 1681  loss=0.0003  tv=0.00050  step=3072ms
+  batch 1682  loss=0.0002  tv=0.00050  step=3792ms  batch 1682  loss=0.0002  tv=0.00049  step=847ms  batch 1682  loss=0.0003  tv=0.00049  step=3070ms
+
+
+  batch 1682  loss=0.0002  tv=0.00048  step=3070ms
+  batch 1683  loss=0.0002  tv=0.00052  step=3789ms  batch 1683  loss=0.0004  tv=0.00049  step=3068ms
+  batch 1683  loss=0.0002  tv=0.00048  step=846ms
+  batch 1683  loss=0.0002  tv=0.00049  step=3069ms
+
+  batch 1684  loss=0.0003  tv=0.00050  step=3787ms  batch 1684  loss=0.0002  tv=0.00049  step=846ms
+  batch 1684  loss=0.0003  tv=0.00049  step=3066ms
+  batch 1684  loss=0.0002  tv=0.00050  step=3067ms
+
+  batch 1685  loss=0.0002  tv=0.00049  step=3785ms
+  batch 1685  loss=0.0003  tv=0.00048  step=846ms  batch 1685  loss=0.0002  tv=0.00049  step=3065ms
+  batch 1685  loss=0.0002  tv=0.00050  step=3065ms
+
+  batch 1686  loss=0.0003  tv=0.00051  step=3063ms  batch 1686  loss=0.0002  tv=0.00051  step=3063ms  batch 1686  loss=0.0003  tv=0.00050  step=3783ms
+
+
+  batch 1686  loss=0.0003  tv=0.00050  step=845ms
+  batch 1687  loss=0.0002  tv=0.00050  step=3078ms  batch 1687  loss=0.0002  tv=0.00051  step=3797ms
+
+  batch 1687  loss=0.0002  tv=0.00052  step=845ms  batch 1687  loss=0.0003  tv=0.00052  step=3077ms
+
+  batch 1688  loss=0.0002  tv=0.00050  step=3076ms  batch 1688  loss=0.0002  tv=0.00051  step=3795ms  batch 1688  loss=0.0002  tv=0.00050  step=844ms
+
+  batch 1688  loss=0.0002  tv=0.00050  step=3075ms
+
+  batch 1689  loss=0.0003  tv=0.00050  step=844ms  batch 1689  loss=0.0002  tv=0.00050  step=3074ms
+  batch 1689  loss=0.0003  tv=0.00049  step=3074ms
+  batch 1689  loss=0.0003  tv=0.00049  step=3793ms
+
+  batch 1690  loss=0.0002  tv=0.00050  step=3072ms  batch 1690  loss=0.0003  tv=0.00050  step=3790ms  batch 1690  loss=0.0002  tv=0.00049  step=844ms
+
+
+  batch 1690  loss=0.0002  tv=0.00048  step=3072ms
+  batch 1691  loss=0.0002  tv=0.00048  step=3788ms  batch 1691  loss=0.0002  tv=0.00048  step=3071ms  batch 1691  loss=0.0002  tv=0.00049  step=843ms
+
+  batch 1691  loss=0.0002  tv=0.00050  step=3070ms
+
+  batch 1692  loss=0.0002  tv=0.00048  step=3069ms  batch 1692  loss=0.0002  tv=0.00050  step=3786ms
+
+  batch 1692  loss=0.0003  tv=0.00048  step=3069ms
+  batch 1692  loss=0.0002  tv=0.00051  step=843ms
+  batch 1693  loss=0.0002  tv=0.00048  step=3067ms  batch 1693  loss=0.0003  tv=0.00049  step=3784ms
+  batch 1693  loss=0.0002  tv=0.00048  step=3067ms
+
+  batch 1693  loss=0.0003  tv=0.00048  step=842ms
+  batch 1694  loss=0.0002  tv=0.00047  step=3066ms  batch 1694  loss=0.0002  tv=0.00052  step=3782ms
+  batch 1694  loss=0.0003  tv=0.00050  step=3065ms
+
+  batch 1694  loss=0.0003  tv=0.00050  step=842ms
+  batch 1695  loss=0.0002  tv=0.00050  step=3080ms  batch 1695  loss=0.0003  tv=0.00051  step=3796ms
+  batch 1695  loss=0.0003  tv=0.00048  step=842ms
+  batch 1695  loss=0.0002  tv=0.00048  step=3079ms
+
+  batch 1696  loss=0.0003  tv=0.00050  step=3078ms
+  batch 1696  loss=0.0002  tv=0.00050  step=841ms  batch 1696  loss=0.0002  tv=0.00051  step=3078ms
+
+  batch 1696  loss=0.0002  tv=0.00050  step=3794ms
+  batch 1697  loss=0.0002  tv=0.00050  step=3077ms  batch 1697  loss=0.0002  tv=0.00048  step=3076ms  batch 1697  loss=0.0003  tv=0.00048  step=841ms
+
+
+  batch 1697  loss=0.0002  tv=0.00050  step=3792ms
+  batch 1698  loss=0.0002  tv=0.00050  step=3075ms  batch 1698  loss=0.0002  tv=0.00050  step=3074ms
+
+  batch 1698  loss=0.0002  tv=0.00049  step=841ms  batch 1698  loss=0.0002  tv=0.00055  step=3789ms
+
+  batch 1699  loss=0.0002  tv=0.00049  step=840ms  batch 1699  loss=0.0002  tv=0.00048  step=3073ms  batch 1699  loss=0.0002  tv=0.00051  step=3073ms
+
+
+  batch 1699  loss=0.0003  tv=0.00051  step=3787ms
+  batch 1700  loss=0.0003  tv=0.00048  step=840ms  batch 1700  loss=0.0003  tv=0.00049  step=3072ms  batch 1700  loss=0.0003  tv=0.00054  step=3071ms
+
+
+  batch 1700  loss=0.0003  tv=0.00053  step=3785ms
+  batch 1701  loss=0.0002  tv=0.00048  step=3070ms  batch 1701  loss=0.0002  tv=0.00048  step=839ms  batch 1701  loss=0.0002  tv=0.00047  step=3069ms
+
+
+  batch 1701  loss=0.0003  tv=0.00050  step=3783ms
+  batch 1702  loss=0.0002  tv=0.00050  step=3068ms  batch 1702  loss=0.0003  tv=0.00053  step=3068ms
+
+  batch 1702  loss=0.0003  tv=0.00048  step=839ms  batch 1702  loss=0.0003  tv=0.00049  step=3781ms
+
+  batch 1703  loss=0.0002  tv=0.00051  step=3083ms
+  batch 1703  loss=0.0002  tv=0.00048  step=3082ms
+  batch 1703  loss=0.0003  tv=0.00049  step=839ms  batch 1703  loss=0.0002  tv=0.00049  step=3795ms
+
+  batch 1704  loss=0.0002  tv=0.00050  step=838ms  batch 1704  loss=0.0002  tv=0.00048  step=3081ms  batch 1704  loss=0.0002  tv=0.00052  step=3793ms
+
+
+  batch 1704  loss=0.0002  tv=0.00051  step=3081ms
+  batch 1705  loss=0.0003  tv=0.00049  step=3791ms  batch 1705  loss=0.0003  tv=0.00051  step=838ms  batch 1705  loss=0.0003  tv=0.00051  step=3079ms
+
+
+  batch 1705  loss=0.0003  tv=0.00049  step=3079ms
+  batch 1706  loss=0.0002  tv=0.00050  step=3789ms  batch 1706  loss=0.0002  tv=0.00051  step=3077ms
+  batch 1706  loss=0.0003  tv=0.00050  step=838ms
+
+  batch 1706  loss=0.0003  tv=0.00050  step=3078ms
+  batch 1707  loss=0.0003  tv=0.00049  step=3076ms
+  batch 1707  loss=0.0003  tv=0.00051  step=837ms  batch 1707  loss=0.0002  tv=0.00050  step=3787ms
+  batch 1707  loss=0.0002  tv=0.00049  step=3076ms
+
+  batch 1708  loss=0.0002  tv=0.00049  step=3785ms  batch 1708  loss=0.0003  tv=0.00051  step=3074ms
+
+  batch 1708  loss=0.0003  tv=0.00049  step=837ms  batch 1708  loss=0.0004  tv=0.00052  step=3074ms
+
+  batch 1709  loss=0.0002  tv=0.00049  step=3783ms  batch 1709  loss=0.0002  tv=0.00050  step=3072ms
+
+  batch 1709  loss=0.0003  tv=0.00051  step=3073ms
+  batch 1709  loss=0.0002  tv=0.00049  step=836ms
+  batch 1710  loss=0.0003  tv=0.00051  step=3781ms  batch 1710  loss=0.0003  tv=0.00049  step=3070ms  batch 1710  loss=0.0003  tv=0.00048  step=3071ms
+
+
+  batch 1710  loss=0.0003  tv=0.00049  step=836ms
+  batch 1711  loss=0.0003  tv=0.00050  step=3085ms  batch 1711  loss=0.0003  tv=0.00050  step=3084ms
+
+  batch 1711  loss=0.0002  tv=0.00049  step=836ms  batch 1711  loss=0.0003  tv=0.00064  step=3794ms
+
+  batch 1712  loss=0.0002  tv=0.00049  step=3083ms
+  batch 1712  loss=0.0003  tv=0.00050  step=3083ms
+  batch 1712  loss=0.0002  tv=0.00050  step=3792ms
+  batch 1712  loss=0.0002  tv=0.00050  step=835ms
+  batch 1713  loss=0.0002  tv=0.00055  step=3081ms  batch 1713  loss=0.0002  tv=0.00048  step=835ms
+  batch 1713  loss=0.0003  tv=0.00050  step=3790ms
+  batch 1713  loss=0.0003  tv=0.00051  step=3081ms
+
+  batch 1714  loss=0.0002  tv=0.00049  step=3079ms  batch 1714  loss=0.0003  tv=0.00051  step=835ms
+  batch 1714  loss=0.0002  tv=0.00051  step=3788ms
+
+  batch 1714  loss=0.0002  tv=0.00048  step=3080ms
+  batch 1715  loss=0.0003  tv=0.00049  step=3078ms  batch 1715  loss=0.0003  tv=0.00051  step=834ms
+
+  batch 1715  loss=0.0002  tv=0.00051  step=3078ms  batch 1715  loss=0.0003  tv=0.00050  step=3786ms
+
+  batch 1716  loss=0.0002  tv=0.00048  step=3076ms  batch 1716  loss=0.0002  tv=0.00050  step=3784ms
+  batch 1716  loss=0.0003  tv=0.00050  step=834ms
+  batch 1716  loss=0.0003  tv=0.00053  step=3076ms
+
+  batch 1717  loss=0.0002  tv=0.00050  step=3781ms  batch 1717  loss=0.0003  tv=0.00050  step=833ms
+  batch 1717  loss=0.0002  tv=0.00049  step=3074ms
+  batch 1717  loss=0.0002  tv=0.00051  step=3075ms
+
+  batch 1718  loss=0.0002  tv=0.00051  step=3073ms  batch 1718  loss=0.0002  tv=0.00046  step=833ms  batch 1718  loss=0.0002  tv=0.00050  step=3779ms
+
+
+  batch 1718  loss=0.0002  tv=0.00050  step=3073ms
+  batch 1719  loss=0.0002  tv=0.00049  step=3086ms
+  batch 1719  loss=0.0003  tv=0.00048  step=3087ms
+  batch 1719  loss=0.0002  tv=0.00051  step=833ms  batch 1719  loss=0.0002  tv=0.00051  step=3793ms
+
+  batch 1720  loss=0.0003  tv=0.00049  step=3085ms  batch 1720  loss=0.0003  tv=0.00049  step=3085ms  batch 1720  loss=0.0002  tv=0.00048  step=3790ms
+
+
+  batch 1720  loss=0.0003  tv=0.00048  step=832ms
+  batch 1721  loss=0.0003  tv=0.00048  step=3083ms  batch 1721  loss=0.0002  tv=0.00050  step=3788ms
+  batch 1721  loss=0.0003  tv=0.00047  step=832ms
+  batch 1721  loss=0.0002  tv=0.00051  step=3083ms
+
+  batch 1722  loss=0.0002  tv=0.00049  step=832ms  batch 1722  loss=0.0003  tv=0.00049  step=3081ms  batch 1722  loss=0.0003  tv=0.00052  step=3786ms
+
+
+  batch 1722  loss=0.0003  tv=0.00050  step=3082ms
+  batch 1723  loss=0.0002  tv=0.00048  step=3784ms  batch 1723  loss=0.0002  tv=0.00048  step=3079ms
+  batch 1723  loss=0.0002  tv=0.00049  step=831ms
+  batch 1723  loss=0.0003  tv=0.00053  step=3080ms
+
+  batch 1724  loss=0.0002  tv=0.00052  step=3078ms  batch 1724  loss=0.0002  tv=0.00048  step=3782ms  batch 1724  loss=0.0002  tv=0.00048  step=831ms
+
+
+  batch 1724  loss=0.0003  tv=0.00051  step=3078ms
+  batch 1725  loss=0.0003  tv=0.00049  step=3780ms  batch 1725  loss=0.0003  tv=0.00048  step=831ms
+  batch 1725  loss=0.0002  tv=0.00049  step=3076ms
+  batch 1725  loss=0.0002  tv=0.00050  step=3077ms
+
+  batch 1726  loss=0.0002  tv=0.00050  step=3074ms  batch 1726  loss=0.0003  tv=0.00050  step=830ms  batch 1726  loss=0.0002  tv=0.00048  step=3778ms
+
+
+  batch 1726  loss=0.0003  tv=0.00050  step=3075ms
+  batch 1727  loss=0.0002  tv=0.00046  step=3089ms
+  batch 1727  loss=0.0003  tv=0.00049  step=3089ms
+  batch 1727  loss=0.0002  tv=0.00048  step=830ms  batch 1727  loss=0.0002  tv=0.00047  step=3792ms
+
+  batch 1728  loss=0.0002  tv=0.00050  step=3088ms  batch 1728  loss=0.0002  tv=0.00050  step=3790ms
+
+  batch 1728  loss=0.0002  tv=0.00050  step=3087ms
+  batch 1728  loss=0.0003  tv=0.00049  step=829ms
+  batch 1729  loss=0.0002  tv=0.00049  step=3788ms  batch 1729  loss=0.0002  tv=0.00050  step=3085ms  batch 1729  loss=0.0002  tv=0.00047  step=829ms
+
+  batch 1729  loss=0.0003  tv=0.00049  step=3086ms
+
+  batch 1730  loss=0.0002  tv=0.00047  step=829ms  batch 1730  loss=0.0003  tv=0.00051  step=3084ms  batch 1730  loss=0.0002  tv=0.00049  step=3786ms
+
+
+  batch 1730  loss=0.0003  tv=0.00048  step=3084ms
+  batch 1731  loss=0.0002  tv=0.00049  step=3082ms
+  batch 1731  loss=0.0003  tv=0.00048  step=828ms  batch 1731  loss=0.0002  tv=0.00050  step=3784ms
+
+  batch 1731  loss=0.0003  tv=0.00047  step=3083ms
+  batch 1732  loss=0.0002  tv=0.00049  step=3782ms  batch 1732  loss=0.0003  tv=0.00048  step=3080ms  batch 1732  loss=0.0002  tv=0.00052  step=828ms
+
+  batch 1732  loss=0.0002  tv=0.00048  step=3081ms
+
+  batch 1733  loss=0.0002  tv=0.00049  step=3779ms  batch 1733  loss=0.0002  tv=0.00047  step=3079ms  batch 1733  loss=0.0002  tv=0.00049  step=828ms
+
+  batch 1733  loss=0.0002  tv=0.00049  step=3079ms
+
+  batch 1734  loss=0.0003  tv=0.00049  step=3077ms
+  batch 1734  loss=0.0002  tv=0.00048  step=827ms  batch 1734  loss=0.0002  tv=0.00050  step=3777ms
+
+  batch 1734  loss=0.0002  tv=0.00048  step=3078ms
+  batch 1735  loss=0.0003  tv=0.00050  step=3092ms
+  batch 1735  loss=0.0002  tv=0.00047  step=827ms  batch 1735  loss=0.0002  tv=0.00048  step=3792ms  batch 1735  loss=0.0002  tv=0.00051  step=3092ms
+
+
+  batch 1736  loss=0.0003  tv=0.00048  step=3091ms  batch 1736  loss=0.0002  tv=0.00050  step=3090ms
+  batch 1736  loss=0.0002  tv=0.00050  step=827ms
+
+  batch 1736  loss=0.0003  tv=0.00050  step=3790ms
+  batch 1737  loss=0.0002  tv=0.00048  step=826ms  batch 1737  loss=0.0002  tv=0.00047  step=3089ms  batch 1737  loss=0.0002  tv=0.00047  step=3088ms
+
+
+  batch 1737  loss=0.0002  tv=0.00050  step=3788ms
+  batch 1738  loss=0.0003  tv=0.00050  step=826ms  batch 1738  loss=0.0002  tv=0.00050  step=3087ms  batch 1738  loss=0.0003  tv=0.00050  step=3087ms
+
+
+  batch 1738  loss=0.0003  tv=0.00048  step=3785ms
+  batch 1739  loss=0.0002  tv=0.00048  step=3085ms
+  batch 1739  loss=0.0002  tv=0.00049  step=825ms  batch 1739  loss=0.0002  tv=0.00048  step=3086ms
+  batch 1739  loss=0.0002  tv=0.00047  step=3783ms
+
+  batch 1740  loss=0.0003  tv=0.00048  step=3781ms  batch 1740  loss=0.0004  tv=0.00047  step=825ms  batch 1740  loss=0.0002  tv=0.00049  step=3083ms
+
+
+  batch 1740  loss=0.0002  tv=0.00050  step=3084ms
+  batch 1741  loss=0.0003  tv=0.00050  step=3779ms  batch 1741  loss=0.0003  tv=0.00049  step=3082ms
+
+  batch 1741  loss=0.0002  tv=0.00051  step=825ms  batch 1741  loss=0.0002  tv=0.00047  step=3082ms
+
+  batch 1742  loss=0.0002  tv=0.00049  step=3080ms  batch 1742  loss=0.0002  tv=0.00048  step=3777ms
+  batch 1742  loss=0.0002  tv=0.00050  step=824ms
+  batch 1742  loss=0.0002  tv=0.00052  step=3081ms
+
+  batch 1743  loss=0.0003  tv=0.00049  step=3096ms
+  batch 1743  loss=0.0002  tv=0.00048  step=3095ms
+  batch 1743  loss=0.0002  tv=0.00050  step=824ms  batch 1743  loss=0.0002  tv=0.00048  step=3792ms
+
+  batch 1744  loss=0.0002  tv=0.00049  step=3094ms  batch 1744  loss=0.0002  tv=0.00050  step=3094ms  batch 1744  loss=0.0002  tv=0.00050  step=824ms
+
+
+  batch 1744  loss=0.0002  tv=0.00051  step=3790ms
+  batch 1745  loss=0.0002  tv=0.00048  step=3093ms  batch 1745  loss=0.0002  tv=0.00052  step=3092ms  batch 1745  loss=0.0002  tv=0.00047  step=823ms
+
+
+  batch 1745  loss=0.0002  tv=0.00051  step=3788ms
+  batch 1746  loss=0.0003  tv=0.00049  step=3091ms  batch 1746  loss=0.0002  tv=0.00051  step=3090ms  batch 1746  loss=0.0003  tv=0.00047  step=823ms
+
+
+  batch 1746  loss=0.0002  tv=0.00047  step=3786ms
+  batch 1747  loss=0.0003  tv=0.00050  step=3784ms  batch 1747  loss=0.0003  tv=0.00048  step=3089ms
+
+  batch 1747  loss=0.0002  tv=0.00049  step=823ms  batch 1747  loss=0.0003  tv=0.00047  step=3089ms
+
+  batch 1748  loss=0.0002  tv=0.00050  step=3782ms  batch 1748  loss=0.0002  tv=0.00048  step=822ms  batch 1748  loss=0.0002  tv=0.00048  step=3087ms
+
+  batch 1748  loss=0.0002  tv=0.00050  step=3088ms
+
+  batch 1749  loss=0.0003  tv=0.00049  step=3086ms  batch 1749  loss=0.0002  tv=0.00048  step=3780ms  batch 1749  loss=0.0002  tv=0.00048  step=822ms
+
+  batch 1749  loss=0.0002  tv=0.00051  step=3086ms
+
+  batch 1750  loss=0.0002  tv=0.00049  step=3778ms  batch 1750  loss=0.0002  tv=0.00050  step=3084ms  batch 1750  loss=0.0003  tv=0.00049  step=822ms
+
+  batch 1750  loss=0.0003  tv=0.00047  step=3084ms
+
+  batch 1751  loss=0.0002  tv=0.00049  step=3099ms
+  batch 1751  loss=0.0002  tv=0.00048  step=821ms  batch 1751  loss=0.0002  tv=0.00049  step=3792ms
+  batch 1751  loss=0.0002  tv=0.00050  step=3098ms
+
+  batch 1752  loss=0.0003  tv=0.00050  step=3790ms  batch 1752  loss=0.0002  tv=0.00047  step=821ms
+  batch 1752  loss=0.0003  tv=0.00047  step=3097ms  batch 1752  loss=0.0002  tv=0.00047  step=3097ms
+
+
+  batch 1753  loss=0.0003  tv=0.00053  step=3788ms  batch 1753  loss=0.0004  tv=0.00050  step=820ms  batch 1753  loss=0.0002  tv=0.00047  step=3095ms
+
+  batch 1753  loss=0.0003  tv=0.00048  step=3096ms
+
+  batch 1754  loss=0.0002  tv=0.00051  step=3093ms  batch 1754  loss=0.0003  tv=0.00053  step=3786ms
+
+  batch 1754  loss=0.0002  tv=0.00049  step=820ms  batch 1754  loss=0.0002  tv=0.00050  step=3094ms
+
+  batch 1755  loss=0.0002  tv=0.00049  step=3092ms  batch 1755  loss=0.0002  tv=0.00050  step=3784ms
+
+  batch 1755  loss=0.0002  tv=0.00048  step=820ms  batch 1755  loss=0.0003  tv=0.00050  step=3092ms
+
+  batch 1756  loss=0.0002  tv=0.00051  step=3090ms  batch 1756  loss=0.0003  tv=0.00051  step=3091ms  batch 1756  loss=0.0003  tv=0.00053  step=3782ms
+
+
+  batch 1756  loss=0.0002  tv=0.00049  step=819ms
+  batch 1757  loss=0.0002  tv=0.00048  step=3089ms  batch 1757  loss=0.0002  tv=0.00051  step=3780ms  batch 1757  loss=0.0002  tv=0.00050  step=3089ms
+
+
+  batch 1757  loss=0.0002  tv=0.00050  step=819ms
+  batch 1758  loss=0.0003  tv=0.00048  step=3087ms  batch 1758  loss=0.0002  tv=0.00050  step=3087ms
+  batch 1758  loss=0.0003  tv=0.00049  step=3778ms
+
+  batch 1758  loss=0.0002  tv=0.00048  step=819ms
+  batch 1759  loss=0.0003  tv=0.00050  step=3102ms  batch 1759  loss=0.0002  tv=0.00049  step=3102ms
+
+  batch 1759  loss=0.0002  tv=0.00048  step=818ms  batch 1759  loss=0.0002  tv=0.00048  step=3792ms
+
+  batch 1760  loss=0.0003  tv=0.00048  step=3100ms  batch 1760  loss=0.0002  tv=0.00048  step=3100ms
+
+  batch 1760  loss=0.0003  tv=0.00050  step=818ms  batch 1760  loss=0.0003  tv=0.00048  step=3790ms
+
+  batch 1761  loss=0.0003  tv=0.00051  step=3098ms  batch 1761  loss=0.0003  tv=0.00050  step=818ms
+  batch 1761  loss=0.0002  tv=0.00050  step=3099ms
+
+  batch 1761  loss=0.0002  tv=0.00051  step=3788ms
+  batch 1762  loss=0.0002  tv=0.00052  step=817ms  batch 1762  loss=0.0002  tv=0.00052  step=3097ms
+  batch 1762  loss=0.0003  tv=0.00051  step=3786ms
+
+  batch 1762  loss=0.0003  tv=0.00050  step=3097ms
+  batch 1763  loss=0.0002  tv=0.00048  step=3095ms  batch 1763  loss=0.0003  tv=0.00050  step=3784ms  batch 1763  loss=0.0002  tv=0.00050  step=817ms
+
+  batch 1763  loss=0.0002  tv=0.00047  step=3095ms
+
+  batch 1764  loss=0.0002  tv=0.00049  step=3093ms
+  batch 1764  loss=0.0002  tv=0.00050  step=817ms  batch 1764  loss=0.0003  tv=0.00049  step=3782ms
+
+  batch 1764  loss=0.0002  tv=0.00050  step=3094ms
+  batch 1765  loss=0.0002  tv=0.00049  step=3092ms  batch 1765  loss=0.0002  tv=0.00050  step=3780ms
+
+  batch 1765  loss=0.0003  tv=0.00048  step=3092ms
+  batch 1765  loss=0.0002  tv=0.00048  step=816ms
+  batch 1766  loss=0.0003  tv=0.00049  step=3090ms  batch 1766  loss=0.0002  tv=0.00047  step=3778ms  batch 1766  loss=0.0002  tv=0.00049  step=3091ms
+
+
+  batch 1766  loss=0.0003  tv=0.00050  step=816ms
+  batch 1767  loss=0.0002  tv=0.00051  step=3105ms
+  batch 1767  loss=0.0002  tv=0.00052  step=3792ms  batch 1767  loss=0.0003  tv=0.00049  step=3105ms  batch 1767  loss=0.0002  tv=0.00047  step=816ms
+
+
+  batch 1768  loss=0.0004  tv=0.00051  step=3104ms
+  batch 1768  loss=0.0002  tv=0.00050  step=3790ms
+  batch 1768  loss=0.0002  tv=0.00048  step=3103ms
+  batch 1768  loss=0.0002  tv=0.00050  step=815ms
+  batch 1769  loss=0.0002  tv=0.00049  step=815ms  batch 1769  loss=0.0003  tv=0.00051  step=3102ms  batch 1769  loss=0.0003  tv=0.00047  step=3788ms
+
+
+  batch 1769  loss=0.0003  tv=0.00050  step=3101ms
+  batch 1770  loss=0.0002  tv=0.00049  step=3100ms  batch 1770  loss=0.0002  tv=0.00049  step=814ms  batch 1770  loss=0.0003  tv=0.00049  step=3786ms
+
+  batch 1770  loss=0.0003  tv=0.00050  step=3100ms
+
+  batch 1771  loss=0.0002  tv=0.00050  step=814ms  batch 1771  loss=0.0002  tv=0.00050  step=3784ms  batch 1771  loss=0.0002  tv=0.00048  step=3098ms
+
+  batch 1771  loss=0.0003  tv=0.00048  step=3099ms
+
+  batch 1772  loss=0.0002  tv=0.00048  step=814ms  batch 1772  loss=0.0002  tv=0.00053  step=3097ms  batch 1772  loss=0.0002  tv=0.00047  step=3096ms
+
+
+  batch 1772  loss=0.0002  tv=0.00051  step=3782ms
+  batch 1773  loss=0.0003  tv=0.00049  step=3095ms
+  batch 1773  loss=0.0002  tv=0.00050  step=3095ms  batch 1773  loss=0.0002  tv=0.00048  step=3780ms
+
+  batch 1773  loss=0.0002  tv=0.00049  step=813ms
+  batch 1774  loss=0.0002  tv=0.00049  step=3094ms  batch 1774  loss=0.0003  tv=0.00050  step=3778ms
+  batch 1774  loss=0.0002  tv=0.00049  step=3093ms
+
+  batch 1774  loss=0.0002  tv=0.00048  step=813ms
+  batch 1775  loss=0.0002  tv=0.00050  step=3108ms
+  batch 1775  loss=0.0002  tv=0.00049  step=3108ms
+  batch 1775  loss=0.0002  tv=0.00047  step=813ms  batch 1775  loss=0.0002  tv=0.00049  step=3792ms
+
+  batch 1776  loss=0.0003  tv=0.00050  step=3790ms  batch 1776  loss=0.0002  tv=0.00050  step=3107ms  batch 1776  loss=0.0002  tv=0.00048  step=812ms
+
+  batch 1776  loss=0.0002  tv=0.00049  step=3106ms
+
+  batch 1777  loss=0.0002  tv=0.00048  step=3788ms
+  batch 1777  loss=0.0002  tv=0.00052  step=3105ms
+  batch 1777  loss=0.0002  tv=0.00048  step=812ms  batch 1777  loss=0.0002  tv=0.00048  step=3105ms
+
+  batch 1778  loss=0.0002  tv=0.00051  step=3786ms  batch 1778  loss=0.0002  tv=0.00050  step=3103ms  batch 1778  loss=0.0003  tv=0.00048  step=812ms
+
+  batch 1778  loss=0.0003  tv=0.00050  step=3103ms
+
+  batch 1779  loss=0.0002  tv=0.00050  step=3101ms  batch 1779  loss=0.0003  tv=0.00050  step=3784ms  batch 1779  loss=0.0002  tv=0.00047  step=811ms
+
+  batch 1779  loss=0.0002  tv=0.00050  step=3102ms
+
+  batch 1780  loss=0.0003  tv=0.00049  step=3782ms  batch 1780  loss=0.0002  tv=0.00050  step=811ms  batch 1780  loss=0.0003  tv=0.00050  step=3100ms
+
+
+  batch 1780  loss=0.0002  tv=0.00050  step=3100ms
+  batch 1781  loss=0.0002  tv=0.00047  step=3780ms
+  batch 1781  loss=0.0002  tv=0.00051  step=3098ms
+  batch 1781  loss=0.0003  tv=0.00048  step=811ms  batch 1781  loss=0.0002  tv=0.00049  step=3099ms
+
+  batch 1782  loss=0.0002  tv=0.00049  step=3096ms  batch 1782  loss=0.0002  tv=0.00048  step=3097ms  batch 1782  loss=0.0002  tv=0.00049  step=3778ms
+
+
+  batch 1782  loss=0.0002  tv=0.00048  step=810ms
+  batch 1783  loss=0.0002  tv=0.00051  step=3111ms
+  batch 1783  loss=0.0002  tv=0.00047  step=3110ms
+  batch 1783  loss=0.0002  tv=0.00049  step=810ms  batch 1783  loss=0.0002  tv=0.00047  step=3791ms
+
+  batch 1784  loss=0.0002  tv=0.00048  step=3789ms  batch 1784  loss=0.0003  tv=0.00048  step=810ms  batch 1784  loss=0.0003  tv=0.00050  step=3109ms
+
+  batch 1784  loss=0.0002  tv=0.00047  step=3108ms
+
+  batch 1785  loss=0.0003  tv=0.00047  step=3787ms
+  batch 1785  loss=0.0002  tv=0.00046  step=809ms  batch 1785  loss=0.0002  tv=0.00050  step=3107ms
+
+  batch 1785  loss=0.0002  tv=0.00050  step=3107ms
+  batch 1786  loss=0.0002  tv=0.00050  step=3785ms
+  batch 1786  loss=0.0003  tv=0.00050  step=3105ms
+  batch 1786  loss=0.0003  tv=0.00048  step=3106ms  batch 1786  loss=0.0002  tv=0.00048  step=809ms
+
+  batch 1787  loss=0.0002  tv=0.00048  step=3104ms  batch 1787  loss=0.0002  tv=0.00049  step=809ms  batch 1787  loss=0.0003  tv=0.00048  step=3783ms
+
+
+  batch 1787  loss=0.0003  tv=0.00048  step=3104ms
+  batch 1788  loss=0.0003  tv=0.00046  step=3102ms  batch 1788  loss=0.0002  tv=0.00047  step=3781ms
+
+  batch 1788  loss=0.0002  tv=0.00047  step=808ms  batch 1788  loss=0.0002  tv=0.00049  step=3102ms
+
+  batch 1789  loss=0.0002  tv=0.00048  step=3100ms  batch 1789  loss=0.0002  tv=0.00048  step=3101ms  batch 1789  loss=0.0002  tv=0.00047  step=3779ms
+
+
+  batch 1789  loss=0.0002  tv=0.00047  step=808ms
+  batch 1790  loss=0.0003  tv=0.00050  step=3099ms  batch 1790  loss=0.0002  tv=0.00047  step=3099ms  batch 1790  loss=0.0002  tv=0.00048  step=3777ms
+
+
+  batch 1790  loss=0.0002  tv=0.00051  step=808ms
+  batch 1791  loss=0.0003  tv=0.00050  step=3114ms
+  batch 1791  loss=0.0003  tv=0.00050  step=3792ms  batch 1791  loss=0.0002  tv=0.00048  step=807ms
+  batch 1791  loss=0.0003  tv=0.00049  step=3115ms
+
+  batch 1792  loss=0.0002  tv=0.00049  step=3113ms
+  batch 1792  loss=0.0003  tv=0.00050  step=807ms  batch 1792  loss=0.0003  tv=0.00048  step=3112ms
+  batch 1792  loss=0.0003  tv=0.00049  step=3790ms
+
+  batch 1793  loss=0.0002  tv=0.00048  step=3788ms
+  batch 1793  loss=0.0003  tv=0.00047  step=3111ms
+  batch 1793  loss=0.0002  tv=0.00050  step=3111ms
+  batch 1793  loss=0.0002  tv=0.00047  step=807ms
+  batch 1794  loss=0.0002  tv=0.00048  step=3786ms  batch 1794  loss=0.0003  tv=0.00050  step=3110ms  batch 1794  loss=0.0003  tv=0.00047  step=3109ms
+
+
+  batch 1794  loss=0.0003  tv=0.00049  step=806ms
+  batch 1795  loss=0.0002  tv=0.00047  step=3784ms  batch 1795  loss=0.0002  tv=0.00047  step=3107ms  batch 1795  loss=0.0002  tv=0.00047  step=3108ms
+
+
+  batch 1795  loss=0.0002  tv=0.00047  step=806ms
+  batch 1796  loss=0.0003  tv=0.00052  step=3106ms  batch 1796  loss=0.0002  tv=0.00050  step=3782ms  batch 1796  loss=0.0002  tv=0.00047  step=3106ms
+
+
+  batch 1796  loss=0.0002  tv=0.00048  step=806ms
+  batch 1797  loss=0.0002  tv=0.00048  step=3104ms  batch 1797  loss=0.0003  tv=0.00049  step=3780ms  batch 1797  loss=0.0003  tv=0.00048  step=3105ms
+
+
+  batch 1797  loss=0.0003  tv=0.00049  step=805ms
+  batch 1798  loss=0.0003  tv=0.00050  step=3103ms  batch 1798  loss=0.0002  tv=0.00048  step=3103ms  batch 1798  loss=0.0003  tv=0.00050  step=3778ms
+
+
+  batch 1798  loss=0.0002  tv=0.00048  step=805ms
+  batch 1799  loss=0.0003  tv=0.00047  step=3118ms
+  batch 1799  loss=0.0002  tv=0.00048  step=805ms  batch 1799  loss=0.0003  tv=0.00049  step=3118ms
+  batch 1799  loss=0.0002  tv=0.00048  step=3793ms
+
+  batch 1800  loss=0.0002  tv=0.00047  step=3791ms
+  batch 1800  loss=0.0003  tv=0.00048  step=3116ms
+  batch 1800  loss=0.0002  tv=0.00048  step=3117ms
+  batch 1800  loss=0.0002  tv=0.00047  step=804ms
+  batch 1801  loss=0.0002  tv=0.00050  step=3789ms  batch 1801  loss=0.0002  tv=0.00047  step=3115ms  batch 1801  loss=0.0002  tv=0.00048  step=804ms
+
+  batch 1801  loss=0.0003  tv=0.00046  step=3115ms
+
+  batch 1802  loss=0.0002  tv=0.00051  step=3787ms  batch 1802  loss=0.0002  tv=0.00051  step=3113ms  batch 1802  loss=0.0003  tv=0.00050  step=804ms
+
+  batch 1802  loss=0.0002  tv=0.00048  step=3113ms
+
+  batch 1803  loss=0.0002  tv=0.00049  step=803ms  batch 1803  loss=0.0002  tv=0.00048  step=3785ms  batch 1803  loss=0.0002  tv=0.00048  step=3111ms
+
+
+  batch 1803  loss=0.0002  tv=0.00050  step=3112ms
+  batch 1804  loss=0.0003  tv=0.00049  step=3110ms  batch 1804  loss=0.0003  tv=0.00049  step=3783ms  batch 1804  loss=0.0002  tv=0.00048  step=803ms
+
+  batch 1804  loss=0.0002  tv=0.00048  step=3110ms
+
+  batch 1805  loss=0.0002  tv=0.00050  step=3108ms
+  batch 1805  loss=0.0003  tv=0.00049  step=3781ms
+  batch 1805  loss=0.0002  tv=0.00050  step=3109ms
+  batch 1805  loss=0.0002  tv=0.00048  step=803ms
+  batch 1806  loss=0.0003  tv=0.00049  step=3107ms  batch 1806  loss=0.0002  tv=0.00048  step=3106ms  batch 1806  loss=0.0002  tv=0.00049  step=3779ms
+
+
+  batch 1806  loss=0.0002  tv=0.00048  step=802ms
+  batch 1807  loss=0.0002  tv=0.00048  step=3121ms
+  batch 1807  loss=0.0002  tv=0.00051  step=3121ms
+  batch 1807  loss=0.0003  tv=0.00049  step=802ms  batch 1807  loss=0.0002  tv=0.00049  step=3793ms
+
+  batch 1808  loss=0.0002  tv=0.00048  step=3119ms
+  batch 1808  loss=0.0002  tv=0.00050  step=802ms  batch 1808  loss=0.0002  tv=0.00048  step=3120ms
+
+  batch 1808  loss=0.0002  tv=0.00049  step=3791ms
+  batch 1809  loss=0.0002  tv=0.00051  step=3118ms  batch 1809  loss=0.0002  tv=0.00048  step=801ms  batch 1809  loss=0.0002  tv=0.00049  step=3118ms
+
+
+  batch 1809  loss=0.0003  tv=0.00050  step=3789ms
+  batch 1810  loss=0.0002  tv=0.00049  step=3116ms  batch 1810  loss=0.0003  tv=0.00050  step=3117ms  batch 1810  loss=0.0002  tv=0.00048  step=801ms
+
+
+  batch 1810  loss=0.0002  tv=0.00048  step=3787ms
+  batch 1811  loss=0.0002  tv=0.00049  step=3114ms  batch 1811  loss=0.0002  tv=0.00049  step=801ms
+  batch 1811  loss=0.0002  tv=0.00052  step=3115ms
+
+  batch 1811  loss=0.0002  tv=0.00050  step=3785ms
+  batch 1812  loss=0.0003  tv=0.00053  step=3113ms
+  batch 1812  loss=0.0002  tv=0.00053  step=3783ms
+  batch 1812  loss=0.0002  tv=0.00049  step=800ms  batch 1812  loss=0.0002  tv=0.00050  step=3113ms
+
+  batch 1813  loss=0.0002  tv=0.00050  step=3111ms
+  batch 1813  loss=0.0003  tv=0.00051  step=800ms  batch 1813  loss=0.0003  tv=0.00051  step=3781ms
+  batch 1813  loss=0.0002  tv=0.00052  step=3112ms
+
+  batch 1814  loss=0.0002  tv=0.00052  step=3110ms
+  batch 1814  loss=0.0003  tv=0.00051  step=800ms  batch 1814  loss=0.0002  tv=0.00053  step=3779ms
+  batch 1814  loss=0.0003  tv=0.00050  step=3110ms
+
+  batch 1815  loss=0.0003  tv=0.00051  step=3125ms  batch 1815  loss=0.0003  tv=0.00051  step=3124ms
+
+  batch 1815  loss=0.0003  tv=0.00051  step=799ms  batch 1815  loss=0.0003  tv=0.00053  step=3794ms
+
+  batch 1816  loss=0.0002  tv=0.00050  step=3123ms  batch 1816  loss=0.0003  tv=0.00051  step=3123ms  batch 1816  loss=0.0003  tv=0.00054  step=799ms
+
+  batch 1816  loss=0.0002  tv=0.00051  step=3792ms
+
+  batch 1817  loss=0.0002  tv=0.00051  step=3121ms  batch 1817  loss=0.0003  tv=0.00050  step=799ms
+  batch 1817  loss=0.0002  tv=0.00053  step=3122ms
+  batch 1817  loss=0.0003  tv=0.00053  step=3790ms
+
+  batch 1818  loss=0.0003  tv=0.00050  step=3120ms  batch 1818  loss=0.0002  tv=0.00048  step=798ms
+  batch 1818  loss=0.0003  tv=0.00051  step=3120ms
+
+  batch 1818  loss=0.0002  tv=0.00050  step=3788ms
+  batch 1819  loss=0.0002  tv=0.00048  step=3118ms  batch 1819  loss=0.0002  tv=0.00048  step=798ms
+  batch 1819  loss=0.0003  tv=0.00047  step=3119ms
+  batch 1819  loss=0.0002  tv=0.00051  step=3786ms
+
+  batch 1820  loss=0.0002  tv=0.00048  step=3116ms  batch 1820  loss=0.0002  tv=0.00049  step=798ms  batch 1820  loss=0.0002  tv=0.00049  step=3784ms
+
+
+  batch 1820  loss=0.0003  tv=0.00051  step=3117ms
+  batch 1821  loss=0.0003  tv=0.00050  step=3782ms  batch 1821  loss=0.0003  tv=0.00050  step=3115ms  batch 1821  loss=0.0002  tv=0.00048  step=3115ms
+
+
+  batch 1821  loss=0.0002  tv=0.00048  step=797ms
+  batch 1822  loss=0.0002  tv=0.00049  step=3113ms  batch 1822  loss=0.0003  tv=0.00050  step=3114ms
+  batch 1822  loss=0.0002  tv=0.00048  step=3780ms
+
+  batch 1822  loss=0.0002  tv=0.00048  step=797ms
+  batch 1823  loss=0.0002  tv=0.00048  step=3794ms
+  batch 1823  loss=0.0002  tv=0.00049  step=3128ms
+  batch 1823  loss=0.0002  tv=0.00050  step=797ms  batch 1823  loss=0.0002  tv=0.00050  step=3128ms
+
+  batch 1824  loss=0.0003  tv=0.00048  step=3127ms
+  batch 1824  loss=0.0003  tv=0.00047  step=3126ms
+  batch 1824  loss=0.0002  tv=0.00052  step=796ms  batch 1824  loss=0.0002  tv=0.00048  step=3792ms
+
+  batch 1825  loss=0.0002  tv=0.00049  step=3790ms  batch 1825  loss=0.0002  tv=0.00049  step=3125ms
+  batch 1825  loss=0.0003  tv=0.00049  step=3125ms
+
+  batch 1825  loss=0.0002  tv=0.00054  step=796ms
+  batch 1826  loss=0.0002  tv=0.00048  step=3123ms  batch 1826  loss=0.0002  tv=0.00051  step=3788ms
+  batch 1826  loss=0.0002  tv=0.00048  step=3124ms
+
+  batch 1826  loss=0.0003  tv=0.00047  step=796ms
+  batch 1827  loss=0.0002  tv=0.00050  step=3786ms  batch 1827  loss=0.0002  tv=0.00050  step=3122ms  batch 1827  loss=0.0003  tv=0.00050  step=3122ms
+
+
+  batch 1827  loss=0.0002  tv=0.00053  step=795ms
+  batch 1828  loss=0.0002  tv=0.00052  step=3784ms  batch 1828  loss=0.0002  tv=0.00050  step=3120ms  batch 1828  loss=0.0002  tv=0.00051  step=3120ms
+
+
+  batch 1828  loss=0.0002  tv=0.00047  step=795ms
+  batch 1829  loss=0.0002  tv=0.00050  step=3118ms  batch 1829  loss=0.0002  tv=0.00050  step=3782ms  batch 1829  loss=0.0003  tv=0.00050  step=3119ms
+
+
+  batch 1829  loss=0.0003  tv=0.00049  step=795ms
+  batch 1830  loss=0.0003  tv=0.00050  step=3117ms  batch 1830  loss=0.0002  tv=0.00050  step=3780ms  batch 1830  loss=0.0002  tv=0.00048  step=3117ms
+
+
+  batch 1830  loss=0.0002  tv=0.00050  step=794ms
+  batch 1831  loss=0.0002  tv=0.00048  step=3795ms  batch 1831  loss=0.0002  tv=0.00049  step=3132ms
+
+  batch 1831  loss=0.0003  tv=0.00048  step=794ms  batch 1831  loss=0.0002  tv=0.00048  step=3132ms
+
+  batch 1832  loss=0.0003  tv=0.00050  step=3131ms  batch 1832  loss=0.0002  tv=0.00050  step=3130ms
+
+  batch 1832  loss=0.0003  tv=0.00048  step=794ms  batch 1832  loss=0.0002  tv=0.00048  step=3793ms
+
+  batch 1833  loss=0.0002  tv=0.00046  step=3129ms  batch 1833  loss=0.0003  tv=0.00048  step=3129ms  batch 1833  loss=0.0003  tv=0.00050  step=3791ms
+
+
+  batch 1833  loss=0.0003  tv=0.00047  step=793ms
+  batch 1834  loss=0.0002  tv=0.00050  step=793ms  batch 1834  loss=0.0002  tv=0.00050  step=3127ms  batch 1834  loss=0.0003  tv=0.00048  step=3789ms
+
+
+  batch 1834  loss=0.0002  tv=0.00048  step=3128ms
+  batch 1835  loss=0.0003  tv=0.00052  step=793ms  batch 1835  loss=0.0002  tv=0.00047  step=3787ms
+  batch 1835  loss=0.0002  tv=0.00048  step=3125ms
+
+  batch 1835  loss=0.0002  tv=0.00048  step=3126ms
+  batch 1836  loss=0.0002  tv=0.00048  step=3785ms
+  batch 1836  loss=0.0003  tv=0.00050  step=792ms  batch 1836  loss=0.0002  tv=0.00050  step=3124ms
+  batch 1836  loss=0.0002  tv=0.00049  step=3124ms
+
+  batch 1837  loss=0.0003  tv=0.00046  step=3123ms  batch 1837  loss=0.0002  tv=0.00048  step=3122ms  batch 1837  loss=0.0002  tv=0.00049  step=3783ms
+
+
+  batch 1837  loss=0.0003  tv=0.00050  step=792ms
+  batch 1838  loss=0.0003  tv=0.00048  step=3781ms  batch 1838  loss=0.0003  tv=0.00047  step=3121ms  batch 1838  loss=0.0002  tv=0.00050  step=3121ms
+
+
+  batch 1838  loss=0.0002  tv=0.00052  step=792ms
+  batch 1839  loss=0.0003  tv=0.00050  step=3795ms  batch 1839  loss=0.0002  tv=0.00050  step=3135ms
+
+  batch 1839  loss=0.0002  tv=0.00050  step=791ms  batch 1839  loss=0.0002  tv=0.00049  step=3135ms
+
+  batch 1840  loss=0.0002  tv=0.00048  step=3134ms
+  batch 1840  loss=0.0002  tv=0.00048  step=3133ms
+  batch 1840  loss=0.0003  tv=0.00051  step=791ms  batch 1840  loss=0.0002  tv=0.00047  step=3793ms
+
+  batch 1841  loss=0.0002  tv=0.00049  step=3791ms
+  batch 1841  loss=0.0002  tv=0.00048  step=3132ms
+  batch 1841  loss=0.0002  tv=0.00048  step=791ms  batch 1841  loss=0.0003  tv=0.00048  step=3132ms
+
+  batch 1842  loss=0.0002  tv=0.00048  step=3130ms  batch 1842  loss=0.0003  tv=0.00048  step=3789ms  batch 1842  loss=0.0003  tv=0.00048  step=790ms
+
+  batch 1842  loss=0.0003  tv=0.00049  step=3131ms
+
+  batch 1843  loss=0.0002  tv=0.00048  step=3129ms  batch 1843  loss=0.0002  tv=0.00048  step=3787ms
+  batch 1843  loss=0.0003  tv=0.00048  step=790ms
+  batch 1843  loss=0.0002  tv=0.00048  step=3129ms
+
+  batch 1844  loss=0.0002  tv=0.00050  step=790ms  batch 1844  loss=0.0003  tv=0.00050  step=3785ms  batch 1844  loss=0.0003  tv=0.00050  step=3127ms
+
+
+  batch 1844  loss=0.0003  tv=0.00050  step=3127ms
+  batch 1845  loss=0.0002  tv=0.00048  step=3125ms  batch 1845  loss=0.0002  tv=0.00048  step=3784ms  batch 1845  loss=0.0002  tv=0.00049  step=789ms
+
+
+  batch 1845  loss=0.0002  tv=0.00048  step=3126ms
+  batch 1846  loss=0.0003  tv=0.00049  step=3782ms  batch 1846  loss=0.0002  tv=0.00049  step=3124ms
+
+  batch 1846  loss=0.0003  tv=0.00050  step=3124ms
+  batch 1846  loss=0.0002  tv=0.00048  step=789ms
+  batch 1847  loss=0.0003  tv=0.00049  step=3138ms
+  batch 1847  loss=0.0003  tv=0.00048  step=789ms  batch 1847  loss=0.0002  tv=0.00047  step=3137ms
+  batch 1847  loss=0.0002  tv=0.00046  step=3795ms
+
+  batch 1848  loss=0.0002  tv=0.00049  step=788ms  batch 1848  loss=0.0002  tv=0.00049  step=3793ms  batch 1848  loss=0.0002  tv=0.00049  step=3136ms
+
+
+  batch 1848  loss=0.0003  tv=0.00050  step=3136ms
+  batch 1849  loss=0.0003  tv=0.00048  step=3791ms  batch 1849  loss=0.0003  tv=0.00048  step=788ms  batch 1849  loss=0.0003  tv=0.00050  step=3134ms
+
+
+  batch 1849  loss=0.0002  tv=0.00047  step=3135ms
+  batch 1850  loss=0.0003  tv=0.00050  step=788ms  batch 1850  loss=0.0003  tv=0.00049  step=3133ms  batch 1850  loss=0.0003  tv=0.00050  step=3789ms
+
+
+  batch 1850  loss=0.0002  tv=0.00050  step=3133ms
+  batch 1851  loss=0.0003  tv=0.00049  step=788ms  batch 1851  loss=0.0002  tv=0.00051  step=3787ms  batch 1851  loss=0.0002  tv=0.00048  step=3131ms
+
+  batch 1851  loss=0.0002  tv=0.00049  step=3131ms
+
+  batch 1852  loss=0.0003  tv=0.00049  step=3785ms  batch 1852  loss=0.0002  tv=0.00048  step=3129ms  batch 1852  loss=0.0003  tv=0.00047  step=3130ms
+
+
+  batch 1852  loss=0.0002  tv=0.00051  step=787ms
+  batch 1853  loss=0.0002  tv=0.00050  step=3128ms  batch 1853  loss=0.0002  tv=0.00050  step=3783ms
+
+  batch 1853  loss=0.0003  tv=0.00049  step=3128ms
+  batch 1853  loss=0.0002  tv=0.00047  step=787ms
+  batch 1854  loss=0.0003  tv=0.00050  step=3127ms  batch 1854  loss=0.0003  tv=0.00051  step=3126ms  batch 1854  loss=0.0003  tv=0.00050  step=3781ms
+
+
+  batch 1854  loss=0.0002  tv=0.00051  step=787ms
+  batch 1855  loss=0.0002  tv=0.00051  step=3141ms
+  batch 1855  loss=0.0002  tv=0.00050  step=3140ms
+  batch 1855  loss=0.0002  tv=0.00052  step=786ms  batch 1855  loss=0.0003  tv=0.00049  step=3795ms
+
+  batch 1856  loss=0.0002  tv=0.00051  step=3793ms  batch 1856  loss=0.0003  tv=0.00049  step=3139ms
+  batch 1856  loss=0.0002  tv=0.00050  step=786ms
+  batch 1856  loss=0.0003  tv=0.00049  step=3139ms
+
+  batch 1857  loss=0.0002  tv=0.00047  step=3137ms  batch 1857  loss=0.0002  tv=0.00047  step=3138ms
+
+  batch 1857  loss=0.0003  tv=0.00051  step=3791ms
+  batch 1857  loss=0.0002  tv=0.00047  step=786ms
+  batch 1858  loss=0.0002  tv=0.00051  step=3136ms  batch 1858  loss=0.0003  tv=0.00047  step=3136ms  batch 1858  loss=0.0003  tv=0.00048  step=3789ms
+
+
+  batch 1858  loss=0.0003  tv=0.00050  step=785ms
+  batch 1859  loss=0.0003  tv=0.00048  step=3134ms  batch 1859  loss=0.0003  tv=0.00049  step=3787ms  batch 1859  loss=0.0002  tv=0.00049  step=3135ms
+
+
+  batch 1859  loss=0.0002  tv=0.00051  step=785ms
+  batch 1860  loss=0.0003  tv=0.00050  step=3785ms  batch 1860  loss=0.0002  tv=0.00047  step=3133ms
+  batch 1860  loss=0.0003  tv=0.00050  step=3133ms
+
+  batch 1860  loss=0.0003  tv=0.00051  step=785ms
+  batch 1861  loss=0.0003  tv=0.00050  step=3131ms  batch 1861  loss=0.0002  tv=0.00049  step=3131ms  batch 1861  loss=0.0002  tv=0.00050  step=3783ms
+
+
+  batch 1861  loss=0.0004  tv=0.00048  step=784ms
+  batch 1862  loss=0.0002  tv=0.00048  step=3129ms  batch 1862  loss=0.0002  tv=0.00047  step=3782ms
+
+  batch 1862  loss=0.0003  tv=0.00048  step=3130ms
+  batch 1862  loss=0.0003  tv=0.00049  step=784ms
+  batch 1863  loss=0.0003  tv=0.00048  step=3796ms
+  batch 1863  loss=0.0002  tv=0.00048  step=3145ms
+  batch 1863  loss=0.0002  tv=0.00048  step=784ms  batch 1863  loss=0.0002  tv=0.00050  step=3145ms
+
+  batch 1864  loss=0.0002  tv=0.00050  step=3143ms  batch 1864  loss=0.0003  tv=0.00050  step=3794ms
+  batch 1864  loss=0.0002  tv=0.00048  step=783ms
+  batch 1864  loss=0.0002  tv=0.00047  step=3143ms
+
+  batch 1865  loss=0.0002  tv=0.00049  step=3141ms  batch 1865  loss=0.0002  tv=0.00050  step=3793ms
+  batch 1865  loss=0.0002  tv=0.00051  step=783ms
+  batch 1865  loss=0.0003  tv=0.00048  step=3142ms
+
+  batch 1866  loss=0.0003  tv=0.00050  step=3791ms  batch 1866  loss=0.0003  tv=0.00051  step=3140ms  batch 1866  loss=0.0002  tv=0.00048  step=783ms
+
+  batch 1866  loss=0.0003  tv=0.00050  step=3140ms
+
+  batch 1867  loss=0.0002  tv=0.00051  step=3138ms  batch 1867  loss=0.0003  tv=0.00050  step=782ms
+  batch 1867  loss=0.0003  tv=0.00049  step=3789ms
+
+  batch 1867  loss=0.0002  tv=0.00047  step=3139ms
+  batch 1868  loss=0.0002  tv=0.00050  step=3137ms  batch 1868  loss=0.0002  tv=0.00048  step=3787ms
+  batch 1868  loss=0.0002  tv=0.00048  step=782ms
+
+  batch 1868  loss=0.0002  tv=0.00050  step=3137ms
+  batch 1869  loss=0.0002  tv=0.00047  step=3135ms  batch 1869  loss=0.0002  tv=0.00051  step=3785ms
+  batch 1869  loss=0.0003  tv=0.00048  step=3136ms
+
+  batch 1869  loss=0.0003  tv=0.00049  step=782ms
+  batch 1870  loss=0.0002  tv=0.00048  step=3134ms
+  batch 1870  loss=0.0002  tv=0.00048  step=3134ms  batch 1870  loss=0.0002  tv=0.00050  step=3783ms
+
+  batch 1870  loss=0.0002  tv=0.00050  step=782ms
+  batch 1871  loss=0.0002  tv=0.00050  step=3148ms
+  batch 1871  loss=0.0002  tv=0.00050  step=3147ms
+  batch 1871  loss=0.0002  tv=0.00049  step=781ms  batch 1871  loss=0.0003  tv=0.00049  step=3796ms
+
+  batch 1872  loss=0.0002  tv=0.00048  step=3146ms  batch 1872  loss=0.0002  tv=0.00050  step=781ms
+  batch 1872  loss=0.0002  tv=0.00050  step=3146ms
+
+  batch 1872  loss=0.0003  tv=0.00050  step=3795ms
+  batch 1873  loss=0.0003  tv=0.00050  step=3145ms
+  batch 1873  loss=0.0002  tv=0.00051  step=3793ms
+  batch 1873  loss=0.0003  tv=0.00049  step=3144ms
+  batch 1873  loss=0.0002  tv=0.00052  step=781ms
+  batch 1874  loss=0.0002  tv=0.00050  step=3791ms
+  batch 1874  loss=0.0003  tv=0.00048  step=3143ms
+  batch 1874  loss=0.0003  tv=0.00050  step=3143ms
+  batch 1874  loss=0.0002  tv=0.00049  step=780ms
+  batch 1875  loss=0.0002  tv=0.00052  step=3141ms  batch 1875  loss=0.0002  tv=0.00049  step=3789ms
+  batch 1875  loss=0.0003  tv=0.00051  step=780ms
+
+  batch 1875  loss=0.0002  tv=0.00052  step=3142ms
+  batch 1876  loss=0.0002  tv=0.00050  step=3787ms  batch 1876  loss=0.0003  tv=0.00049  step=3140ms
+  batch 1876  loss=0.0002  tv=0.00050  step=780ms
+
+  batch 1876  loss=0.0002  tv=0.00047  step=3140ms
+  batch 1877  loss=0.0003  tv=0.00050  step=3785ms  batch 1877  loss=0.0003  tv=0.00051  step=3138ms  batch 1877  loss=0.0002  tv=0.00047  step=779ms
+
+  batch 1877  loss=0.0002  tv=0.00049  step=3139ms
+
+  batch 1878  loss=0.0003  tv=0.00056  step=3136ms  batch 1878  loss=0.0002  tv=0.00048  step=3783ms
+  batch 1878  loss=0.0002  tv=0.00048  step=779ms
+  batch 1878  loss=0.0003  tv=0.00049  step=3137ms
+
+  batch 1879  loss=0.0003  tv=0.00049  step=3150ms
+  batch 1879  loss=0.0002  tv=0.00048  step=3150ms
+  batch 1879  loss=0.0002  tv=0.00050  step=779ms  batch 1879  loss=0.0002  tv=0.00050  step=3796ms
+
+  batch 1880  loss=0.0003  tv=0.00049  step=3148ms  batch 1880  loss=0.0002  tv=0.00048  step=778ms
+  batch 1880  loss=0.0003  tv=0.00047  step=3148ms
+  batch 1880  loss=0.0003  tv=0.00048  step=3794ms
+
+  batch 1881  loss=0.0002  tv=0.00048  step=3147ms  batch 1881  loss=0.0003  tv=0.00048  step=3792ms
+
+  batch 1881  loss=0.0002  tv=0.00048  step=778ms  batch 1881  loss=0.0002  tv=0.00048  step=3146ms
+
+  batch 1882  loss=0.0002  tv=0.00051  step=778ms  batch 1882  loss=0.0003  tv=0.00049  step=3790ms
+  batch 1882  loss=0.0002  tv=0.00049  step=3145ms
+
+  batch 1882  loss=0.0003  tv=0.00050  step=3145ms
+  batch 1883  loss=0.0002  tv=0.00048  step=3788ms  batch 1883  loss=0.0002  tv=0.00050  step=3143ms
+  batch 1883  loss=0.0002  tv=0.00051  step=778ms
+  batch 1883  loss=0.0003  tv=0.00050  step=3144ms
+
+  batch 1884  loss=0.0003  tv=0.00050  step=3142ms  batch 1884  loss=0.0002  tv=0.00050  step=3786ms
+  batch 1884  loss=0.0003  tv=0.00051  step=777ms
+  batch 1884  loss=0.0002  tv=0.00048  step=3142ms
+
+  batch 1885  loss=0.0002  tv=0.00048  step=3140ms
+  batch 1885  loss=0.0003  tv=0.00049  step=777ms  batch 1885  loss=0.0003  tv=0.00048  step=3784ms
+  batch 1885  loss=0.0002  tv=0.00049  step=3141ms
+
+  batch 1886  loss=0.0002  tv=0.00048  step=3139ms  batch 1886  loss=0.0002  tv=0.00047  step=3782ms  batch 1886  loss=0.0002  tv=0.00049  step=777ms
+
+  batch 1886  loss=0.0003  tv=0.00049  step=3139ms
+
+  batch 1887  loss=0.0002  tv=0.00048  step=3796ms
+  batch 1887  loss=0.0002  tv=0.00050  step=3152ms
+  batch 1887  loss=0.0002  tv=0.00049  step=776ms  batch 1887  loss=0.0002  tv=0.00048  step=3153ms
+
+  batch 1888  loss=0.0002  tv=0.00048  step=3151ms
+  batch 1888  loss=0.0003  tv=0.00052  step=776ms  batch 1888  loss=0.0002  tv=0.00050  step=3794ms
+
+  batch 1888  loss=0.0002  tv=0.00050  step=3151ms
+  batch 1889  loss=0.0002  tv=0.00050  step=3792ms  batch 1889  loss=0.0002  tv=0.00051  step=776ms
+  batch 1889  loss=0.0002  tv=0.00050  step=3150ms
+  batch 1889  loss=0.0002  tv=0.00048  step=3149ms
+
+  batch 1890  loss=0.0003  tv=0.00050  step=3148ms  batch 1890  loss=0.0002  tv=0.00048  step=3790ms
+
+  batch 1890  loss=0.0002  tv=0.00050  step=775ms  batch 1890  loss=0.0002  tv=0.00051  step=3148ms
+
+  batch 1891  loss=0.0002  tv=0.00050  step=3146ms  batch 1891  loss=0.0002  tv=0.00050  step=3788ms  batch 1891  loss=0.0002  tv=0.00051  step=775ms
+
+
+  batch 1891  loss=0.0002  tv=0.00048  step=3147ms
+  batch 1892  loss=0.0003  tv=0.00050  step=3786ms
+  batch 1892  loss=0.0002  tv=0.00050  step=775ms  batch 1892  loss=0.0002  tv=0.00048  step=3145ms
+  batch 1892  loss=0.0003  tv=0.00052  step=3145ms
+
+  batch 1893  loss=0.0003  tv=0.00052  step=3143ms  batch 1893  loss=0.0002  tv=0.00051  step=3785ms  batch 1893  loss=0.0002  tv=0.00049  step=774ms
+
+
+  batch 1893  loss=0.0002  tv=0.00049  step=3144ms
+  batch 1894  loss=0.0002  tv=0.00051  step=774ms  batch 1894  loss=0.0002  tv=0.00052  step=3142ms  batch 1894  loss=0.0003  tv=0.00051  step=3783ms
+
+
+  batch 1894  loss=0.0002  tv=0.00053  step=3142ms
+  batch 1895  loss=0.0003  tv=0.00050  step=3795ms
+  batch 1895  loss=0.0003  tv=0.00050  step=3155ms  batch 1895  loss=0.0003  tv=0.00050  step=774ms
+  batch 1895  loss=0.0002  tv=0.00053  step=3155ms
+
+  batch 1896  loss=0.0002  tv=0.00048  step=3154ms  batch 1896  loss=0.0002  tv=0.00048  step=3153ms
+
+  batch 1896  loss=0.0003  tv=0.00050  step=774ms  batch 1896  loss=0.0002  tv=0.00051  step=3793ms
+
+  batch 1897  loss=0.0002  tv=0.00051  step=3152ms  batch 1897  loss=0.0003  tv=0.00047  step=3152ms  batch 1897  loss=0.0003  tv=0.00050  step=773ms
+
+  batch 1897  loss=0.0002  tv=0.00050  step=3792ms
+
+  batch 1898  loss=0.0002  tv=0.00050  step=3150ms  batch 1898  loss=0.0003  tv=0.00048  step=773ms
+  batch 1898  loss=0.0003  tv=0.00049  step=3790ms
+
+  batch 1898  loss=0.0002  tv=0.00046  step=3150ms
+  batch 1899  loss=0.0003  tv=0.00050  step=3788ms  batch 1899  loss=0.0002  tv=0.00047  step=3148ms
+
+  batch 1899  loss=0.0002  tv=0.00049  step=773ms  batch 1899  loss=0.0002  tv=0.00048  step=3149ms
+
+  batch 1900  loss=0.0002  tv=0.00048  step=3147ms  batch 1900  loss=0.0002  tv=0.00049  step=3786ms  batch 1900  loss=0.0002  tv=0.00050  step=772ms
+  batch 1900  loss=0.0002  tv=0.00048  step=3147ms
+
+
+  batch 1901  loss=0.0002  tv=0.00049  step=3784ms  batch 1901  loss=0.0002  tv=0.00050  step=3145ms  batch 1901  loss=0.0003  tv=0.00051  step=772ms
+
+  batch 1901  loss=0.0003  tv=0.00049  step=3146ms
+
+  batch 1902  loss=0.0002  tv=0.00048  step=3144ms  batch 1902  loss=0.0003  tv=0.00050  step=772ms  batch 1902  loss=0.0002  tv=0.00050  step=3782ms
+
+
+  batch 1902  loss=0.0002  tv=0.00050  step=3144ms
+  batch 1903  loss=0.0002  tv=0.00047  step=3159ms
+  batch 1903  loss=0.0003  tv=0.00053  step=3797ms
+  batch 1903  loss=0.0002  tv=0.00048  step=771ms  batch 1903  loss=0.0002  tv=0.00048  step=3158ms
+
+  batch 1904  loss=0.0002  tv=0.00049  step=3157ms  batch 1904  loss=0.0002  tv=0.00049  step=771ms
+  batch 1904  loss=0.0002  tv=0.00048  step=3157ms
+
+  batch 1904  loss=0.0003  tv=0.00052  step=3795ms
+  batch 1905  loss=0.0004  tv=0.00052  step=771ms  batch 1905  loss=0.0003  tv=0.00049  step=3156ms  batch 1905  loss=0.0003  tv=0.00050  step=3155ms
+
+
+  batch 1905  loss=0.0002  tv=0.00051  step=3793ms
+  batch 1906  loss=0.0003  tv=0.00050  step=3791ms  batch 1906  loss=0.0003  tv=0.00050  step=3154ms
+  batch 1906  loss=0.0002  tv=0.00048  step=771ms
+  batch 1906  loss=0.0002  tv=0.00050  step=3154ms
+
+  batch 1907  loss=0.0003  tv=0.00050  step=3789ms  batch 1907  loss=0.0002  tv=0.00051  step=770ms  batch 1907  loss=0.0003  tv=0.00048  step=3152ms
+
+
+  batch 1907  loss=0.0002  tv=0.00050  step=3153ms
+  batch 1908  loss=0.0002  tv=0.00049  step=770ms  batch 1908  loss=0.0002  tv=0.00048  step=3787ms  batch 1908  loss=0.0003  tv=0.00048  step=3151ms
+
+
+  batch 1908  loss=0.0002  tv=0.00050  step=3151ms
+  batch 1909  loss=0.0002  tv=0.00048  step=770ms  batch 1909  loss=0.0002  tv=0.00049  step=3149ms  batch 1909  loss=0.0003  tv=0.00051  step=3785ms
+
+
+  batch 1909  loss=0.0002  tv=0.00049  step=3150ms
+  batch 1910  loss=0.0003  tv=0.00049  step=3783ms  batch 1910  loss=0.0003  tv=0.00048  step=3148ms
+
+  batch 1910  loss=0.0003  tv=0.00048  step=769ms  batch 1910  loss=0.0003  tv=0.00048  step=3148ms
+
+  batch 1911  loss=0.0003  tv=0.00048  step=3162ms
+  batch 1911  loss=0.0002  tv=0.00048  step=3797ms
+  batch 1911  loss=0.0002  tv=0.00047  step=769ms  batch 1911  loss=0.0003  tv=0.00051  step=3162ms
+
+  batch 1912  loss=0.0002  tv=0.00048  step=3160ms  batch 1912  loss=0.0002  tv=0.00048  step=769ms
+  batch 1912  loss=0.0002  tv=0.00050  step=3160ms
+  batch 1912  loss=0.0002  tv=0.00048  step=3795ms
+
+  batch 1913  loss=0.0002  tv=0.00048  step=3159ms  batch 1913  loss=0.0003  tv=0.00051  step=768ms  batch 1913  loss=0.0003  tv=0.00049  step=3158ms
+
+
+  batch 1913  loss=0.0003  tv=0.00051  step=3793ms
+  batch 1914  loss=0.0002  tv=0.00050  step=3157ms  batch 1914  loss=0.0002  tv=0.00049  step=3791ms
+  batch 1914  loss=0.0002  tv=0.00051  step=768ms
+  batch 1914  loss=0.0002  tv=0.00049  step=3157ms
+
+  batch 1915  loss=0.0003  tv=0.00049  step=3789ms  batch 1915  loss=0.0002  tv=0.00048  step=768ms  batch 1915  loss=0.0003  tv=0.00050  step=3155ms
+
+
+  batch 1915  loss=0.0002  tv=0.00048  step=3156ms
+  batch 1916  loss=0.0002  tv=0.00048  step=768ms  batch 1916  loss=0.0003  tv=0.00052  step=3788ms  batch 1916  loss=0.0002  tv=0.00049  step=3154ms
+
+
+  batch 1916  loss=0.0003  tv=0.00050  step=3154ms
+  batch 1917  loss=0.0003  tv=0.00048  step=3786ms  batch 1917  loss=0.0002  tv=0.00049  step=3152ms  batch 1917  loss=0.0002  tv=0.00050  step=767ms
+
+  batch 1917  loss=0.0003  tv=0.00050  step=3153ms
+
+  batch 1918  loss=0.0002  tv=0.00053  step=3784ms  batch 1918  loss=0.0002  tv=0.00050  step=767ms
+  batch 1918  loss=0.0002  tv=0.00050  step=3151ms
+  batch 1918  loss=0.0002  tv=0.00050  step=3151ms
+
+  batch 1919  loss=0.0003  tv=0.00048  step=3165ms
+  batch 1919  loss=0.0002  tv=0.00050  step=3166ms
+  batch 1919  loss=0.0003  tv=0.00049  step=767ms  batch 1919  loss=0.0003  tv=0.00054  step=3798ms
+
+  batch 1920  loss=0.0002  tv=0.00048  step=3164ms
+  batch 1920  loss=0.0003  tv=0.00050  step=3164ms
+  batch 1920  loss=0.0002  tv=0.00049  step=3796ms
+  batch 1920  loss=0.0002  tv=0.00049  step=766ms
+  batch 1921  loss=0.0003  tv=0.00050  step=3794ms  batch 1921  loss=0.0002  tv=0.00050  step=3163ms
+
+  batch 1921  loss=0.0003  tv=0.00051  step=3162ms
+  batch 1921  loss=0.0003  tv=0.00052  step=766ms
+  batch 1922  loss=0.0002  tv=0.00052  step=766ms  batch 1922  loss=0.0003  tv=0.00050  step=3161ms  batch 1922  loss=0.0003  tv=0.00049  step=3792ms
+
+
+  batch 1922  loss=0.0003  tv=0.00050  step=3160ms
+  batch 1923  loss=0.0003  tv=0.00050  step=3790ms  batch 1923  loss=0.0002  tv=0.00051  step=3159ms
+
+  batch 1923  loss=0.0002  tv=0.00050  step=3159ms
+  batch 1923  loss=0.0003  tv=0.00049  step=766ms
+  batch 1924  loss=0.0003  tv=0.00050  step=3789ms  batch 1924  loss=0.0002  tv=0.00049  step=3157ms  batch 1924  loss=0.0002  tv=0.00051  step=3158ms
+
+
+  batch 1924  loss=0.0002  tv=0.00050  step=765ms
+  batch 1925  loss=0.0002  tv=0.00047  step=3156ms  batch 1925  loss=0.0002  tv=0.00047  step=3156ms  batch 1925  loss=0.0003  tv=0.00048  step=3787ms
+
+
+  batch 1925  loss=0.0003  tv=0.00050  step=765ms
+  batch 1926  loss=0.0002  tv=0.00048  step=3785ms  batch 1926  loss=0.0003  tv=0.00048  step=3155ms  batch 1926  loss=0.0003  tv=0.00050  step=3154ms
+
+
+  batch 1926  loss=0.0002  tv=0.00050  step=765ms
+  batch 1927  loss=0.0003  tv=0.00051  step=3797ms
+  batch 1927  loss=0.0002  tv=0.00047  step=3167ms
+  batch 1927  loss=0.0002  tv=0.00047  step=764ms  batch 1927  loss=0.0002  tv=0.00049  step=3168ms
+
+  batch 1928  loss=0.0002  tv=0.00049  step=764ms  batch 1928  loss=0.0003  tv=0.00047  step=3165ms  batch 1928  loss=0.0002  tv=0.00048  step=3166ms
+
+
+  batch 1928  loss=0.0002  tv=0.00050  step=3795ms
+  batch 1929  loss=0.0003  tv=0.00050  step=3164ms  batch 1929  loss=0.0002  tv=0.00050  step=3164ms
+  batch 1929  loss=0.0002  tv=0.00049  step=764ms
+  batch 1929  loss=0.0003  tv=0.00049  step=3793ms
+
+  batch 1930  loss=0.0002  tv=0.00051  step=3163ms  batch 1930  loss=0.0002  tv=0.00048  step=763ms
+  batch 1930  loss=0.0002  tv=0.00050  step=3162ms
+  batch 1930  loss=0.0002  tv=0.00050  step=3792ms
+
+  batch 1931  loss=0.0002  tv=0.00050  step=3790ms  batch 1931  loss=0.0002  tv=0.00050  step=3161ms  batch 1931  loss=0.0002  tv=0.00050  step=763ms
+
+  batch 1931  loss=0.0002  tv=0.00048  step=3161ms
+
+  batch 1932  loss=0.0002  tv=0.00050  step=3788ms  batch 1932  loss=0.0002  tv=0.00049  step=763ms
+  batch 1932  loss=0.0003  tv=0.00048  step=3159ms
+
+  batch 1932  loss=0.0003  tv=0.00056  step=3160ms
+  batch 1933  loss=0.0002  tv=0.00049  step=3786ms  batch 1933  loss=0.0002  tv=0.00050  step=3158ms
+  batch 1933  loss=0.0002  tv=0.00047  step=763ms
+  batch 1933  loss=0.0002  tv=0.00047  step=3158ms
+
+  batch 1934  loss=0.0002  tv=0.00048  step=762ms  batch 1934  loss=0.0002  tv=0.00048  step=3784ms  batch 1934  loss=0.0002  tv=0.00050  step=3156ms
+
+
+  batch 1934  loss=0.0003  tv=0.00046  step=3157ms
+  batch 1935  loss=0.0002  tv=0.00050  step=3169ms
+  batch 1935  loss=0.0002  tv=0.00049  step=762ms  batch 1935  loss=0.0003  tv=0.00048  step=3169ms
+  batch 1935  loss=0.0002  tv=0.00049  step=3796ms
+
+  batch 1936  loss=0.0003  tv=0.00049  step=3168ms  batch 1936  loss=0.0002  tv=0.00049  step=762ms
+  batch 1936  loss=0.0002  tv=0.00050  step=3167ms
+
+  batch 1936  loss=0.0002  tv=0.00050  step=3794ms
+  batch 1937  loss=0.0002  tv=0.00049  step=3166ms  batch 1937  loss=0.0002  tv=0.00048  step=3793ms  batch 1937  loss=0.0003  tv=0.00050  step=761ms
+
+
+  batch 1937  loss=0.0002  tv=0.00048  step=3166ms
+  batch 1938  loss=0.0002  tv=0.00051  step=3165ms  batch 1938  loss=0.0002  tv=0.00049  step=3791ms
+
+  batch 1938  loss=0.0002  tv=0.00049  step=761ms  batch 1938  loss=0.0002  tv=0.00054  step=3164ms
+
+  batch 1939  loss=0.0002  tv=0.00048  step=3789ms  batch 1939  loss=0.0002  tv=0.00050  step=3163ms  batch 1939  loss=0.0003  tv=0.00048  step=3163ms
+
+
+  batch 1939  loss=0.0002  tv=0.00048  step=761ms
+  batch 1940  loss=0.0002  tv=0.00050  step=3161ms  batch 1940  loss=0.0003  tv=0.00051  step=3787ms
+  batch 1940  loss=0.0002  tv=0.00048  step=3162ms
+
+  batch 1940  loss=0.0002  tv=0.00050  step=761ms
+  batch 1941  loss=0.0002  tv=0.00048  step=3160ms  batch 1941  loss=0.0002  tv=0.00048  step=3785ms  batch 1941  loss=0.0003  tv=0.00048  step=3160ms
+
+
+  batch 1941  loss=0.0002  tv=0.00047  step=760ms
+  batch 1942  loss=0.0002  tv=0.00056  step=3159ms  batch 1942  loss=0.0003  tv=0.00050  step=3158ms
+  batch 1942  loss=0.0003  tv=0.00046  step=3783ms
+
+  batch 1942  loss=0.0002  tv=0.00049  step=760ms
+  batch 1943  loss=0.0002  tv=0.00051  step=3795ms
+  batch 1943  loss=0.0002  tv=0.00048  step=3171ms
+  batch 1943  loss=0.0002  tv=0.00047  step=760ms  batch 1943  loss=0.0002  tv=0.00047  step=3170ms
+
+  batch 1944  loss=0.0003  tv=0.00049  step=3169ms  batch 1944  loss=0.0002  tv=0.00047  step=759ms
+  batch 1944  loss=0.0002  tv=0.00047  step=3169ms
+
+  batch 1944  loss=0.0003  tv=0.00047  step=3793ms
+  batch 1945  loss=0.0003  tv=0.00047  step=759ms  batch 1945  loss=0.0002  tv=0.00049  step=3167ms
+  batch 1945  loss=0.0002  tv=0.00050  step=3792ms
+  batch 1945  loss=0.0003  tv=0.00048  step=3168ms
+
+  batch 1946  loss=0.0002  tv=0.00049  step=3166ms  batch 1946  loss=0.0002  tv=0.00047  step=3790ms
+  batch 1946  loss=0.0002  tv=0.00049  step=759ms
+  batch 1946  loss=0.0002  tv=0.00049  step=3166ms
+
+  batch 1947  loss=0.0003  tv=0.00048  step=3165ms  batch 1947  loss=0.0002  tv=0.00049  step=759ms
+  batch 1947  loss=0.0003  tv=0.00049  step=3164ms
+
+  batch 1947  loss=0.0002  tv=0.00048  step=3788ms
+  batch 1948  loss=0.0003  tv=0.00047  step=3786ms  batch 1948  loss=0.0003  tv=0.00048  step=3163ms  batch 1948  loss=0.0002  tv=0.00047  step=3163ms
+
+
+  batch 1948  loss=0.0002  tv=0.00049  step=758ms
+  batch 1949  loss=0.0002  tv=0.00047  step=3161ms  batch 1949  loss=0.0003  tv=0.00048  step=3162ms  batch 1949  loss=0.0002  tv=0.00049  step=3784ms
+
+
+  batch 1949  loss=0.0002  tv=0.00048  step=758ms
+  batch 1950  loss=0.0003  tv=0.00047  step=3782ms  batch 1950  loss=0.0003  tv=0.00050  step=3160ms  batch 1950  loss=0.0003  tv=0.00049  step=3160ms
+
+
+  batch 1950  loss=0.0002  tv=0.00047  step=758ms
+  batch 1951  loss=0.0002  tv=0.00049  step=3173ms
+  batch 1951  loss=0.0002  tv=0.00050  step=757ms  batch 1951  loss=0.0002  tv=0.00048  step=3173ms  batch 1951  loss=0.0002  tv=0.00049  step=3795ms
+
+
+  batch 1952  loss=0.0003  tv=0.00051  step=3172ms  batch 1952  loss=0.0002  tv=0.00048  step=757ms
+  batch 1952  loss=0.0002  tv=0.00048  step=3171ms
+
+  batch 1952  loss=0.0003  tv=0.00050  step=3794ms
+  batch 1953  loss=0.0003  tv=0.00049  step=3170ms
+  batch 1953  loss=0.0003  tv=0.00050  step=757ms  batch 1953  loss=0.0002  tv=0.00047  step=3170ms
+  batch 1953  loss=0.0002  tv=0.00048  step=3792ms
+
+  batch 1954  loss=0.0002  tv=0.00047  step=757ms  batch 1954  loss=0.0002  tv=0.00048  step=3790ms  batch 1954  loss=0.0002  tv=0.00050  step=3168ms
+
+
+  batch 1954  loss=0.0002  tv=0.00048  step=3169ms
+  batch 1955  loss=0.0002  tv=0.00047  step=3167ms  batch 1955  loss=0.0003  tv=0.00049  step=756ms  batch 1955  loss=0.0002  tv=0.00047  step=3788ms
+
+
+  batch 1955  loss=0.0003  tv=0.00049  step=3167ms
+  batch 1956  loss=0.0002  tv=0.00049  step=3786ms  batch 1956  loss=0.0003  tv=0.00050  step=3165ms
+
+  batch 1956  loss=0.0002  tv=0.00048  step=756ms  batch 1956  loss=0.0002  tv=0.00050  step=3166ms
+
+  batch 1957  loss=0.0002  tv=0.00047  step=3784ms  batch 1957  loss=0.0003  tv=0.00048  step=3164ms
+  batch 1957  loss=0.0002  tv=0.00048  step=3164ms
+
+  batch 1957  loss=0.0002  tv=0.00048  step=756ms
+  batch 1958  loss=0.0002  tv=0.00050  step=3162ms  batch 1958  loss=0.0002  tv=0.00049  step=3783ms  batch 1958  loss=0.0002  tv=0.00048  step=3163ms
+
+
+  batch 1958  loss=0.0002  tv=0.00048  step=755ms
+[2026-06-16T18:19:06.112] error: *** JOB 23921632 ON gcn112 CANCELLED AT 2026-06-16T18:19:06 DUE to SIGNAL Terminated ***
+  batch 1959  loss=0.0002  tv=0.00050  step=3796ms  batch 1959  loss=0.0002  tv=0.00050  step=3177ms
+  batch 1959  loss=0.0002  tv=0.00048  step=755ms
+  batch 1959  loss=0.0003  tv=0.00049  step=3177ms
+
+  batch 1960  loss=0.0002  tv=0.00051  step=3795ms  batch 1960  loss=0.0002  tv=0.00050  step=3175ms
+  batch 1960  loss=0.0003  tv=0.00050  step=755ms
+  batch 1960  loss=0.0002  tv=0.00050  step=3175ms
+
+  batch 1961  loss=0.0002  tv=0.00047  step=3793ms  batch 1961  loss=0.0003  tv=0.00051  step=755ms
+  batch 1961  loss=0.0003  tv=0.00048  step=3173ms
+
+  batch 1961  loss=0.0003  tv=0.00047  step=3174ms
+  batch 1962  loss=0.0002  tv=0.00048  step=3791ms  batch 1962  loss=0.0002  tv=0.00049  step=3172ms  batch 1962  loss=0.0002  tv=0.00049  step=754ms
+
+  batch 1962  loss=0.0002  tv=0.00050  step=3172ms
+
+  batch 1963  loss=0.0002  tv=0.00049  step=3789ms  batch 1963  loss=0.0002  tv=0.00051  step=3170ms  batch 1963  loss=0.0002  tv=0.00049  step=754ms
+
+  batch 1963  loss=0.0003  tv=0.00049  step=3171ms
+
+  batch 1964  loss=0.0003  tv=0.00050  step=3787ms  batch 1964  loss=0.0002  tv=0.00048  step=3169ms  batch 1964  loss=0.0003  tv=0.00047  step=754ms
+
+  batch 1964  loss=0.0002  tv=0.00047  step=3169ms
+
+  batch 1965  loss=0.0003  tv=0.00049  step=3785ms  batch 1965  loss=0.0002  tv=0.00048  step=3167ms
+
+  batch 1965  loss=0.0002  tv=0.00048  step=3168ms  batch 1965  loss=0.0003  tv=0.00048  step=753ms
+
+  batch 1966  loss=0.0002  tv=0.00049  step=3166ms
+  batch 1966  loss=0.0002  tv=0.00051  step=3784ms  batch 1966  loss=0.0003  tv=0.00049  step=753ms
+  batch 1966  loss=0.0002  tv=0.00047  step=3166ms
+
+[2026-06-16T18:19:37.573] error: namespace_p_join: open failed for /slurm/23921632/.ns: No such file or directory
+[2026-06-16T18:19:37.574] error: namespace_g_join(JobId=23921632 SLUID=s8FXKV7KHJ6H00): No such file or directory
