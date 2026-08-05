@@ -3205,27 +3205,45 @@ Whichever **adjacent pair** shows the drop localises the failure:
 
 All three probes use the frozen best checkpoint. **No retraining, no GPU-days.**
 
-#### 20.12.1 Do this first — the FiLM norm check (minutes, no forward pass)
+#### 20.12.1 FiLM check — CLOSED, premise was wrong (amended 2026-08-05)
 
-`FiLMLayer` is **zero-initialised** (`model.py:158-160`): `proj.weight` zeroed, scale bias 1,
-shift bias 0. At step 0 the decoder is therefore a plain U-Net that ignores the context
-entirely — that zero-init is what makes `use_cls_depth` safe to switch on (§19), but it also
-means FiLM must *learn its way out of zero*.
+**Both halves of the original rule were false. Do not quote the superseded version.**
 
-**FiLM is the only route by which the transformer's context modulates the decoder.** So read
-the checkpoint and measure `‖film.proj.weight‖` per FiLM layer:
+| Claim as published | Status |
+|---|---|
+| "FiLM is the only route by which transformer context modulates the decoder" | **FALSE** |
+| "Still ≈0 → the decoder is ignoring the context vector" | **FALSE**, follows from the above |
 
-- **Still ≈0** → the decoder is ignoring the context vector. Station-specific level *cannot*
-  reach the output however well the transformer encoded it. That is a structural answer and it
-  explains the symptom exactly: the decoder emits a generic map driven by spatial tokens, and
-  per-station level never enters. Fix is a plumbing/optimisation problem (FiLM learning rate,
-  init scale, or a direct skip from context to the head), not a data problem.
-- **Grown substantially** → context IS modulating the decoder; the failure is upstream, or is a
-  learning problem rather than a wiring one. Proceed to 20.12.2.
+- The 196 target-day spatial tokens are taken from the transformer **output** (`model.py:732-733`)
+  and go straight into `decoder.bottle_proj` (Conv2d 768→512, `model.py:211/252`). Transformer
+  context therefore reaches the decoder **spatially, unconditionally and FiLM-free**.
+- FiLM modulates only the **frozen TerraMind L3/L6/L9 skip** branch. It is a side-channel.
+- So a zero FiLM weight would have meant only "the pooled summary vector adds no sample-dependent
+  modulation to the skips" — never "the decoder ignores context".
 
-Cost: one `torch.load` of `best.pt`. Given the zero-init and the fact that only pixel
-(112,112) is supervised out of 224×224, FiLM being under-trained is a live hypothesis, not a
-formality.
+**Measured anyway from `cls_depth_star_reg/best.pt` (e6) — FiLM has trained:**
+
+| layer | shape | ‖W‖_F | element RMS |
+|---|---|---|---|
+| film_s9 | [1024,768] | 11.28 | 1.27e-2 |
+| film_s6 | [512,768] | 6.22 | 9.9e-3 |
+| film_s3 | [256,768] | 4.68 | 1.06e-2 |
+| depth_film.0 | [128,768] | 1.43 | **4.6e-3** |
+| depth_film.1 | [128,768] | 3.45 | 1.10e-2 |
+| depth_film.2 | [128,768] | 3.72 | 1.19e-2 |
+
+- Weights moved off zero → gradient signal **did** reach FiLM. The zero-init-trap hypothesis is dead.
+- But element RMS ≈1.3e-2 vs AdamW's decay equilibrium `1/λ = 10` → **~790× below it**, and ~0.5%
+  of the ballistic bound (`Σlr ≈ 2e-4 × 12,300 steps`) → the gradient has been near-sign-random.
+- Weight decay is **not** the explanation: the undecayed biases (`_split_param_groups` excludes
+  `endswith("bias")`) also barely moved from (1, 0).
+- **Compare element RMS, never ‖W‖_F** — the Frobenius ordering is an artefact of parameter count.
+- Real finding: `depth_film.0` is 2.5× smaller than `.1`/`.2`, and depth 0 is the star-residual
+  base that predicts absolute SM rather than an offset.
+
+**Consequence:** FiLM is demoted. Do not spend a GPU job on it. Answering decoder-vs-transformer
+needs a **bottleneck** ablation (freeze `decoder.bottle_proj`'s input to a dataset mean), not a
+FiLM one — and that is only worth running if §20.14 shows the information exists at all.
 
 #### 20.12.2 The context probe
 
@@ -3325,3 +3343,83 @@ sites, ubRMSE ≈0.05, absolute level explicitly out of scope with §20 as the e
 | More regularisation | §19.5 doubled wd and drop_path; memorisation curve unchanged vs S16 |
 | More depth capacity / cascade | 30-100 has the LOWEST train loss of three depths (§20.2) |
 | Raising Huber `delta` | train residuals ≈0.020-0.027, already inside delta=0.05 → delta is inactive where gradients are produced; and it targets offset, which ubRMSE removes by construction |
+
+---
+
+## §20.14 Station-mean probe — the gate before any model work (2026-08-05)
+
+**Runs before §20.12's decoder-vs-transformer question.** If level is not predictable from
+available inputs, that question is moot and any GPU job is wasted. CPU-only, <1 min, data
+already on disk.
+
+### 20.14.1 Why
+
+- Offsets (0.0618 / 0.0611 / 0.0875) exceed ubRMSE (0.0543 / 0.0504 / 0.0552) at every depth.
+- Two causes are indistinguishable from model output — (a) inputs don't determine level,
+  (b) they do and the network discards it — and they demand opposite responses.
+- Each wrong guess costs a ~5-day run. → strip to **one number per station** and ask in isolation.
+
+### 20.14.2 Design
+
+- **Target:** per station per depth, mean observed SM over `qc == 0` only. Three independent
+  regressions.
+- **Rows:** the stations the run actually used — replicate `dataset.py:813-835`
+  (`category_filter=["sm_only"]`, `split ∈ {train,val}`, `soil_patch_ok`, zarr opens). ≈577/74.
+  **Assert** the val list matches `val_station_metrics.csv` or the comparison is invalid.
+
+| Block | Features | Source |
+|---|---|---|
+| B0 | global train mean (null) | — |
+| B1 | 21 soil channel means + 21 spatial stds; elevation; IGBP/lc_cci/koppen one-hot | zarr `soil`; `station_splits.csv` |
+| B2 | + 19 `ERA5_VARS` temporal means over whole record | zarr `era5/values` |
+| B3 | + VPD, Hargreaves PET, aridity, seasonal amplitude of t2m and tp | derived from B2 |
+| B4 | + lat/lon | `station_splits.csv` |
+
+- **Ridge** chosen because it is **weak** — ~600 rows under a real L2 penalty cannot memorise, so
+  a positive result cannot be an artefact. **GBM** (depth 3, early stop) is the nonlinearity
+  control: ridge fails + GBM works → curved, not absent.
+- **GroupKFold on `location_group_id`, training stations only** — plain K-fold puts neighbours in
+  both folds. Main split has 0 train/val group overlap (646/69 groups); tuning must match.
+- Standardise features — ridge's penalty is scale-sensitive.
+- Run **with and without lat/lon**: only the coordinate-free version speaks to transfer.
+
+### 20.14.3 Decision table (pre-registered)
+
+Reference: network RMS per-station bias = 0.0618 / 0.0611 / 0.0875.
+
+| Outcome | Reading | Next |
+|---|---|---|
+| ridge ≈ null | level not determined by available inputs | §20.7 Branch A — retarget to anomaly, reframe per §20.13 |
+| ridge ≪ network | information present, network discarding it | §20.8 Branch B — post-hoc correction on the existing checkpoint FIRST as a gate |
+| ridge ≈ network | network already extracts what exists | §20.7; remainder irreducible |
+| **B2 ≫ B1** | level carried by ERA5 the model already has | model failure → revives decoder-vs-transformer, now worth a GPU job |
+| **B3 ≫ B2** | model could have derived it but didn't | supply derived terms explicitly |
+
+### 20.14.4 Implementation
+
+- `station_mean_probe.py` (new, CPU, `Pool(64)`), `slurm/station_mean_probe.sh` (genoa,
+  `--cpus-per-task=64`, mail flags). Conventions from `tier1_probe.py:322-391`.
+- **Reuse, do not reimplement:** `dataset._load_zarr_labels` (`:174-187`, handles the qc/sm
+  realign affecting 513 stations), `_open_zarr`, `fill_soil_nans` (`:539`), `ZARR_ROOT`,
+  `ERA5_VARS`, `SM_DEPTHS`.
+- **Do NOT instantiate `SoilMoistureDataset`** — it eagerly loads L12 (~16 GB, minutes of GPFS).
+  Read zarr per station directly.
+- Outputs: `csvs/station_mean_probe.json`, `figures/station_mean_probe.png`, stdout `VERDICT:`.
+- Report ridge's top-10 coefficients — they name which soil properties drive level, the input
+  §20.8's reparameterisation needs.
+- **No silent caps** — log every dropped station and why.
+
+### 20.14.5 Verification
+
+- B0 RMSE must equal the between-station std of mean SM, else the target is built wrong.
+- B4 ≥ B3 expected; a large jump = geographic interpolation, not physics.
+- Val station list must match `val_station_metrics.csv`.
+- Runtime >1 min ⇒ the L12 path is being touched.
+
+### 20.14.6 Scope decisions
+
+- `swvl`/ET **rejected** (not downloaded, 2026-08-05) → a negative means "not learnable from what
+  we have", NOT "not learnable in principle". State it that way.
+- `ssrd`/`strd` re-ingest only if B3 shows PET signal.
+- Train-split context caching for §20.12.2 deferred until this ladder fixes the feature blocks and
+  α-tuning it must share.
