@@ -2880,6 +2880,44 @@ dry. `val_station_metrics.csv` confirms this directly; the first val station log
 **Never read global bias as evidence of per-site calibration. Take the RMS of the per-station
 `bias` column instead.**
 
+### 20.1b Measured numbers (run 25235976, epochs 1-5)
+
+Per-station offsets, measured directly from `val_station_metrics.csv` at e5 — confirms §20.1's
+algebra (0.060 / 0.061 / 0.091):
+
+| Depth | RMS bias | mean bias | range | abs>0.05 | n stations |
+|---|---|---|---|---|---|
+| 0-10 | **0.0618** | −0.0019 | −0.156 … +0.127 | 29/74 | 74 |
+| 10-30 | **0.0611** | +0.0053 | −0.216 … +0.117 | 17/51 | 51 |
+| 30-100 | **0.0875** | +0.0079 | −0.219 … +0.244 | 21/43 | 43 |
+
+ubRMSE by epoch:
+
+| Depth | e1 | e2 | e3 | e4 | e5 |
+|---|---|---|---|---|---|
+| 0-10 | 0.0567 | 0.0552 | 0.0546 | 0.0556 | 0.0542 |
+| 10-30 | 0.0517 | 0.0513 | 0.0513 | 0.0511 | 0.0509 |
+| 30-100 | 0.0553 | 0.0548 | 0.0564 | 0.0553 | 0.0569 |
+
+bias by epoch:
+
+| Depth | e1 | e2 | e3 | e4 | e5 |
+|---|---|---|---|---|---|
+| 0-10 | 0.0142 | 0.0158 | 0.0047 | 0.0029 | 0.0027 |
+| 10-30 | 0.0131 | 0.0186 | 0.0154 | 0.0151 | 0.0090 |
+| 30-100 | 0.0194 | 0.0209 | 0.0183 | 0.0126 | 0.0165 |
+
+- Mean bias ≈ 0 while stations reach ±0.15 → offsets cancel; global bias is meaningless per-site.
+- Offsets are large at **all** depths — never was a deep-only problem, just worst at depth.
+- ubRMSE spans only 0.006 across depths → deep **dynamics** are fine; only level and the
+  generalisation gap (12× vs 5×) fail.
+- 30-100 ubRMSE oscillates 0.0548-0.0569 with no trend, best value at e2, while its train loss
+  falls 6× → flat anomaly skill, not degrading.
+- 30-100 has 43 val stations vs 74 (≥95% coverage filter) → the statable reason if scoping down.
+- 0.04 ubRMSE is unreachable here: 0.0567→0.0542 over 5 epochs, decelerating.
+- Even at ubRMSE 0.040 with offset 0.062, RMSE ≈ 0.074 → a 0.04 gate certifies **anomaly skill
+  only**, not soil moisture prediction. Say so explicitly if used as a criterion.
+
 ### 20.2 What the per-depth train/val gap rules out
 
 The per-depth breakdown §19 added exists to separate a capacity/information ceiling from a
