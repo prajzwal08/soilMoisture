@@ -696,7 +696,12 @@ def _load_l12_shm(dir_name: str, shm_dir: Path) -> dict[str, np.ndarray] | None:
     for key in ("s2", "s1_asc", "s1_desc"):
         bin_path  = shm_dir / f"{dir_name}__{key}.bin"
         meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
-        if not bin_path.exists():
+        # Both must exist: the preloader creates the .bin via np.memmap(mode="w+") BEFORE
+        # writing .meta.json, so a rank-0 death between those two statements leaves a bin
+        # with no meta — and the preloader's own resume check is `if bin_path.exists()`,
+        # so it never repairs it. Checking only the bin here would then raise
+        # FileNotFoundError and kill all four ranks at dataset init.
+        if not (bin_path.exists() and meta_path.exists()):
             continue
         meta = json.loads(meta_path.read_text())
         result[key] = np.memmap(bin_path, dtype=meta["dtype"], mode="r",

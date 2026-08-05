@@ -83,6 +83,24 @@ check("loss is 0.0", l.item() == 0.0)
 check("counts are zero", c.sum().item() == 0)
 
 
+# ── 4b. A non-finite prediction at an UNOBSERVED depth must not poison the sum ─
+# `elem * valid` looks correct but nan * False is nan, not 0. pred is taken for ALL
+# depths while the scalar loss only sees pred[mask], so a nan at a depth with no label
+# cannot affect training -- but it would make depth_sum nan, survive all_reduce(SUM) to
+# every rank, and silently blank the per-depth diagnostic while train_loss stayed
+# healthy. That is precisely the signal the breakdown exists to provide.
+print("\n4b. nan at an unobserved depth")
+sm_p = torch.rand(4, 3, 224, 224)
+sm_p[:, 1, 112, 112] = float("nan")        # nan prediction ...
+lab_p = torch.rand(4, 3)
+lab_p[:, 1] = float("nan")                 # ... at a depth with no label
+l_p, s_p, c_p = masked_huber_loss(sm_p, lab_p, per_depth=True, return_breakdown=True)
+check("scalar loss stays finite", torch.isfinite(l_p).item())
+check("depth_sum has no nan", bool(torch.isfinite(s_p).all()), str(s_p.tolist()))
+check("unobserved depth sums to exactly 0", s_p[1].item() == 0.0)
+check("observed depths unaffected", s_p[0].item() > 0 and s_p[2].item() > 0)
+
+
 # ── 5. DDP sum-reduction equals a single-pass computation ─────────────────────
 # Accumulating per-batch SUMS and all_reduce(SUM)ing them must reproduce the
 # result of one pooled pass.  Means would not: they cannot be averaged when the
@@ -148,6 +166,70 @@ check("m=None does not raise", True)
 check("m=None says 'no val samples'", "no val samples" in line_novl, line_novl.strip())
 check("m=None still shows train loss", "0.027312" in line_novl)
 check("m=None shows nan val", "nan" in line_novl)
+
+
+# ── 8. No normalisation parameter may land in the weight-decay group ──────────
+# Regression guard. The original filter was name-based and missed every BatchNorm2d
+# in the decoder, because they sit inside nn.Sequential and get positional names
+# (decoder.conv1.net.1.weight) with no "norm" substring. Their biases WERE excluded,
+# which is what made it hard to spot. Each BatchNorm gamma is a multiplicative gate
+# on a whole decoder feature map, so decaying it attenuates signal rather than
+# constraining capacity -- and doubling weight_decay doubled the damage.
+print("\n8. optimiser param groups")
+import torch.nn as nn
+from model import SoilMoistureModel
+from train import _split_param_groups, _NORM_TYPES
+
+net = SoilMoistureModel(n_depths=3, d_model=768, n_heads=12, n_layers=6,
+                        use_cls_depth=True)
+decay, no_decay = _split_param_groups(net, net)
+
+norm_ids = {id(p) for mod in net.modules() if isinstance(mod, _NORM_TYPES)
+            for p in mod.parameters(recurse=False)}
+decay_ids = {id(p) for p in decay}
+leaked = norm_ids & decay_ids
+check("no norm-layer param is decayed", not leaked, f"{len(leaked)} leaked")
+
+n_norm_mods = sum(1 for m_ in net.modules() if isinstance(m_, _NORM_TYPES))
+check("norm modules were actually found", n_norm_mods > 0, f"{n_norm_mods} modules")
+check("BatchNorm2d present (the ones the old filter missed)",
+      any(isinstance(m_, nn.BatchNorm2d) for m_ in net.modules()))
+
+bias_leak = [n for n, p in net.named_parameters()
+             if p.requires_grad and n.endswith("bias") and id(p) in decay_ids]
+check("no bias is decayed", not bias_leak, str(bias_leak[:3]))
+
+# MultiheadAttention's packed QKV bias is `self_attn.in_proj_bias` -- no dot before
+# "bias", so a `.bias` suffix test silently starts decaying it. Named explicitly
+# because it is the exact mirror of the BatchNorm bug this section exists for.
+inproj = [n for n, p in net.named_parameters() if n.endswith("in_proj_bias")]
+check("in_proj_bias exists in this model", len(inproj) > 0, f"{len(inproj)} found")
+check("in_proj_bias not decayed",
+      all(id(p) not in decay_ids for n, p in net.named_parameters()
+          if n.endswith("in_proj_bias")))
+
+# Nothing that was protected before may quietly lose protection.
+old_nd = {n for n, p in net.named_parameters()
+          if p.requires_grad and ("bias" in n or "norm" in n.lower())}
+new_nd = {n for n, p in net.named_parameters()
+          if p.requires_grad and id(p) not in decay_ids}
+check("no regression vs old filter", not (old_nd - new_nd), str(sorted(old_nd - new_nd)[:3]))
+
+dt = [p for n, p in net.named_parameters() if n.endswith("depth_tokens")]
+check("depth_tokens excluded from decay", dt and id(dt[0]) not in decay_ids)
+
+total = sum(1 for p in net.parameters() if p.requires_grad)
+check("groups partition all trainable params", len(decay) + len(no_decay) == total,
+      f"{len(decay)}+{len(no_decay)}=={total}")
+check("no param in both groups", not (decay_ids & {id(p) for p in no_decay}))
+
+# The old name-based rule, kept here purely to prove the bug was real.
+old_decay = [n for n, p in net.named_parameters()
+             if p.requires_grad and "bias" not in n and "norm" not in n.lower()]
+old_leak = {n for n, p in net.named_parameters() if n in set(old_decay)
+            and id(p) in norm_ids}
+check("old name-based filter demonstrably leaked", len(old_leak) > 0,
+      f"{len(old_leak)} norm scales, e.g. {sorted(old_leak)[:2]}")
 
 
 print("\n" + "=" * 66)

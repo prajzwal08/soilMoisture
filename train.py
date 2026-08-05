@@ -263,10 +263,29 @@ def _advise_l369_willneed(*datasets) -> None:
 
 
 def _fsync_save(obj, path):
-    """torch.save + fsync: forces GPFS client to flush to storage server immediately."""
-    torch.save(obj, path)
-    with open(path, "rb") as f:
+    """Atomically write a checkpoint, then fsync so GPFS flushes to the storage server.
+
+    Writes to a sibling .tmp and os.replace()s it into place.  Overwriting the live
+    file directly is not survivable: these are ~600 MB, and SLURM sends SIGTERM then
+    SIGKILL 30 s later (KillWait) on preemption or requeue.  A kill part-way through
+    leaves a truncated last.pt/mid_epoch.pt that torch.load rejects on every rank, so
+    the job crash-loops on requeue — and a truncated last.pt alongside a best.pt
+    written from the same state moments later can lose a multi-day run outright.
+
+    os.replace is atomic within a filesystem, so a reader sees either the whole old
+    file or the whole new one.  The directory fsync makes the rename itself durable.
+    """
+    path = Path(path)
+    tmp  = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    with open(tmp, "rb") as f:
         os.fsync(f.fileno())
+    os.replace(tmp, path)
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)            # make the rename durable, not just the data
+    finally:
+        os.close(dir_fd)
 
 
 def _log_mem_snapshot(label: str, device, is_main: bool,
@@ -411,6 +430,43 @@ def _loss_aggregates(depth_sum, depth_cnt):
     per_d  = [s / c for s, c in zip(depth_sum.tolist(), depth_cnt.tolist()) if c > 0]
     depth_mean = sum(per_d) / len(per_d) if per_d else float("nan")
     return pooled, depth_mean
+
+
+_NORM_TYPES = (torch.nn.LayerNorm, torch.nn.BatchNorm1d, torch.nn.BatchNorm2d,
+               torch.nn.BatchNorm3d, torch.nn.GroupNorm, torch.nn.InstanceNorm2d)
+
+
+def _split_param_groups(model, raw_model):
+    """-> (decay_params, no_decay_params) for AdamW.
+
+    Selection is by module TYPE, not by parameter name.  The previous name-based
+    filter (`"norm" not in n.lower()`) silently missed every BatchNorm2d in the
+    decoder: they sit inside nn.Sequential, so PyTorch names them positionally
+    (`decoder.conv1.net.1.weight`) with no "norm" substring anywhere.  Ten BatchNorm
+    scale vectors were being decayed toward zero as a result — and each γ is a
+    multiplicative gate on an entire decoder feature map, so decaying it attenuates
+    the signal rather than constraining capacity.  Their biases were excluded (the
+    name contains "bias"), which made the bug harder to spot.
+
+    Matching is by id(), so it is unaffected by DDP's "module." name prefix.
+
+    depth_tokens are excluded too: like a positional embedding they are a learned
+    *input*, not a weight matrix, and decaying them pulls the three per-depth queries
+    back toward the symmetric state that §18.3 exists to break.
+    """
+    no_decay_ids = {id(p) for mod in raw_model.modules() if isinstance(mod, _NORM_TYPES)
+                    for p in mod.parameters(recurse=False)}
+    decay, no_decay = [], []
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        # endswith("bias"), not endswith(".bias"): MultiheadAttention names its packed
+        # QKV bias `self_attn.in_proj_bias`, which has no dot before "bias" and would
+        # otherwise start being decayed — the mirror image of the BatchNorm bug.
+        is_no_decay = (id(p) in no_decay_ids or n.endswith("bias")
+                       or n.endswith("depth_tokens"))
+        (no_decay if is_no_decay else decay).append(p)
+    return decay, no_decay
 
 
 def _format_depth_line(depth: str, train_loss: float, val_loss: float, m: dict | None) -> str:
@@ -739,7 +795,19 @@ def main():
         _shm_done.touch()
         print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s  ({SHM_DIR})")
     else:
+        # Bounded wait. Rank 0's preload reads ~120 GB from GPFS and took 1901 s in the worst
+        # observed case, so the ceiling is generous — but it must exist: an unbounded spin
+        # means a rank-0 death during preload leaves ranks 1-3 idling for the full 120 h
+        # walltime while holding four H100s.
+        _SHM_WAIT_MAX = 3 * 3600
+        _t_wait = time.perf_counter()
         while not _shm_done.exists():
+            if time.perf_counter() - _t_wait > _SHM_WAIT_MAX:
+                raise RuntimeError(
+                    f"[SHM] rank {_pre_rank}: waited {_SHM_WAIT_MAX/3600:.0f} h for rank 0's "
+                    f"preload sentinel ({_shm_done}) and it never appeared — rank 0 most "
+                    f"likely died during preload. Failing fast instead of holding the GPUs."
+                )
             time.sleep(2)
 
     is_ddp = "LOCAL_RANK" in os.environ
@@ -846,10 +914,10 @@ def main():
         print("CONFIG: " + "  ".join(f"{k}={CONFIG.get(k)}" for k in _echo))
 
     # ── Optimiser ─────────────────────────────────────────────────────
-    decay_params    = [p for n, p in model.named_parameters()
-                       if p.requires_grad and "bias" not in n and "norm" not in n.lower()]
-    no_decay_params = [p for n, p in model.named_parameters()
-                       if p.requires_grad and ("bias" in n or "norm" in n.lower())]
+    decay_params, no_decay_params = _split_param_groups(model, raw_model)
+    if is_main:
+        print(f"Optimiser groups: {len(decay_params)} decayed, "
+              f"{len(no_decay_params)} not decayed (norms, biases, depth_tokens)")
     optimizer = AdamW(
         [{"params": decay_params},
          {"params": no_decay_params, "weight_decay": 0.0}],
@@ -883,10 +951,42 @@ def main():
                 f"Checkpoint key mismatch — architecture likely changed. "
                 f"Delete {ckpt_last} to start fresh.\nOriginal error: {e}"
             ) from None
-        optimizer.load_state_dict(ckpt["optimizer"])
-        for pg in optimizer.param_groups:  # honour CONFIG lr even when resuming
-            pg["lr"] = CONFIG["lr"]
+        try:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        except ValueError as e:
+            # Param-group SIZES changed (e.g. the norm/bias split was corrected), so the
+            # saved optimizer state cannot be mapped. The model state_dict already loaded
+            # cleanly, which is why the friendly RuntimeError above never fires — without
+            # this catch you get a bare ValueError that says nothing about what to do.
+            # Continuing with fresh Adam moments is far better than dying: they re-warm
+            # within a few hundred steps and the weights are intact.
+            if is_main:
+                print(f"  [resume] optimizer state incompatible — continuing with fresh "
+                      f"Adam moments (weights loaded fine). Reason: {e}")
         scheduler.load_state_dict(ckpt["scheduler"])
+
+        # Restore-then-override.  Optimizer.load_state_dict replaces the whole param-group
+        # dict and ReduceLROnPlateau.load_state_dict is a bare __dict__.update, so BOTH
+        # silently revert this launch's CLI flags to whatever the checkpoint held.
+        # Re-apply ONLY what was passed explicitly.
+        #
+        # Critically, lr is no longer reset unconditionally. The scheduler's decayed lr
+        # lives in param_groups (ReduceLROnPlateau never writes it back on load), so
+        # clobbering it meant every requeue of this --requeue/120h job jumped lr from e.g.
+        # 5e-5 back to 2e-4 while the restored scheduler.best/num_bad_epochs still believed
+        # the decay had happened. Silent, no crash — the run would simply re-diverge.
+        if args.lr is not None:
+            for pg in optimizer.param_groups:
+                pg["lr"] = CONFIG["lr"]
+        if args.weight_decay is not None:
+            optimizer.param_groups[0]["weight_decay"] = CONFIG["weight_decay"]  # group 1 stays 0.0
+        if args.lr_patience is not None:
+            scheduler.patience = CONFIG["lr_patience"]
+        if is_main:
+            print(f"  [resume] lr={optimizer.param_groups[0]['lr']:.3e}  "
+                  f"wd={optimizer.param_groups[0]['weight_decay']}  "
+                  f"lr_patience={scheduler.patience}  "
+                  f"(explicit CLI flags re-applied; others kept from checkpoint)")
         best_val_loss    = ckpt["best_val_loss"]
         no_improve_count = ckpt["no_improve_count"]
         wandb_run_id     = ckpt.get("wandb_run_id")
@@ -916,11 +1016,22 @@ def main():
         mc = torch.load(mid_ckpt_path, map_location=device, weights_only=False)
         if mc.get("epoch") == start_epoch:
             raw_model.load_state_dict(mc["model"])
-            optimizer.load_state_dict(mc["optimizer"])
+            _lr_before = [pg["lr"] for pg in optimizer.param_groups]
+            try:
+                optimizer.load_state_dict(mc["optimizer"])
+            except ValueError as e:
+                if is_main:
+                    print(f"  [mid-epoch] optimizer state incompatible — fresh Adam "
+                          f"moments. Reason: {e}")
+            # mid_epoch.pt has no scheduler state, so restore whatever lr the
+            # epoch-boundary resume above had already settled on.  Without this the
+            # mid-epoch path silently reverts to the lr stored in mid_epoch.pt.
+            for pg, lr in zip(optimizer.param_groups, _lr_before):
+                pg["lr"] = lr
             skip_batches = mc.get("batches_done", 0)
             if is_main:
                 print(f"  Mid-epoch checkpoint: epoch {start_epoch}, "
-                      f"resuming from batch {skip_batches + 1}")
+                      f"resuming from batch {skip_batches + 1}, lr={_lr_before[0]:.3e}")
 
     if is_ddp:
         dist.barrier()
@@ -1156,11 +1267,21 @@ def main():
                 # use_cls_depth is inert.  Cosine should sit near -0.02 at init.
                 if CONFIG.get("use_cls_depth", False):
                     with torch.no_grad():
-                        dt = F.normalize(raw_model.depth_tokens.float(), dim=-1)
+                        dt  = F.normalize(raw_model.depth_tokens.float(), dim=-1)
                         cos = dt @ dt.T
+                        # depth_ctx is the one that matters: the transformer OUTPUT for each
+                        # depth slot. The input tokens can stay near-orthogonal while the
+                        # outputs collapse, which is exactly use_cls_depth being inert.
+                        ctx_v   = getattr(raw_model, "_last_depth_ctx", None)
+                        cos_ctx = None
+                        if ctx_v is not None:
+                            dc      = F.normalize(ctx_v, dim=-1)
+                            cos_ctx = dc @ dc.T
                     for a in range(len(SM_DEPTHS)):
                         for b in range(a + 1, len(SM_DEPTHS)):
                             log_dict[f"diag/depth_token_cos_{a}{b}"] = cos[a, b].item()
+                            if cos_ctx is not None:
+                                log_dict[f"diag/depth_ctx_cos_{a}{b}"] = cos_ctx[a, b].item()
                 # Worst-5 stations per depth
                 if per_station:
                     for depth in SM_DEPTHS:

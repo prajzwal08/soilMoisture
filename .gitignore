@@ -20,3 +20,11 @@ latex/
 *.md
 !text/architecture.md
 wandb/
+
+# Derived analysis output — regenerable from the scripts that write them
+capacity_output/
+embed_viz_output/
+tier1_output/
+graphify-out/
+# Stray editor/atomic-write temporaries
+*.tmp.*

@@ -721,6 +721,12 @@ class SoilMoistureModel(nn.Module):
         depth_ctx   = None
         if self.use_cls_depth:
             depth_ctx = ctx[:, :self.n_depths, :]                     # (B, n_depths, 768)
+            # Diagnostic stash (no autograd, ~9 KB).  Training logs the pairwise cosine of
+            # THIS, not of self.depth_tokens: the token parameters can stay near-orthogonal
+            # while six bidirectional layers drive all three CLS slots to identical content.
+            # That collapse is the failure mode — use_cls_depth being inert — and the
+            # parameter cosine cannot see it.
+            self._last_depth_ctx = depth_ctx.detach().float().mean(0)  # (n_depths, 768)
 
         sp_start    = spatial_start + depth_offset
         spatial_ctx = ctx[:, sp_start : sp_start + 196, :]            # (B, 196, 768)
@@ -780,7 +786,13 @@ def masked_huber_loss(
         valid     = ~torch.isnan(label)                                # (B, D) bool
         lab       = torch.nan_to_num(label, nan=0.0)
         elem      = F.huber_loss(pred.detach(), lab, delta=delta, reduction="none")
-        depth_sum = (elem * valid).sum(0).float()                      # (D,)
+        # torch.where, NOT `elem * valid`: nan * False is nan, not 0.  `pred` is taken
+        # for ALL depths while the scalar loss only ever sees pred[mask], so a non-finite
+        # prediction at a depth with no label cannot affect training — but it would make
+        # depth_sum nan, survive all_reduce(SUM) to every rank, and silently turn the
+        # per-depth diagnostic into nan while train_loss still looked healthy.  That is
+        # precisely the signal this breakdown exists to provide.
+        depth_sum = torch.where(valid, elem, elem.new_zeros(())).sum(0).float()   # (D,)
         depth_cnt = valid.sum(0).float()                               # (D,)
 
     if per_depth:
