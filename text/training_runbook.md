@@ -3367,13 +3367,20 @@ already on disk.
   (`category_filter=["sm_only"]`, `split ∈ {train,val}`, `soil_patch_ok`, zarr opens). ≈577/74.
   **Assert** the val list matches `val_station_metrics.csv` or the comparison is invalid.
 
-| Block | Features | Source |
+| Block | Features | Mechanism it isolates |
 |---|---|---|
-| B0 | global train mean (null) | — |
-| B1 | 21 soil channel means + 21 spatial stds; elevation; IGBP/lc_cci/koppen one-hot | zarr `soil`; `station_splits.csv` |
-| B2 | + 19 `ERA5_VARS` temporal means over whole record | zarr `era5/values` |
-| B3 | + VPD, Hargreaves PET, aridity, seasonal amplitude of t2m and tp | derived from B2 |
-| B4 | + lat/lon | `station_splits.csv` |
+| B0 | global train mean | null |
+| B1 | 21 soil channel means + 21 spatial stds | water-holding capacity |
+| B2 | + `elevation_m`, `elevation_band` | drainage / water table |
+| B3 | + IGBP, lc_cci one-hot | rooting depth, ET demand |
+| B4 | + 19 `ERA5_VARS` means + köppen one-hot | climate forcing the model already has |
+| B5 | + VPD, Hargreaves PET, aridity, seasonal amplitude of t2m/tp | derivable terms |
+| B6 | + lat/lon | geographic proximity |
+
+**Blocks are split, not lumped** — soil / terrain / land cover are different mechanisms and a
+lumped B1 cannot attribute between them. **köppen sits in B4, not B1**: it is a climate
+classification, and leaving it in the static block leaks climate into B1 and shrinks the B4
+increment the ladder turns on.
 
 - **Ridge** chosen because it is **weak** — ~600 rows under a real L2 penalty cannot memorise, so
   a positive result cannot be an artefact. **GBM** (depth 3, early stop) is the nonlinearity
@@ -3423,3 +3430,64 @@ Reference: network RMS per-station bias = 0.0618 / 0.0611 / 0.0875.
 - `ssrd`/`strd` re-ingest only if B3 shows PET signal.
 - Train-split context caching for §20.12.2 deferred until this ladder fixes the feature blocks and
   α-tuning it must share.
+
+### 20.14.7 RESULT — job 25246010 (2026-08-05, genoa, 64 cores, ~2 min)
+
+Inputs verified complete: 661 `sm_only` train+val stations (587/74), **0 dropped** — all have
+`soil`, `era5`, `labels`. Val count 74 matches `val_station_metrics.csv`. `labels/qc` present for
+all; **403 of 661 need the length realign** `_load_zarr_labels` handles. ERA5 raw (t2m 264-302 K,
+tp 3e-4..3.7e-2 m). Soil NaN mean 1.3%, max 44%, none >50%.
+
+RMSE on the 74 held-out val stations, m³/m³ (ridge / GBM):
+
+| Block | nfeat | 0-10 | 10-30 | 30-100 |
+|---|---|---|---|---|
+| B1 soil | 42 | 0.0698 / 0.0621 | 0.0675 / 0.0625 | 0.0851 / 0.0830 |
+| B2 +terrain | 46 | 0.0698 / 0.0610 | 0.0647 / 0.0607 | 0.0832 / 0.0827 |
+| B3 +landcover | 80 | 0.0697 / 0.0612 | 0.0633 / 0.0610 | 0.0817 / 0.0827 |
+| B4 +climate | 118 | 0.0658 / 0.0627 | 0.0599 / 0.0609 | 0.0820 / 0.0829 |
+| B5 +derived | 123 | 0.0646 / **0.0599** | 0.0599 / **0.0588** | 0.0836 / **0.0815** |
+| B6 +latlon | 125 | 0.0647 / 0.0597 | 0.0599 / 0.0604 | 0.0836 / 0.0819 |
+| **network** | — | **0.0618** | **0.0611** | **0.0875** |
+| **null** | — | **0.0752** | **0.0763** | **0.0877** |
+
+- **Station-mean SM is only weakly predictable**: best beats null by 21% / 23% / **7%**. Level is
+  largely *not* determined by the inputs we have → **§20.7 Branch A**.
+- **0-10 and 10-30: the network already matches the probe** (0.0618 vs 0.0597; 0.0611 vs 0.0588).
+  No untapped signal. Its remaining offset is close to irreducible from these inputs.
+- **30-100 is the exception. The network sits exactly at null (0.0875 vs 0.0877) — it extracts
+  NOTHING about deep absolute level — while the probe reaches 0.0815.** Small pocket (7%), but the
+  network's contribution there is zero, not merely suboptimal.
+- **GBM > ridge at the surface** (0.0597 vs 0.0647): the relation is **nonlinear**, and a
+  ridge-only probe understates it by ~8%. The nonlinearity control earned its place — do not run
+  this ladder ridge-only.
+- **lat/lon adds ≈0** → the signal is physical, not geographic interpolation. Good news for
+  transfer.
+- **B5 derived helps GBM but not ridge** → VPD/PET/aridity carry real curved signal.
+- Top ridge coefficients: soil means dominate at 10-30 / 30-100; `koppen_16` is the single largest
+  at 30-100; **VPD is negative at all three depths**.
+
+**Caveat on the printed VERDICT.** The pre-registered rule ("Branch B if best < 0.90 × network")
+printed "network already extracts what exists" for all three depths, including 30-100 where the
+ratio is 0.932. That is **misleading at 30-100** — the rule compares probe-vs-network but never
+network-vs-null, and the network is at null there. **Fix the rule to test network vs null first;
+do not quote the 30-100 verdict line as printed.**
+
+**Terrain null is uninformative** — B2 is essentially one scalar (`elevation_m`). The zarr stores
+DEM only as TerraMind tokens, so slope / aspect / TWI are unavailable. A flat B2 is not evidence
+that terrain does not matter.
+
+Artefacts: `station_mean_probe.py`, `slurm/station_mean_probe.sh`,
+`csvs/station_mean_probe.json`, `figures/station_mean_probe.{png,pdf}`.
+Log: `logs/station_mean_probe_25246010.out`.
+
+### 20.14.8 What follows
+
+1. **Branch A is the main path** (§20.7): retarget to per-station standardised anomaly, report
+   ubRMSE as the headline, absolute level explicitly out of scope with this table as the evidence.
+2. **§20.12's decoder-vs-transformer question is largely moot at 0-10 / 10-30** — there is no
+   withheld signal to localise. Do not spend a GPU job there.
+3. **The one live Branch-B pocket is 30-100.** The network is at null while ~7% is extractable.
+   Cheapest test: post-hoc per-station offset correction on the existing checkpoint using the
+   fitted GBM, deep depth only. No retraining, no GPU.
+4. Do **not** re-run this ladder ridge-only, and do not add `swvl`/ET without re-reading §20.14.6.
