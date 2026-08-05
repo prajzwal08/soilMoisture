@@ -2831,3 +2831,278 @@ different station subsets, so smoke runs partly bypass the shared-memory design.
 - At step 0, `depth_film[1:]` receives exactly zero gradient (zero-init offset heads × zero-init
   FiLM projection). Self-resolving after one AdamW step, but the deep-depth FiLM starts one step
   behind — worth knowing if the first ~100 batches look flat.
+
+---
+
+## §20 The absolute-level problem — diagnostic before lever (Session 20, 2026-08-05)
+
+Run `cls_depth_star_reg` (job 25235976) answered the question §19 was built to ask, and the
+answer was not the one either branch of §19.8 anticipated. This section records the finding,
+the diagnostic that must run before any further architecture work, and the two mutually
+exclusive plans that follow from its result.
+
+**Nothing here requires stopping run 25235976.** The diagnostic is CPU-only and reads
+artefacts that already exist.
+
+### 20.1 The finding: dynamics are learned, absolute level is not
+
+Best epoch so far is e3 (`val_loss=0.002312`). Per-depth, on the 74 held-out val stations:
+
+| Depth | MSE | RMSE (√MSE) | ubRMSE | bias |
+|---|---|---|---|---|
+| 0-10 | 0.0066 | 0.0812 | 0.0546 | +0.0047 |
+| 10-30 | 0.0065 | 0.0806 | 0.0513 | +0.0154 |
+| 30-100 | 0.0111 | 0.1054 | 0.0564 | +0.0183 |
+
+`compute_metrics` (`train.py:324`) removes **each station's own temporal mean** from both
+prediction and observation before computing ubRMSE. Within a station the anomaly error and
+the mean-offset error are orthogonal, so
+
+```
+MSE  ≈  ubRMSE²  +  (per-station offset)²
+```
+
+Solving for the offset:
+
+| Depth | ubRMSE (dynamics) | implied per-station offset | offset / ubRMSE |
+|---|---|---|---|
+| 0-10 | 0.0546 | **0.0602** | 1.10 |
+| 10-30 | 0.0513 | **0.0622** | 1.21 |
+| 30-100 | 0.0564 | **0.0890** | 1.58 |
+
+**The dominant error is getting each station's absolute level wrong, not its dynamics — and
+it worsens monotonically with depth.**
+
+The trap: global `bias` at 0-10 is +0.0047, which reads as near-perfect calibration. It is
+not. It means the per-station offsets are large but **cancel** — some sites too wet, some too
+dry. `val_station_metrics.csv` confirms this directly; the first val station logged
+(`ISMN_Berlin_PSA1BerlinerStr`, 0-10) carries `bias = −0.0389` against a global +0.0047.
+**Never read global bias as evidence of per-site calibration. Take the RMS of the per-station
+`bias` column instead.**
+
+### 20.2 What the per-depth train/val gap rules out
+
+The per-depth breakdown §19 added exists to separate a capacity/information ceiling from a
+generalisation failure. At e3:
+
+| Depth | train | val | gap |
+|---|---|---|---|
+| 0-10 | 0.000604 | 0.002124 | 3.5× |
+| 10-30 | 0.000440 | 0.002105 | 4.8× |
+| 30-100 | **0.000388** | **0.002902** | **7.5×** |
+
+**30-100 cm fits the training data BEST and generalises WORST.** §19.7 predicted that a
+capacity or information ceiling would show as high-and-flat train loss at 30-100. The opposite
+happened: it is the easiest depth to fit. Physically consistent — deep soil moisture is
+temporally smooth, so per-station it is nearly a slowly-varying constant, trivial to memorise
+on seen stations and worthless on unseen ones.
+
+Three things are therefore ruled out, and should not be attempted:
+
+1. **The cascade** (§19.8) — it adds deep-depth capacity. Capacity is not the constraint;
+   30-100 already has the lowest train loss of the three depths.
+2. **More regularisation strength** — §19.5 doubled `weight_decay` (0.05→0.1) and
+   `drop_path_rate` (0.1→0.2) and the memorisation curve was unchanged versus S16
+   (e2 train 0.00067 both runs). This is not a weight-magnitude problem; the network is
+   using legitimately-supplied inputs (a unique 74×74 soil patch, DEM, LULC) as a station
+   fingerprint. Weight decay cannot suppress that.
+3. **More depth-specific parameters** — the S16 lever. `use_cls_depth` raised depth-specific
+   params 195 → 297,795 and did not beat the S16 baseline at the same epoch
+   (30-100 ubRMSE 0.0564 vs 0.0559; bias +0.0183 vs +0.0146).
+
+### 20.3 Why the model cannot be its own diagnostic
+
+When the network gets absolute level wrong by 0.060, two causes are indistinguishable from
+its output alone:
+
+- **(A)** the static data does not determine site moisture level — two sites with identical
+  texture and terrain genuinely sit at different levels (drainage, water table, macroporosity,
+  sensor calibration), or
+- **(B)** the static data does determine it and the network is failing to exploit it.
+
+These demand opposite responses, and each wrong guess costs a ~5-day run. The network cannot
+separate them because its failure is confounded with learning dynamics, fusing five
+modalities, and overfitting simultaneously.
+
+### 20.4 The diagnostic: is station-mean SM predictable from static features?
+
+Strip the problem to one number per station and ask it in isolation.
+
+**Table.** One row per station, 577 train + 74 val (the stations the run actually used, not
+the CSV's 680/90 — token availability differs, and the comparison must be exact).
+
+| Block | Features |
+|---|---|
+| Soil | the 21 OpenLandMap channels averaged over the 74×74 patch (21), plus their spatial std (21) — within-footprint heterogeneity may itself matter |
+| Terrain | DEM mean, std, slope |
+| Land cover | LULC class fractions over the patch |
+| Climate | mean ERA5 precipitation, mean temperature, aridity index |
+
+**Target.** Each station's mean observed SM, **computed separately per depth** (three
+independent regressions). 30-100 cm is where the problem is worst and must be reported
+separately.
+
+**Note a depth mismatch to handle explicitly:** the soil product's depths are 0-30 / 30-60 /
+60-100 cm (`text/architecture.md:255-263`) while the SM labels are 0-10 / 10-30 / 30-100 cm.
+Do not silently pair them 1:1. Feed all 21 channels to every depth's regression and let the
+model weight them.
+
+**Two methodological requirements:**
+
+1. **Standardise features.** Ridge's L2 penalty is scale-sensitive; clay in % and elevation
+   in metres would otherwise be penalised unequally.
+2. **Tune α by GroupKFold on `location_group_id`, within training stations only.** Ordinary
+   K-fold would place neighbouring stations in both fold-train and fold-test and yield an
+   optimistic α. The main split already enforces **zero** train/val group overlap (verified:
+   646 train groups, 69 val groups, 0 shared) and the tuning must match that standard.
+
+**Run twice — with and without lat/lon.** With coordinates the model can spatially
+interpolate, which is legitimate but answers "are nearby stations similar", not "does soil
+physics determine level". Only the coordinate-free version speaks to transfer into a new
+region. Report both.
+
+### 20.5 Why ridge AND gradient boosting, specifically
+
+**Ridge is chosen because it is weak, not because it is good.** With 577 rows, ~50 features
+and a real L2 penalty, it is incapable of memorising. Therefore a positive result **cannot be
+an artefact** — that is the property required of a measuring instrument. Its coefficients are
+also directly readable, and identify which soil properties drive level, which is exactly the
+input the §20.7 reparameterisation needs.
+
+**GBM is the nonlinearity control.** Water retention is not linear in texture — moisture rises
+with clay, saturates, and interacts with organic carbon. A purely linear probe could report
+"no signal" when the signal is real but curved. Shallow trees (depth ≈3) with early stopping
+under the same GroupKFold keep it honest.
+
+Neither alone is sufficient: ridge alone confuses *nonlinear* with *absent*; GBM alone leaves
+open whether it memorised.
+
+| Ridge | GBM | Interpretation |
+|---|---|---|
+| works | — | signal exists, roughly linear — cheap to exploit |
+| fails | works | signal exists but nonlinear — a small MLP or pedotransfer form is right |
+| fails | fails | no signal in these features — §20.6 |
+
+### 20.6 Decision procedure — three numbers
+
+1. **Null baseline** — predict the global training mean for every station. Its RMSE is the
+   between-station spread of mean SM. This defines "no skill" and must be computed first.
+2. **Ridge / GBM** — RMSE on the 74 val stations, per depth.
+3. **The network's error at the same task** — RMS of the per-station `bias` column in
+   `checkpoints/.../cls_depth_star_reg/val_station_metrics.csv`, filtered to the best epoch.
+   That column IS each station's offset, so this is directly comparable and station-equally
+   weighted. Expect ≈0.060 / 0.062 / 0.089 per §20.1.
+
+| Outcome | Conclusion | Go to |
+|---|---|---|
+| ridge ≈ null | static features do not determine level; the task is unidentifiable from these inputs | §20.7 |
+| ridge ≪ network | information is present and the network is discarding it | §20.8 |
+| ridge ≈ network | the network already extracts everything available; remainder is irreducible | §20.7 |
+
+All three outcomes are actionable and point somewhere different. That is what makes the
+diagnostic worth running before choosing a lever.
+
+### 20.7 BRANCH A — if there is no information
+
+**First, one more cheap check before accepting it.** ISMN aggregates many networks using
+different sensor types (capacitance, TDR, neutron probe), each with its own calibration. Two
+identical soils instrumented differently read different absolute values. Group the per-station
+`bias` by the `network` column of `station_splits.csv`:
+
+- **Offsets cluster strongly by network** → a substantial part of the 0.060 is *instrumentation
+  bias in the labels*, not model error. No model can predict it, because it is not a property
+  of the soil. This is itself a reportable finding and fully justifies anomaly-based evaluation.
+- **Offsets unstructured within networks** → genuine unmeasured site variability (drainage,
+  water table, macroporosity).
+
+Either way, three moves:
+
+**A1. Change the target.** Train on per-station standardised anomaly
+`z = (θ − μ_station) / σ_station`. Today a large share of the loss is spent on a component
+that provably cannot be predicted, which actively competes with dynamics learning. Removing it
+should **improve** ubRMSE rather than merely relabel the problem. This is a testable
+prediction, not a cosmetic change.
+
+**A2. Change the claim.** Report anomaly skill (ubRMSE, correlation) as the primary result.
+This is standard practice, not a retreat — SMAP/SMOS validation leans on anomaly metrics and
+triple-collocation methods exist precisely because absolute cross-sensor agreement is known to
+be unattainable. "Predicts SM dynamics at unseen sites with ubRMSE ≈0.046 (median station)" is
+a clean, defensible claim.
+
+**A3. Offer level where obtainable.** If the application permits even a handful of local
+observations, a single offset correction removes essentially all of this error. Frame the
+product as transferable dynamics plus a one-sample site calibration.
+
+### 20.8 BRANCH B — if the information exists
+
+**Do NOT rebuild the model first. Test post-hoc on the existing checkpoint — it costs nothing
+and sizes the prize.**
+
+**B1. Post-hoc offset correction (no GPU, no retraining).** Take the best checkpoint's val
+predictions, use the fitted ridge to predict each val station's mean from its static features,
+and shift that station's predictions to match. Recompute MSE, ubRMSE, bias.
+
+- ubRMSE is unchanged by construction (a constant shift cancels in anomalies) — this is a
+  correctness check on the implementation, not a result.
+- MSE should fall by roughly the recovered offset variance. If 30-100's MSE drops from 0.0111
+  toward ~0.004, the fix is demonstrated using an artefact that already exists.
+- **If MSE barely moves, stop.** The ridge's apparent skill did not transfer to the actual
+  predictions, and no rebuild is justified. This gate exists to prevent a 5-day run on a
+  result that looked good only in aggregate.
+
+**B2. Two-headed model** (only if B1 succeeds):
+
+- **Head A** predicts `z(t)`, the normalised dynamics — what the network already does well.
+- **Head B** predicts `μ_station` (and `σ_station`) from **static features only**. Small,
+  low-capacity, deliberately incapable of memorising. Warm-start from the fitted ridge.
+- Reconstruct `θ̂(t) = μ̂ + σ̂ · ẑ(t)`. Keep the Huber loss on `θ̂` so `val_loss` stays
+  comparable with every prior run (§19.10.2 discipline).
+
+**B3. The critical addition is an auxiliary loss directly on `μ̂`** against each training
+station's observed mean. This is what is missing today: the level currently receives only an
+implicit, diluted gradient tangled with dynamics. A dedicated target plus a dedicated
+low-capacity pathway converts it into a supervised problem the model can actually solve.
+
+**B4. Bundle static-feature dropout** — randomly zero the soil patch, DEM and LULC during
+training. This prevents Head A from re-learning the station fingerprint and forces level
+information to flow through Head B, where it belongs. Cheap, few lines, and attacks the
+memorisation mechanism identified in §20.2 directly.
+
+### 20.9 Implementation spec for the diagnostic script
+
+```
+scripts: station_mean_probe.py          (new)
+inputs:  csvs/station_splits.csv        (splits, network, location_group_id)
+         zarr soil/ patches             (21, 74, 74) per station
+         label NetCDFs                  (per-station mean SM per depth)
+         checkpoints/.../cls_depth_star_reg/val_station_metrics.csv  (network comparison)
+outputs: csvs/station_mean_probe.json   (all scores)
+         plots/station_mean_probe.png   (pred vs true station mean, per depth)
+runtime: < 1 min, CPU only, Pool(64) per feedback_multiprocessing
+```
+
+Must report, per depth: null-baseline RMSE, ridge RMSE (with and without coordinates), GBM
+RMSE, the network's RMS per-station bias, the top-10 ridge coefficients by magnitude, and the
+per-network mean/std of station bias for the §20.7 clustering check.
+
+**No silent caps** — if any station is dropped for missing features, log the count and the
+reason. A quietly reduced station set would make every number optimistic.
+
+### 20.10 Caveats to carry
+
+- Each station's mean SM is computed over its **own record period**, and those differ. Some
+  between-station variance is therefore climate-of-the-period rather than site character. This
+  adds noise to the target and makes the test **conservative**: a positive result stays
+  trustworthy, but a marginal negative deserves a re-run restricted to a common period.
+- The soil composite is single-epoch 2020-2022 while labels span 2016-2025. Static soil
+  properties are genuinely near-static, so this is acceptable — but it means land-use change
+  within the record is invisible to the probe.
+- 19 stations have fully-NaN soil patches and are already excluded via `soil_patch_ok`; confirm
+  none re-enter through the probe's own feature construction.
+
+### 20.11 Status
+
+Diagnostic NOT yet run. Run 25235976 continues — e4 turned (`val_loss` 0.002312 → 0.002336,
+first non-improvement, `no_improve_count` 1 of 6) with best still at e3. The run should be
+left to finish or early-stop on its own; its `val_station_metrics.csv` is an input to §20.6
+and improves with every epoch logged.
