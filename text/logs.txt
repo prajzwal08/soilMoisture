@@ -3168,3 +3168,196 @@ different loss definitions.
 
 Dense spatial supervision / Step-1 proxy-consistency structure loss
 (runbook §16.4); distributed validation; skip-connection ablation.
+
+================================================================================
+SESSION 20 (continued) — 2026-08-05, afternoon
+================================================================================
+
+Continues the morning entry above. Morning = bug hunt + launch. Afternoon = the
+run produced its answer, and the answer redirected the whole project.
+
+--- Run cls_depth_star_reg (job 25235976) — still running at sign-off ---
+
+  epoch  train      val        30-100 ubRMSE  30-100 bias
+    1    0.001601   0.002512   0.0553         0.0194
+    2    0.000671   0.002508   0.0548         0.0209
+    3    0.000478   0.002312   0.0564         0.0183
+    4    0.000378   0.002336   0.0553         0.0126
+    5    0.000314   0.002304   0.0569         0.0165
+    6    0.000271   0.002230   0.0552         0.0123   <- BEST
+    7    0.000237   0.002287
+    8    0.000215   0.002240
+
+Best = e6. Train fell 7x, val 11%. Gap 8x. All three startup checks passed
+(Trainable parameters 50,348,544; Optimiser groups 70/94; SHM preload 1732.9s;
+zero zarr [WARN]). Per-depth loss reporting works — three finite depths, no nan.
+
+--- THE FINDING: two separate failures, not one ---
+
+compute_metrics removes each station's own temporal mean before ubRMSE, so
+within a station the anomaly error and the offset error are orthogonal:
+    MSE ~ ubRMSE^2 + (per-station offset)^2
+
+Measured DIRECTLY from val_station_metrics.csv (not derived) at e5:
+
+    depth    RMS bias   mean bias   range            |b|>0.05
+    0-10     0.0618     -0.0019     -0.156..+0.127   29/74
+    10-30    0.0611     +0.0053     -0.216..+0.117   17/51
+    30-100   0.0875     +0.0079     -0.219..+0.244   21/43
+
+Mean bias ~0 while individual stations reach +/-0.15 -> the offsets CANCEL.
+Global bias is meaningless per-site. Always take RMS of the per-station column.
+
+So: (1) absolute level is wrong by 0.062/0.061/0.088, and (2) dynamics are
+stuck at ubRMSE 0.054/0.050/0.055. Two deficits, they add in quadrature,
+total RMSE ~0.082 at the surface. Fixing the offset does NOT improve ubRMSE —
+it cancels out of the anomaly by construction.
+
+--- §20.14 station-mean probe (job 25246010, ~2 min, CPU) ---
+
+Question: is per-station MEAN SM predictable from what the model already sees?
+Ridge chosen because it is WEAK (~600 rows under real L2 cannot memorise, so a
+positive result cannot be an artefact); GBM as the nonlinearity control.
+GroupKFold on location_group_id to match the split's zero train/val overlap.
+
+Inputs verified complete: 661 sm_only train+val (587/74), zero dropped, all
+with soil/era5/labels. Val 74 matches val_station_metrics.csv. 403 of 661 need
+the qc/sm realign that _load_zarr_labels already handles.
+
+RESULT (best RMSE on 74 held-out stations):
+              probe    null    network
+    0-10      0.0597   0.0752   0.0618
+    10-30     0.0588   0.0763   0.0611
+    30-100    0.0815   0.0877   0.0875
+
+  * Level is only WEAKLY predictable — best beats null by 21/23/7%. Largely not
+    determined by available inputs -> §20.7 Branch A.
+  * 0-10 and 10-30: the network ALREADY MATCHES the probe. No untapped signal.
+    Decoder-vs-transformer is moot there; do not spend a GPU job on it.
+  * 30-100 is the exception and the only live Branch-B pocket: the network sits
+    EXACTLY at null (0.0875 vs 0.0877), extracting nothing about deep level,
+    while the probe reaches 0.0815.
+  * GBM beat ridge at the surface (0.0597 vs 0.0647) -> the relation is
+    NONLINEAR; my ridge-only preliminary run understated it by ~8%. Never run
+    this ladder ridge-only.
+  * lat/lon added ~0 -> the signal is physical, not geographic interpolation.
+
+Honesty note recorded in the runbook: the pre-registered VERDICT rule
+("Branch B if best < 0.90 x network") printed "network already extracts what
+exists" for 30-100, where the ratio is 0.932 — misleading, because the rule
+never compares network vs null and the network IS at null there. Rule needs
+fixing; that line must not be quoted as printed.
+
+--- §20.12.1 FiLM check — CLOSED, my premise was wrong ---
+
+I had written that FiLM is the only route by which transformer context reaches
+the decoder. It is not. The 196 target-day spatial tokens come from the
+transformer OUTPUT (model.py:732-733) and go straight into decoder.bottle_proj,
+so context reaches the decoder spatially, unconditionally and FiLM-free. FiLM
+modulates only the frozen TerraMind skip branch — a side channel.
+
+Measured anyway: FiLM HAS trained (element RMS ~1.3e-2, off zero), so the
+zero-init-trap hypothesis is dead. But that is ~790x below AdamW's decay
+equilibrium 1/lambda=10 and ~0.5% of the ballistic bound, so the gradient
+reaching FiLM has been near-sign-random. Weight decay is not the explanation —
+the undecayed biases barely moved either. One real finding: depth_film.0 is
+2.5x smaller than .1/.2, and depth 0 is the star-residual base that predicts
+absolute SM rather than an offset.
+
+Also ruled out with evidence, do not re-attempt: more regularisation (§19.5
+doubled wd and drop_path, memorisation curve unchanged); more depth capacity /
+the cascade (30-100 has the LOWEST train loss); raising Huber delta (train
+residuals are 0.020-0.027, already INSIDE delta=0.05, so delta is inactive
+exactly where gradients are produced — and it targets the offset, which ubRMSE
+removes by construction).
+
+--- §21 SMAP + ECOSTRESS — ceiling tests before any build ---
+
+User proposal: SMAP for absolute level, ECOSTRESS LST 70m as a dense spatial
+supervision target. Critique recorded in §21.1:
+
+  * SMAP is categorically different from anything §20.14 tested — soil/terrain/
+    landcover/ERA5 are PROXIES for wetness, SMAP L-band MEASURES it. §20.14's
+    negative was scoped to "not learnable from what we have"; SMAP is the thing
+    we don't have. The finding motivates the idea.
+  * BUT 36 km is ~1300 km2 and gives the REGIONAL mean, while our error is the
+    station's deviation FROM its region — sub-pixel heterogeneity is exactly
+    what SMAP averages away.
+  * Prior from data in hand: lat/lon added ~0 to the ladder, so station means
+    are not strongly spatially organised. Lowers the prior.
+  * The proposal's emphasis is backwards: SMAP's strong suit is LEVEL, not
+    ubRMSE — ERA5-Land already carries regional dynamics at 9 km, FINER than
+    SMAP.
+  * It changes the thesis from retrieval to SMAP downscaling, and hardens the
+    baseline from "predict the global mean" to "resample SMAP to the station".
+
+ECOSTRESS deferred by user decision. Banked: CMR confirms ECO_L2T_LSTE v002/003
+run 2018-07-09 -> ongoing, so it covers at most 5 of the 7 training years and
+ZERO of 2016-2017.
+
+--- GEE access ---
+
+Credentials had expired (Jun 3, invalid_grant). Default `earthengine
+authenticate` failed — it wants gcloud, not installed. notebook auth_mode needs
+an interactive paste-back, which a FIFO could not deliver (the write blocked).
+Solved by splitting the flow across two processes using ee.oauth.Flow: process
+1 builds the URL and persists flow.code_verifier to disk; process 2 calls
+oauth._obtain_and_write_token(code, verifier, scopes). Worth remembering — this
+is the reliable headless-HPC pattern for EE auth.
+
+Catalog probe (2026-08-05):
+  NASA/SMAP/SPL3SMP_E/006   n=4060    2015-03-31 -> 2026-08-03   PRESENT
+  NASA/SMAP/SPL3SMP (36 km)                                      ABSENT
+  NASA/SMAP/SPL4SMGP/008    n=33134   2015-03-31 -> 2026-08-02   PRESENT
+  NASA/SMAP/SPL1CTB                                              ABSENT
+
+  * The standard 36 km L3 is NOT in GEE. Only the 9 km Enhanced, which is the
+    SAME 36 km footprints Backus-Gilbert interpolated — same information, finer
+    posting, and finer helps against the sub-pixel objection.
+  * L1C_TB is not a separate collection, but tb_h_corrected / tb_v_corrected
+    are BANDS inside SPL3SMP_E. So brightness temperature comes free.
+  * L4 has sm_rootzone (0-100 cm) and sm_profile — the only thing covering the
+    10-30 and 30-100 bins, since L3 is surface-only. User chose L3 ONLY, to keep
+    the independence claim (L4 is a land-model assimilation). Consequence
+    accepted: 0-10 is SMAP's BEST case, so a failure there kills the idea
+    without needing L4.
+
+--- Built this session ---
+
+  station_mean_probe.py        §20.14 ladder, 7 blocks, ridge + GBM
+  slurm/station_mean_probe.sh  genoa, 64 cores
+  plot_loss_curves.py          publication figure, validated CVD-safe palette
+  download_smap_gee.py         SMAP L3 per-station extraction (running at sign-off)
+  figures/loss_curves_cls_depth_star_reg.{png,pdf}
+  figures/station_mean_probe.{png,pdf}
+  csvs/station_mean_probe.json
+
+Runbook: §20.1b (measured offsets + 5-epoch tables), §20.12.1 (amended),
+§20.13 (plan once 0.04 is off the table), §20.14 (+ .7 result, .8 what follows),
+§21 (SMAP/ECOSTRESS ceiling tests).
+Commits: b81faf7 5a5c271 0313f25 9f08b34 1dc75a9 c805f75 a6c259c db8c94a
+8e079ce 58fc6a3 — all pushed to feat/per-depth-loss-reporting AND main.
+
+--- In flight at sign-off ---
+
+  * Run 25235976 still training, e8 done, e6 best, no_improve 2/6.
+  * download_smap_gee.py extracting 661 station means from GEE.
+  * B7 (SMAP retrieval) and B8 (TB-derived: emissivity h/v normalised by ERA5
+    skt, polarisation difference, NPR, VWC) added to the ladder, not yet run.
+    Kept separate deliberately: B8 > B7 would mean the L3 retrieval's
+    climatological tau-omega assumptions discard information the raw observable
+    retains — which would itself be a publishable finding.
+
+--- Next ---
+
+  1. Run the ladder with B7/B8. Wall to beat: null 0.0752/0.0763/0.0877.
+  2. If SMAP flat -> level is sub-pixel and irreducible -> §20.7 Branch A:
+     retarget to per-station standardised anomaly, report ubRMSE as the
+     headline, absolute level explicitly out of scope with §20.14 as evidence.
+  3. Reality-check the 0.04 ubRMSE bar — it is SMAP's requirement against CORE
+     validation sites, not broad ISMN point-scale validation, where reported
+     ubRMSE is nearer 0.05-0.06. If that holds, 0.054 at unseen stations may
+     already be competitive and 0.04 was never the right target.
+  4. Deferred: real oos/oot/oost evaluation (meeting_output/ is a 10-station
+     smoke run). OOT = same stations, 2023 — the counterfactual that decides
+     whether the offset is a transfer limit or a representation limit.

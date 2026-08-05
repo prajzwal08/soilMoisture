@@ -101,7 +101,72 @@ def _derived(era5_means):
     return np.stack([vpd, pet, aridity], axis=1).astype(np.float32)
 
 
-def build_blocks(meta, soil, era5, seasonal):
+def _smap_blocks(meta, era5, smap_csv):
+    """-> (B7 retrieval, B8 TB-derived, report) or (None, None, msg) if absent.
+
+    B7 is SMAP's own soil-moisture retrieval. B8 is built from the raw brightness
+    temperatures, and the two are kept SEPARATE deliberately: the L3 retrieval inverts a
+    tau-omega model using climatological vegetation optical depth, albedo, roughness and
+    effective soil temperature. Where those global assumptions are wrong at a given site
+    the error becomes a site-specific offset — exactly the failure mode under test. So
+    B8 > B7 would mean the retrieval discards information the raw observable retains.
+
+    Raw TB is useless on its own: it swings ~±40 K seasonally with physical temperature,
+    which dwarfs the moisture signal (TB ≈ emissivity × T_eff). It is normalised by ERA5
+    skin temperature into an emissivity proxy, plus the two polarisation combinations that
+    carry vegetation/roughness.
+
+    Missing SMAP (open water, frozen ground, dense vegetation) is imputed with the
+    column median and flagged by an explicit indicator column, NOT dropped — dropping
+    would change the station set and silently shift the B0-B6 numbers, breaking the
+    ladder's whole logic.
+    """
+    p = Path(smap_csv)
+    if not p.exists():
+        return None, None, f"{p} not found — run download_smap_gee.py first"
+
+    smap = pd.read_csv(p).set_index("dir_name")
+    smap = smap.reindex(meta["dir_name"].to_numpy())          # align to probe order
+
+    def col(name):
+        return smap[name].to_numpy(dtype=np.float64) if name in smap.columns else None
+
+    sm_am, sm_pm = col("soil_moisture_am"), col("soil_moisture_pm")
+    tb_h, tb_v   = col("tb_h_corrected_am"), col("tb_v_corrected_am")
+    vwc          = col("vegetation_water_content_am")
+    if sm_am is None or tb_h is None or tb_v is None:
+        return None, None, f"{p} lacks expected SMAP columns: {list(smap.columns)}"
+
+    skt = era5[:, ERA5_VARS.index("skt_mean")].astype(np.float64)   # Kelvin
+    with np.errstate(invalid="ignore", divide="ignore"):
+        emis_h = tb_h / skt
+        emis_v = tb_v / skt
+        npr    = (tb_v - tb_h) / (tb_v + tb_h)
+    pol_diff = tb_v - tb_h
+
+    b7_raw = np.column_stack([sm_am, sm_pm if sm_pm is not None else sm_am])
+    b8_raw = np.column_stack([emis_h, emis_v, pol_diff, npr,
+                              vwc if vwc is not None else np.full_like(skt, np.nan)])
+
+    n_missing = int(np.isnan(b7_raw[:, 0]).sum())
+
+    def _fill(a):
+        a = a.copy()
+        miss = ~np.isfinite(a)
+        for j in range(a.shape[1]):
+            med = np.nanmedian(a[:, j])
+            a[miss[:, j], j] = med if np.isfinite(med) else 0.0
+        return a.astype(np.float32)
+
+    indicator = (~np.isfinite(b7_raw[:, 0])).astype(np.float32).reshape(-1, 1)
+    b7 = np.hstack([_fill(b7_raw), indicator])
+    b8 = np.hstack([_fill(b8_raw), indicator])
+    report = (f"SMAP loaded: {len(smap)} rows, {n_missing} stations with no retrieval "
+              f"(imputed + flagged)")
+    return b7, b8, report
+
+
+def build_blocks(meta, soil, era5, seasonal, smap_b7=None, smap_b8=None):
     """-> ordered [(name, feature_array), ...] forming the NESTED ladder."""
     elev = np.column_stack([
         meta["elevation_m"].to_numpy(dtype=np.float32),
@@ -114,7 +179,7 @@ def build_blocks(meta, soil, era5, seasonal):
     koppen = pd.get_dummies(meta["koppen_geiger"].astype(str)).to_numpy(dtype=np.float32)
     climate = np.hstack([era5, koppen])
     latlon = meta[["latitude", "longitude"]].to_numpy(dtype=np.float32)
-    return [
+    blocks = [
         ("B1 soil",       soil),
         ("B2 +terrain",   elev),
         ("B3 +landcover", landcover),
@@ -122,6 +187,11 @@ def build_blocks(meta, soil, era5, seasonal):
         ("B5 +derived",   np.hstack([_derived(era5), seasonal])),
         ("B6 +latlon",    latlon),
     ]
+    if smap_b7 is not None:
+        blocks.append(("B7 +smap_sm", smap_b7))
+    if smap_b8 is not None:
+        blocks.append(("B8 +smap_tb", smap_b8))
+    return blocks
 
 
 # ── fitting ──────────────────────────────────────────────────────────────────
@@ -167,6 +237,8 @@ def main():
     ap.add_argument("--out",        default="csvs")
     ap.add_argument("--figdir",     default="figures")
     ap.add_argument("--workers",    type=int, default=64)
+    ap.add_argument("--smap-csv",   default="csvs/smap_station.csv",
+                    help="from download_smap_gee.py; blocks B7/B8 are skipped if absent")
     args = ap.parse_args()
 
     # ── station selection: mirrors dataset.py:813-835 ─────────────────────
@@ -190,6 +262,7 @@ def main():
         dn = (f"ISMN_{r['network']}_{r['station_name']}" if str(r["source_network"]) == "ISMN"
               else f"{r['source_network']}_{r['station_id']}")
         tasks.append((dn, str(ZARR_ROOT / CATEGORY / dn)))
+    splits["dir_name"] = [t[0] for t in tasks]   # needed to join the SMAP table
 
     with Pool(args.workers) as pool:
         recs = pool.map(_read_station, tasks)
@@ -217,7 +290,9 @@ def main():
         print(f"   {d:>7}: {np.isfinite(y[is_train]).sum():3d} train / "
               f"{np.isfinite(y[is_val]).sum():2d} val stations with observed mean")
 
-    blocks = build_blocks(meta, soil, era5, seasonal)
+    b7, b8, smap_msg = _smap_blocks(meta, era5, args.smap_csv)
+    print(f"\n{smap_msg}")
+    blocks = build_blocks(meta, soil, era5, seasonal, smap_b7=b7, smap_b8=b8)
 
     # ── the nested ladder ─────────────────────────────────────────────────
     results, coefs, X = {}, {}, None
@@ -250,7 +325,10 @@ def main():
              + ["elev"] + [f"elevband_{i}" for i in range(meta["elevation_band"].nunique())]
              + [f"lc_{i}" for i in range(blocks[2][1].shape[1])]
              + list(ERA5_VARS) + [f"koppen_{i}" for i in range(blocks[3][1].shape[1] - 19)]
-             + ["vpd", "pet", "aridity", "seas_t2m", "seas_tp", "lat", "lon"])
+             + ["vpd", "pet", "aridity", "seas_t2m", "seas_tp", "lat", "lon"]
+             + ["smap_sm_am", "smap_sm_pm", "smap_missing"]
+             + ["smap_emis_h", "smap_emis_v", "smap_pol_diff", "smap_npr",
+                "smap_vwc", "smap_missing2"])
     print(f"\nTop-10 ridge coefficients ({full}, standardised):")
     for d in SM_DEPTHS:
         c = coefs.get((full, d))
