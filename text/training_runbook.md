@@ -3491,3 +3491,114 @@ Log: `logs/station_mean_probe_25246010.out`.
    Cheapest test: post-hoc per-station offset correction on the existing checkpoint using the
    fitted GBM, deep depth only. No retraining, no GPU.
 4. Do **not** re-run this ladder ridge-only, and do not add `swvl`/ET without re-reading §20.14.6.
+
+---
+
+## §21 SMAP + ECOSTRESS — ceiling tests before any build (2026-08-05)
+
+Two independent failures, per §20.14:
+
+| Failure | Size (m³/m³) | Cause | Status |
+|---|---|---|---|
+| Per-station offset (level) | 0.062 / 0.061 / 0.088 | information not in current inputs | ~irreducible from what we have |
+| ubRMSE (dynamics) | 0.054 / 0.050 / 0.055 | untested; likely single-pixel supervision | **unmeasured** |
+
+Proposed: **SMAP L3 36 km** for level, **ECOSTRESS LST 70 m** as a dense supervision target. Both
+plausible, both large builds. §20.14's cheap-test-before-expensive-lever discipline just saved a
+5-day run — apply it again. **Nothing in §21 trains a model.**
+
+### 21.1 Critique of the proposal — record before testing
+
+**Right:** SMAP is categorically different from anything §20.14 tested. Soil / terrain / land cover
+/ ERA5 are all *proxies* for wetness; SMAP L-band **measures** it. §20.14's negative was explicitly
+scoped to "not learnable from what we have" — SMAP is the thing we don't have. The finding
+motivates the idea rather than contradicting it. Likewise LST beats §16.4's own priority-1 proxy
+(S1 VV/VH) because S1 **is already a model input** — circularity the runbook itself flags.
+
+**The serious objection — 36 km cannot see the offset we are chasing.** A SMAP pixel is ~1,300 km².
+It gives the **regional mean**; our error is the station's **deviation from its region** — sub-pixel
+heterogeneity, exactly what SMAP averages away. SMAP can only fix the between-region share of the
+offset variance.
+
+**Prior from data in hand: lat/lon added ≈0 to the §20.14 ladder** → station means are not strongly
+spatially organised at the scale our stations sample. Lowers the prior on SMAP. Not decisive — SMAP
+measures *at* the station rather than interpolating between training stations.
+
+**Emphasis is backwards.** SMAP's strong suit is **level** (L-band measures water content; nothing
+else in our inputs does). For **dynamics/ubRMSE** its marginal value over ERA5-Land is likely small
+— ERA5 already carries regional wetting/drying at **9 km, finer than SMAP**. Do not assume it fixes
+both.
+
+**It changes the thesis.** With SMAP as input this becomes *SMAP downscaling*, not *retrieval from
+S1/S2/TerraMind*. Respectable and publishable, but different — and the baseline hardens from
+"predict the global mean" (0.075) to "resample SMAP to the station". Decide deliberately.
+
+### 21.2 T2 — does SMAP break the station-mean wall?
+
+Add SMAP as **block B7** in `station_mean_probe.py`. One number per station (temporal mean of SMAP
+surface SM) suffices.
+
+- Product: **SMAP L3 36 km radiometer retrieval** — keeps the "retrieval" claim; L4 is a land-model
+  assimilation, closer to ERA5 than to a measurement.
+- **Try GEE first** — `download_era5land_gee.py` already exists, so if SMAP L3 is in the GEE catalog
+  this is a reducer query, not a new Earthdata pipeline. If only the 9 km *Enhanced* L3 is there,
+  that still satisfies the independence intent — record the substitution.
+- Wall: null **0.0752 / 0.0763 / 0.0877**; network 0.0618 / 0.0611 / 0.0875.
+- **Read:** drives station-mean RMSE toward ~0.03 → SMAP validated before any model code. Barely
+  moves → sub-pixel heterogeneity dominates, months avoided.
+- Run a **separate** SMAP-anomaly → station-anomaly check; the dynamics claim needs its own evidence.
+
+### 21.3 T3 — does ECOSTRESS have enough coverage?
+
+- **Hard constraint: ECOSTRESS launched July 2018.** Training years are 2016-2022 → covers at most
+  ~5 of 7 years, **zero of 2016-2017**. Any dense-supervision arm is masked to the post-2018 subset.
+- Census via Earthdata **CMR metadata API** — no granule downloads. ECOSTRESS is on LP DAAC, **not**
+  Microsoft Planetary Computer, so no existing downloader applies.
+- Report usable clear-sky overpasses **per station per year** (per-year, so the 2016-2017 gap is
+  visible), median per station-year.
+- **Read:** too few → dense supervision falls back to the §16.4 S1/NDVI proxy, whose raw 224² pixels
+  already exist in `/projects/prjs1968/satellite_zarr`.
+
+### 21.4 Deferred: T1 and Phase 0
+
+- **T1 (is the offset regional or sub-pixel?)** — semivariogram / Moran's I of per-station offset vs
+  separation distance. **Deferred**: T2 measures the same question *directly*, and T1 needs Phase
+  0's oos+oost stations for power. 74 val stations = 69 location groups → far too sparse. **Do not
+  run T1 on val alone.** When run, report n-pairs per distance bin: a nugget-dominated variogram
+  with few short-range pairs is evidence of **no power**, not of white noise.
+- **Phase 0 (real oos/oot/oost evaluation)** — `meeting_output/` currently holds a **10-station
+  smoke run** (Jun 18), not real numbers. Needs run 25235976 finished so `best.pt` is final.
+  `sbatch slurm/evaluate_meeting.sh cls_depth_star_reg best.pt`.
+  - **OOT is the counterfactual**: `split_filter=["train","val"], years=[2023]` — stations the model
+    memorised, unseen year. Small OOT offset → the model *can* hold level on a seen station → the
+    failure is purely station transfer and §20.14's conclusion is airtight. Large → representation
+    problem, architecture question reopens.
+  - Fixes needed: add `network`/`source_network` to `META_COLS` (`evaluate_splits.py:39-43`) for the
+    sensor-calibration check; report `train.compute_metrics` alongside its own (pooled vs
+    mean-across-stations — only the former is comparable to `val_station_metrics.csv`); post-filter
+    OOT to `oot_eligible` (358) since the script does not.
+
+### 21.5 Decision gates
+
+| T2 | T3 | Action |
+|---|---|---|
+| SMAP breaks the wall | — | build the SMAP input path — highest-value lever |
+| SMAP flat | — | **drop SMAP**; level is sub-pixel and irreducible → §20.7 Branch A |
+| SMAP flat | ECOSTRESS rich | skip SMAP, go straight to dense supervision |
+
+Dense supervision gets its **own plan after T3**, as a clean ablation with the current single-pixel
+run as control. Design note: prefer a **multi-task LST head** over a proxy-consistency loss — LST is
+a real measurement and not a model input.
+
+### 21.6 Carried forward
+
+- **§16.4 Step 0 already PASSED** — `capacity_check.py` job 24352962: decoder norm-std 0.0061 →
+  0.2504, corr 1.000 vs a synthetic dense target. The decoder **can** paint structure; flat maps are
+  a supervision problem. Step 1 green-lit and unstarted.
+- **§17.7 supersedes §16.4 Step 2**: the missing piece is a full-resolution **carrier** (measured
+  pixels as decoder input), ranked above the bilinear→PixelShuffle swap. Order: dense supervision
+  first, carrier second, upsampler third.
+- `lambda_boundary` is the only active loss term touching off-centre pixels, and its gradient is
+  exactly zero inside [0,1] — it is **not** spatial supervision.
+- **TWI is not viable** as a proxy: it needs upslope contributing area, not computable from an
+  isolated 2.24 km tile.
