@@ -67,14 +67,15 @@ def main():
     model.eval()
 
     # Run evaluation
-    val_loss, metrics, per_station = evaluate(
+    val_loss, metrics, per_station, depth_loss = evaluate(
         model, val_loader, device
     )
 
     print(f"\n=== Global metrics (epoch {ckpt['epoch']}) ===")
-    print(f"val_loss = {val_loss:.4f}")
+    print(f"val_loss = {val_loss:.6f}")
     for depth, m in metrics.items():
-        print(f"  {depth:>8s}  MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
+        print(f"  {depth:>8s}  loss={depth_loss[depth]:.6f}  "
+              f"MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
               f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}")
 
     surface = SM_DEPTHS[0]

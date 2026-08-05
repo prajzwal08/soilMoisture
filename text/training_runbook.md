@@ -1,6 +1,6 @@
 # Soil Moisture Training Runbook
 
-Last updated: 2026-08-03 (Session 19 — §17 UNetDecoder reference, §18 per-depth dynamics plan)  
+Last updated: 2026-08-05 (Session 20 — §19 per-depth loss reporting + regularisation run)  
 Author: Prajwal Khanal
 
 ---
@@ -2285,4 +2285,279 @@ Smoke test (decoder + model instantiation, dummy tensors):
 | `cos(depth_tokens[0], depth_tokens[1])` | **−0.024** (was exactly 1.0) |
 | Depth-specific params | **297,795** (was 195) |
 
-Next action = launch `sbatch slurm/train.sh --run-name cls_depth_star --use-cls-depth`.
+~~Next action = launch `sbatch slurm/train.sh --run-name cls_depth_star --use-cls-depth`.~~
+
+**Superseded by §19** (Session 20, 2026-08-05). The launch was deferred to bundle in two more
+things: per-depth *loss* reporting (§19.3-19.4) and regularisation (§19.5). Run name is now
+`cls_depth_star_reg`.
+
+---
+
+## §19. Run `cls_depth_star_reg` — per-depth loss reporting + regularisation (Session 20, 2026-08-05)
+
+### 19.1 Why
+
+Two things are being fixed at once, both consequences of run `baseline_huber_notv_perdepth`
+(job 25150428, W&B `pg7mw3xb`, stopped at epoch 6).
+
+**(a) The architecture fix (§18) has never actually run.** All of §18 landed in `model.py` on
+2026-08-03 but the flag was never switched on, so every run to date has had only **195 of
+50,050,944 parameters depth-specific**. Symptom: 0-10 and 10-30 cm flat while 30-100 cm
+*regressed* — ubRMSE .0559 → .0566 and wet bias +.0146 → +.0245 monotonic across e3→e6.
+
+**(b) There is still no per-depth LOSS anywhere.** `train.py` reports per-depth
+MSE/MAE/ubRMSE/bias on *validation only* (L955-957, L1009-1012). The training loss is a single
+pooled scalar. That gap matters because the two candidate explanations for a stuck 30-100 cm
+need **opposite** fixes and are indistinguishable without it:
+
+| Per-depth train loss | Per-depth val loss | Diagnosis | Fix |
+|---|---|---|---|
+| high, flat | high | capacity or information ceiling | architecture (cascade), or accept the ceiling |
+| low, falling | high, rising | label scarcity / generalisation | depth-aware sampling, regularisation |
+
+Recall the physical caveat (logs.txt S16): S2 optical senses ~1 cm, S1 C-band a few cm. 30-100 cm
+information can *only* come from ERA5-Land, soil texture, and temporal memory. If the trunk never
+encoded it, no head architecture will extract it. Per-depth train loss is what tells us whether
+we are fighting capacity or physics.
+
+**(c) Regularisation.** Val loss bottomed at epoch 3 and rose thereafter while train loss fell
+5×. Classic overfit onset. `early_stop_patience=20` would have burned ~20 epochs past best.
+
+### 19.2 Readiness (verified 2026-08-05)
+
+| Item | State |
+|---|---|
+| §18 model changes | Committed (0d68932); `use_cls_depth=False` path untouched, old checkpoints still load |
+| Zarr on scratch | Present — `sm_only` 842, `sm_and_flux` 48, `flux_only` 103 `.complete` markers |
+| `.npy` anchor memmaps | Present (7,401 files); `slurm/train.sh:47` hard-wires `--use-memmap` |
+| TV / smoothness loss | Off — `lambda_tv: 0.0` (`train.py:213`), disabled since d339085 per the Tier-1 verdict |
+| Boundary penalty | On — `lambda_boundary: 0.1`; range penalty on SM ∉ [0,1], not smoothness |
+| GPU budget | 730,202 / 800,000 SBU remaining |
+| Queue | Empty |
+| Checkpoint collision | New run name ⇒ new dir; no stale `last.pt` / `mid_epoch.pt` to resume from |
+
+### 19.3 Change 1 — `masked_huber_loss(..., return_breakdown=True)`
+
+`model.py:745`. When set, additionally returns `(depth_sum, depth_cnt)`, both `(n_depths,)`
+float32, on-device, **detached**.
+
+Computed branch-free — better than the sketch in logs.txt L2914, which reused the existing
+`if mask_d.any():` pattern and would add a GPU sync per depth per batch:
+
+```python
+valid     = ~torch.isnan(label)                                     # (B, D)
+lab       = torch.nan_to_num(label, nan=0.0)
+elem      = F.huber_loss(pred, lab, delta=delta, reduction="none")  # (B, D)
+depth_sum = (elem * valid).sum(0).detach()                          # (D,)
+depth_cnt = valid.sum(0).float().detach()                           # (D,)
+```
+
+No data-dependent control flow ⇒ no new `.item()` calls, no new syncs.
+
+**The returned scalar `loss` is unchanged.** Both the `per_depth` and pooled branches stay
+byte-identical, so `val_loss` remains comparable to `baseline_huber_notv_perdepth`.
+
+**Consequence to remember:** the mean of the new per-depth losses will *not* equal `val/loss`.
+The scalar is a mean-of-batch-means-of-depth-means; the breakdown is sample-weighted over the
+whole epoch. Sample-weighting is the correct choice here — deep coverage is sparse (43 val
+stations at 30-100 vs 74 at 0-10), so a batch-mean would over-weight batches holding two deep
+samples. Two different quantities on purpose; do not expect them to reconcile.
+
+`return_breakdown` defaults `False`, so `eval_stations.py` / `demo_plot.py` are unaffected.
+
+### 19.4 Change 2 — accumulate, reduce, log
+
+- `_compute_loss` (`train.py:356`) gains `return_breakdown=False` and forwards through. Two call
+  sites only: L476 (train), L543 (val).
+- `train_one_epoch` (L434) and `evaluate` (L520) accumulate `depth_sum` / `depth_cnt` as device
+  tensors and return the **raw sums**, not means — the DDP reduction is only correct on sums.
+- Reduction is `all_reduce(..., op=SUM)` for the new vectors. Note this differs from the existing
+  scalar-loss reduction, which is `AVG` (`train.py:556`) and stays as-is.
+- Divide as `sum / cnt.clamp(min=1)`, then write `nan` where `cnt == 0`, so a depth absent from
+  the batch or from a smoke subset reports cleanly instead of as a misleading `0.0000`.
+- **Edge case:** the DDP reduce block (L936) is guarded by `epoch != val_pending_epoch`, and the
+  val-pending resume path (L857-861) skips training entirely. Initialise both vectors to zeros in
+  that branch or it `NameError`s on resume-after-val-crash.
+
+Reporting:
+- Epoch line (L952) → **6 decimals** on `train_loss` / `val_loss`. The 4-decimal print is exactly
+  what hid the rising val loss last run: stdout showed a flat `0.0022` for four epochs while the
+  checkpoints held 0.002182277 → 0.002230212.
+- Per-depth print (L955-957) gains `train_loss` and `val_loss` columns.
+- New W&B keys: `train/{depth}/loss`, `val/{depth}/loss`, `val/{depth}/MSE` (computed today but
+  never logged), `val/worst_depth_loss`.
+- **Mechanism check** (§18.7): log pairwise cosine similarity of the `depth_tokens` rows as
+  `diag/depth_token_cos_{01,02,12}`. Should sit near −0.02 at init and stay well below 1.0. If it
+  returns to ≈1.0 the depth queries have collapsed and `use_cls_depth` is inert — this is the
+  cheapest possible check that the whole premise of the run is holding.
+
+### 19.5 Change 3 — regularisation, as CLI flags
+
+`CONFIG` keeps its baseline values; new flags override them, so the run is reproducible from the
+sbatch line and the defaults stay clean for comparison runs.
+
+| Flag | CONFIG key | Baseline | This run | Rationale |
+|---|---|---|---|---|
+| `--weight-decay` | `weight_decay` (L194) | 0.05 | **0.1** | overfit by e3 |
+| `--drop-path-rate` | `drop_path_rate` (L205) | 0.1 | **0.2** | stochastic depth is the strongest regulariser available for a 6-layer ViT and is already plumbed to the model (L735) |
+| `--early-stop-patience` | `early_stop_patience` (L198) | 20 | **6** | 20 would burn ~20 epochs × ~440 s past best |
+| `--lr-patience` | `lr_patience` (L195) | 10 | **3** | first LR drop should land near the overfit knee, not 10 epochs after it |
+
+`DropPath` has no parameters, so raising `drop_path_rate` does not change the parameter set.
+Weight decay already excludes bias/norm via the existing `decay_params` / `no_decay_params` split
+(L748-754) — no change needed there.
+
+**Stated confound.** This run changes architecture *and* regularisation together, so a worse
+result cannot be cleanly attributed to `use_cls_depth`. Accepted deliberately to save a run cycle.
+The mitigation is the new per-depth **train** loss: if regularisation is the culprit, train loss
+rises across all three depths together. If the architecture is, the depths move apart.
+
+### 19.6 Run
+
+Smoke first. Note `slurm/train_a100_smoke.sh` does **not** hard-wire `--use-memmap` (unlike
+`train.sh:47`), so pass it explicitly:
+
+```bash
+sbatch slurm/train_a100_smoke.sh --run-name smoke_cls_star_reg --use-cls-depth --use-memmap \
+  --max-stations 20 --max-epochs 2 --max-train-batches 5 --max-val-batches 5 \
+  --weight-decay 0.1 --drop-path-rate 0.2
+```
+
+Pass criteria:
+
+| Check | Expect |
+|---|---|
+| `Trainable parameters:` | **50,348,544** (was 50,050,944) — proves the flag took effect |
+| Zarr fallback | No `[WARN]` line ⇒ memmaps are being read |
+| Per-depth train/val loss | Finite for depths present in the 20-station subset; `nan` (not `0.0000`, not a crash) for any absent depth |
+| `diag/depth_token_cos_01` | ≈ −0.02, not 1.0 |
+| Epoch 2 completes | Mid-epoch / resume paths untouched |
+
+Then the full run:
+
+```bash
+sbatch slurm/train.sh --run-name cls_depth_star_reg --use-cls-depth \
+  --weight-decay 0.1 --drop-path-rate 0.2 --early-stop-patience 6 --lr-patience 3
+```
+
+H100×4, ~440 s compute/epoch. Data time swings 27-691 s on GPFS contention (§3g) — that variance
+is storage, not the model.
+
+### 19.7 What to watch
+
+| Signal | Expect / meaning |
+|---|---|
+| `train/30-100/loss` | **The key diagnostic.** High + flat ⇒ capacity or information ceiling. Falling while `val/30-100/loss` rises ⇒ label scarcity |
+| `val/30-100/ubRMSE`, `bias` | Should stop the monotonic wet drift (+.0146 → +.0245 was the failure mode) |
+| `val/0-10/*` | Small degradation acceptable — under the star residual `heads[0]` is now a shared baseline receiving gradient from all three losses. Large degradation ⇒ star residual is hurting |
+| `diag/depth_token_cos_*` | Must stay well below 1.0 |
+| Epoch of best val | Was e3. More depth capacity may pull it earlier; heavier regularisation should push it later |
+
+**Comparison baseline:** `baseline_huber_notv_perdepth` (W&B `pg7mw3xb`), compared on per-depth
+ubRMSE/MAE/bias in m³/m³. **Never compare the `val_loss` scalar across runs with different loss
+definitions** — `baseline_huber_memmap`'s 0.00209 pooled all (sample × depth) pairs, which is a
+different quantity from per-depth-then-mean.
+
+### 19.8 Follow-up branches
+
+Do **not** respond to a flat 30-100 cm by adding more parameters.
+
+- **If per-depth train loss says capacity** — next lever is a **cascade** (10-30 as a residual on
+  0-10, 30-100 as a residual on 10-30) rather than the current star. Physically motivated: deep SM
+  is roughly a lagged, damped integral of shallow SM. Star was chosen first because the ≥95 %
+  coverage filter drops depths per station, so a sparse middle depth in a chain is a weak link;
+  revisit that trade-off only if star has demonstrably plateaued.
+- **If it says label scarcity** — depth-aware sampling or per-depth loss weighting.
+- **If train loss is high and flat even with 297,795 depth params** — that is the information
+  ceiling, and the honest conclusion is that 30-100 cm is not recoverable from this input set.
+
+Still blocked on the single-pixel loss (`model.py:753`), unchanged: dense spatial supervision
+(§16.4) and 3×3 per-depth heads (§18.5).
+
+### 19.9 Status
+
+**Implemented 2026-08-05.** Changes landed:
+
+| Change | Location |
+|---|---|
+| `return_breakdown` on `masked_huber_loss` | `model.py:745-807` |
+| `_compute_loss` forwarding | `train.py:357-382` |
+| `_per_depth_mean` helper (nan where cnt==0) | `train.py:384` |
+| Accumulate + return sums in `train_one_epoch` | `train.py:474-477, 505-510, 550` |
+| Accumulate + `all_reduce(SUM)` in `evaluate` | `train.py:570-576, 597-603, 628` |
+| `val_pending_epoch` vector init | `train.py:931-932` |
+| Train-side `all_reduce(SUM)` + `_per_depth_mean` | `train.py:1014-1021` |
+| 6-decimal epoch print, per-depth train/val columns | `train.py:1029-1041` |
+| 6-decimal "New best" line | `train.py:1158` |
+| CONFIG echo at startup | `train.py:806-812` |
+| W&B keys + depth-token cosine diagnostic | `train.py:1097-1118` |
+| Regularisation CLI flags | `train.py:667-674, 688-691` |
+| `eval_stations.py` updated for new `evaluate` arity | `eval_stations.py:70-78` |
+
+Two issues found while wiring it up, both fixed:
+- `eval_stations.py` unpacked `evaluate` into 3 values and would have crashed.
+- The per-depth print iterated `metrics`, but `compute_metrics` **drops** a depth entirely when
+  val has no samples for it (`train.py:324-325`). Train and val are different station sets, so a
+  depth can be trained and not validated — its train loss would have vanished from the log. Now
+  iterates `SM_DEPTHS` and prints `no val samples`.
+
+**Offline verification (CPU):**
+
+| Check | Result |
+|---|---|
+| Scalar loss identical with/without `return_breakdown`, both loss modes | True |
+| Absent depth | `nan`, not `0.0` |
+| All-NaN label batch | loss 0.0, no crash |
+| DDP arithmetic — 4 simulated ranks, uneven depth coverage vs single-pass truth | match to 1e-8 |
+| Param count `use_cls_depth` False → True | 50,050,944 → **50,348,544** |
+| `drop_path_rate` changes param count | False (as expected — `DropPath` has no params) |
+| `depth_tokens` cos 01/02/12 at init | −0.047 / 0.014 / −0.067 |
+| `heads[1]` zero-init | True |
+
+**Smoke test — job 25234282** (A100×4, 20 stations, 2 epochs, batch 32, W&B `alm7sze4`): PASS.
+
+| Check | Result |
+|---|---|
+| `Trainable parameters:` | **50,348,544** ✓ |
+| Zarr fallback `[WARN]` | none — 138 L369 memmap arrays opened ✓ |
+| Per-depth train/val loss | all finite and independent ✓ |
+| DDP grad-stride warning | now `[1, 64, 1, 1]` (per-depth head) vs `[3, 64, 1, 1]` before — independent confirmation the branch switched ✓ |
+| `diag/depth_token_cos_01` | −0.047 (init) → 0.088 after 2 epochs — tokens diverging, mechanism live ✓ |
+| W&B keys | `train/{d}/loss`, `val/{d}/loss`, `val/{d}/MSE`, `val/worst_depth_loss`, `diag/depth_token_cos_*` all present ✓ |
+
+Epoch 1 per-depth train loss was near-identical across depths (0.0268 / 0.0275 / 0.0273) — correct
+by construction: the star residual with zero-init offset heads makes all depths the same prediction
+at step 0. By epoch 2 they separate (0.0132 / 0.0116 / 0.0127).
+
+Sanity check on the documented §19.3 caveat: epoch-1 `train_loss` 0.047413 vs per-depth mean
+0.02722. The 0.0202 gap is the boundary penalty (`lambda_boundary=0.1` × ~0.2), which the per-depth
+breakdown excludes by design. The two numbers are not supposed to reconcile.
+
+**Smoke re-run — job 25234340** (6 stations, 1 epoch): re-verifies the final code, since 25234282
+predated the `SM_DEPTHS` print-loop fix, the CONFIG echo, and the 6-dp "New best" line. Fewer
+stations to also exercise the `no val samples` branch.
+
+The CONFIG echo confirms every flag reached `CONFIG` — this line is now the single place to check
+what a run actually used:
+
+```
+CONFIG: run_name=smoke_cls_star_reg2  use_cls_depth=True  per_depth_loss=True  lr=0.0002
+        batch_size=32  weight_decay=0.1  drop_path_rate=0.2  n_layers=6  lambda_tv=0.0
+        lambda_boundary=0.1  early_stop_patience=6  lr_patience=3
+```
+
+Result: PASS, zero errors. Per-depth train loss again near-identical at epoch 1
+(0.026945 / 0.026448 / 0.027202) as the star residual predicts. The `no val samples` branch was
+still not hit live — both smoke subsets happened to carry all three depths in val — so it remains
+covered only by the offline unit test. It is a `.get()` fallback, so the risk is a cosmetic print,
+not a crash.
+
+**Full run — job 25234370**, launched 2026-08-05. Fresh start (no prior `cls_depth_star_reg`
+checkpoint dir). Command:
+
+```bash
+sbatch slurm/train.sh --run-name cls_depth_star_reg --use-cls-depth \
+  --weight-decay 0.1 --drop-path-rate 0.2 --early-stop-patience 6 --lr-patience 3
+```
+
+Record the W&B run ID and per-epoch results here as they land.

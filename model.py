@@ -749,8 +749,39 @@ def masked_huber_loss(
     station_col: int   = SoilMoistureModel.STATION_COL,
     delta:       float = 0.05,
     per_depth:   bool  = False,
-) -> torch.Tensor:
+    return_breakdown: bool = False,
+):
+    """Huber loss at the station pixel, ignoring depths with no observation.
+
+    return_breakdown=True additionally returns (depth_sum, depth_cnt), both
+    (n_depths,) float32, detached, on-device:
+        depth_sum[d] = Σ Huber over samples in this batch that observed depth d
+        depth_cnt[d] = number of those samples
+    Raw SUMS, not means — the caller accumulates them over the epoch and
+    all_reduce(SUM)s across ranks, which is only correct on sums.
+
+    The returned scalar `loss` is byte-identical with and without the flag, so
+    train/val loss stays comparable across runs.
+
+    NOTE: mean(depth_sum / depth_cnt) does NOT equal the scalar loss. The scalar
+    is a mean-of-batch-means-of-depth-means; the breakdown is sample-weighted
+    over the whole epoch. Sample-weighting is deliberate — deep coverage is
+    sparse (43 val stations at 30-100 cm vs 74 at 0-10), so batch-means would
+    over-weight batches that happen to hold two deep samples. Two different
+    quantities on purpose; see training_runbook.md §19.3.
+    """
     pred = sm_map[:, :, station_row, station_col]                      # (B, n_depths)
+
+    if return_breakdown:
+        # Branch-free so no data-dependent control flow is introduced: the
+        # `if mask_d.any():` pattern below would cost one GPU sync per depth
+        # per batch. nan_to_num keeps NaN out of the autograd-free arithmetic;
+        # the `valid` mask zeroes those entries out anyway.
+        valid     = ~torch.isnan(label)                                # (B, D) bool
+        lab       = torch.nan_to_num(label, nan=0.0)
+        elem      = F.huber_loss(pred.detach(), lab, delta=delta, reduction="none")
+        depth_sum = (elem * valid).sum(0).float()                      # (D,)
+        depth_cnt = valid.sum(0).float()                               # (D,)
 
     if per_depth:
         # Equal gradient weight per depth: compute Huber separately for each depth,
@@ -763,16 +794,17 @@ def masked_huber_loss(
                 depth_losses.append(
                     F.huber_loss(pred[mask_d, d], label[mask_d, d], delta=delta, reduction="mean")
                 )
-        if not depth_losses:
-            return pred.sum() * 0.0
-        return torch.stack(depth_losses).mean()
+        loss = torch.stack(depth_losses).mean() if depth_losses else pred.sum() * 0.0
+    else:
+        # Default: pool all valid (batch × depth) pairs into one mean — preserves
+        # backward compatibility with baseline runs.
+        mask = ~torch.isnan(label)
+        loss = (F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
+                if mask.any() else pred.sum() * 0.0)
 
-    # Default: pool all valid (batch × depth) pairs into one mean — preserves
-    # backward compatibility with baseline runs.
-    mask = ~torch.isnan(label)
-    if not mask.any():
-        return pred.sum() * 0.0
-    return F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
+    if return_breakdown:
+        return loss, depth_sum, depth_cnt
+    return loss
 
 
 def total_variation_loss(sm_map: torch.Tensor) -> torch.Tensor:

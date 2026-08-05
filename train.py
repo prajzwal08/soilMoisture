@@ -31,6 +31,7 @@ except ImportError:
     psutil = None
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -353,9 +354,20 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0, per_depth=False):
+def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0, per_depth=False,
+                  return_breakdown=False):
+    """Returns (loss, tv) — or (loss, tv, depth_sum, depth_cnt) if return_breakdown.
+
+    depth_sum/depth_cnt are raw per-depth SUMS over this batch (see
+    masked_huber_loss docstring). They describe the Huber term only — the TV and
+    boundary terms are not attributed to any depth.
+    """
     import torch.nn.functional as F
-    loss = masked_huber_loss(pred, label, per_depth=per_depth)
+    if return_breakdown:
+        loss, depth_sum, depth_cnt = masked_huber_loss(
+            pred, label, per_depth=per_depth, return_breakdown=True)
+    else:
+        loss = masked_huber_loss(pred, label, per_depth=per_depth)
     if lambda_tv > 0.0:
         tv = total_variation_loss(pred)
         loss = loss + lambda_tv * tv
@@ -364,7 +376,18 @@ def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0, per_depth=Fal
     if lambda_boundary > 0.0:
         boundary = F.relu(-pred).mean() + F.relu(pred - 1.0).mean()
         loss = loss + lambda_boundary * boundary
+    if return_breakdown:
+        return loss, tv.detach(), depth_sum, depth_cnt
     return loss, tv.detach()
+
+
+def _per_depth_mean(depth_sum, depth_cnt) -> dict:
+    """Sums/counts -> {depth_name: mean loss}, with nan where a depth was never
+    observed.  nan rather than 0.0 so an absent depth is visibly absent instead
+    of masquerading as a perfect fit (runbook §19.4)."""
+    mean = (depth_sum / depth_cnt.clamp(min=1)).tolist()
+    cnt  = depth_cnt.tolist()
+    return {d: (mean[i] if cnt[i] > 0 else float("nan")) for i, d in enumerate(SM_DEPTHS)}
 
 
 def _scan_for_nan(tensors: dict, exclude=()) -> dict:
@@ -448,6 +471,12 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
     compute_time = 0.0
     t_data_start = time.perf_counter()
 
+    # Per-depth Huber accumulators — raw sums, reduced with all_reduce(SUM) by the
+    # caller (runbook §19.4). Kept on-device and never .item()'d inside the loop.
+    n_depths     = len(SM_DEPTHS)
+    depth_sum_acc = torch.zeros(n_depths, device=device)
+    depth_cnt_acc = torch.zeros(n_depths, device=device)
+
     # Loader is pre-sliced by make_resume_loader — no IO skip needed here.
     # skip_batches is kept as a display/checkpoint offset only.
     if skip_batches > 0:
@@ -473,7 +502,12 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
                 if bad_out:
                     _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
-            loss, tv = _compute_loss(mu, batch["label"], lambda_tv, lambda_boundary, per_depth)
+            loss, tv, d_sum, d_cnt = _compute_loss(
+                mu, batch["label"], lambda_tv, lambda_boundary, per_depth,
+                return_breakdown=True)
+
+        depth_sum_acc += d_sum
+        depth_cnt_acc += d_cnt
 
         optimizer.zero_grad()
         loss.backward()
@@ -513,7 +547,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
         t_data_start = time.perf_counter()
 
     n = max(n_batches, 1)
-    return total_loss / n, total_tv / n, data_time, compute_time
+    return total_loss / n, total_tv / n, data_time, compute_time, depth_sum_acc, depth_cnt_acc
 
 
 @torch.no_grad()
@@ -534,13 +568,20 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     SROW = SoilMoistureModel.STATION_ROW
     SCOL = SoilMoistureModel.STATION_COL
 
+    n_depths      = len(SM_DEPTHS)
+    depth_sum_acc = torch.zeros(n_depths, device=device)
+    depth_cnt_acc = torch.zeros(n_depths, device=device)
+
     for batch in CudaPrefetcher(loader, device):
         if max_batches is not None and n_batches >= max_batches:
             break
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu = model(batch)
-            loss, _ = _compute_loss(mu, batch["label"], per_depth=per_depth)
+            loss, _, d_sum, d_cnt = _compute_loss(
+                mu, batch["label"], per_depth=per_depth, return_breakdown=True)
+        depth_sum_acc += d_sum
+        depth_cnt_acc += d_cnt
         total_loss += loss.item()
         n_batches  += 1
 
@@ -555,6 +596,11 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         loss_t = torch.tensor(mean_loss, device=device)
         dist.all_reduce(loss_t, op=dist.ReduceOp.AVG)
         mean_loss = loss_t.item()
+
+        # Per-depth accumulators are raw SUMS, so they reduce with SUM (not AVG
+        # like the scalar above) before being divided by the global count.
+        dist.all_reduce(depth_sum_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(depth_cnt_acc, op=dist.ReduceOp.SUM)
 
         # Gather predictions from all ranks to rank 0 (variable-length safe via pickle)
         n_depths = len(SM_DEPTHS)
@@ -579,7 +625,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         targets = np.concatenate(all_targets, axis=0)
         metrics, per_station = compute_metrics(preds, targets, all_station_keys)
 
-    return mean_loss, metrics, per_station
+    return mean_loss, metrics, per_station, _per_depth_mean(depth_sum_acc, depth_cnt_acc)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -616,6 +662,16 @@ def main():
                         help="Equal-weight Huber per depth (vs. pooled baseline)")
     parser.add_argument("--use-cls-depth", action="store_true",
                         help="Add per-depth CLS tokens to transformer for depth-specific representations")
+    # Regularisation overrides — CONFIG keeps the baseline values so comparison runs
+    # stay clean; pass these on the sbatch line to make a run self-documenting.
+    parser.add_argument("--weight-decay", type=float, default=None,
+                        help="AdamW weight decay (default 0.05; bias/norm always excluded)")
+    parser.add_argument("--drop-path-rate", type=float, default=None,
+                        help="Stochastic depth rate, linearly scaled across layers (default 0.1)")
+    parser.add_argument("--early-stop-patience", type=int, default=None,
+                        help="Epochs without val improvement before stopping (default 20)")
+    parser.add_argument("--lr-patience", type=int, default=None,
+                        help="ReduceLROnPlateau patience in epochs (default 10)")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
@@ -629,6 +685,10 @@ def main():
     if args.lambda_boundary is not None: CONFIG["lambda_boundary"] = args.lambda_boundary
     if args.per_depth_loss: CONFIG["per_depth_loss"] = True
     if args.use_cls_depth:  CONFIG["use_cls_depth"]  = True
+    if args.weight_decay        is not None: CONFIG["weight_decay"]        = args.weight_decay
+    if args.drop_path_rate      is not None: CONFIG["drop_path_rate"]      = args.drop_path_rate
+    if args.early_stop_patience is not None: CONFIG["early_stop_patience"] = args.early_stop_patience
+    if args.lr_patience         is not None: CONFIG["lr_patience"]         = args.lr_patience
 
     # ── L12 shared memory preloading (before DDP init to avoid TCPStore timeout) ──
     # Rank 0 reads ~120 GB from GPFS — can take several minutes. Doing this before
@@ -743,6 +803,13 @@ def main():
     n_params = sum(p.numel() for p in raw_model.parameters() if p.requires_grad)
     if is_main:
         print(f"Trainable parameters: {n_params:,}")
+        # Echo the run-defining config. It is saved into the checkpoint too, but a job
+        # log should be readable on its own — otherwise which flags a run actually used
+        # can only be recovered by torch.load-ing a 600 MB checkpoint.
+        _echo = ["run_name", "use_cls_depth", "per_depth_loss", "lr", "batch_size",
+                 "weight_decay", "drop_path_rate", "n_layers", "lambda_tv",
+                 "lambda_boundary", "early_stop_patience", "lr_patience"]
+        print("CONFIG: " + "  ".join(f"{k}={CONFIG.get(k)}" for k in _echo))
 
     # ── Optimiser ─────────────────────────────────────────────────────
     decay_params    = [p for n, p in model.named_parameters()
@@ -855,10 +922,14 @@ def main():
         _log_mem_snapshot(f"epoch_{epoch:03d}_start", device, is_main)
 
         if epoch == val_pending_epoch:
-            # Resuming after a val crash — training already completed, reuse saved metrics
+            # Resuming after a val crash — training already completed, reuse saved metrics.
+            # The per-depth vectors must be initialised here too: the DDP reduce below is
+            # guarded on `epoch != val_pending_epoch`, but the print/log path is not.
             train_loss = saved_train_loss or 0.0
             train_tv   = saved_train_tv   or 0.0
             data_time = compute_time = 0.0
+            train_depth_sum = torch.zeros(len(SM_DEPTHS), device=device)
+            train_depth_cnt = torch.zeros(len(SM_DEPTHS), device=device)
         else:
             # Mid-epoch checkpoint callback (rank 0 only)
             def _save_mid_ckpt(batches_done):
@@ -882,7 +953,8 @@ def main():
                 _loader = train_loader
 
             try:
-                train_loss, train_tv, data_time, compute_time = train_one_epoch(
+                (train_loss, train_tv, data_time, compute_time,
+                 train_depth_sum, train_depth_cnt) = train_one_epoch(
                     model, _loader, optimizer, device, CONFIG["grad_clip"],
                     lambda_tv=CONFIG["lambda_tv"],
                     lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
@@ -920,7 +992,7 @@ def main():
         # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
         # averages the loss across ranks; all_gather_object collects preds to rank 0.
         # No NCCL timeout risk: all GPUs stay active throughout validation.
-        val_loss, metrics, per_station = evaluate(
+        val_loss, metrics, per_station, val_depth_loss = evaluate(
             model if not is_ddp else model.module,
             val_loader, device,
             world_size=world_size, rank=rank,
@@ -939,9 +1011,14 @@ def main():
             t_tv   = torch.tensor(train_tv,   device=device)
             dist.reduce(t_loss, dst=0, op=dist.ReduceOp.AVG)
             dist.reduce(t_tv,   dst=0, op=dist.ReduceOp.AVG)
+            # Per-depth sums/counts reduce with SUM — all_reduce (not reduce) so every
+            # rank stays in sync and the collective count matches the val path.
+            dist.all_reduce(train_depth_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(train_depth_cnt, op=dist.ReduceOp.SUM)
             if is_main:
                 train_loss = t_loss.item()
                 train_tv   = t_tv.item()
+        train_depth_loss = _per_depth_mean(train_depth_sum, train_depth_cnt)
         # val_loss already all_reduced inside evaluate() — same on all ranks, no broadcast needed
 
         scheduler.step(val_loss)
@@ -949,12 +1026,21 @@ def main():
         if is_main:
             peak_vram = torch.cuda.max_memory_allocated(device) / 1e9
             gpu_util  = (compute_time / max(data_time + compute_time, 1e-6)) * 100
-            print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
+            # 6 decimals, not 4: at 4 dp the val_loss printed a flat 0.0022 for four
+            # epochs of run 25150428 while it was actually rising 0.002182 -> 0.002230.
+            print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.6f}  val_loss={val_loss:.6f}"
                   f"  data={data_time:.0f}s  compute={compute_time:.0f}s"
                   f"  gpu_util={gpu_util:.0f}%  peak_vram={peak_vram:.1f}GB")
-            for depth, m in metrics.items():
-                print(f"  {depth:>8s}  MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
-                      f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}")
+            # Iterate SM_DEPTHS, not metrics: compute_metrics drops a depth entirely when
+            # val has no samples for it, but train and val are different station sets, so
+            # a depth can be trained and not validated. Printing from metrics would hide
+            # that depth's train loss altogether.
+            for depth in SM_DEPTHS:
+                m = metrics.get(depth)
+                stats = (f"MSE={m['MSE']:.4f}  MAE={m['MAE']:.4f}  "
+                         f"ubRMSE={m['ubRMSE']:.4f}  bias={m['bias']:.4f}") if m else "no val samples"
+                print(f"  {depth:>8s}  train_loss={train_depth_loss[depth]:.6f}  "
+                      f"val_loss={val_depth_loss[depth]:.6f}  {stats}")
 
             # Per-station ubRMSE — all stations, all depths, sorted by surface ubRMSE
             surface_depth = SM_DEPTHS[0]
@@ -1010,6 +1096,26 @@ def main():
                     log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
                     log_dict[f"val/{depth}/MAE"]    = m["MAE"]
                     log_dict[f"val/{depth}/bias"]   = m["bias"]
+                    log_dict[f"val/{depth}/MSE"]    = m["MSE"]   # printed before, never logged
+                # Per-depth Huber loss — the capacity-vs-scarcity diagnostic (runbook §19.1).
+                # train high+flat => capacity/information ceiling; train low + val high =>
+                # label scarcity.  These need opposite fixes.
+                for depth in SM_DEPTHS:
+                    log_dict[f"train/{depth}/loss"] = train_depth_loss[depth]
+                    log_dict[f"val/{depth}/loss"]   = val_depth_loss[depth]
+                _finite_val = [v for v in val_depth_loss.values() if math.isfinite(v)]
+                if _finite_val:
+                    log_dict["val/worst_depth_loss"] = max(_finite_val)
+                # Mechanism check (§18.7 / §19.4): if the depth tokens stay mutually
+                # identical, each depth is asking the same attention question and
+                # use_cls_depth is inert.  Cosine should sit near -0.02 at init.
+                if CONFIG.get("use_cls_depth", False):
+                    with torch.no_grad():
+                        dt = F.normalize(raw_model.depth_tokens.float(), dim=-1)
+                        cos = dt @ dt.T
+                    for a in range(len(SM_DEPTHS)):
+                        for b in range(a + 1, len(SM_DEPTHS)):
+                            log_dict[f"diag/depth_token_cos_{a}{b}"] = cos[a, b].item()
                 # Worst-5 stations per depth
                 if per_station:
                     for depth in SM_DEPTHS:
@@ -1049,7 +1155,7 @@ def main():
 
             if no_improve_count == 0:
                 _fsync_save(state, ckpt_dir / "best.pt")
-                print(f"  New best val_loss={best_val_loss:.4f} — checkpoint saved")
+                print(f"  New best val_loss={best_val_loss:.6f} — checkpoint saved")
 
         # Broadcast early-stop decision to all ranks so none hang at next DDP sync
         stop_flag = torch.tensor(
