@@ -3106,3 +3106,90 @@ Diagnostic NOT yet run. Run 25235976 continues — e4 turned (`val_loss` 0.00231
 first non-improvement, `no_improve_count` 1 of 6) with best still at e3. The run should be
 left to finish or early-stop on its own; its `val_station_metrics.csv` is an input to §20.6
 and improves with every epoch logged.
+
+### §20.12 Localising the failure — decoder or temporal transformer?
+
+§20 asks *whether* the level information exists. This asks *where it is lost*. The two are
+complementary and share a target, a split and a metric, so their numbers are directly
+comparable.
+
+**Method: measure the same quantity at three points along the pipeline.**
+
+```
+raw static features   →   context vector   →   final prediction
+      (input)             (decoder input)          (output)
+```
+
+| Point | How | Answers |
+|---|---|---|
+| Input | §20.4 ridge on soil / terrain / climate → station mean | is the information present at all? |
+| Decoder boundary | ridge on the 768-d context vector → station mean | did the transformer preserve it? |
+| Output | RMS of per-station `bias` in `val_station_metrics.csv` | did the decoder use it? |
+
+Whichever **adjacent pair** shows the drop localises the failure:
+
+| input | context | output | Verdict |
+|---|---|---|---|
+| good | good | bad | transformer encoded it; **the DECODER is discarding it** |
+| good | bad | bad | **the TRANSFORMER destroyed it**; the decoder never had a chance |
+| bad | — | bad | no information — §20.7 Branch A; neither component is at fault |
+
+All three probes use the frozen best checkpoint. **No retraining, no GPU-days.**
+
+#### 20.12.1 Do this first — the FiLM norm check (minutes, no forward pass)
+
+`FiLMLayer` is **zero-initialised** (`model.py:158-160`): `proj.weight` zeroed, scale bias 1,
+shift bias 0. At step 0 the decoder is therefore a plain U-Net that ignores the context
+entirely — that zero-init is what makes `use_cls_depth` safe to switch on (§19), but it also
+means FiLM must *learn its way out of zero*.
+
+**FiLM is the only route by which the transformer's context modulates the decoder.** So read
+the checkpoint and measure `‖film.proj.weight‖` per FiLM layer:
+
+- **Still ≈0** → the decoder is ignoring the context vector. Station-specific level *cannot*
+  reach the output however well the transformer encoded it. That is a structural answer and it
+  explains the symptom exactly: the decoder emits a generic map driven by spatial tokens, and
+  per-station level never enters. Fix is a plumbing/optimisation problem (FiLM learning rate,
+  init scale, or a direct skip from context to the head), not a data problem.
+- **Grown substantially** → context IS modulating the decoder; the failure is upstream, or is a
+  learning problem rather than a wiring one. Proceed to 20.12.2.
+
+Cost: one `torch.load` of `best.pt`. Given the zero-init and the fact that only pixel
+(112,112) is supervised out of 224×224, FiLM being under-trained is a live hypothesis, not a
+formality.
+
+#### 20.12.2 The context probe
+
+One forward pass over the 74 val stations with the frozen checkpoint, caching the context
+vector, then ridge from context → station mean. **Use §20.4's methodology exactly** —
+standardised features, GroupKFold on `location_group_id`, same 577/74 split — so the number is
+commensurable with the input-side ridge. A drop between the two localises the loss to the
+encoder/transformer.
+
+#### 20.12.3 The bypass head — proof rather than inference
+
+Cache context vectors for train+val once (a single forward pass), then train a tiny MLP
+`context → 3 scalars` with everything else frozen. Minutes on cached features.
+
+If the bypass head's RMS per-station bias is materially lower than the full decoder's, the
+decoder is **provably** the bottleneck — and the run also yields a working alternative readout
+for free.
+
+#### 20.12.4 Why this matters beyond the level problem
+
+The Tier-1 verdict (2026-07-01) already traced over-smooth SM maps to the decoder side —
+bilinear upsampling plus single-pixel loss — rather than to attention. If the decoder is also
+where absolute level dies, that is **the same root cause surfacing twice**, and it materially
+raises the priority of dense spatial supervision (§16.4, currently deferred): one fix would
+then address both the smoothness and the level failure.
+
+Conversely, if FiLM has trained and the context probe is strong, the decoder is exonerated
+here and §16.4 stays a separate, independently-motivated piece of work.
+
+#### 20.12.5 Ruled out as a cause
+
+Modality dropout was checked and is **not** implemented in `model.py`, despite
+`text/architecture.md` listing "Modality dropout p=0.5 during training" as design intent. Had
+it been active on the soil branch it would have been a direct cause — the model would have been
+explicitly trained not to depend on the only input carrying site-level information. Confirm it
+is absent from `dataset.py` and `train.py` too before closing this out.
