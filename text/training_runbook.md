@@ -2653,3 +2653,181 @@ a second run. With the existing baseline that gives a clean three-point design:
 | `cls_depth_star_reg` — **to launch** | **on** | wd 0.1, dp 0.2, patience 6/3 | the regularisation, given the row above |
 
 Compare all three on `val/huber_pooled` (§19.10.2) and per-depth ubRMSE — never on `val_loss`.
+
+---
+
+## §19.12 Pre-launch bug hunt — 9 defects found and fixed (Session 20, 2026-08-05)
+
+Before committing H100 hours, `train.py`, `model.py` and `dataset.py` were reviewed
+adversarially. Nine real defects surfaced. Two were introduced today; seven were pre-existing
+and had been shipping in every run to date. Runs 25234370 and 25234753 were cancelled during
+SHM preload (no checkpoint written, no compute wasted) to fix them first.
+
+Summary, worst first:
+
+| # | Defect | Sev | Origin | Where |
+|---|---|---|---|---|
+| 1 | `nan` silently poisoned the per-depth diagnostic | High | today | `model.py:783` |
+| 2 | Every resume reset LR, discarding all scheduler decay | High | pre-existing | `train.py:943` |
+| 3 | Checkpoints written non-atomically over the live 600 MB file | High | pre-existing | `train.py:265` |
+| 4 | 10 decoder BatchNorm scales were being weight-decayed | Med | pre-existing | `train.py:748` |
+| 5 | `--weight-decay` / `--lr-patience` silently reverted on resume | Med | pre-existing | `train.py:942` |
+| 6 | Optimizer group-size mismatch → bare `ValueError` crash-loop | Med | today (from #4) | `train.py:942` |
+| 7 | Mid-epoch resume reverted the LR | Med | pre-existing | `train.py:1007` |
+| 8 | Depth-token cosine measured the wrong tensor | Med | today | `train.py:1194` |
+| 9 | `endswith(".bias")` dropped 6 `in_proj_bias` tensors | Med | today (from #4) | `train.py:449` |
+
+### 19.12.1 `nan` poisoned the per-depth diagnostic
+
+```python
+depth_sum = (elem * valid).sum(0)     # WRONG: nan * False is nan, not 0
+```
+
+`pred` is taken for **all** depths (`sm_map[:, :, row, col]`) while the scalar loss only ever
+sees `pred[mask]`. So a non-finite prediction at a depth with **no label** cannot affect
+training — but it made `depth_sum` `nan`, survived `all_reduce(SUM)` to all four ranks, and
+turned `train/{depth}/loss`, `huber_pooled` and `huber_depth_mean` into `nan` while
+`train_loss` still printed a healthy number. That is exactly the signal §19.1 added the
+breakdown to obtain.
+
+Fixed with `torch.where(valid, elem, elem.new_zeros(()))`. Guarded by test §4b.
+
+### 19.12.2 Every resume reset the learning rate
+
+The single most likely way this run could have been silently corrupted.
+
+```python
+optimizer.load_state_dict(ckpt["optimizer"])
+for pg in optimizer.param_groups:      # ran unconditionally
+    pg["lr"] = CONFIG["lr"]
+```
+
+`ReduceLROnPlateau.load_state_dict` is a bare `__dict__.update` — it never writes back to
+`param_groups`, and `_reduce_lr` reads `param_group["lr"]` live. So the decayed LR lives only
+in the optimizer, and this loop overwrote it.
+
+`slurm/train.sh` sets `--requeue` and `--time=120:00:00`. Any preemption or requeue after the
+first LR drop jumped LR from e.g. 5e-5 back to 2e-4, while the restored
+`scheduler.best`/`num_bad_epochs` still believed the decay had happened. No crash, no log
+line — the run simply re-diverges, days in.
+
+Fixed: LR is overridden **only** when `--lr` is passed explicitly. Same treatment for
+`--weight-decay` (#5) and `--lr-patience` (#5), which `load_state_dict` was also silently
+reverting to the checkpoint's values while `CONFIG`, W&B and the startup echo all still
+reported the flags you passed. A `[resume]` line now prints the effective lr/wd/patience.
+
+### 19.12.3 Non-atomic checkpoint writes
+
+`_fsync_save` called `torch.save` straight over the live `last.pt`/`mid_epoch.pt` — 600 MB on
+GPFS. SLURM sends SIGTERM then SIGKILL after `KillWait` (30 s default; `train.sh` sets no
+`--signal=B:TERM@N`). A kill part-way through leaves a truncated checkpoint that `torch.load`
+rejects **on all four ranks**, so the job crash-loops on requeue. Worse, a truncated `last.pt`
+plus a `best.pt` written from the same state moments later can lose a multi-day run outright.
+
+Fixed: write to `.tmp`, fsync, `os.replace` (atomic within a filesystem), then fsync the
+directory so the rename itself is durable. A reader now sees either the whole old file or the
+whole new one.
+
+### 19.12.4 Weight decay was hitting BatchNorm scales
+
+The optimizer split was name-based:
+
+```python
+decay_params = [p for n, p in model.named_parameters()
+                if p.requires_grad and "bias" not in n and "norm" not in n.lower()]
+```
+
+Every decoder BatchNorm sits inside an `nn.Sequential`, so PyTorch names it positionally —
+`decoder.conv1.net.1.weight` — with no `norm` substring. The filter missed all ten. Their
+*biases* were excluded (the name contains `bias`), which is what made it hard to spot.
+
+Only 3,424 scalars of 50 M, but each BatchNorm γ is a **multiplicative gate on an entire
+decoder feature map**: decaying it attenuates signal rather than constraining capacity. And
+§19.5 had just doubled `weight_decay` 0.05 → 0.1, doubling the effect — inside the very run
+meant to measure what regularisation does.
+
+Fixed: `_split_param_groups()` selects by module **type**, matching on `id(p)` so DDP's
+`module.` prefix is irrelevant. Newly protected: 8 decoder + 2 soil-encoder BatchNorm scales,
+plus `depth_tokens` (a learned *input* like a positional embedding — decaying it pulls the
+three per-depth queries back toward the symmetric state §18.3 exists to break).
+
+Group sizes 81/83 → 70/94.
+
+**And a regression caught while fixing it (#9):** the first attempt used `endswith(".bias")`,
+which silently dropped protection from six `self_attn.in_proj_bias` tensors — MultiheadAttention's
+packed QKV bias has no dot before `bias`. The exact mirror of the original defect. Now
+`endswith("bias")`, with a test naming `in_proj_bias` explicitly and another asserting that
+nothing protected by the old filter lost protection.
+
+### 19.12.5 The mechanism diagnostic watched the wrong tensor
+
+`diag/depth_token_cos_*` measured `self.depth_tokens` — the learned **input** parameters. The
+failure mode it exists to catch is `use_cls_depth` being inert, and that manifests in the
+transformer **outputs**: after six bidirectional layers all three CLS slots can carry identical
+content while the input parameters remain near-orthogonal (cos ≈ 0, "looks healthy").
+
+Without this fix the run could have gone four days with the diagnostic reading fine and the
+per-depth losses locked together, leaving no way to tell whether the CLS mechanism or the
+decoder was at fault.
+
+Fixed: `SoilMoistureModel.forward` stashes the batch-mean `depth_ctx` (detached, ~9 KB) and
+training now logs `diag/depth_ctx_cos_*` alongside the parameter cosine. **`depth_ctx_cos` is
+the one to watch.**
+
+### 19.12.6 Verified clean
+
+`model.py` came back with no blocking defect, verified by execution rather than reading:
+`use_cls_depth` index offsets (`depth_ctx` lands exactly on the prepended slots; `sp_start`
+correct; 199 positions excluded from the context pool); star-residual gradient routing
+(`∂out[:,d]/∂heads[k]` nonzero for exactly `k ∈ {0,d}`); channel order matching `SM_DEPTHS`;
+FiLM identity at init; `nan_to_num` giving sums identical to masking first; scalar loss
+byte-identical; `F.huber_loss` on autocast's fp32 list so no bf16 accumulation; and the
+`use_cls_depth=False` path unchanged, so old checkpoints still load.
+
+`train.py` DDP collective symmetry was traced and is clean — every collective is reached by all
+ranks, none sits inside an `is_main` block, and the two new `all_reduce`s are correctly placed
+above the rank-0 guard. No unbound-variable path on either resume route.
+
+### 19.12.6b `dataset.py` — clean for this run, two guards added
+
+`dataset.py` was reviewed against the actual data on disk, not just read. Everything that could
+corrupt labels is **provably** clean for this run:
+
+| Hazard | Finding |
+|---|---|
+| Depth→channel mis-mapping | The only depth strings across all 993 stores are exactly `0-10` (889), `10-30` (686), `30-100` (554). No whitespace or format variants, so `depths.index()` cannot collide; a different order is handled by construction, a subset just leaves NaN |
+| QC realignment (`dataset.py:184-186`) | 513/890 stations hit the trailing-slice realign. Proved correct: the pre-2016 trim archives contain no `labels_qc` (it was written later, from the untrimmed series), `len(labels_dates) == qc_len - sm_len` **exactly** for all 513, and all start at 20160101 — so the surplus is entirely leading |
+| Label values | At `qc == 0` — the only slots used — **0 values > 1.0** out of 5,192,395, 8 negatives, 0 NaNs |
+| Date alignment | All-integer YYYYMMDD, no timezones. ERA5 right-alignment verified across all 661 in-scope stations: **0 interior gaps, and the window's last ERA5 day equals the target day for all 1,598,711 observed label days** |
+| memmap staleness | All 8,667 `.npy` slots: JSON shape matches zarr layer length and byte size equals `prod(shape)*2` exactly, 0 mismatches |
+| Missing → 0.0 confusion | Missingness is always out-of-band (`doys == 0` / `valid=False`), never a sentinel value |
+| DDP worker safety | Read-only memmaps use position-independent page faults (no shared fd offset); zarr opens a fresh fd per chunk, so none crosses the fork |
+
+Two guards added anyway, both against burning 120 h × 4 H100s:
+
+- `_load_l12_shm` checked only `bin_path.exists()` then read `meta.json` unconditionally
+  (`dataset.py:699`). The preloader creates the `.bin` *before* the `.meta.json`, and its own
+  resume check is `if bin_path.exists()`, so a rank-0 death between those statements leaves a
+  bin with no meta that never gets repaired → `FileNotFoundError` on all four ranks. Now checks
+  both.
+- `while not _shm_done.exists(): sleep(2)` (`train.py:798`) had **no timeout**. If rank 0 died
+  during preload, ranks 1-3 would spin for the full 120 h walltime holding four H100s. Now
+  bounded at 3 h (worst observed preload: 1901 s) with an explicit failure message.
+
+Not applicable to this run, recorded for when scope changes: partial `.npy` coverage is silent
+unless a station has *no* npy at all (103/102/78 stations lack s2/s1_asc/s1_desc npy, but **zero**
+are in `sm_only` train+val); and with `--max-stations` the preloader and the train dataset select
+different station subsets, so smoke runs partly bypass the shared-memory design.
+
+### 19.12.7 Known and accepted
+
+- `evaluate` calls `_compute_loss` **without** `lambda_boundary`, so `val_loss` excludes the
+  boundary penalty that `train_loss` includes — model selection optimises a slightly different
+  objective than training. Left unchanged: fixing it would change `val_loss`'s definition and
+  break comparability with `pg7mw3xb`, and `huber_pooled` (§19.10.2) is already boundary-free
+  and consistent across train and val. Flagged for a deliberate decision, not changed silently.
+- After a val-crash resume, one epoch's per-depth **train** losses log as `nan` (the old
+  checkpoint stores `train_loss` but not the depth vectors). Cosmetic; one row in W&B.
+- At step 0, `depth_film[1:]` receives exactly zero gradient (zero-init offset heads × zero-init
+  FiLM projection). Self-resolving after one AdamW step, but the deep-depth FiLM starts one step
+  behind — worth knowing if the first ~100 batches look flat.
