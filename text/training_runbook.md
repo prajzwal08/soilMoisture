@@ -3292,3 +3292,36 @@ carrying site-level information is always available. That conclusion survives th
 **Method note worth generalising:** the original error came from grepping one file and
 concluding absence. For any "is X implemented" question spanning the data path, check
 `dataset.py`, `model.py` and `train.py` before recording a negative.
+
+### §20.13 Plan once ubRMSE 0.04 is off the table (2026-08-05)
+
+Run 25235976 at e6: val 0.002230 (best), ubRMSE 0.0543 / 0.0504 / 0.0552, still improving but
+dynamics near-flat — 6 epochs bought 4% ubRMSE at the surface, ~0% at depth, while val_loss
+fell 11%. **Level is what's moving, not dynamics.** 0.04 needs ~50 more epochs at a
+decelerating rate → not reachable by this run.
+
+**Order of work:**
+
+1. **Diagnostics first** (§20.12.1 FiLM norm, §20.4 ladder) — minutes each. If FiLM ≈0, ubRMSE
+   is capped by wiring not physics, and everything below is premature.
+2. **Per-station standardised anomaly target** (§20.7-A1) — the single change most likely to
+   move ubRMSE. ~Half the loss is currently spent on the station offset, unlearnable at unseen
+   sites; removing it sends all capacity to dynamics. Testable prediction: ubRMSE **improves**,
+   not merely gets relabelled.
+3. **Dense spatial supervision** (§16.4) — largest untapped structural lever. Only pixel
+   (112,112) of 224² is supervised; the Tier-1 verdict already traced over-smooth maps to this,
+   and it targets the decoder that §20.12 may be about to implicate.
+
+**Reframe the bar.** 0.04 is SMAP's mission requirement against *core validation sites*. Broad
+ISMN point-scale validation of SMAP/SMOS typically lands nearer 0.05-0.06 — **confirm against
+current literature before quoting** — in which case ubRMSE ≈0.054 at stations the model has
+never seen is competitive, not a failure. Claim becomes: transferable SM *dynamics* at unseen
+sites, ubRMSE ≈0.05, absolute level explicitly out of scope with §20 as the evidence.
+
+**Ruled out with evidence — do not spend a run on these:**
+
+| Lever | Why ruled out |
+|---|---|
+| More regularisation | §19.5 doubled wd and drop_path; memorisation curve unchanged vs S16 |
+| More depth capacity / cascade | 30-100 has the LOWEST train loss of three depths (§20.2) |
+| Raising Huber `delta` | train residuals ≈0.020-0.027, already inside delta=0.05 → delta is inactive where gradients are produced; and it targets offset, which ubRMSE removes by construction |
