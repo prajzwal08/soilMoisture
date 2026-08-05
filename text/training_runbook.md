@@ -2931,12 +2931,43 @@ Strip the problem to one number per station and ask it in isolation.
 **Table.** One row per station, 577 train + 74 val (the stations the run actually used, not
 the CSV's 680/90 — token availability differs, and the comparison must be exact).
 
-| Block | Features |
-|---|---|
-| Soil | the 21 OpenLandMap channels averaged over the 74×74 patch (21), plus their spatial std (21) — within-footprint heterogeneity may itself matter |
-| Terrain | DEM mean, std, slope |
-| Land cover | LULC class fractions over the patch |
-| Climate | mean ERA5 precipitation, mean temperature, aridity index |
+**Run it as a NESTED LADDER, not one lumped model.** Each block's *increment* attributes the
+information, which turns the diagnostic from a yes/no into "here is which input matters".
+
+| Block | Features | What its increment tells you |
+|---|---|---|
+| B0 | global training mean | null baseline; defines "no skill" |
+| B1 | soil (21 channel means over the 74×74 patch + their 21 spatial stds) + DEM mean/std/slope + LULC class fractions | do static site properties determine level? |
+| B2 | **+ all 19 `ERA5_VARS` temporal means** over the station's whole record | does the forcing the model *already has* determine it? |
+| B3 | + derived water-balance terms: VPD from `t2m`/`d2m`, a temperature-based PET (Hargreaves, from `t2m_min`/`t2m_max`), aridity ratio, seasonal amplitude | could the network have derived these itself? |
+| B4 | + lat/lon | how much is merely geographic proximity? |
+
+**Use the 19 ERA5 means, not hand-picked climate summaries.** Selecting features by hand tests
+the feature engineering, not the information content. Feeding all 19 makes the probe a fair
+upper bound on what is linearly extractable **from what the network actually sees**. Average
+over each station's whole record, not the 365-day sample window — the target is its long-term
+climate, not one sample's forcing.
+
+**Decisive read:** if **B2 ≫ B1**, the level information is carried by forcing the model
+already receives, which makes the failure unambiguously a model failure and hands the question
+straight to §20.12. If **B3 ≫ B2**, the network could have derived the term but did not, which
+argues for supplying it explicitly rather than trusting a 6-layer transformer to learn PET from
+raw fields.
+
+**Deliberately out of scope (decided 2026-08-05):** ERA5-Land `volumetric_soil_water_layer_*`
+and `total_evaporation` are **not** downloaded — `download_era5land.py` fetches only
+t2m/d2m/skt/u10/v10/sp × {mean,min,max} + tp_sum, and the zarr stores exactly those 19
+(`era5/values (N, 19)`). They were considered as a "is the information obtainable at all"
+ceiling and an ERA5-Land baseline, and **rejected** — not worth a new acquisition for this
+diagnostic. Consequence: the ladder measures what is extractable from **current inputs only**,
+so a negative result means "not learnable from what we have", NOT "not learnable in principle".
+State it that way in any write-up.
+
+**Also absent from the zarr, though it was downloaded:** `ssrd`/`strd` (solar and thermal
+radiation × mean/min/max). `download_era5land.py` writes them into the per-station NetCDFs but
+they never reached the zarr, so the model has never seen them. Downwelling radiation is the
+primary driver of evaporative demand. If B3's temperature-based PET carries signal, re-ingesting
+these six from the existing NetCDFs is the cheap follow-up — a re-ingest, not a download.
 
 **Target.** Each station's mean observed SM, **computed separately per depth** (three
 independent regressions). 30-100 cm is where the problem is worst and must be reported
@@ -3186,10 +3217,40 @@ then address both the smoothness and the level failure.
 Conversely, if FiLM has trained and the context probe is strong, the decoder is exonerated
 here and §16.4 stays a separate, independently-motivated piece of work.
 
-#### 20.12.5 Ruled out as a cause
+#### 20.12.5 Modality dropout — what is actually withheld during training
 
-Modality dropout was checked and is **not** implemented in `model.py`, despite
-`text/architecture.md` listing "Modality dropout p=0.5 during training" as design intent. Had
-it been active on the soil branch it would have been a direct cause — the model would have been
-explicitly trained not to depend on the only input carrying site-level information. Confirm it
-is absent from `dataset.py` and `train.py` too before closing this out.
+**CORRECTION.** An earlier version of this section stated modality dropout was not
+implemented. That was wrong. It **is** implemented — entirely in `dataset.py`, never in
+`model.py`. Grepping `model.py` alone finds only `DropPath` and ordinary `nn.Dropout` and
+misses all of it. Look in `dataset.py` for anything of this kind.
+
+| Modality | Treatment during training | Location |
+|---|---|---|
+| ERA5 | 15% of timesteps zeroed and marked as padding | `dataset.py:1054-1058` |
+| SIF | dropped entirely, **p = 0.5** per sample | `dataset.py:1064-1065` |
+| TWSA | dropped entirely, **p = 0.5** per sample | `dataset.py:1071-1072` |
+| Satellite spatial tokens | 50% random token dropout before pyramid pooling | `dataset.py:306, 397` |
+| **Soil / DEM / LULC** | **never dropped — always present** | — |
+
+None is applied at val/test time.
+
+**Soil is therefore ruled out as a direct cause**, which was this check's purpose: the input
+carrying site-level information is always available. That conclusion survives the correction.
+
+**But two consequences the original draft missed:**
+
+1. **TWSA is withheld half the time, and it is the one input about water *storage* rather than
+   forcing.** GRACE terrestrial water storage anomaly is conceptually the closest thing in the
+   input set to "how much water is in this column". Dropping it at p=0.5 explicitly trains the
+   model to discount it. Its ~300 km footprint and monthly cadence limit how well it can
+   discriminate *between* nearby stations — many val stations share a GRACE cell — so this is a
+   hypothesis to test, not a conclusion. If the §20.4 ladder shows a TWSA/SIF block carrying
+   real level information, lowering or removing TWSA's dropout is a one-line experiment, far
+   cheaper than anything in §20.8.
+2. **ERA5's 15% masking is immaterial to the level problem.** It drops individual days at
+   random from a 365-day window; a temporal *mean* over that window is barely perturbed. It
+   targets temporal generalisation, not the station-level signal.
+
+**Method note worth generalising:** the original error came from grepping one file and
+concluding absence. For any "is X implemented" question spanning the data path, check
+`dataset.py`, `model.py` and `train.py` before recording a negative.
