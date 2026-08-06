@@ -3959,31 +3959,52 @@ case for §21.9 item 1 (anomaly retargeting), which removes exactly the memorise
 #### NSE vs r² — why §22.5 insisted on both
 
 At OOS 0-10: r² = 0.611 but NSE = −0.76, purely because the level is wrong; NSE_anom is
-**+0.35**, i.e. the model beats each station's own climatology on dynamics. Reporting a
-single "R²" would have hidden either the skill or the failure. At 30-100 NSE_anom is
-−1.76: **even after removing the level error the model is worse than predicting the station
-mean.** Honest negative result for the deep layer — do not report 30-100 as working.
+positive, i.e. the model beats each station's own climatology on dynamics. Reporting a
+single "R²" would have hidden either the skill or the failure.
+
+**CORRECTION (same day). Never quote mean NSE — it is unbounded below and a handful of
+catastrophic stations dominate it.** Use the median and the fraction beating climatology:
+
+| OOS | mean NSE_anom | **median** | % stations > 0 | p10 |
+|---|---|---|---|---|
+| 0-10 | +0.347 | **+0.555** | 88.9% | −0.06 |
+| 10-30 | −0.073 | **+0.476** | 82.4% | −0.26 |
+| 30-100 | −1.761 | **+0.214** | 58.5% | −2.49 |
+
+An earlier draft of this section read "30-100 does not work … worse than predicting the
+station mean" off the mean. **That was wrong.** The median station at 30-100 beats its own
+climatology and 58.5% of stations do. 30-100 is the **weakest** depth with a **heavy failure
+tail**, not a broken one. Same pattern on OOST (0-10 mean −0.676 vs median +0.516).
 
 Per-station `bias` IS the level offset (`mean(p) − mean(t)`); there is no separate `offset`
 column. The §20.1 cancellation warning is dramatic here: OOS 10-30 mean bias is −0.0001
 (reads as flawless calibration) while RMS offset is 0.0646 and 42/125 stations are off by
 >0.05. **Always RMS the per-station bias.**
 
-#### SNOTEL dominates the headline (new, not previously recorded)
+#### SNOTEL — raw ubRMSE is worse, but the model is RELATIVELY BETTER there
 
-ubRMSE 0-10, split by network:
+**CORRECTED (same day). Do NOT exclude SNOTEL — it would be cherry-picking in reverse.**
 
-| split | non-SNOTEL | SNOTEL | penalty | SNOTEL share |
-|---|---|---|---|---|
-| oos | **0.0433** | 0.0616 | +42% | 73/180 |
-| oot | 0.0350 | 0.0427 | +22% | 241/399 |
-| oost | **0.0455** | 0.0602 | +32% | 58/98 |
+| OOS 0-10 | non-SNOTEL | SNOTEL |
+|---|---|---|
+| ubRMSE | 0.0433 | 0.0616 (**+42%**) |
+| observed SD | 0.0623 | 0.0898 (**+44%**) |
+| ubRMSE / SD (lower better) | 0.682 | **0.630** |
+| median NSE_anom (higher better) | +0.535 | **+0.602** |
 
-SNOTEL are snow-dominated mountain sites (sensor under snowpack or frozen for months) and
-are 41-60% of every split. Excluding them, **OOS 0-10 ubRMSE is 0.0433** — below the
-0.05-0.06 typical ISMN point-scale range (§21.9 item 3) and approaching the 0.04 SMAP bar.
-8 of the 10 worst OOST stations are SNOTEL, up to ubRMSE 0.124. Worth reporting stratified,
-and worth asking whether frozen-soil days should be masked at all.
+SNOTEL ubRMSE is 33-42% higher at every depth — but their observed variability is 44-57%
+higher. **Normalised for that, SNOTEL is the split the model handles best** (better
+ubRMSE/SD and better median NSE_anom at all three depths). Snowmelt-driven mountain sites
+simply swing harder, and ubRMSE is an absolute metric. An earlier draft proposed excluding
+SNOTEL to report "OOS 0-10 = 0.0433" — that would drop the stations where the model
+performs *relatively best*. **Report ubRMSE alongside a variance-normalised metric
+(NSE_anom or ubRMSE/SD) instead of excluding anything.**
+
+Freeze masking is also not the lever it looked like. ERA5 `skt` is in the zarr in Kelvin
+(confirmed, 100% join to prediction rows), so the SMAP-style flag `skt_mean < 273.15` is
+free to compute. It flags 23-32% of OOS rows — but frozen days are only **1.05-1.11×**
+worse, so masking them moves overall MAE by ~2.5%. The SNOTEL gap is a variance effect,
+**not** a frozen-soil effect. Do not attribute it to freezing without checking.
 
 #### §22.7 diagnostic — FIRED. Seasonality excluded by two independent controls
 

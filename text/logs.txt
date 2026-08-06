@@ -3631,3 +3631,47 @@ DO NOT quote OOT as clean temporal generalisation.
 Residual confound not yet checked: if OOT records end mid-2023 more often than
 OOST's, late-year samples have sparser tokens, mimicking decay. The masking
 ablation is immune to it and is now justified rather than speculative.
+
+--- CORRECTIONS to the §22 write-up (same day) ---
+
+Two claims I made earlier today were WRONG. Both are fixed in §22.9.
+
+1. "30-100 does not work — worse than predicting the station mean."
+   WRONG. I quoted the MEAN NSE_anom (-1.76). NSE is unbounded below and a few
+   catastrophic stations dominate the mean. Medians:
+
+     OOS      mean     median   %stations>0   p10
+     0-10    +0.347    +0.555      88.9%     -0.06
+     10-30   -0.073    +0.476      82.4%     -0.26
+     30-100  -1.761    +0.214      58.5%     -2.49
+
+   The MEDIAN station at 30-100 beats its own climatology and 58.5% of stations
+   do. 30-100 is the WEAKEST depth with a HEAVY FAILURE TAIL, not a broken one.
+   Same pattern on OOST (0-10 mean -0.676 vs median +0.516).
+
+   RULE: never quote mean NSE. Use median + fraction beating climatology + p10.
+   (I added the median columns for exactly this reason and then didn't use them.)
+
+2. "Exclude SNOTEL; OOS 0-10 is really 0.0433."
+   WRONG, and it would have been cherry-picking in reverse. SNOTEL ubRMSE is
+   33-42% higher, but their observed SD is 44-57% higher. Normalised:
+
+     OOS 0-10        non-SNOTEL   SNOTEL
+     ubRMSE            0.0433     0.0616  (+42%)
+     observed SD       0.0623     0.0898  (+44%)
+     ubRMSE/SD         0.682      0.630   <- SNOTEL BETTER
+     median NSE_anom   +0.535     +0.602  <- SNOTEL BETTER
+
+   The model handles SNOTEL RELATIVELY BEST at all three depths. Those sites just
+   swing harder (snowmelt) and ubRMSE is absolute. Report a variance-normalised
+   metric alongside ubRMSE; do not exclude stations.
+
+   I also blamed the SNOTEL gap on frozen soil without testing it. ERA5 skt is in
+   the zarr in Kelvin (100% join), so the SMAP-style flag skt_mean < 273.15 is
+   free. It flags 23-32% of OOS rows but frozen days are only 1.05-1.11x worse
+   -> masking moves overall MAE ~2.5%. The SNOTEL gap is a VARIANCE effect, not
+   a freezing effect.
+
+Net effect on the headline: the model looks BETTER than this morning's write-up,
+not worse. 89% / 82% / 59% of unseen stations beat their own climatology on
+dynamics at the three depths.
