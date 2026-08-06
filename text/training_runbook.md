@@ -3670,7 +3670,7 @@ val_loss 0.00217653.** 10h13m, 16 epochs.
    validation sites, not broad ISMN point-scale validation (typically 0.05-0.06). If that
    holds, 0.0539 / 0.0500 at *unseen* stations may already be competitive.
 4. **Cheap:** 30-100 post-hoc offset correction via the fitted GBM (no retrain); real
-   oos/oot/oost evaluation (`meeting_output/` is still a 10-station smoke run).
+   oos/oot/oost evaluation — **now specified in §22** (Session 21, 2026-08-06).
 
 ### 21.10 GEE operational notes (cost real time — do not rediscover)
 
@@ -3684,3 +3684,320 @@ val_loss 0.00217653.** 10h13m, 16 epochs.
   server-side stalls indefinitely. Sample per year, average locally — identical result.
 - `getInfo()` on a FeatureCollection aborts past **5000 elements**. For 661 stations ×
   ~2500 days use `ee.batch.Export.table.toDrive`, not `getInfo`.
+
+---
+
+## §22 Held-out evaluation — OOS / OOT / OOST (Session 21, 2026-08-06)
+
+**Written before the job runs.** §22.1–22.8 are the design and the pre-registered
+predictions; §22.9 is filled only after the numbers exist. Nothing here is provisional.
+
+### 22.1 Why now
+
+`cls_depth_star_reg` `best.pt` = epoch 16 is the final Phase-1 model (§21.8). Its only
+reported numbers are on **val**: ubRMSE 0.0539 / 0.0500 / 0.0552. Val drove early stopping
+and LR scheduling, so **it cannot appear in the paper**. The three held-out splits were
+pre-registered in §13.1 and implemented in `evaluate_splits.py:33-37` but have **never been
+run for real** — `meeting_output/` still holds the 2026-06-18 smoke run (10 stations,
+against the older `baseline_huber`). This section closes §21.9 item 4.
+
+### 22.2 Verified station counts
+
+Probed all 842 `sm_only` zarr stores directly (ERA5 coverage, S2 coverage, ≥30 `qc==0`
+observed days) rather than trusting the CSV `end_date`, which runs to 2025 while ERA5/S2
+often stop earlier:
+
+| Split | Filter | Years | Stations |
+|---|---|---|---|
+| OOS  | `split == "oos"` | 2016–2022 | **180** |
+| OOT  | `split ∈ {train, val}` | 2023 | **399** (355 train + 44 val) |
+| OOST | `split == "oos"` | 2023 | **98** |
+
+All 842 stores present and `.complete` on scratch (survived the purge/restore).
+
+- **Do not filter OOT on `oot_eligible`.** It is `True` only for `split=="train"` rows by
+  construction (`create_evaluation_splits.py:335`), so filtering would silently drop the
+  44 val stations. The dataset's own year gating (`dataset.py:950-967`) already removes
+  stations lacking 2023 ERA5/S2/labels — the counts above are what it will actually yield.
+  Carry a `train_split` column instead so val can be sliced out at analysis time.
+- 98 < the 128 flagged `oost_eligible`: the flag checks only `end_date`, not whether ERA5
+  and S2 actually reach 2023.
+- OOST stations are a **subset** of the OOS stations (579 unique stations, 677 station×split
+  combinations).
+
+### 22.3 Input context is not label leakage
+
+Predicting a 2023 day needs the trailing **365-day input window**, which for early-2023
+targets reaches back into 2022. This is automatic — no code change:
+`__getitem__` passes `(year, doy)` to `load_s2_rolling_zarr` / `load_s1_rolling_zarr` /
+`load_era5_rolling` (`dataset.py:1005-1045`), which slice the station's **full** cached
+arrays. `years=[2023]` selects which days become *samples* (`dataset.py:955`); it does not
+truncate input history.
+
+**This is not leakage.** Inputs are satellite tokens, ERA5, SIF, TWSA, static soil. Soil
+moisture observations are **only ever targets** — no SM history enters `__getitem__`. Using
+2022 weather and imagery to predict January 2023 is what is available at deployment time.
+
+The honest asymmetry: for an OOT station those 2022 input tokens were also seen in training
+(as context for 2022 targets). So seen-context fraction decays across 2023:
+
+| target date | input window | seen context |
+|---|---|---|
+| 2023-01-01 | 2022-01-02 … 2023-01-01 | ~100% |
+| 2023-07-01 | 2022-07-02 … 2023-07-01 | ~50% |
+| 2023-12-31 | 2023-01-01 … 2023-12-31 | ~0% |
+
+Inherent to the OOT definition (same station, novel year), not a defect — but it motivates
+§22.7.
+
+**Decision:** OOT metrics *and* figures use 2023 only. No training-period context top-up
+pass. One GPU pass total.
+
+### 22.4 Architecture — dump predictions once, everything else is CPU
+
+The decoder emits a full `(3,224,224)` map but the metric path reads only the station pixel
+`(112,112)` (`model.py:348-349`). **Spatial maps are not required for metrics** — same
+forward pass, zero extra cost, nothing spatial written.
+
+```
+GPU once (~70 min):  eval_predict.py  → eval_output/predictions_{oos,oot,oost}.parquet
+CPU seconds:         eval_metrics.py  → per_station_{split}.csv, metrics_summary.csv
+CPU seconds:         plot_eval_scatter.py, plot_eval_timeseries.py
+GPU separate:        spatial maps (deferred, §22.8)
+```
+
+**Why the parquet, and not the existing pattern:** every current plot script rebuilds the
+dataset and re-runs GPU inference (`plot_timeseries_meeting.py:56` infers per station),
+~10 min per re-plot. Long format (one row per station×day×depth, ~1.2M rows, ~25 MB
+compressed) makes per-depth groupby trivial and keeps depth-coverage differences explicit.
+
+**Store it on work3, not scratch.** Scratch has already been purged once. The parquet is
+the durable record of what this checkpoint predicted — every later comparison (notably
+anomaly retargeting, §21.9 item 1) is a per-station per-day diff against it, impossible if
+only summary metrics survive. Stamp `eval_output/manifest.json` with run name, checkpoint
+path, epoch, val_loss, split definitions, station counts, run date.
+
+### 22.5 Metric definitions
+
+Per station × depth: `n`, `RMSE`, `ubRMSE`, `MAE`, `bias`, `offset` (= `mean(p) − mean(t)`),
+`R`, `R2_pearson`, `NSE`, `NSE_anom`. Require `n ≥ 5`; ubRMSE additionally `n ≥ 2`.
+ubRMSE removes **each station's own temporal mean** (`train.py:350-368`).
+
+Two traps this section exists to avoid:
+
+- **NSE and `R2_pearson` are reported separately, never merged as "R²."** A pure level
+  offset drives NSE strongly negative while leaving Pearson untouched. Given §20.1 (level
+  is the dominant error, RMS offsets 0.0585/0.0584/0.0851 vs ubRMSE 0.0539/0.0500/0.0552),
+  **the gap between them is the expected headline result**, not a nuisance.
+- **Every summary metric is emitted twice** — `*_stn` (mean across stations, each station
+  once; what `evaluate_splits.py:103` does) and `*_pool` (over all samples; what
+  `train.py:324` does, so comparable to the val numbers). §21.7 records that silently
+  mixing these already produced one wrong conclusion ("it is a tie, not a win"). Also emit
+  `RMS_offset`; §20.1 warns global `bias` reads as near-perfect calibration when per-site
+  calibration is poor.
+
+### 22.6 Pre-registered sanity checks (from §13.5)
+
+Registered **before seeing any number**, so a FAIL is a finding rather than something
+rationalised afterwards:
+
+1. OOT ubRMSE ≈ val ubRMSE — same stations, novel year only
+2. OOS ubRMSE > val ubRMSE — novel stations
+3. OOST ubRMSE ≥ OOS — hardest condition
+4. `metrics_summary.csv` has exactly 9 rows (3 splits × 3 depths)
+
+**Hard gate before any of the above is believed:** run the metric code over a
+`split=val, years=2016–2022` dump and reproduce **0.0539 / 0.0500 / 0.0552** from
+`val_station_metrics.csv` epoch 16. This proves the new code agrees with
+`train.py:compute_metrics`. Until it passes, no OOS/OOT/OOST number means anything.
+
+### 22.7 Pre-registered diagnostic — OOT error vs day-of-year
+
+Plot OOT mean absolute error binned by day-of-year in 2023, one line per depth. Free: a
+groupby on the parquet, no GPU.
+
+Motivated by §22.3's 100%→0% seen-context decay. It separates two memorisation modes that
+§21.8 lumps together under the 21× train/val gap:
+
+- **flat** → skill does not depend on having seen the input context = genuine temporal
+  generalisation. Consistent with pure *station-level* memorisation (offset, no DOY trend).
+- **rising** → skill decays as seen context leaves the window = *input-sequence*
+  memorisation.
+
+**The control is OOST**, overlaid on the same axes. OOST stations have 0% seen context at
+every DOY, so they carry the seasonal shape alone. OOT rising while OOST is flat = memory
+decay. Both tracing the same shape = seasonality, and the diagnostic says nothing.
+Soil moisture error genuinely is seasonal — **do not read a rising OOT curve without the
+OOST control.**
+
+Suggestive, not decisive. The decisive test is an ablation: zero the pre-2023 portion of
+the input window and check whether early-2023 predictions degrade. Costs a second GPU pass.
+**Run it only if this free diagnostic shows a signal.**
+
+### 22.8 Deliverables
+
+| file | role |
+|---|---|
+| `eval_predict.py` | GPU pass → parquet |
+| `eval_metrics.py` | parquet → per-station + summary CSVs |
+| `plot_eval_scatter.py` | pred-vs-obs 3×3, station-mean, metric distributions, ubRMSE-vs-offset, OOT error-vs-DOY |
+| `plot_eval_timeseries.py` | best-10 / worst-10 per split; 3 depth panels, obs dots vs pred line |
+| `slurm/eval_predict.sh` | `gpu_h100`, 1 GPU, 16 CPU, 120 G, **4 h** (not the 2 h in `evaluate_meeting.sh`) |
+
+```bash
+# smoke first
+python eval_predict.py --run-name cls_depth_star_reg --max-stations 5 --splits oos
+# full
+sbatch slurm/eval_predict.sh cls_depth_star_reg best.pt
+```
+
+Outputs land in **`eval_output/`** — the stale June `meeting_output/` is left intact rather
+than silently overwritten.
+
+- Load checkpoints with `ckpt_utils.load_checkpoint` **only**. The loaders in
+  `eval_stations.py:35` and `demo_plot.py:44` build the model without
+  `use_cls_depth`/`drop_path_rate` and call `load_state_dict` strictly — both crash on this
+  checkpoint. (`eval_stations.py` has been broken for this run since §19.)
+- Time-series station ranking needs an `n ≥ 100` guard; `n` spans 5 to ~2500 across
+  stations, so an unguarded "best" list selects short records, not good ones.
+- Spatial maps (`plot_spatial_sm_meeting.py`, already written) are deferred to a separate
+  GPU pass — scope set after §22.9.
+
+**Memory — the reason this is two jobs, not one (measured, do not rediscover).**
+`SoilMoistureDataset` eagerly preloads every station's L12 tokens into RAM. Uncompressed
+sizes from the zarr array shapes:
+
+| split | stations | L12 in RAM |
+|---|---|---|
+| val | 74 | 18 GB |
+| oos / oost | 181 | 39 GB |
+| **oot (train+val)** | 774 | **156 GB** |
+
+- `evaluate_meeting.sh`'s `--mem=120G` is **not enough for OOT** — it would OOM. Job A
+  (val+oos+oost) runs at 120 G; job B (oot) needs 300 G.
+- The split loop must `del` the previous dataset and `gc.collect()` before building the
+  next, or oos+oot are resident together and peak near 195 GB.
+- **`DISABLE_L12_CACHE=1` is not the fix.** Measured on 8 OOT stations: RAM cache 1:32 /
+  7.3 GB RSS vs lazy zarr 5:59 / 6.3 GB RSS — **3.9× slower** (the §3f GPFS chunk-read
+  penalty) for ~0.13 GB/station saved. Extrapolated to OOT's ~120k samples the lazy path
+  needs ~4.3 h of inference and busts the 4 h wall. Buy the memory, not the disk reads.
+- **The cost is init, not inference.** Measured on the 2026-08-06 run: OOT spent ~65 min
+  loading 156 GB off GPFS before the first batch, against ~15 min of actual inference
+  (observed throughput ~179 samples/s). Chunk it — `eval_predict.py` takes
+  `--csv-start-idx/--csv-end-idx/--tag` (same pattern as `precompute_terramind.py`), and
+  `eval_metrics.py` globs `predictions_{split}_*.parquet` back together, de-duplicating on
+  `(station, year, doy, depth)`:
+
+```bash
+for i in 0 1 2 3; do
+  lo=$((i*195)); hi=$(((i+1)*195))
+  sbatch --mem=100G slurm/eval_predict.sh cls_depth_star_reg best.pt \
+      --splits oot --csv-start-idx $lo --csv-end-idx $hi --tag c$i
+done   # ~20 min wall instead of ~80, same total GPU cost
+```
+
+### 22.9 Results (jobs 25283775 + 25284407, 2026-08-06)
+
+Checkpoint `cls_depth_star_reg/best.pt` e16. Station counts hit the §22.2 probe exactly
+(val 74, oos 180, oot 399, oost 98). Wall: val 11.9 + oos 29.7 + oost 4.0 min (job A),
+oot 15.6 min inference after ~66 min init (job B).
+
+**Gate PASSED exactly** — three independent quantities reproduced to 4 dp:
+pooled ubRMSE 0.0539/0.0500/0.0552 (§21.8), station-equal 0.0490/0.0459/0.0490
+(`val_station_metrics.csv` e16), RMS offset 0.0585/0.0584/0.0851 (§21.8). The metric code
+agrees with `train.py:compute_metrics`.
+
+Station-equal means (`_stn`); `metrics_summary.csv` also carries `_pool`.
+
+| split | depth | ubRMSE | RMSE | r² | NSE | NSE_anom | RMS offset | n |
+|---|---|---|---|---|---|---|---|---|
+| val  | 0-10 | 0.0490 | 0.0721 | 0.598 | −1.39 | +0.23 | 0.0585 | 74 |
+| val  | 10-30 | 0.0459 | 0.0688 | 0.589 | −11.3 | −1.03 | 0.0584 | 51 |
+| val  | 30-100 | 0.0490 | 0.0868 | 0.495 | −17.2 | −1.29 | 0.0851 | 43 |
+| **oos** | 0-10 | **0.0507** | 0.0762 | 0.611 | −0.76 | **+0.35** | 0.0639 | 180 |
+| **oos** | 10-30 | **0.0489** | 0.0742 | 0.564 | −2.40 | −0.07 | 0.0646 | 125 |
+| **oos** | 30-100 | **0.0499** | 0.0899 | 0.480 | −20.8 | −1.76 | 0.0865 | 106 |
+| oot | 0-10 | 0.0397 | 0.0472 | 0.674 | −0.36 | +0.17 | **0.0303** | 399 |
+| oot | 10-30 | 0.0357 | 0.0431 | 0.668 | −0.85 | +0.05 | **0.0289** | 350 |
+| oot | 30-100 | 0.0369 | 0.0490 | 0.622 | −30.5 | −3.55 | **0.0427** | 287 |
+| oost | 0-10 | 0.0542 | 0.0798 | 0.579 | −4.48 | −0.68 | 0.0665 | 98 |
+| oost | 10-30 | 0.0465 | 0.0768 | 0.594 | −16.1 | −1.65 | 0.0713 | 82 |
+| oost | 30-100 | 0.0569 | 0.0974 | 0.476 | −40.6 | −1.98 | 0.0906 | 67 |
+
+#### Pre-registered checks: 5 of 6 pass
+
+1. OOT ≈ val — PASS at all depths, but **the check is badly written**: it is two-sided at
+   25% tolerance and OOT came in 19-25% *better*, not merely close. A PASS here means much
+   less than it appears. Rewrite as a signed test before reusing.
+2. OOS > val — PASS at all three depths.
+3. OOST ≥ OOS — PASS at 0-10 and 30-100, **FAIL at 10-30** (0.0465 vs 0.0489). Survives a
+   like-for-like recut on the 98 common stations (0.0465 vs 0.0481, 3.3%), so it is a real
+   small improvement in *dynamics*, not a composition artefact. Level error still degrades
+   in 2023 at every depth (0.0653→0.0665, 0.0637→0.0713, 0.0823→0.0906). **Temporal
+   extrapolation costs absolute level, not tracking.**
+4. Nine held-out rows — PASS.
+
+#### The level failure is TRANSFER, not representation
+
+The counterfactual `logs.txt:3474` asked for. OOT and OOST are both 2023, so year is
+controlled; they differ only in whether the station was seen in training:
+
+| RMS offset | 0-10 | 10-30 | 30-100 |
+|---|---|---|---|
+| OOT — 2023, **seen** stations | 0.0303 | 0.0289 | 0.0427 |
+| OOST — 2023, **novel** stations | 0.0665 | 0.0713 | 0.0906 |
+| OOS — 2016-22, novel stations | 0.0639 | 0.0646 | 0.0865 |
+
+**Level error is 2.2× larger on novel stations in the same year.** OOST sits with OOS, not
+with OOT — so 2023 is not an easy year, station-seenness is the whole effect. The network
+*can* represent per-station level (it does so, to 0.030, for stations it has seen); it
+cannot *infer* it for novel stations. This corroborates §20.14/§21.7 from the opposite
+direction: the level information is not recoverable from the inputs. Confirms the §21.8
+attribution of the 21× train/val gap to **station-level memorisation**, and strengthens the
+case for §21.9 item 1 (anomaly retargeting), which removes exactly the memorised quantity.
+
+#### NSE vs r² — why §22.5 insisted on both
+
+At OOS 0-10: r² = 0.611 but NSE = −0.76, purely because the level is wrong; NSE_anom is
+**+0.35**, i.e. the model beats each station's own climatology on dynamics. Reporting a
+single "R²" would have hidden either the skill or the failure. At 30-100 NSE_anom is
+−1.76: **even after removing the level error the model is worse than predicting the station
+mean.** Honest negative result for the deep layer — do not report 30-100 as working.
+
+Per-station `bias` IS the level offset (`mean(p) − mean(t)`); there is no separate `offset`
+column. The §20.1 cancellation warning is dramatic here: OOS 10-30 mean bias is −0.0001
+(reads as flawless calibration) while RMS offset is 0.0646 and 42/125 stations are off by
+>0.05. **Always RMS the per-station bias.**
+
+#### SNOTEL dominates the headline (new, not previously recorded)
+
+ubRMSE 0-10, split by network:
+
+| split | non-SNOTEL | SNOTEL | penalty | SNOTEL share |
+|---|---|---|---|---|
+| oos | **0.0433** | 0.0616 | +42% | 73/180 |
+| oot | 0.0350 | 0.0427 | +22% | 241/399 |
+| oost | **0.0455** | 0.0602 | +32% | 58/98 |
+
+SNOTEL are snow-dominated mountain sites (sensor under snowpack or frozen for months) and
+are 41-60% of every split. Excluding them, **OOS 0-10 ubRMSE is 0.0433** — below the
+0.05-0.06 typical ISMN point-scale range (§21.9 item 3) and approaching the 0.04 SMAP bar.
+8 of the 10 worst OOST stations are SNOTEL, up to ubRMSE 0.124. Worth reporting stratified,
+and worth asking whether frozen-soil days should be masked at all.
+
+#### §22.7 diagnostic — signal present, not yet decisive
+
+`figures/eval/oot_error_vs_doy.png`. At 0-10 and 10-30 the OOT error anomaly rises
+monotonically through 2023 (≈ −0.010 → +0.005, a ~0.015 swing against ubRMSE 0.0397) while
+the OOST control traces a *different* shape (declining at 0-10). Pre-registered rule: shared
+shape = seasonality, divergence = memory decay. **They diverge**, consistent with reliance
+on memorised input context. Caveat: OOT and OOST are different station populations.
+Per §22.7 the decisive test is the masking ablation (zero the pre-2023 window, second GPU
+pass) — **not yet run.**
+
+#### Artefacts
+
+`eval_output/`: `predictions_{val,oos,oot,oost}.parquet` (6.7 MB total, work3, purge-proof),
+`per_station_{split}.csv`, `metrics_summary.csv`, `gate.json`, `manifest.json`,
+`timeseries/{split}/` (60 figures + contact PDFs).
+`figures/eval/`: 5 scatter figures (PNG+PDF).

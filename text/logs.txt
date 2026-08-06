@@ -3498,3 +3498,113 @@ RESULT (best RMSE on 74 held-out stations, ridge/GBM):
 
   regularisation strength (§19.5) | depth capacity / cascade (§20.2) |
   Huber delta (§20.13) | SMAP integration (§21.2) | FiLM fixes (§20.12.1)
+
+
+================================================================================
+2026-08-06 (Session 21) — Held-out evaluation: OOS / OOT / OOST  [runbook §22]
+================================================================================
+
+Ran the real held-out evaluation of cls_depth_star_reg/best.pt (e16). The
+meeting_output/ numbers were a 10-station June smoke run against baseline_huber;
+they are now superseded by eval_output/. Closes §21.9 item 4.
+
+--- What was built ---
+
+  eval_predict.py        one GPU pass -> long-format parquet (station, date,
+                         depth, pred, obs). Supports --csv-start-idx/--csv-end-idx
+                         /--tag for chunking.
+  eval_metrics.py        parquet -> per_station_{split}.csv + metrics_summary.csv;
+                         globs chunks; prints gate + pre-registered checks.
+  plot_eval_scatter.py   5 figures  -> figures/eval/
+  plot_eval_timeseries.py best/worst-10 per split, 3 depth panels -> 60 figures
+  slurm/eval_predict.sh  gpu_h100, 4 h
+
+Architecture: predictions dumped ONCE, then every metric and figure is a CPU
+pass over the parquet (seconds, no GPU, no dataset rebuild). The old plot
+scripts re-ran inference per station, ~10 min per re-plot.
+
+--- Jobs ---
+
+  25282462  smoke, 5 stations                                   COMPLETED
+  25283775  job A: val + oos + oost   (120G)                     COMPLETED
+  25284407  job B: oot                (300G)                     COMPLETED
+  25283782  lazy-vs-RAM L12 timing probe                         COMPLETED
+
+Station counts hit the zarr probe exactly: val 74, oos 180, oot 399, oost 98.
+
+--- GATE PASSED ---
+
+Reproduced THREE independent quantities from train.py to 4 dp: pooled ubRMSE
+0.0539/0.0500/0.0552, station-equal 0.0490/0.0459/0.0490, RMS offset
+0.0585/0.0584/0.0851. The metric code agrees with train.py:compute_metrics.
+
+--- Headline (station-equal) ---
+
+  OOS  (180 novel stations, 2016-22): ubRMSE 0.0507 / 0.0489 / 0.0499
+  OOT  (399 seen stations, 2023):     ubRMSE 0.0397 / 0.0357 / 0.0369
+  OOST (98 novel stations, 2023):     ubRMSE 0.0542 / 0.0465 / 0.0569
+
+Dynamics generalise to unseen stations almost for free — OOS ubRMSE is only
+2-7% worse than val.
+
+--- MAIN RESULT: the level failure is TRANSFER, not representation ---
+
+OOT and OOST are both 2023, so year is controlled. RMS offset:
+
+  OOT  (2023, SEEN stations)   0.0303 / 0.0289 / 0.0427
+  OOST (2023, NOVEL stations)  0.0665 / 0.0713 / 0.0906
+  OOS  (2016-22, novel)        0.0639 / 0.0646 / 0.0865
+
+Level error is 2.2x larger on novel stations IN THE SAME YEAR. OOST sits with
+OOS, not OOT — so 2023 is not an easy year; station-seenness is the whole
+effect. The network CAN represent per-station level (0.030 for seen stations);
+it cannot INFER it for novel ones. Confirms §21.8's attribution of the 21x
+train/val gap to station-level memorisation, and strengthens §21.9 item 1
+(anomaly retargeting removes exactly the memorised quantity).
+
+--- Other findings ---
+
+  * SNOTEL dominates the headline. ubRMSE 0-10 non-SNOTEL vs SNOTEL:
+    OOS 0.0433 vs 0.0616 (+42%), OOT 0.0350 vs 0.0427, OOST 0.0455 vs 0.0602.
+    SNOTEL is 41-60% of every split. EXCLUDING THEM, OOS 0-10 = 0.0433 —
+    below the 0.05-0.06 typical ISMN range and approaching the 0.04 SMAP bar.
+    8 of the 10 worst OOST stations are SNOTEL (up to 0.124). Report stratified.
+  * 30-100 does not work. NSE_anom is negative on every held-out split
+    (OOS -1.76): even after removing level error it is worse than predicting
+    the station mean. Do not report 30-100 as functional.
+  * NSE vs r-squared: at OOS 0-10, r2=0.611 but NSE=-0.76 and NSE_anom=+0.35.
+    A single "R2" would have hidden either the skill or the failure.
+  * §22.7 diagnostic fired: OOT error rises through 2023 while the OOST control
+    traces a different shape -> consistent with memorised input context.
+    Suggestive only; the decisive masking ablation is NOT yet run.
+
+--- Pre-registered checks: 5 of 6 pass ---
+
+  FAIL: OOST >= OOS at 10-30 (0.0465 vs 0.0489). Survives a like-for-like recut
+  on the 98 common stations (0.0465 vs 0.0481) — a real small improvement in
+  DYNAMICS. Level error still degrades in 2023 at every depth. Temporal
+  extrapolation costs absolute level, not tracking.
+
+  Check 1 ("OOT ~ val") is BADLY WRITTEN: two-sided at 25% tolerance, and OOT
+  came in 19-25% BETTER, not merely close. Rewrite as a signed test.
+
+--- Operational (measured, do not rediscover) ---
+
+  * OOT needs ~156 GB of L12 in RAM (val 18, oos/oost 39). evaluate_meeting.sh's
+    --mem=120G would OOM. Must del + gc.collect() between splits or oos+oot are
+    resident together (~195 GB peak).
+  * DISABLE_L12_CACHE=1 is NOT the fix: 3.9x slower (1:32 -> 5:59 on 8 stations)
+    for ~0.13 GB/station saved. Would bust the 4 h wall.
+  * The cost is INIT, not inference: OOT = ~66 min loading vs ~15 min compute
+    at ~179 samples/s. Chunk it with --csv-start-idx/--csv-end-idx/--tag.
+  * RAM and lazy paths give BIT-IDENTICAL predictions (verified).
+  * Use ckpt_utils.load_checkpoint only — eval_stations.py and demo_plot.py
+    build the model without use_cls_depth and crash on this checkpoint.
+
+--- Next ---
+
+  1. §21.9 item 1 (anomaly retargeting) — now better motivated than ever.
+     Compare against eval_output/*.parquet per station per day.
+  2. Decide whether to mask frozen/snow-covered days, or report stratified.
+  3. Optional: §22.7 masking ablation, only because the diagnostic fired.
+  4. Spatial maps (§22 Phase 4) — still not run; scope not yet set.
