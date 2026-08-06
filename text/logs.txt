@@ -3675,3 +3675,43 @@ Two claims I made earlier today were WRONG. Both are fixed in §22.9.
 Net effect on the headline: the model looks BETTER than this morning's write-up,
 not worse. 89% / 82% / 59% of unseen stations beat their own climatology on
 dynamics at the three depths.
+
+--- Failure-tail diagnosis + tomorrow's starting point ---
+
+Diagnosed the NSE_anom < 0 tail on OOS. NOT a data bug. It is an AMPLITUDE
+calibration problem.
+
+  OOS 0-10        pred SD   obs SD   ratio
+  NSE_anom < 0     0.0759   0.0456   1.67
+  NSE_anom >= 0    0.0730   0.0757   0.98
+
+Failing stations have 1.7-2.6x LOWER observed variability (84-90% below median),
+but their correlation is fine (R ~0.62-0.65) — the shape is right, the amplitude
+is wrong. The model emits nearly the SAME spread at every station regardless of
+how variable that station is (0.0759 vs 0.0730 at 0-10 — essentially identical).
+At 30-100 observed SD differs 2.6x between groups while the model's output
+differs only 1.24x.
+
+=> The network learned ONE typical soil-moisture rhythm and applies it
+   everywhere. Same class of defect as the level failure — inability to infer a
+   per-station property — but the second moment (sigma) instead of the first (mu).
+
+Secondary, weaker: SCAN fails 18% at 0-10 / 40% at 30-100; Shrub-Savanna 31% at
+0-10. Variance explains most of it; don't chase the network signal first.
+
+NEXT SESSION — start here:
+
+  1. GATE: is sigma_station predictable from soil/ERA5/terrain?
+     Adapt station_mean_probe.py (already does this for mu) to target sigma.
+     CPU-only, ~an afternoon, no GPU.
+       - predictable    -> fix amplitude directly, no leakage, most of the win
+       - not predictable-> anomaly retargeting is a REFRAME not a fix
+  2. Only then decide on anomaly retargeting z=(theta-mu)/sigma. Implementation
+     is modest (per-station mu/sigma from TRAINING YEARS ONLY in dataset.py,
+     loss unchanged) but the back-conversion needs mu and sigma, which a novel
+     station does not have. Computing them from the test period is leakage.
+     If sigma is not predictable, the honest framing is "given a site's
+     climatology, predict its anomalies" — what drought monitoring and data
+     assimilation actually consume. The paper must say which claim it makes.
+  3. Still not run: spatial maps (§22 Phase 4); §22.7 masking ablation.
+

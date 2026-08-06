@@ -4033,6 +4033,47 @@ mean removed) per 100 days of year; 95% CI from a station-clustered bootstrap.
   GPU pass) — immune to that confound. **Not yet run**, but now justified rather than
   speculative.
 
+#### The NSE_anom failure tail — an AMPLITUDE problem, not a data bug
+
+Diagnosed on OOS after the correction above. Stations with NSE_anom < 0 are
+20/180 (0-10), 22/125 (10-30), **44/106 (30-100)**. They are not broken sites:
+
+| OOS 0-10 | predicted SD | observed SD | pred/obs |
+|---|---|---|---|
+| NSE_anom < 0 | 0.0759 | 0.0456 | **1.67** |
+| NSE_anom ≥ 0 | 0.0730 | 0.0757 | 0.98 |
+
+- Failing stations have **1.7-2.6× lower observed variability**; 84-90% of them sit below
+  the median for variability. Their correlation is still fine (R ≈ 0.62-0.65) — the shape
+  is right, the **amplitude** is wrong.
+- **The model emits nearly the same spread at every station** (0.0759 vs 0.0730 at 0-10 —
+  essentially identical) regardless of how variable the site actually is. At 30-100 the
+  observed SD differs 2.6× between groups while the model's output differs only 1.24×.
+- **Conclusion: the network has learned one typical soil-moisture rhythm and applies it
+  everywhere.** It is not failing at quiet stations so much as failing to know they are
+  quiet. This is the same class of defect as the level failure — an inability to infer a
+  per-station property — one moment up (σ) instead of the first (μ).
+- Weak secondary clustering: SCAN fails 18% at 0-10 and 40% at 30-100; Shrub-Savanna 31%
+  at 0-10. The variance effect explains most of it; do not chase the network signal first.
+
+#### GATE BEFORE ANOMALY RETARGETING — is σ_station predictable?
+
+Retargeting to `z = (θ − μ_station)/σ_station` removes both the unlearnable level and the
+miscalibrated amplitude, and the loss code is unchanged. **But converting a prediction back
+to θ needs that station's μ and σ, which a novel station does not have** — computing them
+from the test period is exactly the leakage §22 exists to prevent. §20.14/§21 proved μ is
+not inferable from the inputs.
+
+So run the cheap probe first: **adapt `station_mean_probe.py` (which already does this for
+μ) to target σ.** CPU-only, ~an afternoon.
+- σ predictable → fix the amplitude directly, no leakage, most of the win without a reframe.
+- σ not predictable → retargeting is a **reframe, not a fix**: it changes the task to
+  "given a site's climatology, predict its anomalies" (legitimate — that is what drought
+  monitoring and data assimilation consume) and the paper must say so explicitly rather
+  than imply absolute prediction at unknown sites.
+
+Decide this before spending a training run.
+
 #### Artefacts
 
 `eval_output/`: `predictions_{val,oos,oot,oost}.parquet` (6.7 MB total, work3, purge-proof),
