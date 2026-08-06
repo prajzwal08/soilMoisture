@@ -3985,15 +3985,32 @@ are 41-60% of every split. Excluding them, **OOS 0-10 ubRMSE is 0.0433** — bel
 8 of the 10 worst OOST stations are SNOTEL, up to ubRMSE 0.124. Worth reporting stratified,
 and worth asking whether frozen-soil days should be masked at all.
 
-#### §22.7 diagnostic — signal present, not yet decisive
+#### §22.7 diagnostic — FIRED. Seasonality excluded by two independent controls
 
-`figures/eval/oot_error_vs_doy.png`. At 0-10 and 10-30 the OOT error anomaly rises
-monotonically through 2023 (≈ −0.010 → +0.005, a ~0.015 swing against ubRMSE 0.0397) while
-the OOST control traces a *different* shape (declining at 0-10). Pre-registered rule: shared
-shape = seasonality, divergence = memory decay. **They diverge**, consistent with reliance
-on memorised input context. Caveat: OOT and OOST are different station populations.
-Per §22.7 the decisive test is the masking ablation (zero the pre-2023 window, second GPU
-pass) — **not yet run.**
+`figures/eval/oot_error_vs_doy.png`. Quantified as the trend in |error| anomaly (per-station
+mean removed) per 100 days of year; 95% CI from a station-clustered bootstrap.
+**Positive = error grows through the year.** OOS 2016-22 is the strong seasonality control
+— 7 years × 180 novel stations, so year-specific weather averages out.
+
+| | 0-10 | 10-30 | 30-100 |
+|---|---|---|---|
+| **OOT 2023 — SEEN stations** | **+0.0033** [+0.0023,+0.0041] | **+0.0045** [+0.0032,+0.0055] | **+0.0032** [+0.0011,+0.0048] |
+| OOST 2023 — novel | −0.0039 [−0.0074,−0.0002] | −0.0016 (ns) | +0.0022 (ns) |
+| OOS 2016-22 — novel, 7 yr | −0.0025 [−0.0038,−0.0012] | −0.0013 (ns) | −0.0007 (ns) |
+
+- **OOT rises at all three depths, significantly. Both novel-station controls go the other
+  way** (flat or declining), with non-overlapping intervals at 0-10 and 10-30. Seasonality
+  would move all three rows together. It does not. **Seasonality is excluded.**
+- Direction matches the mechanism: on 2023-01-01 the 365-day input window is entirely 2022
+  inputs seen in training; by 2023-12-31 it is entirely novel.
+- Magnitude ≈ +0.012 m³/m³ across the year — **~30% of OOT's 0.0397 ubRMSE**. So a
+  meaningful part of OOT's apparent advantage over val is borrowed from having seen the
+  inputs, and it decays. **Do not quote OOT as clean temporal generalisation.**
+- **Residual confound:** if OOT station records end mid-2023 more often than OOST's,
+  late-year samples have sparser valid tokens, which mimics decay. Not yet checked.
+- Decisive test remains the masking ablation (zero the pre-2023 window, re-predict, second
+  GPU pass) — immune to that confound. **Not yet run**, but now justified rather than
+  speculative.
 
 #### Artefacts
 

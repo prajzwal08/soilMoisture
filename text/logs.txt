@@ -3608,3 +3608,26 @@ train/val gap to station-level memorisation, and strengthens §21.9 item 1
   2. Decide whether to mask frozen/snow-covered days, or report stratified.
   3. Optional: §22.7 masking ablation, only because the diagnostic fired.
   4. Spatial maps (§22 Phase 4) — still not run; scope not yet set.
+
+--- Addendum: §22.7 DOY diagnostic quantified (same day) ---
+
+Refit the OOT error-vs-day-of-year trend properly, adding OOS 2016-22 (7 years x
+180 novel stations) as the strong seasonality control. Trend in |error| anomaly
+per 100 DOY, 95% CI from a station-clustered bootstrap:
+
+              0-10                10-30               30-100
+  OOT  2023  +0.0033 [.0023,.0041] +0.0045 [.0032,.0055] +0.0032 [.0011,.0048]
+  OOST 2023  -0.0039 [-.0074,-.0002] -0.0016 (ns)        +0.0022 (ns)
+  OOS 16-22  -0.0025 [-.0038,-.0012] -0.0013 (ns)        -0.0007 (ns)
+
+OOT rises at all three depths; BOTH novel-station controls go the other way,
+non-overlapping at 0-10 and 10-30. Seasonality would move all rows together —
+it does not. SEASONALITY EXCLUDED; this is the memory-decay signature.
+
+Magnitude ~+0.012 m3/m3 across the year = ~30% of OOT's 0.0397 ubRMSE. Part of
+OOT's apparent advantage over val is borrowed from seen inputs and decays.
+DO NOT quote OOT as clean temporal generalisation.
+
+Residual confound not yet checked: if OOT records end mid-2023 more often than
+OOST's, late-year samples have sparser tokens, mimicking decay. The masking
+ablation is immune to it and is now justified rather than speculative.
