@@ -4080,3 +4080,526 @@ Decide this before spending a training run.
 `per_station_{split}.csv`, `metrics_summary.csv`, `gate.json`, `manifest.json`,
 `timeseries/{split}/` (60 figures + contact PDFs).
 `figures/eval/`: 5 scatter figures (PNG+PDF).
+
+---
+
+## §23 Spatial heterogeneity diagnostic — does the predicted field vary in space? (Session 22, 2026-08-10)
+
+**Status: PLANNED, not yet run.** Approved 2026-08-10. Diagnostic only — no retraining, no
+loss change, no touching `plot_spatial_sm_meeting.py`.
+
+### 23.0 Why this exists
+
+`SoilMoistureModel.forward()` (`model.py:670`) returns `(B, 3, 224, 224)` — the model has
+**only ever emitted a 2D field**. There is no separate spatial head to enable. Every
+evaluation path in the repo indexes the centre pixel and discards the rest:
+
+| file | line | code |
+|---|---|---|
+| `eval_predict.py` | 75 | `preds.append(mu[:, :, srow, scol]...)` |
+| `evaluate_splits.py` | 61 | `all_preds.append(mu[:, :, SROW, SCOL]...)` |
+| `demo_plot.py` | 79 | `mu[0, :, model.STATION_ROW, model.STATION_COL]` |
+
+and `masked_huber_loss` (`model.py:751`) supervises **1 pixel of 50,176**, with
+`lambda_tv = 0.0` (`train.py:213`, disabled per the §16.1 verdict).
+
+Two prior results bracket the question:
+
+- **§16.1** (`tier1_probe.py`, epoch 11 of the older `baseline_huber`): output map
+  norm-std = **0.0065**; decoder taps 0.089 / 0.095 / **0.034** at 28²/56²/112². Structure
+  survives to 56² and collapses by 112². Verdict: **decoder-side**, not attention-side.
+- **§16.4** (`capacity_check.py`, job 24352962): froze everything up to the bottleneck and
+  overfit only the decoder against a dense synthetic target — norm-std **0.0061 → 0.2504,
+  corr 1.000**. The decoder *can* paint structure. Flatness is a **supervision artefact,
+  not a capacity limit**.
+
+What is missing is the same measurement on the **final Phase-1 model**
+(`cls_depth_star_reg/best.pt`, epoch 16), at stations where the model demonstrably works,
+across seasons, next to the satellite scene the model actually consumed.
+
+**Expected outcome, stated up front so the figure is not oversold: the maps will be
+near-uniform.** The value is that it is measured on the delivered model, at good stations,
+against a landscape that demonstrably has structure, with a flat-terrain control that kills
+the "the landscape is just flat" rebuttal. It converts an assertion into a figure with
+numbers, and it is the evidence base for Phase 2 dense supervision.
+
+### 23.1 Station selection — ubRMSE alone is a trap
+
+Ranking `eval_output/per_station_oos.csv` purely on `ubRMSE_0_10` returns:
+
+| station | ubRMSE₀₋₁₀ | IGBP | LULC classes | DEM relief |
+|---|---|---|---|---|
+| ISMN_NGARI_ALI02 | 0.0172 | **WAT (lake)** | 2 | 301 m |
+| ISMN_USCRN_Tucson-11-W | 0.0219 | SAV | 2 | 249 m |
+| ISMN_SCAN_Crossroads | 0.0265 | GRA | **1** | **9.5 m** |
+
+A lake and flat deserts — sites where a uniform map is arguably *correct*. Publishing that
+hands a reviewer the rebuttal for free.
+
+**Split: `oos`** (spatially held out, 2016-2022, so a full seasonal cycle fits inside one
+year). Not `oot`/`oost` — 2023-only, `n = 365`, and a weaker generalisation claim. Not
+`val` — those stations were seen in training.
+
+**Gates, applied before ranking.** Each one blocks a specific objection:
+
+| gate | blocks |
+|---|---|
+| `n_0_10 ≥ 700` (~2 yr daily) | "the score is a fluke of a short record" |
+| `R_0_10 ≥ 0.6` | "low ubRMSE because nothing ever moves" |
+| `std(obs) ≥ 0.03` at 0-10, from `predictions_oos.parquet` | explicit dynamic-range floor |
+| `IGBP ∉ {WAT, SNO}` | drops the lake |
+| `category == sm_only` | `train.py:184` — the model never saw anything else |
+
+**Three stations, three roles** (this is the design, not a count):
+
+1. **best gated ubRMSE** — the model at its strongest;
+2. **most heterogeneous footprint** among the gated set (`#LULC ≥ 3` or relief ≥ 30 m) —
+   e.g. `ISMN_RSMN_Iasi`, 6 classes / 75 m;
+3. **flat control** `ISMN_SCAN_Crossroads` (1 class, 9.5 m). **Keep this one.** If the map
+   is equally flat at Iasi and at Crossroads, the flatness is the model, not the landscape.
+   That contrast is the punchline and it costs one extra station of runtime.
+
+### 23.2 Figure design
+
+**As shipped** (v2 — the per-panel anomaly block of the first draft was dropped in favour of
+the time series, so that one figure carries both the spatial and the temporal validation):
+
+```
+HEADER      station, network, lat/lon, elevation, IGBP + Köppen spelled out, record, ubRMSE
+CONTEXT     [ S2 RGB | NDVI | DEM | land cover w/ NAMED classes ]   structure available to paint
+SEASON GRID (4 rows DJF/MAM/JJA/SON)
+            [ anchor scene (MODEL INPUT, orbit+date+lag) | SM 0-10 | 10-30 | 30-100 ]
+            one shared 0-0.5 scale; σ, ñ, Δ printed in each map title
+TIME SERIES [ 0-10 | 10-30 | 30-100 ]  whole target year at the station pixel,
+            predicted line + observed dots, the four map dates marked
+BOTTOM      [ ñ per season vs §16.1/§16.4 lines | SYMBOL GLOSSARY | spatial summary ]
+CAPTION     checkpoint, split, year, anchor-lag caveat, what the cyan cross means
+```
+
+Design decisions worth keeping:
+
+- **The time series is swept through the model, not read from the parquet.** `eval_predict.py:110`
+  drops rows with NaN `obs`, so the parquet cannot show a depth the station never measured.
+  `infer_year()` runs every sample day of the target year, so all three depths appear and
+  unmeasured ones are labelled *"no in-situ sensor at this depth — prediction shown,
+  unvalidated"*. At Iasi that is 2 of 3 depths; hiding it would have been misleading.
+- **σ, ñ and Δ moved onto the map titles** when Block B was dropped — the statistics survive
+  even though the anomaly rendering does not, and the anomaly maps are still available in
+  `heterogeneity_metrics.json`.
+- **`interpolation="nearest"` on every SM panel.** `plot_spatial_sm_meeting.py:312` uses
+  `bilinear`, which manufactures precisely the smoothness under investigation.
+- **DEM/LULC/NDVI appear once**, in the context strip. The existing renderer redraws them per
+  row (`:285-303`) — half the ink, none of the information.
+- **Land cover is labelled with class NAMES**, from `text/modality_bands.txt:59-81`: the zarr
+  stores the *remapped TerraMind indices* (0 No data, 1 Water, 2 Trees, 3 Flooded veg.,
+  4 Crops, 5 Built area, 6 Bare ground, 7 Snow/ice, 8 Clouds, 9 Rangeland), **not** raw ESRI
+  values, and ESRI v1 "Grass" (3) and "Scrub/Shrub" (6) are both merged into Rangeland
+  (`_LULC_REMAP = [0,1,2,9,3,4,9,5,6,7,8,9]`). This is why Crossroads reads 100% class 9 and
+  why reading the stored value as raw ESRI would wrongly call it Snow/Ice.
+- **Row heights track panel width.** Equal-aspect `imshow` in a short cell leaves a white band
+  in every row; `h_row ≈ figure_width / n_cols` removes it.
+
+*(Superseded first draft: paired absolute + per-panel-anomaly blocks with amplitude bars under
+each anomaly panel. The anomaly rendering was the right tool for "is it flat?", but once the
+answer turned out to be "no, and the structure is wrong" the diagnostic value moved to the
+correlations and the persistence statistic, which are numbers rather than pictures.)*
+
+### 23.3 Metrics — so it is not an eyeball argument
+
+Per SM panel: `σ_s = sm.std()`, `ñ = norm_std(sm)` (**`tier1_probe.norm_std`, L123, verbatim**
+so it is directly comparable to the §16.1 0.0065), `Δ = p98 − p2`.
+
+Five references, all computed in the same script and written to `heterogeneity_metrics.json`:
+
+1. **§16.1 `ñ = 0.0065`** and **§16.4 ceiling `0.2504`** as dashed lines in the metric strip,
+   with provenance in the footer. These two lines turn the strip into a verdict.
+2. **Structure available in the same footprint** — `norm_std(DEM)`, `norm_std(NDVI)`,
+   `#LULC classes`. "The map is flat" means nothing without "and here is what was there to
+   paint".
+3. **σ_space / σ_time — the headline scalar.** σ_time = std of the centre-pixel prediction
+   across the target year, from `predictions_oos.parquet`. A ratio ≈ 0.02 licenses the
+   sentence *"the model moves the whole field up and down in time 50× more than it varies
+   across space"* — i.e. a temporally modulated constant.
+4. **Physical plausibility** — Pearson r between the SM anomaly and z-scored DEM / NDVI, at
+   224² and after 16×16 block-averaging to the **14×14 token grid** (the meaningful one: the
+   bottleneck's native resolution, free of upsample smoothing).
+   - **Report r only. No p-values** — 50,176 spatially autocorrelated pixels, effective
+     n ≈ 196; every p-value would read `< 1e-300`.
+   - Also report `r(anom_0-10, anom_30-100)`, and **label it a caveat, not a finding**: the
+     star residual (`model.py:276-280`) makes deeper depths `base + offset`, so cross-depth
+     spatial similarity is an architectural fact.
+5. **Effective resolution** — block-average to 14×14, re-upsample, report the fraction of
+   spatial variance retained. If ≈100%, state plainly: effective resolution is **160 m, not
+   10 m**.
+
+### 23.4 Scene selection — show what the model actually saw
+
+`dataset.py:503` sets `anchor_rel_pos = 364 − (target_date − acq_date).days`, so
+
+```python
+anchor_date  = target_date - timedelta(days=364 - int(item["anchor_rel_pos"]))
+anchor_orbit = int(item["anchor_orbit"])          # 0 = s2, 1 = s1_asc, 2 = s1_desc
+```
+
+The token store and the raw store `/projects/prjs1968/satellite_zarr/{key}.zarr` carry
+**identical, index-aligned `dates`** (verified on `ISMN_RSMN_Iasi`: 164 entries, equal
+element-for-element), so an exact string match retrieves the true input scene.
+
+**Do not reuse `get_s2_rgb` (`plot_spatial_sm_meeting.py:77`)** — it takes the nearest scene
+within 30 days, which is *not* what the model consumed.
+
+**The anchor can be up to 364 days stale.** `select_anchor_zarr` (`dataset.py:488-492`)
+takes the most recent fully-clear acquisition in a 365-day window, else the most recent. A
+winter row may legitimately display a summer scene. **Always print the lag in days** — a
+200-day lag is a finding, not a bug. Panel titles read
+`S2 anchor 2021-06-27 · lag 12 d · MODEL INPUT`; when the anchor is S1 the VV panel carries
+that label and the seasonally-matched RGB moves to the context strip marked
+`NOT model input`.
+
+Cloud mask is **QC only**, from the token store (`cm/masks (N,224,224) uint8`,
+chunks `(128,224,224)` — read once, index in memory). Use `mean(isin(cm,(3,4,5)))`;
+**not** `mean(cm != 0)` (`visualize_embeddings.py:118`), which counts water and snow as cloud
+and would mark every lakeside or winter station permanently cloudy.
+
+Season centres `--season-doys 15 105 196 288`, nearest sample within **30** days (tighter
+than the existing 45 at `:193`), requiring a non-NaN label. Year = the one filling the most
+season slots (replaces the blind median-year pick at `:469`), ties broken by recency.
+
+### 23.5 Reuse — and the two loaders that must not be used
+
+| from | function | why |
+|---|---|---|
+| `ckpt_utils.py:33` | `load_checkpoint` | **Only** loader honouring `use_cls_depth` (`:44`) and calling `model.eval()` (`:59`; required — `UNetDecoder.pre_head_drop` is `Dropout(0.1)`, `model.py:235`) |
+| `plot_spatial_sm_meeting.py` | `_sat_zarr_path` 63, `_closest_idx` 68, `get_s1_vv` 108, `get_dem` 136, `get_lulc` 148, `_make_key` 358, `_crosshair` 336, `_no_data` 342, `_hcbar` 348 | readers + panel furniture |
+| `plot_spatial_sm_meeting.py:163` | `infer_spatial_for_dates` | adapt into `infer_seasons`, also returning `anchor_rel_pos`, `anchor_orbit`, centre pixel |
+| `tier1_probe.py` | `norm_std` 123, `subset_splits_csv` 99, `patch_open_zarr_no_marker` 75 | comparable metric; 3-station dataset init; held-out stores lack the `.complete` marker |
+
+**Do not use `demo_plot.py:44` or `plot_satellite_sm_meeting.py:47`.** Both are duplicate
+loaders predating `use_cls_depth`; with `strict=False` they will silently build the wrong
+architecture for `cls_depth_star_reg` and swallow the mismatch. Adding this diagnostic into
+`plot_spatial_sm_meeting.py` is how those two duplicates came to exist — it is Step 3 of
+`slurm/evaluate_meeting.sh:44-48` and stays untouched. (Separately noted: its
+`resolve_stations` at `:389` reads the stale `meeting_output/per_station_oos.csv`, not
+`eval_output/`, and its default `--run-name baseline_huber` is out of date.)
+
+### 23.6 Verification — the figure must be checked, not merely produced
+
+1. **Selection** — `--dry-run-selection` on the login node (CPU; reads CSVs, parquet and
+   zarr *metadata* only, no torch import on that path). Review every gate value before
+   spending GPU time.
+2. **Centre-pixel identity against `predictions_oos.parquet`**, joined on
+   `(station_key, year, doy, depth)`.
+   **Do not assert bit-exact equality — it will false-alarm.** `eval_predict.py:74` ran under
+   `autocast(bfloat16)` at batch 128; this runs batch 1, and kernel selection is batch-size
+   dependent. Run **with** autocast bf16, assert `|Δ| ≤ 2e-3` (~2.5 bf16 ulp at 0.2), and
+   always print the max abs diff. **> 5e-3 means something real is wrong**: wrong checkpoint,
+   wrong sample index, `model.train()` leaking dropout, or a different `category_filter`.
+   Second trap: `eval_predict.py:110` drops rows with NaN `obs`, so a missing
+   (station, doy, depth) must **skip with a warning**, not fail.
+3. **Anchor identity, two independent derivations** — (a) the `anchor_rel_pos` arithmetic;
+   (b) re-implement the candidate loop of `select_anchor_zarr` (`dataset.py:445-494`) in the
+   verifier. Assert `(date, orbit)` agree. For an S2 anchor also recompute dataset.py's own
+   validity rule (`isin(cm.reshape(14,16,14,16),[3,4,5,255]).mean(axis=(1,3)) <= 0.01`,
+   `:471`) and assert 196 valid tokens whenever a fully-clear candidate exists.
+4. **Renderer self-test** (`--selftest`) — push a synthetic checkerboard through the same
+   panel-drawing function; assert the printed σ/ñ/Δ match numpy and that the anomaly panel
+   shows the checkerboard. This catches *"the panel is flat because imshow got the wrong
+   array"* — the failure mode that would make the entire figure a lie in the safe direction.
+5. **Single source array** — assert Block A and Block B derive from the same `sm` object.
+6. **Effective-resolution round-trip** doubles as a check that the map is not being read at
+   the wrong scale.
+
+### 23.7 Artefacts and commands
+
+New: `plot_spatial_heterogeneity.py`, `slurm/spatial_heterogeneity.sh` (copy the
+`slurm/tier1_probe.sh` header: `gpu_h100`, 1 GPU, 16 cpus, `--mem=120G`, **`--time=00:40:00`**,
+`ulimit -n 65536`, mail flags, `conda run -n terramind`).
+Outputs: `figures/spatial_heterogeneity/{station}_heterogeneity.{png,pdf}`,
+`heterogeneity_metrics.json`, `selection.csv`.
+
+Use the **`terramind`** env, not `soilmoisture` — the latter has no pyarrow, so the parquet
+verification step fails there.
+
+```bash
+# 1. selection only, login node, seconds, no GPU
+python plot_spatial_heterogeneity.py --dry-run-selection
+
+# 2. one-station smoke with both verifiers, ~5 min
+sbatch slurm/spatial_heterogeneity.sh --station ISMN_RSMN_Iasi --selftest \
+       --verify-against eval_output/predictions_oos.parquet
+
+# 3. full 3-station run, expected < 10 min
+sbatch slurm/spatial_heterogeneity.sh
+```
+
+Runtime is dominated by dataset init and a few `(12,224,224)` int16 scene reads — inference
+is 3 stations × 4 seasons = **12 batch-1 forward passes**. §16.1's `tier1_probe` built 3,430
+samples over 4 stations well inside a 30-minute wall.
+
+### 23.8 Non-goals
+
+- **No retraining, no touching `lambda_tv`.** §16.4 already proved the decoder has the
+  capacity; a retrain would answer a question that is already answered.
+- **No change to `plot_spatial_sm_meeting.py`** or the meeting pipeline.
+- **Not a fix.** If it confirms near-uniform output, the follow-on is dense spatial
+  supervision (Phase 2) — separate work, and gated on the §22 anomaly-retargeting decision
+  first.
+
+### 23.9 Result
+
+**The §23.0 prediction was wrong, and the real failure is worse.**
+
+Jobs 25408177 (smoke, Iasi) and 25408407 (full, 3 stations), 2026-08-10. All verifications
+passed: selftest PASS, anchors `exact=True` with lags 0-7 d, centre pixel vs
+`predictions_oos.parquet` **max |Δ| = 4.88e-04** against a 2e-3 tolerance (16 matched, 20
+absent because those station-depths carry no observations) — the rendered map is provably the
+same forward pass that produced the §22 evaluation numbers.
+
+**The maps are not flat. §16.1's magnitude does not hold for `cls_depth_star_reg` e16.**
+
+| station | role | LULC | relief | ñ (0-10, over seasons) | σ | Δ p2-p98 |
+|---|---|---|---|---|---|---|
+| ISMN_USCRN_Tucson-11-W | best ubRMSE | 2 | **249 m** | 0.093 – 0.201 | 0.0107 | 0.044 |
+| ISMN_RSMN_Iasi | heterogeneous | **5** | 75 m | 0.133 – 0.282 | 0.0246 | 0.089 |
+| ISMN_SCAN_Crossroads | **flat control** | **1** | **9.5 m** | **0.317 – 0.524** | 0.0325 | **0.135** |
+
+That is **14–80×** the §16.1 baseline of 0.0065, with several panels at or above the §16.4
+dense-supervision ceiling of 0.2504. Not a like-for-like regression — §16.1 measured
+`baseline_huber` epoch 11 over 4 stations — but the gap is far too large to be sampling.
+
+**The control station inverted the expected relationship, and that inversion is the finding.**
+The *flattest* footprint (1 land-cover class, 9.5 m relief, DEM ñ = 0.001, uniform NDVI)
+receives the **most** spatial variation — ñ 0.52, Δ = 0.188 m³/m³ in DJF at 0-10. The footprint
+with 5 land-cover classes and a river valley receives less; the one with 249 m of relief
+receives least. **Structure painted is anti-correlated with structure present.**
+
+Corroborating numbers across all four seasons and all three stations:
+
+- `r(anomaly, DEM)` at 14×14 = **−0.04 to +0.21**; `r(anomaly, NDVI)` = **−0.10 to +0.06**.
+  What is being painted is neither the terrain nor the vegetation.
+- `r(season~season)` = **+0.34 to +0.84** (0-10: 0.34–0.56), against +0.03 for independent
+  fields and +1.00 for a frozen template (both verified synthetically in `--selftest`). The
+  pattern is **substantially persistent but not perfectly static** — it responds to inputs
+  somewhat, just not to anything physical in the footprint.
+- Variance retained at 14×14 = **64–83%**: most structure lives on the token grid, so
+  **effective resolution ≈ 160 m, not 10 m**.
+- σ_space/σ_time = **0.46–0.89**. The spatial spread is of the same order as the centre
+  pixel's entire annual range — not a small perturbation on a constant.
+- At Crossroads the painted spread (Δ = 0.135) is **5× that station's ubRMSE (0.0265)** and
+  **3.7× its σ_time (0.0365)**.
+- Visible edge artefact: a strong band down the left edge of the Crossroads DJF/SON maps.
+  Decoder padding, not hydrology.
+
+**Reframing for Phase 2.** One-pixel supervision does not produce a blank field. It leaves
+50,175 pixels *unconstrained*, and unconstrained is not empty — the decoder fills them with
+confident, physically meaningless structure of up to 0.19 m³/m³, strongest exactly where the
+landscape is most uniform. So (a) any claim or figure about this model's spatial output is
+currently indefensible, and (b) dense supervision is needed to **constrain** structure that
+already exists, not to **create** structure that is missing. Different argument from §16.1's,
+and a stronger one.
+
+**Do not quote 0.0065 as the current model's behaviour anywhere.** §16.1's *mechanism* finding
+(decoder-side, not attention-side) stands; its *magnitude* is obsolete.
+
+Artefacts: `plot_spatial_heterogeneity.py`, `slurm/spatial_heterogeneity.sh`,
+`figures/spatial_heterogeneity/{ISMN_USCRN_Tucson-11-W,ISMN_RSMN_Iasi,ISMN_SCAN_Crossroads}_heterogeneity.{png,pdf}`,
+`heterogeneity_metrics.json`, `selection.csv`.
+Logs: `logs/spatial_het_25408177.out`, `logs/spatial_het_25408407.out`.
+
+Follow-ups, cheapest first:
+1. **Is the lattice the positional embedding?** Correlate the anomaly fields *across stations*.
+   High r ⇒ a fixed decoder/position artefact independent of input entirely. One-line addition
+   to `pattern_persistence`, no new GPU work beyond what is already cached.
+2. **Does dense supervision suppress it or merely overwrite it?** Re-run `capacity_check.py`'s
+   frozen-decoder setup and report ñ *and* r(DEM) afterwards, not ñ alone.
+3. **The left-edge band** points at padding in `UNetDecoder`; ten minutes with a synthetic
+   constant input would settle it.
+
+---
+
+## §24 Is the satellite branch doing anything? — modality shuffling (Session 22, 2026-08-10)
+
+**Status: PLANNED, implementation starting.** No retraining. One eval pass per condition.
+
+### 24.0 The gap
+
+**A no-satellite ablation has never been run.** The runbook contains a TV-loss ablation
+(§16.4), a pyramid-attention ablation (§8.3), a bottleneck ablation (§20.12), and the
+temporal masking ablation (§22.7) — all unrun — but nothing has ever tested the premise of
+the whole thesis: that the TerraMind satellite tokens contribute to the prediction. It is the
+first question a reviewer asks about a multimodal model, and we cannot answer it.
+
+Three independent results now suggest the answer may be "very little":
+
+1. **§20.14** — a ridge/GBM over soil, terrain, land cover, climate, lat/lon and SMAP, using
+   **no imagery at all**, reaches station-mean RMSE ≈ 0.0576 / 0.0576 / 0.0782. The trained
+   network's RMS station bias is 0.0618 / 0.0611 / 0.0875: **it ties at the surface and is
+   worse at 30-100 cm than tabular regression.**
+2. **§22.10** — the model beats climatology on novel-station level by 8-22%; the static probe
+   got ~23% off the null. The same number, reached without imagery.
+3. **§23** — the predicted spatial field is uncorrelated with terrain and vegetation and
+   *anti*-correlated with landscape complexity. Not what a model consuming useful imagery
+   produces.
+
+Counter-argument to keep in view: S1 backscatter genuinely is sensitive to surface soil
+moisture — it is the basis of operational Sentinel-1 SM retrievals. So a null result means
+"we are not extracting it", not "it is not there".
+
+`csvs/station_splits.csv` already carries `ablation_train` (143 stations) and `ablation_oos`
+(50) — a stratified cheap-ablation subset someone designed and never used.
+
+### 24.1 Design — shuffle, do not zero
+
+Keep the trained checkpoint, the temporal transformer and every non-satellite input exactly
+as they are. Swap only the satellite bundle between samples and re-run the evaluation.
+
+**Zeroing is the wrong perturbation.** It puts the input off the training distribution, so a
+collapse would show that the model dislikes zeros, not that it uses imagery. Shuffling holds
+every marginal distribution fixed — same token statistics, magnitudes, sparsity — and destroys
+only the *correspondence* between imagery and the station being predicted. That is what makes
+a null result interpretable.
+
+Two conditions, which decompose what the tokens carry:
+
+| donor | destroys | preserves | question |
+|---|---|---|---|
+| **different station, same season** (±15 d) | station identity | seasonality | do the tokens say *where* we are? |
+| **same station, different season** (>60 d) | temporal state | station identity | do the tokens say *when* we are? |
+
+The first is aimed at the §20.14/§22 level failure. The second asks whether the imagery
+carries any dynamic signal, i.e. whether S1 is being used as a moisture observable.
+
+**The evidence is asymmetric, and that is fine.** No change under shuffling is *conclusive* —
+the model is not using the tokens. A large drop is *ambiguous*, because breaking
+correspondence is itself a perturbation; that case escalates to a retrain on the 143/50
+ablation subset.
+
+### 24.2 Modality groups — a modality moves as a whole
+
+From `dataset.py:1083-1125`:
+
+```
+S2 history   s2_pyr, s2_doys, s2_valid, s2_rel_pos
+S1 history   s1_pyr, s1_doys, s1_valid, s1_rel_pos
+static img   dem_pyr, lulc_pyr
+anchor       anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit
+--- not satellite ---
+soil         soil_patch
+ERA5         era5, era5_doys          <- the positive control
+SIF / TWSA   sif*, twsa*
+```
+
+Permuting `s2_pyr` without `s2_rel_pos` hands the model tokens whose declared time offsets
+belong to a different acquisition — that tests **incoherence, not absence**. The anchor group
+is the same: `anchor_l3/6/9/12` must travel with `anchor_rel_pos` and `anchor_orbit`, or the
+§23 arithmetic that recovers the anchor date becomes meaningless.
+
+### 24.3 The trap: do NOT permute along the batch dimension
+
+`eval_predict.py:70` iterates a **non-shuffled** loader, so a batch is typically consecutive
+days *from one station*. Permuting within the batch therefore yields a **within-station date
+shuffle** while the run is labelled cross-station. Both conditions would come out
+indistinguishable and both mislabelled — a silent, unfalsifiable error.
+
+Use an explicit donor map instead, built from `ds.samples` metadata (`station_key`, `year`,
+`doy`) before any I/O.
+
+### 24.4 Implementation
+
+```python
+class AblationDataset(torch.utils.data.Dataset):
+    """Wraps SoilMoistureDataset; replaces one modality with another sample's."""
+    def __init__(self, base, modality, mode, seed=0):
+        self.base, self.keys = base, MODALITY_KEYS[modality]
+        rng = np.random.default_rng(seed)
+        s = base.samples                       # metadata only -- no token reads
+        self.donor = np.empty(len(s), dtype=np.int64)
+        for i, si in enumerate(s):
+            if mode == "cross_station":        # different site, same season
+                cand = [j for j in doy_bucket[si["doy"] // 15]
+                        if s[j]["station_key"] != si["station_key"]]
+            else:                              # same site, different season
+                cand = [j for j in station_index[si["station_key"]]
+                        if abs(s[j]["doy"] - si["doy"]) > 60]
+            self.donor[i] = rng.choice(cand) if cand else i
+
+    def __getitem__(self, i):
+        item = self.base[i]
+        d    = self.base[int(self.donor[i])]
+        for k in self.keys:
+            item[k] = d[k]
+        return item
+```
+
+Cross-station donors are season-matched (±15 d) so `rel_pos`/`doys` stay plausible and the
+perturbation is confined to station identity rather than "everything at once".
+
+`eval_predict.py` gains `--ablate {none,sat,s2,s1,anchor,dem,lulc,era5}`,
+`--ablate-mode {cross_station,within_station}`, `--seed`, wraps the dataset when
+`--ablate != none`, and tags output as
+`predictions_{split}__{ablate}_{mode}_s{seed}.parquet`. Everything downstream
+(`eval_metrics.py`, `plot_eval_boxplot.py`, `verify_level_claim.py`) then works unchanged and
+yields per-station ubRMSE, bias, r, NSE_anom and level-vs-climatology skill for free.
+
+**Cost:** `__getitem__` doubles for ablated conditions (two token bundles per sample). That is
+the honest price of an exact donor map; accept it.
+
+### 24.5 Positive control — run FIRST, not last
+
+Shuffle **ERA5** with the identical machinery. We are confident ERA5 forcing matters.
+
+- ERA5 shuffle collapses skill, satellite shuffle does not → the null is real.
+- **ERA5 shuffle changes nothing → the harness is broken. Stop and debug.** The permutation is
+  not reaching the model, and every satellite condition would be a false negative.
+
+Same discipline as §23's `--selftest` and the reason it caught nothing silently: without this,
+"nothing changed" is indistinguishable from "nothing was applied".
+
+### 24.6 Run order
+
+```bash
+# 1. positive control first
+sbatch slurm/eval_predict.sh --splits oos --ablate era5 --ablate-mode cross_station --seed 0
+# 2. the actual question, three seeds -- one permutation can be lucky
+sbatch slurm/eval_predict.sh --splits oos --ablate sat --ablate-mode cross_station --seed 0
+#    ... seeds 1, 2
+# 3. only if 2 shows a drop: identity or temporal content?
+sbatch slurm/eval_predict.sh --splits oos --ablate sat --ablate-mode within_station --seed 0
+# 4. attribution, if warranted
+#    --ablate s2 | s1 | anchor
+```
+
+OOS only to start: 180 stations, a fraction of the 4-hour `eval_predict.sh` budget.
+Baseline is already on disk and reproduces §22 to 4.88e-04 (§23.9), so it needs no re-run.
+
+### 24.7 Interpretation
+
+| result | reading | consequence |
+|---|---|---|
+| sat shuffle ≈ baseline | the model does not use the imagery | the multimodal claim does not survive as written; the question becomes *why* the tokens are ignored — and §20.14, §22.10, §23 all become one story |
+| sat shuffle ≫ baseline error | genuine reliance, or perturbation shock | escalate to the retrain on the 143/50 ablation subset for clean attribution |
+| era5 shuffle ≈ baseline | harness broken | stop; no satellite result is valid |
+| cross-station drops, within-station does not | tokens carry site identity but no dynamics | supports the §22 level story from a new direction |
+
+### 24.8 Couple it to §23
+
+Re-run `plot_spatial_heterogeneity.py` under the `sat` shuffle. If the predicted map is
+unchanged when the imagery comes from a *different station*, the §23 blob lattice is confirmed
+as input-independent decoration, and the spatial and multimodal stories close together.
+
+### 24.9 What else this flag unlocks
+
+Built properly, the same mechanism covers §22.7's unrun masking ablation (zero/replace the
+pre-2023 input window to test memorised-context reliance) — add `--ablate-window` later rather
+than writing a second harness.
+
+### 24.10 Non-goals
+
+- No retraining in this section. Attribution by retrain is a separate decision, gated on 24.7.
+- No change to the checkpoint, the splits, or the §22 baseline artefacts.
+
+### 24.11 Result
+
+*(to be filled in — per condition and seed: median per-station ubRMSE / bias / r / NSE_anom at
+each depth on OOS, Δ from baseline, and the level-vs-climatology skill from
+`verify_level_claim.py`.)*

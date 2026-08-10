@@ -31,6 +31,7 @@ from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel
 from train import CudaPrefetcher
 from ckpt_utils import load_checkpoint
+from ablation import AblationDataset, MODALITIES     # §24 modality shuffling
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
@@ -154,7 +155,33 @@ def main():
     p.add_argument("--tag",           default=None,
                    help="Suffix for output files, e.g. --tag c0 -> "
                         "predictions_oot_c0.parquet")
+    # §24 modality shuffling.  Run --ablate era5 FIRST as the positive control: if
+    # shuffling ERA5 does not move the metrics, the permutation never reached the
+    # model and every satellite condition would be a false negative.
+    p.add_argument("--ablate",      default="none",
+                   choices=["none"] + MODALITIES,
+                   help="replace this modality with another sample's (§24)")
+    p.add_argument("--ablate-mode", default="cross_station",
+                   choices=["cross_station", "within_station"],
+                   help="cross_station: different site, same season (kills site "
+                        "identity).  within_station: same site, different season "
+                        "(kills temporal state)")
+    p.add_argument("--seed",        type=int, default=0,
+                   help="permutation seed -- run several, one shuffle can be lucky")
+    p.add_argument("--station-flag", default=None,
+                   help="restrict to stations flagged true in this station_splits.csv "
+                        "column, e.g. ablation_oos (50 stratified OOS stations). The "
+                        "ablation is a PAIRED comparison against the same stations in "
+                        "the baseline parquet, so a subset costs power, not validity.")
     args = p.parse_args()
+    if args.station_flag and (args.csv_start_idx is not None
+                              or args.csv_end_idx is not None):
+        raise SystemExit("--station-flag and --csv-start/end-idx are mutually exclusive")
+
+    # auto-tag so an ablation can never overwrite the baseline artefacts
+    if args.ablate != "none":
+        abl_tag = f"{args.ablate}_{args.ablate_mode}_s{args.seed}"
+        args.tag = f"{args.tag}_{abl_tag}" if args.tag else abl_tag
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -212,6 +239,15 @@ def main():
         # temporary CSV holding only this chunk's stations, so it preloads
         # only their L12 tokens.
         active_csv = str(SPLITS_CSV)
+        if args.station_flag:
+            sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
+            keep = sub[args.station_flag].astype(str).str.lower().isin(
+                ["true", "1", "yes"])
+            sub = sub[keep]
+            flag_csv = out_dir / f"_flag_{split_name}_{args.station_flag}.csv"
+            sub.to_csv(flag_csv, index=False)
+            active_csv = str(flag_csv)
+            print(f"  Station flag {args.station_flag}: {len(sub)} stations")
         if args.csv_start_idx is not None or args.csv_end_idx is not None:
             sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
             lo  = args.csv_start_idx or 0
@@ -245,6 +281,10 @@ def main():
         if len(ds) == 0:
             print("  No samples -- skipping")
             continue
+
+        if args.ablate != "none":
+            ds = AblationDataset(ds, args.ablate, args.ablate_mode, args.seed)
+            print(ds.report())
 
         loader = DataLoader(
             ds,

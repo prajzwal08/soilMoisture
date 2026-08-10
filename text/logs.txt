@@ -3715,3 +3715,115 @@ NEXT SESSION — start here:
      assimilation actually consume. The paper must say which claim it makes.
   3. Still not run: spatial maps (§22 Phase 4); §22.7 masking ablation.
 
+
+================================================================================
+2026-08-10  Session 22 — verification of the level claim, §23 spatial diagnostic,
+            §24 modality-shuffling ablation (built + launched)
+================================================================================
+
+FIGURES / TOOLING BUILT (all CPU unless noted)
+
+  plot_eval_boxplot.py        per-station ubRMSE boxplots by depth x split.
+                              Reads per_station_*.csv (no pyarrow needed).
+  plot_eval_timeseries.py     new --select median mode: 2 random stations either
+                              side of each split's median ubRMSE, 12 figures.
+  plot_eval_ecosystem.py      station inventory + ubRMSE by igbp_macro / kg_macro.
+  plot_eval_somo_panel.py     SoMo.ml Fig.5 layout: station-mean scatter + daily
+                              density histograms, per split.
+  verify_level_claim.py       §22.10 -- the report-grade level verification.
+  verify_frozen_effect.py     §22.12 -- frozen vs unfrozen ubRMSE per station.
+  plot_spatial_heterogeneity.py + slurm/spatial_heterogeneity.sh   §23.
+  ablation.py + eval_predict.py flags                              §24.
+
+§22.10  LEVEL CLAIM VERIFIED — AND MY EARLIER PHRASING CORRECTED
+
+  Station-equal, novel stations: median |bias| 0.041-0.061 vs ubRMSE 0.044-0.059.
+  |bias| ~ ubRMSE, so bias^2 is ~50% of MSE. "Level DOMINATES" was too strong;
+  the two terms are the SAME SIZE. (57-70% was the observation-weighted figure.)
+
+  What is specific to the level is TRANSFER.  seen -> novel:
+      |bias|  x3.06 / x2.91 / x3.56
+      ubRMSE  x1.23 / x1.39 / x1.47
+      sd_obs  x1.06 / x1.08 / x1.02   <- novel stations are not more variable
+  Level skill vs climatology (1 - RMS_model/RMS_null), 95% CI over stations:
+      OOT  +63 / +67 / +55 %      (station seen in training)
+      OOS  +22 / +22 / +12 %
+      OOST +17 / +21 /  +8 % [-0.06,+0.20]   <- NOT distinguishable from climatology
+  ...while median daily r stays 0.70-0.85 at those same stations.
+  Offset fitted on the 1st half of a record removes 45-64% of 2nd-half MSE on OOS
+  (oracle ceiling 60-73%): the offset is real, persistent and transferable.
+  SECOND FAILURE, previously under-weighted: anomaly NSE on novel stations is
+  0.56 / 0.48 / 0.22 by depth. Deep dynamics barely transfer either. A perfect
+  level buys only -29% RMSE at the surface.
+
+§22.11/22.12  "FOREST IS WORSE" IS ACTUALLY "SNOTEL IS WORSE" — AND NOT FROZEN SOIL
+
+  Within Forest: SNOTEL 0.0572 vs non-SNOTEL 0.0429 (OOS 0-10). Within SNOTEL,
+  land cover makes no difference (Forest 0.0572 vs Grass-Crop 0.0581).
+  Frozen/unfrozen split by ERA5 skin temperature: frozen days are EASIER, and
+  removing them WIDENS the SNOTEL gap (OOST 30-100: +0.0210 -> +0.0328).
+  => warm-season property.  dataset.ERA5_VARS has NO snow variable at all
+  (no snow depth, SWE or melt), so snowmelt — the dominant control at half the
+  evaluation pool — is invisible to the model. Concrete, testable input gap.
+
+§23  SPATIAL MAPS: THE §23.0 PREDICTION WAS WRONG, AND THE TRUTH IS WORSE
+
+  Verified first: centre pixel of the rendered map == predictions_oos.parquet to
+  max |d| = 4.88e-04 (tol 2e-3, bf16/batch-size), anchors exact, selftest pass.
+
+  norm-std 0.093-0.524 vs the §16.1 baseline of 0.0065 — 14-80x higher, several
+  panels above the §16.4 dense-supervision ceiling of 0.2504.  The maps are NOT
+  flat; §16.1's magnitude is obsolete (its decoder-side MECHANISM still stands).
+
+  THE CONTROL STATION INVERTED THE RELATIONSHIP:
+      Crossroads  1 LULC class,  9.5 m relief -> n~ 0.317-0.524   (MOST structure)
+      Iasi        5 LULC classes, 75 m relief -> n~ 0.133-0.282
+      Tucson      2 LULC classes, 249 m relief-> n~ 0.093-0.201   (LEAST)
+  r(anomaly,DEM) -0.04..+0.21, r(anomaly,NDVI) -0.10..+0.06, r(season~season)
+  +0.34..+0.84 (independent fields give +0.03), variance retained at 14x14 = 64-83%
+  => effective resolution ~160 m, not 10 m.  Structure painted is ANTI-correlated
+  with structure present. Unconstrained is not empty: the decoder fills the
+  50,175 unsupervised pixels with confident, physically meaningless structure.
+  => Phase 2 must CONSTRAIN existing structure, not CREATE missing structure.
+  => Do not present this model as producing 10 m soil-moisture maps.
+
+§24  BUILT AND LAUNCHED — IS THE SATELLITE BRANCH DOING ANYTHING?
+
+  No no-satellite ablation had ever been run. Three results say it may be doing
+  little: (a) §20.14's imagery-free probe TIES the network at 0-10/10-30 and BEATS
+  it at 30-100; (b) §22.10's novel-station level skill (8-22%) ~ the static probe's
+  23%; (c) §23's non-physical maps.
+
+  ablation.py: swap ONE modality between samples (shuffle, never zero — zeroing
+  tests off-distribution shock, not use). cross_station = different site, same
+  season (kills site identity); within_station = same site, different season.
+  A modality moves as a WHOLE (tokens + masks + rel_pos + orbit) or you test
+  incoherence. Donor map built from metadata, NOT a batch-dim permute — the eval
+  loader is unshuffled, so batch-permuting would silently give a within-station
+  shuffle labelled cross_station.
+
+  Launched on the stratified ablation_oos subset (50 stations, 36 evaluated,
+  only 20% SNOTEL vs 41% in full OOS; paired against the existing baseline):
+      25412088  era5 cross_station s0   <- POSITIVE CONTROL, read this first
+      25412085/86/87  sat cross_station s0/s1/s2
+
+NEXT SESSION — start here:
+
+  1. READ THE ERA5 CONTROL (job 25412088) FIRST. If shuffling ERA5 does not move
+     the metrics, the harness never reached the model and every satellite result
+     is a false negative — stop and debug before reading anything else.
+  2. Then the sat conditions (25412085/86/87). Subset the baseline
+     predictions_oos.parquet to the same 36 stations and compare PAIRED per
+     station: ubRMSE, bias, r, NSE_anom + verify_level_claim.py.
+       - sat ~ baseline  -> the model does not use the imagery. §20.14, §22.10
+         and §23 become one story, and the multimodal claim needs rewriting.
+       - sat >> baseline -> ambiguous (perturbation shock); escalate to a retrain
+         on the 143/50 ablation subset.
+  3. If time: --ablate sat --ablate-mode within_station (identity vs dynamics),
+     then per-modality s2 / s1 / anchor.
+  4. Re-run plot_spatial_heterogeneity.py under the sat shuffle (§24.8). If the
+     map is unchanged with another station's imagery, §23 closes completely.
+  5. STILL THE OPEN GATE from last session: is sigma_station predictable?
+     (adapt station_mean_probe.py). Decides fix-vs-reframe for retargeting.
+  6. Reporting decisions, free: stratify every §22 metric SNOTEL vs non-SNOTEL;
+     mask frozen days; stop claiming 10 m spatial maps.

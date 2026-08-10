@@ -11,8 +11,8 @@
     "10-30",
     "30-100"
   ],
-  "generated": "2026-08-06T14:55:11",
-  "max_stations": null,
+  "generated": "2026-08-10T17:56:44",
+  "max_stations": 5,
   "splits": {
     "val": {
       "split_filter": [
@@ -70,6 +70,25 @@
       },
       "nan_pred": 0,
       "minutes": 4.0
+    },
+    "oos_smoke_era5_cross_station_s0": {
+      "split_filter": [
+        "oos"
+      ],
+      "years": [
+        2016,
+        2022
+      ],
+      "n_stations": 5,
+      "n_rows": 11213,
+      "n_samples": 6296,
+      "rows_by_depth": {
+        "0-10": 6296,
+        "10-30": 4281,
+        "30-100": 636
+      },
+      "nan_pred": 0,
+      "minutes": 1.4
     }
   }
 }
