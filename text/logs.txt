@@ -3814,7 +3814,21 @@ NEXT SESSION — start here:
      median r 0.81->0.47, 0.70->0.46, 0.64->0.50, mean|dpred| 0.035-0.050.
      The permutation reaches the model, so a NULL on the satellite conditions
      is interpretable. Go straight to step 2.
-  2. Then the sat conditions (25412085/86/87). Subset the baseline
+  2. SAT CONDITIONS ALREADY IN (25412085/86/87) — AND THE PREDICTION WAS WRONG.
+     Shuffling the satellite tokens hurts MORE than shuffling ERA5:
+       d ubRMSE  0-10 +0.0344 (era5 +0.0227) | 10-30 +0.0321 (+0.0174)
+                 30-100 +0.0402 (+0.0117, 3.4x)
+       median r  baseline 0.81/0.70/0.64 -> era5 0.47/0.46/0.50
+                 -> satellite 0.35/0.32/0.23   (seed spread <0.004)
+     So the model DOES use TerraMind. Two caveats: (a) 16 satellite keys vs 2 ERA5
+     keys is an unmatched perturbation — run --ablate s2|s1|anchor separately;
+     (b) cross_station kills identity AND content, so the tokens may be a SITE
+     FINGERPRINT rather than a moisture observable. Job 25413066 (within_station:
+     same site, wrong date) separates those — READ IT FIRST TOMORROW.
+     This does NOT contradict §22.10: ubRMSE/r are anomaly quantities, so imagery
+     can drive dynamics while still failing to supply a novel station's level.
+
+  2b. (original plan) Subset the baseline
      predictions_oos.parquet to the same 36 stations and compare PAIRED per
      station: ubRMSE, bias, r, NSE_anom + verify_level_claim.py.
        - sat ~ baseline  -> the model does not use the imagery. §20.14, §22.10

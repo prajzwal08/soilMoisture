@@ -4612,6 +4612,33 @@ than writing a second harness.
 mean |Δpred| 0.035-0.050 m³/m³. **The permutation reaches the model and materially changes
 its output, so a null result on the satellite conditions is interpretable** (§24.5 satisfied).
 
-*Satellite conditions: jobs 25412085/86/87 (`sat`, cross_station, seeds 0/1/2) were still
-running at sign-off. Compare the same way — paired, same 36 stations — and add
-`verify_level_claim.py` for the level-vs-climatology skill.*
+**SATELLITE CONDITION: THE TOKENS MATTER — MORE THAN ERA5.** Jobs 25412085/86/87,
+`sat` cross_station, seeds 0/1/2. Median Δ ubRMSE vs baseline, same 36 stations, paired:
+
+| depth | ERA5 shuffled | satellite shuffled (s0/s1/s2) |
+|---|---|---|
+| 0-10 | +0.0227 | **+0.0351 / +0.0343 / +0.0344** |
+| 10-30 | +0.0174 | **+0.0333 / +0.0315 / +0.0316** |
+| 30-100 | +0.0117 | **+0.0413 / +0.0411 / +0.0382** |
+
+Median r: baseline 0.81/0.70/0.64 → ERA5 0.47/0.46/0.50 → **satellite 0.35/0.32/0.23**.
+mean |Δpred| 0.071-0.078 (satellite) vs 0.035-0.050 (ERA5). Seed spread < 0.004.
+
+**The §24.0 expectation was wrong: the model is not ignoring TerraMind.** Two caveats
+before this is quoted as a clean win, both anticipated in §24.7:
+
+1. **Perturbation sizes are not matched** — 16 satellite keys (including the anchor
+   L3/L6/L9/L12 skips that feed the U-Net decoder directly) against 2 ERA5 keys. A larger
+   input disturbance producing a larger output disturbance is not automatically "more
+   informative". A fairer contrast would ablate one satellite sub-block at a time
+   (`--ablate s2 | s1 | anchor`), now justified.
+2. **cross_station conflates identity with content.** The model may be using the tokens as
+   a **site fingerprint** rather than as a moisture observable — which would be entirely
+   consistent with §20.14 and §22.10 (level memorised for seen stations, not inferable for
+   novel ones). `--ablate sat --ablate-mode within_station` (job 25413066, submitted) is
+   what separates them: same station's imagery, wrong date. Collapse ⇒ genuine temporal
+   content; little movement ⇒ mostly an identity key.
+
+**This does not contradict the level findings.** ubRMSE and r are anomaly quantities: the
+imagery can drive day-to-day variation while still failing to supply a novel station's
+absolute level. Read §24 as being about dynamics, §22.10 as being about level.
