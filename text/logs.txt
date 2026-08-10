@@ -3809,9 +3809,11 @@ FIGURES / TOOLING BUILT (all CPU unless noted)
 
 NEXT SESSION — start here:
 
-  1. READ THE ERA5 CONTROL (job 25412088) FIRST. If shuffling ERA5 does not move
-     the metrics, the harness never reached the model and every satellite result
-     is a false negative — stop and debug before reading anything else.
+  1. ERA5 CONTROL (job 25412088) ALREADY PASSED, run at sign-off:
+     ubRMSE 0.0497->0.0714 / 0.0464->0.0661 / 0.0357->0.0524 (+46/+38/+33%),
+     median r 0.81->0.47, 0.70->0.46, 0.64->0.50, mean|dpred| 0.035-0.050.
+     The permutation reaches the model, so a NULL on the satellite conditions
+     is interpretable. Go straight to step 2.
   2. Then the sat conditions (25412085/86/87). Subset the baseline
      predictions_oos.parquet to the same 36 stations and compare PAIRED per
      station: ubRMSE, bias, r, NSE_anom + verify_level_claim.py.

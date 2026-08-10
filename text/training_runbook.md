@@ -4600,6 +4600,18 @@ than writing a second harness.
 
 ### 24.11 Result
 
-*(to be filled in — per condition and seed: median per-station ubRMSE / bias / r / NSE_anom at
-each depth on OOS, Δ from baseline, and the level-vs-climatology skill from
-`verify_level_claim.py`.)*
+**POSITIVE CONTROL PASSED (job 25412088, 2026-08-10).** ERA5 shuffled cross-station on the
+`ablation_oos` subset, paired against the baseline over 112,791 rows / 36 stations:
+
+| depth | n | ubRMSE base | ubRMSE shuffled | Δ median | r base → shuffled |
+|---|---|---|---|---|---|
+| 0-10 | 36 | 0.0497 | 0.0714 | **+0.0227 (+46%)** | 0.81 → 0.47 |
+| 10-30 | 28 | 0.0464 | 0.0661 | **+0.0174 (+38%)** | 0.70 → 0.46 |
+| 30-100 | 21 | 0.0357 | 0.0524 | **+0.0117 (+33%)** | 0.64 → 0.50 |
+
+mean |Δpred| 0.035-0.050 m³/m³. **The permutation reaches the model and materially changes
+its output, so a null result on the satellite conditions is interpretable** (§24.5 satisfied).
+
+*Satellite conditions: jobs 25412085/86/87 (`sat`, cross_station, seeds 0/1/2) were still
+running at sign-off. Compare the same way — paired, same 36 stations — and add
+`verify_level_claim.py` for the level-vs-climatology skill.*
