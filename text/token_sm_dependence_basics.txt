@@ -1,0 +1,661 @@
+================================================================================
+TESTING WHETHER TERRAMIND L12 EMBEDDINGS CARRY SOIL-MOISTURE SIGNAL
+The method, from first principles.  Written 2026-08-11 for critique BEFORE any
+code is written.
+================================================================================
+
+STATUS: proposal only. Nothing here has been run. If the reasoning does not
+survive review, nothing has been wasted. Read section 6 (the attack surface)
+before section 3 (the flowchart) if you are short of time -- section 6 is where
+the method is weakest and where a critique should land.
+
+
+--------------------------------------------------------------------------------
+0. THE QUESTION
+--------------------------------------------------------------------------------
+
+Everything the project currently knows about whether satellite imagery matters
+is mediated by a TRAINED NETWORK. Section 24 of the runbook perturbed the inputs
+of a checkpoint and concluded the tokens matter. Section 24.12 then showed the
+content is largely a SITE FINGERPRINT, and that the fingerprint share grows with
+depth (the temporal share of the effect was 39% / 27% / 12% at 0-10 / 10-30 /
+30-100 cm).
+
+A sceptic can answer all of that with one sentence:
+
+    "Your model responds to the tokens. That says nothing about whether the
+     tokens contain soil moisture."
+
+This document describes how to answer the question with NO TRAINED MODEL
+ANYWHERE. Nothing is fitted to predict soil moisture from tokens. The evidence
+is a dependence statistic measured against an explicit null.
+
+What we are asking:
+
+    For each day t we have an image embedding x_t (768 numbers) and a soil
+    moisture value y_t. Does knowing x tell you anything about y?
+
+    Formally:   dependence  <=>  P(y | x) != P(y)
+                independence <=> the joint distribution factorises
+
+What we are NOT asking, and must not later pretend we asked:
+
+    - not "can we predict soil moisture from imagery" (that is a modelling
+      question, and a negative answer there could just mean a bad model)
+    - not "does the imagery CAUSE the moisture reading"
+    - not "does the embedding contain moisture information that is not already
+      in ERA5 and the calendar" -- that is a harder, conditional question,
+      discussed in section 7
+
+
+--------------------------------------------------------------------------------
+1. BUILDING UP FROM THE EASY CASE
+--------------------------------------------------------------------------------
+
+1.1 If the embedding were a single number
+-----------------------------------------
+Suppose x were one number -- say Sentinel-1 VV backscatter in dB. You would plot
+y against x, compute a Pearson correlation, get r = 0.4, and ask "is that real?"
+
+Two things go wrong immediately. Both survive into the 768-dimensional case, so
+they are worth stating carefully now.
+
+  PROBLEM 1 -- Pearson only sees straight lines.
+      If y were a perfect U-shape in x, Pearson r would be near zero while the
+      dependence is total. A test that can only see linear relationships will
+      report "nothing" for a large class of real relationships.
+
+  PROBLEM 2 -- the textbook p-value assumes independent observations.
+      The standard significance test for r assumes your n observations are
+      independent draws. Soil moisture on consecutive days is very nearly the
+      same number. With 300 daily values you do not have 300 independent
+      observations; you have something closer to a few dozen. Every classical
+      p-value computed on such data is too small, often by a lot.
+
+
+1.2 The idea that fixes assumption-free testing: shuffle it yourself
+--------------------------------------------------------------------
+This is the entire foundation of the method. It needs no formulas.
+
+You have 300 correctly-paired days. Compute your statistic -- anything you like.
+Say it comes out 0.4.
+
+Now SHUFFLE the y values and recompute. You have personally destroyed any
+relationship, so whatever number you get is what "no relationship" looks like.
+Do it 999 times. You now have 999 numbers describing a world where nothing is
+going on. Say they spread from -0.12 to +0.11.
+
+Your real 0.4 sits far outside that spread. A relationship that strong
+essentially never arises from a random pairing.
+
+    p-value = (1 + how many of the 999 fakes reached 0.4) / 1000
+
+WHY THIS IS VALID: if there truly is no relationship, then the real pairing is
+nothing special -- it is one arrangement among many equally likely ones. So the
+real number is itself just another draw from that same histogram, and it lands
+in the top 5% exactly 5% of the time. That is the whole argument.
+
+No normality. No independence assumption. No large-sample approximation. And it
+works for ANY statistic, however strange.
+
+    CONSEQUENCE, and it is important:
+    the choice of statistic controls POWER (how often a true effect is found).
+    It cannot control VALIDITY. A poor statistic finds less; it cannot lie.
+
+This is why later concerns about the distance-correlation estimator being biased
+in high dimensions are a REPORTING problem, not an inference problem: the fake
+draws carry the identical bias, and it cancels in the p-value.
+
+
+1.3 The catch, and it is the one that matters here
+---------------------------------------------------
+The shuffle must destroy ONLY the thing being tested.
+
+Soil moisture is smooth in time -- today's value is close to yesterday's.
+Embeddings are smooth too, because consecutive acquisitions see nearly the same
+scene. When you shuffle y at random, you destroy the pairing AND you destroy the
+smoothness.
+
+So the 999 fake datasets are jagged while the real one is smooth. That is not a
+fair comparison. Two smooth series drift into apparent agreement far more often
+than two jagged ones do. (This is the classic spurious-regression effect: two
+INDEPENDENT random walks routinely show large correlations.)
+
+The consequence is severe and specific:
+
+    the fake histogram comes out too narrow
+    -> the real value looks impressively extreme
+    -> you announce a discovery from pure noise
+
+THE FIX: shift instead of shuffle. Rotate y in time by a random number of days,
+wrapping the end around to the start ("circular" or "toroidal" shift). The
+series stays exactly as smooth as it really is; only the date alignment is
+wrong. Now the fakes match the real data in every respect except the single
+thing under test.
+
+This is standard practice in spatial ecology for exactly this reason. It is
+approximately exact for a stationary series and exactly correct for a
+circularly-stationary one.
+
+    THIS IS THE SINGLE MOST IMPORTANT DESIGN DECISION IN THE WHOLE METHOD.
+    Get it wrong and every result downstream is a false positive.
+
+THIS IS NOT A THEORETICAL WORRY. MEASURED 2026-08-11: two INDEPENDENT AR(1)
+series, n = 300, 400 repetitions, 199 null draws, statistic = |Pearson r|. The
+truth is that there is no relationship, so a correct test must reject 5% of the
+time and no more.
+
+    autocorrelation      shuffle        circular shift     (correct = 5.0%)
+    rho = 0.00             6.0%             6.8%
+    rho = 0.70            23.0%             6.0%
+    rho = 0.90            51.0%             6.5%
+    rho = 0.95            66.5%             8.0%
+
+Read the rho = 0.90 row. Shuffling declares a discovery on completely unrelated
+data 51% of the time -- ten times the nominal rate. Daily soil moisture is at
+least this autocorrelated. With no autocorrelation (rho = 0) the two nulls agree,
+which confirms the effect is caused by smoothness and nothing else.
+
+Circular shift stays near 5% throughout. It does drift slightly optimistic at
+rho = 0.95 (8.0%, against a Monte-Carlo standard error of about 1.1%), which is
+itself an argument for setting the minimum lag per station from the measured
+autocorrelation rather than fixing it globally -- see 6(e).
+
+
+1.4 Now the 768 dimensions
+---------------------------
+Why not just run 768 separate correlations, one per embedding coordinate, and
+correct for multiple testing?
+
+  The obvious objection: with 768 tests you expect ~38 to look significant at
+  p<0.05 by chance alone. Bonferroni handles that but destroys power, and the
+  signal may be spread thinly across many coordinates rather than concentrated
+  in one.
+
+  The deeper objection, and the decisive one: THE 768 NUMBERS ARE AN ARBITRARY
+  COORDINATE SYSTEM. A transformer's residual stream has no privileged axes.
+  Rotate the basis by any orthogonal matrix Q and the embedding X becomes XQ --
+  identical information, but every single per-coordinate correlation changes.
+
+  A statistic whose answer depends on the orientation of an arbitrary basis is
+  measuring the basis, not the data.
+
+So what IS invariant to rotation? DISTANCES BETWEEN POINTS. However you rotate
+the space, the distance between day i's embedding and day j's embedding is
+unchanged. Therefore the test must be built out of distances.
+
+
+1.5 The intuition, in one sentence
+-----------------------------------
+    If the embedding knows about soil moisture, then days whose images look
+    similar to each other should have similar soil moisture.
+
+Made concrete: for every pair of days (i,j) compute
+
+    a_ij = distance between the two embeddings
+    b_ij = |SM_i - SM_j|
+
+If there is dependence, small a should go with small b. "Distance correlation"
+is a carefully normalised version of correlating a against b. The k-nearest-
+neighbour version is the blunt form: take the 10 most similar images, and ask
+whether their soil moisture values are closer to each other than random pairs
+are.
+
+Everything else -- characteristic functions, double-centring, bias correction --
+is machinery that makes this intuition exact. It is not where the belief comes
+from.
+
+The formal property that justifies the choice: distance correlation is zero IF
+AND ONLY IF the two variables are independent, in any dimensions (Szekely,
+Rizzo & Bakirov 2007). Pearson gives zero for plenty of dependent pairs. This
+matters most for a NEGATIVE result: a test consistent against all alternatives
+lets "we found nothing" mean something.
+
+
+--------------------------------------------------------------------------------
+2. WHAT GETS COMPARED -- THE THREE ARMS
+--------------------------------------------------------------------------------
+
+Soil-moisture variance splits into a SPATIAL part (some places are wetter than
+others) and a TEMPORAL part (some days are wetter than others at one place).
+These are different physical questions, they fail independently, and pooling
+them re-creates exactly the confound section 24.12 identified. So they are
+tested separately and never merged.
+
+  ARM T   (time)         same station, different dates
+                         "do wet DAYS look different from dry days?"
+                         main confound: season, rain, phenology
+
+  ARM S-coarse (space)   different stations, far apart
+                         "do wet PLACES look different from dry places?"
+                         main confound: GEOGRAPHY -- nearby places look alike
+                         and are similarly wet, so an uncontrolled result
+                         proves only that embeddings encode location
+
+  ARM S-fine (space)     different stations <5 km apart, SAME DATE
+                         "at fixed weather and climate, does a difference in
+                          embedding track a difference in soil moisture?"
+                         main confound: land cover
+
+ARM S-fine is the cleanest test available. Two stations a kilometre apart share
+the same storm, the same season, the same climate -- every nuisance variable is
+held fixed by construction, and what remains is spatial moisture contrast.
+
+Its cost is sample size. Measured from csvs/station_splits.csv:
+
+    890 stations with soil moisture, in 824 location groups
+     31 groups contain >= 2 SM stations  ->   97 stations, 175 pairs
+        105 pairs < 2.24 km  (25 groups)  <- both inside ONE 224x224 patch
+        175 pairs < 5 km     (31 groups)
+    networks: TxSON 28 pairs, SNOTEL 18, FMI 14, iRON 4, AmeriFlux 4
+
+n = 31 clusters must be stated in every claim this arm supports, and aggregation
+must be cluster-equal -- TxSON alone would otherwise carry the result.
+
+
+--------------------------------------------------------------------------------
+3. THE FLOWCHART
+--------------------------------------------------------------------------------
+
+PART A -- the core test, one station, temporal arm
+---------------------------------------------------
+
+        +----------------------------------------------------------+
+  [1]   |  INPUT                                                   |
+        |  L12 tokens (N, 196, 768) fp16   +   dates (N,)          |
+        |  daily soil moisture (n_days,)   +   qc flag             |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [2]   |  REDUCE 196 patches -> the station's own footprint       |
+        |  grid[6:8, 6:8].mean()          ->  (N, 768)             |
+        |  (station sits on the corner of tokens 90/91/104/105)    |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [3]   |  JOIN on date string, keep qc==0 only                    |
+        |  ->  X (n, 768)   paired with   y (n,)     n ~ 100-900   |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [4]   |  SUBTRACT STATION MEAN   from X and from y               |
+        |  kills "wet sites vs dry sites"                          |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [5]   |  REGRESS OUT sin/cos(2 pi k doy / 365), k = 1..3         |
+        |  from X and from y     kills "summer vs winter"          |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [6]   |  z-score each of 768 dims  ->  PCA -> keep ~20           |
+        |  (uses X only -- y never enters, so the null stays valid)|
+        +----------------------------+-----------------------------+
+                                     |
+                    +----------------+----------------+
+                    |                                 |
+        +-----------v-----------+        +------------v-------------+
+  [7]   |  REAL                 |  [8]   |  NULL, repeat 999x       |
+        |  a_ij = ||x_i - x_j|| |        |  y' = roll(y, random     |
+        |  b_ij = |y_i - y_j|   |        |        lag >= 30 days)   |
+        |  U-centre both        |        |  recompute b'_ij only    |
+        |  T_obs = dCor(a,b)    |        |  -> T_1 ... T_999        |
+        +-----------+-----------+        +------------+-------------+
+                    |                                 |
+                    +----------------+----------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [9]   |  p = (1 + #{T_b >= T_obs}) / 1000                        |
+        |  ONE number per station                                  |
+        +----------------------------+-----------------------------+
+                                     v
+                          (repeat for 890 stations)
+
+
+PART B -- from 890 stations to a verdict
+------------------------------------------
+
+        +----------------------------------------------------------+
+  [10]  |  890 stations x (statistic, p)                           |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [11]  |  fraction with p <= 0.05                                 |
+        |  under a true null this MUST be about 5%                 |
+        +----------------------------+-----------------------------+
+                                     |
+        +----------------------------v-----------------------------+
+  [12]  |  GLOBAL NULL: shift y at EVERY station at once,          |
+        |  recompute the fraction, 999x                            |
+        |  -> handles clustered / non-independent stations         |
+        +----------------------------+-----------------------------+
+                                     |
+                        +------------v------------+
+                        | fraction >> global null?|
+                        +---+------------------+--+
+                        yes |                  | no
+             +--------------v-----+   +--------v------------------+
+       [13]  | DEPENDENCE PRESENT |   | compare to DETECTION FLOOR|
+             | -> then argue about|   | "no effect above size X"  |
+             |    which confound  |   | (meaningless without it)  |
+             +--------------------+   +---------------------------+
+
+
+PART C -- gates that must pass before Part B is believed
+---------------------------------------------------------
+
+   +------------------------+  +------------------------+  +-----------------------+
+   | POSITIVE CONTROL       |  | NULL CALIBRATION       |  | DETECTION FLOOR       |
+   | target = raw VV dB     |  | target = shifted SM    |  | plant alpha * signal  |
+   | from the SAME scene    |  |                        |  | into real embeddings  |
+   |                        |  |                        |  |                       |
+   | must fire strongly     |  | must give about 5%     |  | find smallest alpha   |
+   | else HARNESS BROKEN    |  | else NULL IS WRONG     |  | that is detected      |
+   |                        |  |                        |  | else a null is mute   |
+   +------------------------+  +------------------------+  +-----------------------+
+
+
+--------------------------------------------------------------------------------
+4. WHY EACH BOX EXISTS -- AND WHAT BREAKS WITHOUT IT
+--------------------------------------------------------------------------------
+
+[1] INPUT
+    L12 is the final TerraMind layer, chosen by decision, not by evidence. It is
+    the deepest and most semantic representation; if soil moisture survives
+    anywhere it is most likely to be a high-level property there, but it is also
+    the layer most likely to have discarded low-level radiometry. The shallower
+    layers L3/L6/L9 exist on disk and are the obvious follow-up if L12 is null.
+    WITHOUT IT: nothing. This is the given.
+
+[2] REDUCE 196 PATCHES TO THE STATION FOOTPRINT
+    Each acquisition is 196 patch tokens covering 2.24 x 2.24 km. The in-situ
+    sensor is a point. Averaging the four tokens over the station (a ~320 m
+    footprint) is the closest available match to what the sensor measures.
+    WITHOUT IT: averaging all 196 tokens would mix in land 1 km away, which has
+    its own moisture, diluting any real relationship. Using a single token would
+    be arbitrary, because the station falls exactly on the corner between four.
+
+[3] JOIN ON DATE, qc == 0 ONLY
+    The label file contains gap-filled values flagged qc==1. Those are
+    climatological interpolations, not observations -- they are a smooth function
+    of day-of-year. Including them would inject pure seasonality into y and
+    inflate any apparent relationship with a seasonal embedding.
+    WITHOUT IT: a substantial fraction of the "signal" would be our own
+    gap-filling algorithm being detected.
+
+[4] SUBTRACT THE STATION MEAN
+    This is the first half of the scientific argument. Across stations, the
+    dominant variation in both embeddings and soil moisture is site identity: a
+    desert looks different from a bog and is drier. A test on raw values would
+    fire strongly and mean only "different places are different". Section 24.12
+    already established that the fingerprint dominates.
+    WITHOUT IT: guaranteed strong positive result carrying no information.
+
+[5] REGRESS OUT DAY-OF-YEAR HARMONICS
+    The second half of the scientific argument. Within a station, both the
+    imagery (vegetation green-up, sun angle, snow) and the soil moisture follow
+    an annual cycle. Any statistic on unadjusted series would detect "both things
+    have a seasonal cycle", which is true and uninteresting.
+    Removing k = 1..3 harmonics from BOTH sides leaves the question: beyond the
+    seasonal norm at this site, do wet anomalies look different from dry ones?
+    WITHOUT IT: a strong positive result that is just the calendar.
+    NOTE: this is done symmetrically to both sides, so nothing crosses between X
+    and y. That is what keeps the procedure model-free.
+
+[6] Z-SCORE, THEN PCA TO ~20 DIMENSIONS
+    Two separate reasons.
+    (a) z-scoring: the 768 embedding coordinates have very different scales.
+        Without standardising, a handful of high-variance coordinates would
+        dictate every distance and the other 700 would be invisible.
+    (b) PCA: in high dimensions all pairwise distances concentrate toward the
+        same value -- the relative spread collapses and distance-based statistics
+        lose their power. Reducing to ~20 components restores contrast.
+    IS THIS CHEATING? No. PCA is computed from X alone; y never enters it. The
+    null permutes only y, so the reduction is identical in the real and fake
+    datasets and cannot manufacture a difference. It must be fitted ONCE, outside
+    the permutation loop.
+    WITHOUT IT: the test still valid, but with much reduced power -- a real effect
+    could be missed.
+
+[7] DISTANCES AND U-CENTRING
+    Distances because they are the rotation-invariant summary (section 1.4).
+    U-centring (rather than the simpler double-centring) because the naive
+    estimator of distance correlation is biased UPWARD, and the bias grows with
+    dimension: Szekely & Rizzo (2013) showed it tends to 1 as dimension grows for
+    ANY data, related or not. At 768 dimensions, pure noise can return ~0.9.
+    WITHOUT IT: the p-value would still be correct (the bias cancels between real
+    and fake), but any reported effect size would be meaningless. The rule is
+    therefore: never quote an effect size from the biased estimator. This is the
+    same class of error as quoting mean NSE (runbook section 22).
+
+[8] CIRCULAR SHIFT, NOT SHUFFLE
+    See section 1.3. This is the load-bearing step.
+    The minimum lag of 30 days exists so the shifted series is not still aligned
+    with itself through autocorrelation.
+    WITHOUT IT: systematic false positives; the entire study would be wrong.
+
+[9] THE PER-STATION p-VALUE
+    The (1 + count)/(B + 1) form, rather than count/B, is what makes the test
+    exactly valid rather than approximately so, and prevents a p-value of zero.
+
+[10]-[11] THE FRACTION OF STATIONS
+    One station with ~300 autocorrelated days is weak evidence either way. The
+    strength of the design comes from ~890 near-independent repetitions of the
+    same experiment. Under a true null, exactly 5% of stations should reach
+    p<=0.05 -- that is what a p-value means. The scientific question becomes:
+    is it 5%, or is it 40%?
+
+[12] THE GLOBAL NULL
+    Stations in the same cluster are not independent, so a binomial test on the
+    fraction from [11] would overstate significance. Instead, shift y at every
+    station simultaneously and recompute the whole aggregate. Any cross-station
+    dependence is present in both the real and the fake numbers and cancels. This
+    requires no independence assumption at all.
+    WITHOUT IT: an over-confident global p-value.
+
+[13] THE VERDICT, AND WHY IT IS CONDITIONAL
+    A positive result is the START of the argument, not the end -- see section 5.
+    A negative result is meaningless without the detection floor from Part C.
+
+PART C GATES
+    POSITIVE CONTROL: replace the target with raw Sentinel-1 VV backscatter from
+    the same scene. The tokens were computed from exactly that image, so
+    dependence MUST be strong. If it is not, the machinery is broken and every
+    null elsewhere is a false negative. This mirrors the ERA5 positive control in
+    runbook section 24.5, which is the reason section 24's result was
+    interpretable at all.
+
+    NULL CALIBRATION: with a shifted target, the fraction of stations at p<=0.05
+    must come out near 5%. Materially higher means the minimum lag is too short
+    for that site's autocorrelation, and the null must be fixed before anything
+    else is believed.
+
+    DETECTION FLOOR: plant a known signal of size alpha into real embeddings and
+    find the smallest alpha the machine reliably recovers. This converts a null
+    from the uninterpretable "we found nothing" into the scientific statement
+    "there is no dependence above an effect of size X". A test with no power
+    finds nothing by construction; without this step we could not tell the two
+    apart.
+
+
+--------------------------------------------------------------------------------
+5. WHAT EACH OUTCOME IS ALLOWED TO CLAIM
+--------------------------------------------------------------------------------
+
+IF THE TEST FIRES:
+    Allowed:     "the embedding co-varies with soil moisture, beyond site
+                  identity and beyond the seasonal cycle"
+    NOT allowed: "the embedding contains soil-moisture information"
+
+    The gap between those two is not closed by any statistic. It is closed --
+    partially -- by the design: subtracting the station mean removes site
+    identity, removing harmonics removes season, and comparing two stations 1 km
+    apart on the same day removes weather because they share it. Each of those is
+    a PHYSICAL argument. The statistics only certify that what remains is not
+    chance.
+
+    So the honest place to be sceptical is not the mathematics. It is whether
+    boxes [4] and [5] really remove what they claim to remove.
+
+IF THE TEST DOES NOT FIRE:
+    Allowed:     "no dependence above an effect of size X" (X from the detection
+                  floor)
+    NOT allowed: "the embeddings do not carry soil moisture"
+
+    And a null at L12 immediately raises the next question rather than closing
+    the topic: is the signal present in the shallower layers L3/L6/L9, which the
+    U-Net decoder consumes directly? Those bundles are already on disk.
+
+
+--------------------------------------------------------------------------------
+6. THE ATTACK SURFACE -- WHERE THIS METHOD IS WEAKEST
+--------------------------------------------------------------------------------
+
+Stated by us rather than left for a reviewer to find.
+
+(a) BOXES [4] AND [5] CARRY THE ENTIRE SCIENTIFIC ARGUMENT.
+    Everything downstream is bookkeeping. If those two subtractions do not remove
+    climate and season, a positive result is a confound and no amount of
+    permutation testing repairs it.
+
+(b) THREE HARMONICS UNDER-FIT REAL SEASONALITY.  <- attack this first
+    Three sine/cosine pairs describe a SMOOTH annual cycle. Soil moisture
+    seasonality is not smooth: snowmelt is a step, monsoon onset is a step. What
+    the harmonics fail to remove stays in BOTH X and y, and shared leftover
+    seasonality manufactures exactly the dependence we are looking for. The
+    number 3 is a guess. Sensitivity to it must be reported, and a step-tolerant
+    alternative (e.g. a per-station day-of-year climatology, or a smoothing
+    spline) should be tested.
+
+(c) SUPPORT MISMATCH -- 320 m token footprint versus a point sensor.
+    The sensor integrates a few cubic centimetres of soil. The embedding sees
+    ~320 m. That mismatch is real physical noise in y relative to X, and no
+    statistic removes it. It can only push results toward a null -- which means a
+    small measured effect might be genuine, and it is another reason the
+    detection floor is mandatory.
+
+(d) THE PCA DIMENSION ~20 IS ARBITRARY -- AND PCA CAN DELETE THE SIGNAL.
+    If the answer moves with the number of components, there is no answer. The
+    number must be swept and reported, not chosen.
+
+    Worse, and discovered by accident on 2026-08-11: a pilot simulation planted a
+    known signal along ONE embedding coordinate, then applied the same z-score +
+    PCA-to-20 reduction described in box [6]. The distance test did NOT recover
+    it. The reason is instructive and applies directly to the real method: PCA is
+    UNSUPERVISED. It keeps the directions of largest variance, and there is no
+    reason at all that the soil-moisture direction is among them. An unsupervised
+    reduction can discard precisely the axis of interest.
+
+    That pilot was mis-specified as a power benchmark and is NOT evidence about
+    the real method -- its planted signal was one of 768 mutually independent
+    directions, which is an unrealistically hard case, and its per-coordinate
+    comparison used classical p-values, which fail outright on autocorrelated
+    data (100% false positives -- itself an unintended demonstration of section
+    1.1, Problem 2). But the MECHANISM it exposed is real and unresolved.
+
+    Options, none yet chosen: sweep the component count; run the test on all 768
+    dimensions with no reduction and accept the loss of power to distance
+    concentration; or use a reduction that is not variance-based. This must be
+    settled before the method is trusted.
+
+(e) THE >= 30-DAY MINIMUM LAG ASSUMES SM DECORRELATES WITHIN A MONTH.
+    At snow-dominated sites (SNOTEL is roughly half the evaluation pool) it does
+    not. There the null stays too easy and false positives return. The lag should
+    be set per station from the measured autocorrelation, not fixed globally.
+
+(f) BOX [11] PRESUMES p-VALUES ARE UNIFORM UNDER THE NULL.
+    That is precisely what the calibration gate must ESTABLISH, not assume. If
+    calibration fails, [11] and [12] are both invalid.
+
+(g) MULTIPLE COMPARISONS ACROSS THE STUDY.
+    Three arms x several modality configurations x three depths x several
+    choices of k is a large search space. One primary endpoint must be fixed IN
+    WRITING before anything runs; everything else is explicitly exploratory.
+
+(h) DEPENDENCE IS MARGINAL, NOT CONDITIONAL.
+    Even a valid rejection does not show the embedding adds anything beyond ERA5
+    and the calendar. Partial distance correlation can condition on those, but
+    Shah & Peters (2020) proved no conditional-independence test controls error
+    against all alternatives while keeping power. Conditioning reduces a
+    confound; it does not eliminate one.
+
+(i) THE CLOUD-SURVIVAL BIAS AFFECTS SENTINEL-2 ONLY.
+    36% of S2 acquisitions were removed by cloud filtering, and clear days are
+    dry-biased -- the surviving sample is not a random sample of days. Sentinel-1
+    sees through cloud and has no such selection, which is one reason it is the
+    primary modality. The size of the S2 bias should be measured directly by
+    comparing the SM distribution on acquisition days against all days.
+
+
+--------------------------------------------------------------------------------
+7. OPEN DECISIONS -- NOT YET SETTLED
+--------------------------------------------------------------------------------
+
+1. Primary endpoint: distance correlation on continuous soil moisture, or the
+   simpler and more intuitive two-sample version (do the embeddings of the
+   wettest third of days differ from those of the driest third)? The second is
+   easier to defend and to check by eye; the first uses every observation and has
+   more power. Whichever is chosen must be declared before running.
+
+2. Number of DOY harmonics, or a switch to a step-tolerant seasonal model --
+   see 6(b).
+
+3. Whether to run the null-calibration simulation on real embeddings before
+   building anything (recommended: yes; it is cheap, and if the circular-shift
+   null does not calibrate, the design needs rethinking rather than executing).
+   The synthetic version above already settled the shuffle-versus-shift question;
+   what remains is confirming it on the actual token time series, whose
+   autocorrelation structure is not AR(1).
+
+3b. A CORRECTED POWER AND DETECTION-FLOOR SIMULATION IS STILL OWED. The pilot run
+   on 2026-08-11 was mis-specified -- see 6(d) -- so the method currently has NO
+   measured power. Until it does, a negative result from this design would be
+   uninterpretable. The corrected version must plant the signal along a realistic
+   direction (a leading principal component of real embeddings, not an arbitrary
+   coordinate of synthetic noise) and must resolve the box [6] reduction question
+   at the same time.
+
+4. Modality order. Proposal: Sentinel-1 + Sentinel-2 together first, since that
+   is the honest "does the satellite branch carry it" question and has the most
+   power; only then one modality at a time. DEM and LULC embeddings are static
+   (one per station, no time axis), so they can contribute only to the spatial
+   arms, never to the temporal one.
+
+5. A separate, much cheaper question that needs none of this machinery: for the
+   105 station pairs closer than 2.24 km, does the TRAINED model already get the
+   spatial contrast right? Both stations of every pair fall in the same data
+   split (location group was the cross-validation group), and 61 pairs with
+   133,583 paired station-day-depth rows sit in the novel-station OOS split.
+   That test needs no inference and no tokens -- only the prediction files
+   already on disk -- and it answers a different and directly useful question:
+   does the model know which of two nearby sites is wetter?
+
+
+--------------------------------------------------------------------------------
+8. REFERENCES
+--------------------------------------------------------------------------------
+
+Szekely, Rizzo & Bakirov (2007). Measuring and testing dependence by correlation
+    of distances. Annals of Statistics 35(6). -- distance correlation; zero iff
+    independent; consistency against all alternatives.
+Szekely & Rizzo (2013). The distance correlation t-test of independence in high
+    dimension. J. Multivariate Analysis 117. -- the upward bias and its
+    correction.
+Szekely & Rizzo (2014). Partial distance correlation with methods for
+    dissimilarities. Annals of Statistics 42(6).
+Gretton et al. (2005). Measuring statistical dependence with Hilbert-Schmidt
+    norms. -- HSIC, the kernel counterpart.
+Sejdinovic et al. (2013). Equivalence of distance-based and RKHS-based
+    statistics. Annals of Statistics 41(5). -- distance covariance IS HSIC for a
+    particular kernel.
+Shah & Peters (2020). The hardness of conditional independence testing and the
+    generalised covariance measure. Annals of Statistics 48(3).
+
+Related runbook sections: 20.14 (tabular probe reaches the network's level skill
+without imagery), 22 (held-out evaluation; the level failure is transfer), 23
+(predicted spatial field is non-physical), 24 and 24.12 (modality shuffling; the
+tokens matter, but identity dominates and its share grows with depth).
+
+================================================================================
+END. Nothing in this document has been executed. Critique before code.
+================================================================================
