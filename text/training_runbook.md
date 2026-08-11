@@ -4642,3 +4642,63 @@ before this is quoted as a clean win, both anticipated in §24.7:
 **This does not contradict the level findings.** ubRMSE and r are anomaly quantities: the
 imagery can drive day-to-day variation while still failing to supply a novel station's
 absolute level. Read §24 as being about dynamics, §22.10 as being about level.
+
+### 24.12 within_station — identity vs content, and the depth gradient (Session 23, 2026-08-11)
+
+Job 25413066 (`sat`, `within_station`, seed 0) finished 2026-08-10 18:29 and is analysed
+here. Donors: 99.8% assigned, 73 fallbacks, 0.0% from a different station, median |Δdoy|
+146 d — i.e. same site, wrong date, exactly the intended perturbation.
+
+**It is not a null.** Paired over the same 112,791 rows / 36 stations as every other
+condition:
+
+| depth | n | Δ ubRMSE, same site / wrong date | stations worse | Δ ubRMSE, wrong station | temporal share |
+|---|---|---|---|---|---|
+| 0-10 | 36 | **+0.0136** | 94% | +0.0351 | 39% |
+| 10-30 | 28 | **+0.0089** | 93% | +0.0333 | 27% |
+| 30-100 | 21 | **+0.0049** | 67% | +0.0413 | 12% |
+
+Median r: baseline 0.81 / 0.70 / 0.64 → within_station 0.49 / 0.38 / 0.35 → cross_station
+0.37 / 0.32 / 0.20. Median NSE_anom: 0.517 / 0.365 / 0.004 → 0.186 / 0.091 / −0.147 →
+−0.477 / −0.819 / −4.663.
+
+**Reading — both §24.7 rows are partly true, and which one dominates depends on depth.**
+
+1. **The tokens do carry genuine temporal content**, and the test that shows it is
+   *conservative*. `select_anchor_zarr` (`dataset.py:488`) already accepts the most recent
+   fully-clear acquisition within a **365-day** window, so the model is routinely fed stale
+   imagery; a 146-day median donor gap is close to normal operation. A degradation this
+   large under a perturbation the model is habituated to is signal, not perturbation shock.
+   This is the one condition where the asymmetry of §24.7 runs in our favour: the bias was
+   toward a null and we did not get one.
+2. **Site identity is nonetheless the larger component, and its share grows with depth.**
+   At 30-100 the date barely matters (+0.0049, only 67% of stations worse) while the station
+   matters enormously (+0.0413, 100% worse): deep prediction is close to a pure site
+   fingerprint. At 0-10 the split is nearer even. That gradient is physically sensible —
+   surface moisture is what optical/SAR imagery can actually observe — and it lines up with
+   §20.14 and §22.10, which are about level and are strongest at depth.
+
+**Metric trap avoided, worth recording.** Baseline median NSE_anom at 30-100 on these 36
+stations is **0.004**, against 0.214 for the full 180-station OOS pool (§22). The
+`ablation_oos` subset is a harder slice at depth. Its *paired deltas* are valid — that is
+what it was built for — but **never quote its absolute numbers as OOS performance.**
+
+**Harness re-verified on a fresh code path.** `compare_ablation.py` reproduces the §24.11
+cross-station and ERA5 deltas to within 0.0007, independently of the one-off script used on
+2026-08-10.
+
+Tooling: `compare_ablation.py` (paired inner join on `station_key/year/doy/depth`, per-station
+metrics, station-equal medians, fraction-worse); summary table in
+`eval_output/ablation_summary.csv`.
+
+```bash
+python compare_ablation.py eval_output/predictions_oos_sat_within_station_s0.parquet \
+                           eval_output/predictions_oos_sat_cross_station_s0.parquet \
+                           eval_output/predictions_oos_era5_cross_station_s0.parquet \
+                           --csv eval_output/ablation_summary.csv
+```
+
+**§24 is closed as a question.** What remains from it is optional attribution
+(`--ablate s2 | s1 | anchor`, which also fixes the unmatched-perturbation problem of
+§24.11 caveat 1) and the §24.8 coupling to §23. Neither is on the critical path; the open
+gate is still §22's "is σ_station predictable?".

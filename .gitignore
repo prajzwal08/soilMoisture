@@ -28,3 +28,14 @@ tier1_output/
 graphify-out/
 # Stray editor/atomic-write temporaries
 *.tmp.*
+
+# SLURM job output — some are 16 MB; the runbook records what mattered
+logs/
+# Prediction dumps and figures — regenerable from eval_predict.py / plot_eval_*.py.
+# manifest.json is kept: it is the index of which artefacts exist.
+eval_output/*.parquet
+eval_output/timeseries/
+figures/
+demo_output/
+meeting_output/
+.ipynb_checkpoints/

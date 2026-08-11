@@ -11,7 +11,7 @@
     "10-30",
     "30-100"
   ],
-  "generated": "2026-08-10T18:01:15",
+  "generated": "2026-08-10T18:18:52",
   "max_stations": null,
   "splits": {
     "val": {
@@ -90,7 +90,7 @@
       "nan_pred": 0,
       "minutes": 1.4
     },
-    "oos_era5_cross_station_s0": {
+    "oos_sat_cross_station_s1": {
       "split_filter": [
         "oos"
       ],
@@ -107,7 +107,26 @@
         "30-100": 27468
       },
       "nan_pred": 0,
-      "minutes": 8.8
+      "minutes": 13.3
+    },
+    "oos_sat_within_station_s0": {
+      "split_filter": [
+        "oos"
+      ],
+      "years": [
+        2016,
+        2022
+      ],
+      "n_stations": 36,
+      "n_rows": 112791,
+      "n_samples": 47842,
+      "rows_by_depth": {
+        "0-10": 47839,
+        "10-30": 37484,
+        "30-100": 27468
+      },
+      "nan_pred": 0,
+      "minutes": 8.9
     }
   }
 }
