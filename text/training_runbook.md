@@ -6113,6 +6113,14 @@ sampling.
 
 ### 29.9 LST as dense auxiliary supervision (forward-looking; design only)
 
+> **STATUS after Phase A ran:** §29's main hypothesis failed, but **this idea survived it in better
+> shape than it entered** — see §29.15. The seasonal climatology shows the 30 m LST field is
+> 0.967-coherent across all twelve months, i.e. a stable 5–9 K landscape texture. That is nearly
+> worthless as a model *input* (DEM and LULC already supply static structure) but it is a virtue in
+> a *target*: a consistent field is easier to learn than a noisy one, and the decoder's problem is
+> that nothing supplies within-tile structure at all. This is now the strongest remaining §29
+> thread, ahead of Phase B.
+
 Recorded now because it changes what "success" in §29 means. If the correlation comes back
 negative-as-predicted, the natural follow-on is not to feed LST in as another input but to
 **supervise on it**.
@@ -6184,6 +6192,28 @@ the DTR test and figure rows 3–4 light up. (9) Extend the write-up.
 All jobs on `rome` with `--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhanal@gmail.com`;
 download jobs `conda activate soilmoisture` per the `jobs/` idiom, analysis jobs
 `conda run -n terramind` per the `slurm/` idiom. Total scratch < 15 GB against 1.9 P free.
+
+> **What actually happened (2026-08-13).** Phase A ran end to end. Deviations from the plan above,
+> all recorded so the estimates can be trusted next time:
+> * **Speed.** Both downloads finished in **under one minute**, not ~25. The full 1162×1168 AOI is
+>   962 MB; the 76×76 tile window is 7.7 MB. HTTP round-trips, not bytes, are the cost, and 246
+>   scenes at 12 workers is nothing.
+> * **Scene count.** 247 after platform+tier+asset+`cloud<80`, not 298 — the 298 figure was before
+>   the cloud filter. 246 downloaded, 1 failed (a corrupt `QA_PIXEL.TIF` on
+>   `LC09_L2SP_028039_20220519`, source-side, not retryable).
+> * **Script names** differ from the plan: `download_landsat_st_mpc.py` (as planned),
+>   `extract_lst_timeseries.py` + `analyze_lst_heterogeneity.py` (planned as one
+>   `analyze_lst_heterogeneity.py`), `plot_lst.py` + `plot_lst_seasonal.py` (planned as
+>   `plot_tile_lst.py` + `plot_lst_timeseries.py`). SLURM: `slurm/landsat_st.sh`,
+>   `slurm/lst_pipeline.sh`, `slurm/plot_lst.sh`, `slurm/plot_lst_seasonal.sh`.
+> * **The census (step 0) was never run as a separate job** — its Landsat half was answered during
+>   planning and its assertions were folded into the downloader (`assert_grid_invariants`), so
+>   `census_lst_sources.py` does not exist. The ECOSTRESS half is still unrun and is the first
+>   thing Phase B needs.
+> * **Two coordinate systems, one bug.** `extract_lst_timeseries.py` initially wrote the 30 m LST
+>   raster indices into `row`/`col`, which the plotting code read as 10 m tile pixels — putting
+>   every station marker in the top-left corner. Now written explicitly as `lst_row`/`lst_col` and
+>   `tile_row`/`tile_col`, with an assert in the plotter. Never let those two share a column name.
 
 
 ### 29.13 RESULT — Phase A, run 2026-08-13
