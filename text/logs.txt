@@ -4018,3 +4018,11 @@ NEXT, IN ORDER (nothing started)
   6. Regression gates -> smoke (20 stations, 3 epochs, measure data= and peak RAM against
      the 540 GB baseline) -> full run ~42 GPU-h.
   Untouched from earlier: §27b.4 B9 block; §29 Step 0; §26.3's mosaic_txson.py gate.
+
+  AMENDMENT (same day, after §29 Phase A ran): §30.6's fallback said LST is "tied to
+  wetness by evaporative cooling". §29.13 tested that and it is FALSE within-tile —
+  daytime Landsat LST vs SM is -0.077 under station fixed effects; the +0.167 pooled
+  figure is a Simpson's-paradox artefact of station identity. The §30 fallback now rests
+  on §29.9 (LST as a DENSE AUXILIARY TARGET: 5776 px/tile vs 1 — supervision density, not
+  correlation). Phase B (ECOSTRESS night + diurnal range) is the only untested arm that
+  could still give a direct LST<->SM link. §30.6 amended in place.

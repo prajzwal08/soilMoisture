@@ -6653,9 +6653,16 @@ way (`eval_predict.py:167-169`), but do not expect it to carry the run.
 - **Weather may dominate.** 365 shared weather tokens against ~102 local ones. Log across-location SD
   of predictions every epoch; near-zero means the cross-attention is being ignored.
 - **§27b's ceiling may be real.** If a station's own token genuinely carries 0–4.2% within-network
-  skill, no architecture manufactures information. Fallback is §29 (ECOSTRESS/Landsat LST) — a
-  different physical channel, not already a model input. §16.4 proved the decoder paints correct
-  structure under dense supervision (norm-std 0.0061 → 0.2504, corr 1.000).
+  skill, no architecture manufactures information. Fallback is §29 LST — but **amended 2026-08-13
+  by §29.13**, which ran Phase A and found daytime Landsat LST does *not* track within-tile soil
+  moisture (within-station fixed effects **−0.077**; the apparent +0.167 pooled correlation is a
+  Simpson's-paradox artefact of station identity). So the fallback can no longer be justified by
+  "tied to wetness by evaporative cooling" — that mechanism was tested and is absent at this tile,
+  most likely through skin/5 cm decoupling. It survives on **§29.9's** grounds instead: LST as a
+  **dense auxiliary target** is about supervision density (5776 px/tile against 1), not about LST
+  correlating with SM. §16.4 proved the decoder paints correct structure under dense supervision
+  (norm-std 0.0061 → 0.2504, corr 1.000). Phase B (ECOSTRESS night LST + diurnal range) is untouched
+  and is the only arm that could still recover a direct LST↔SM link.
 
 ### 30.7 Files
 
