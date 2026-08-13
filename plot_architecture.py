@@ -148,10 +148,11 @@ def figure_current():
     arrow(ax, 66, 72.2, 73, 67.7)
     box(ax, 27, 63.7, 40, 7.4, "bottleneck", "ctx[:, 12:208] → (768, 14, 14)",
         fc=C_PROC, ec=C_PROC_E)
-    box(ax, 73, 63.7, 44, 7.4, "context  = masked mean of every\nNON-spatial token", "(768,)",
-        fc=C_BAD, ec=C_BAD_E)
-    note(ax, 73, 57.4, "SPATIALLY CONSTANT — 100% of the temporal", ha="center", weight="bold")
-    note(ax, 73, 54.9, "signal arrives through this one vector", ha="center", weight="bold")
+    box(ax, 73, 63.7, 44, 7.4, "context  = masked mean of every valid\nnon-CLS, non-spatial, non-pad token",
+        "(768,)   model.py:736-743", fc=C_BAD, ec=C_BAD_E)
+    note(ax, 73, 57.4, "SPATIALLY CONSTANT — the ENTIRE time series", ha="center", weight="bold")
+    note(ax, 73, 54.9, "(ERA5 365 d, S2/S1 history, SIF, TWSA)", ha="center", weight="bold")
+    note(ax, 73, 52.4, "reaches the decoder through this one vector", ha="center", weight="bold")
 
     # skips
     box(ax, 9.0, 51.0, 14, 6.4, "skips\nL3 / L6 / L9", "3 x (196, 768)",
@@ -160,7 +161,7 @@ def figure_current():
 
     # ---- decoder -------------------------------------------------------
     arrow(ax, 27, 59.9, 27, 42.3)
-    arrow(ax, 73, 52.6, 73, 42.3, ls=(0, (3, 2)))
+    arrow(ax, 73, 50.2, 73, 42.3, ls=(0, (3, 2)))
     ax.add_patch(FancyBboxPatch((3, 27.0), 94, 15.0,
                                 boxstyle="round,pad=0.4,rounding_size=1.2",
                                 facecolor=C_BAD, edgecolor=C_BAD_E,

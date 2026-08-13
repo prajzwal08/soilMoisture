@@ -6196,11 +6196,19 @@ Three measured facts define it:
 - **The map is not flat, it is wrong.** §23: norm-std 0.093–0.524, strongest where the landscape is
   most uniform (flat control SCAN Crossroads Δ 0.188 m³/m³, 5× its own ubRMSE); `r(anomaly, DEM)` =
   −0.04…+0.21.
-- **The temporal path is spatially constant.** `context` is a masked mean over all non-spatial tokens
-  (`model.py:738-743`) applied through FiLM as a uniform per-channel scale/shift. **100% of the
-  temporal signal reaches the decoder through one vector.** Two stations 500 m apart therefore cannot
-  have different *response functions*, only different means — exactly the observed signature:
-  temporal SD perfect, between-station SD 15–19%.
+- **The temporal path is spatially constant.** Verified against `model.py:736-743`: `ctx_mask` starts
+  as `~key_mask`, then zeroes the depth-CLS slots and the 196 spatial slots, and `context` is the
+  masked mean of what remains — every valid non-CLS, non-spatial, non-pad token. FiLM applies it as a
+  uniform per-channel scale/shift. Two precisions the first draft of this section got wrong:
+  (i) the code comment calls it "temporal context for FiLM", but the mean **also includes the pooled
+  static tokens** at indices 0–11 (DEM/LULC/soil pyramids); (ii) it is not "100% of the temporal
+  signal" — the anchor contributes one date's spatial snapshot with a staleness embedding, so the
+  bottleneck *is* date-dependent. The correct statement is that **all of the time-series signal —
+  ERA5's 365 days, S2/S1 history, SIF, TWSA — reaches the decoder only through that one spatially
+  constant vector**. The spatial pattern can change between samples; the **response to weather cannot
+  vary across the tile**. Two stations 500 m apart therefore cannot have different *response
+  functions*, only different means — exactly the observed signature: temporal SD perfect,
+  between-station SD 15–19%.
 
 **Why §27b does not close this off.** §27b time-averaged each station's centre token and asked
 whether it predicts that station's multi-year mean SM (9.8% global, 0–4.2% within-network).
@@ -6329,6 +6337,71 @@ blocking. Bilinear hides exactly that failure behind a smooth ramp — which is 
 looks plausible while being anti-correlated with the landscape. Do not smooth it away; report it.
 **Do not add a within-block coordinate feature** `(i%16, j%16)` — it lets the model paint arbitrary
 sub-token patterns from position alone.
+
+### 30.3a Which channels earn a place in Block 4 — MEASURED 2026-08-13
+
+A channel belongs at 224 only if it varies *within* a 160 m token; otherwise the token already
+carries it and putting it in Block 4 is redundancy. Exact variance decomposition against the token
+grid (total = between-token + within-token; the residual is orthogonal to the block means by
+construction):
+
+```python
+tot    = a.var()                                   # over all 224x224 pixels
+blk    = a.reshape(14,16,14,16).mean(axis=(1,3))   # mean inside each 16x16 token -> (14,14)
+coarse = np.repeat(np.repeat(blk,16,0),16,1)
+frac   = (a - coarse).var() / tot                  # = 1 - R^2 of "predict pixel by its token mean"
+```
+
+Averaged over 4 dense TxSON tiles (CR200-18, CR1000-2, CR200-3, CR200-26):
+
+| channel | sub-token fraction | verdict |
+|---|---|---|
+| `curv_lap` | **0.96** | tier 1 |
+| `curv_plan` | **0.95** | tier 1 |
+| `tpi_100m` | **0.79** | tier 1 |
+| **S1 VV (latest)** | **0.76** | tier 1 — and the only time-varying one |
+| soil `socd` / `soc` | 0.54 / 0.50 | tier 2 |
+| northness | 0.51 | tier 2 |
+| S2 B08 NIR | 0.47 | tier 2 |
+| `bd` | 0.44 | tier 2 |
+| slope | 0.42 | tier 2 |
+| LULC | 0.40 | tier 2 |
+| `ph` | 0.36 | tier 3 |
+| soil clay / sand / silt | 0.29 / 0.27 / 0.26 | context encoder only |
+| **elevation** | **0.05** | **DROP from Block 4** — the token already has all of it |
+
+**This metric measures non-redundancy, NOT usefulness.** Curvature is a second derivative, i.e. a
+high-pass operator whose token means are ~0, so ~0.95 is close to tautological. It proves a token
+cannot carry the channel; it does not prove the channel predicts soil moisture. Necessary, not
+sufficient — sufficiency needs a regression of observed within-tile SM contrast on these channels.
+Further caveats: **S1's 0.76 includes speckle**, which is sub-token noise by definition, so it is an
+upper bound that multi-looking will lower; **soil is mildly inflated** by the nearest-neighbour
+74→224 upsample used in the measurement; and 4 semi-arid Texas tiles at 46–88 m relief are not
+globally representative. The elevation (0.05) and curvature (0.95) results are structural and hold
+anywhere; the S1 and LULC numbers are landscape-dependent.
+
+**Correction to `subkm_design.tex`:** it calls soil "noise" on the basis of 3% clay across CR200-18's
+six stations. Across the **full tile** the range is 11 wt% clay and 22.75 wt% sand. The "noise"
+verdict applies to those six points, not to the tile.
+
+**Latest-clear imagery needs two extra inputs.** Feed S1 as **(latest, long-term median)** so the
+model can difference them itself — current minus baseline *is* the wetness anomaly, while the
+baseline is roughness and vegetation. And feed **days-since-acquisition**, because "latest clear" has
+variable staleness; reuse the staleness embedding already at `model.py:505-514` rather than letting
+stale imagery read as current.
+
+**Channel budget (C = 24).** curv_plan/prof/lap (3) · tpi 30/100/300 m (3) · slope/northness/eastness
+(3) · TWI/HAND (2) · S1 vv_now/vh_now/vv_med/vh_med/days_since (5) · S2 ndvi/SWIR-index/days_since
+(3) · LULC embedding (2) · soil soc/socd/bd (3). Elevation, soil texture and the 30–60 / 60–100 cm
+layers stay in Block 1.
+
+### 30.3b The current model already has S and g — what it lacks is Block 3
+
+Both ingredients exist today, wired wrong. `context` (B,768) at `model.py:736-743` is the analogue of
+**g**, a tile summary; the 196 spatial tokens at `model.py:731-734` are the analogue of **S**.
+Nothing ever combines a *specific location's* context with a *specific location's* history — they
+meet only inside FiLM, where the temporal half is broadcast uniformly. **We have context and
+per-location tokens; we have no per-location processing.** That is the entire delta of §30.
 
 **Cost.**
 
