@@ -4702,3 +4702,1797 @@ python compare_ablation.py eval_output/predictions_oos_sat_within_station_s0.par
 (`--ablate s2 | s1 | anchor`, which also fixes the unmatched-perturbation problem of
 §24.11 caveat 1) and the §24.8 coupling to §23. Neither is on the critical path; the open
 gate is still §22's "is σ_station predictable?".
+
+---
+
+## §26 TxSON network run — per-station time series at every pixel + composite SM maps (Session 24, 2026-08-11)
+
+**STATUS: RUN 2026-08-11 (jobs 25461484 smoke, 25461750 full).** The §26.1–26.9 text below was
+written *before* code existed, for critique; its pre-run numbers are measured from data on disk
+(station coordinates, tile bounds, zarr labels, `eval_output/manifest.json` throughput). Results
+are in §26.11 and the verification PASS is back-filled into §26.6 item 3. The shipped scripts
+took generalised names — `build_network_readouts.py`, `combine_network.py`, `plot_network_map.py`,
+`plot_network_timeseries.py`, `plot_tile_context.py` — rather than the `*_txson.py` names planned
+in §26.5. **`mosaic_txson.py` (§26.5 step 4) does not exist**, so the 417 k-overlap-pixel
+disagreement map, the decisive §26.3 test, is still unbuilt and §26.7's gate is still open.
+
+### 26.1 Motivation
+
+Every station in this project is predicted at exactly **one pixel** — `(112, 112)` of its own
+224×224 @ 10 m tile (`model.py:348-349`, `masked_huber_loss` at `model.py:751`, readout at
+`eval_predict.py:76`). The model emits a full `(B, 3, 224, 224)` map (`model.py:672`), so
+**50,175 of 50,176 pixels have never been compared to anything.**
+
+§23 measured that map and found it is *not* flat (norm-std 0.093–0.524) but that the painted
+structure is **anti-correlated with the landscape**: the flattest control station gets the most
+structure, `r(anomaly, DEM) ≈ 0`, and 64–83 % of the variance sits on the 14×14 token grid
+(effective resolution ≈160 m). §23 could not decide whether that structure is *real but
+mis-scaled* or a *decoder positional artefact*, because there was no ground truth off-centre and
+no second opinion on the same ground.
+
+TxSON supplies both. **40 stations inside a 33 × 33 km domain** with 2.24 km tiles means
+**27 of the 40 fall inside at least one other station's tile**, and the tiles overlap each other
+heavily. One forward pass on one tile predicts up to 6 stations at once.
+
+### 26.2 Verified facts (measured 2026-08-11, read-only)
+
+Time-series side:
+
+| | |
+|---|---|
+| TxSON stations | 40 — 14 train / 8 val / 18 oos; all have tiles + tokens |
+| Network extent | 32.9 × 32.6 km — no single 2.24 km tile covers it |
+| **(tile, station) readouts** | **96** = 40 centre + 56 off-centre |
+| Estimates per station | 13 ×1, 15 ×2, 3 ×3, 3 ×4, 4 ×5, 2 ×6 |
+| Densest tiles | CR200-18 holds 6 stations; CR200-3 holds 5; CR200-26 holds 4 |
+| Depths | **all 40 are surface-only (`0-10`)** — no 10-30 / 30-100 labels anywhere in TxSON |
+| Records | essentially gap-free: 2503 daily obs, 2016-01-01 → 2022-11-07 for most |
+| ERA5 span | 2016-01-01 → 2022-12-31 for all 40; 53–201 S2 acquisitions per station |
+| **Anchor-day bottleneck** | **none.** Samples are keyed to the anchor's observed days (`dataset.py:950-977`); checked on all 3 multi-station tiles, every member's observed days are a **subset** of its anchor's (0–1 days lost). |
+
+Composite side — **all 40 tiles are EPSG:32614**, so the mosaic is a paste, no reprojection:
+
+| | |
+|---|---|
+| Mosaic grid | 34.8 × 35.0 km = **3482 × 3499 px @ 10 m** (12.2 M px) |
+| Covered by ≥1 tile | **131 km² = 10.7 %** of the bounding box |
+| Covered by ≥2 tiles | **417 k px = 31.9 % of covered**, up to 6 tiles deep |
+| Shape | **17 disconnected islands** — NOT a continuous map |
+
+Overlap histogram (tiles per covered pixel): 1→892,080 · 2→257,834 · 3→83,425 · 4→40,558 ·
+5→24,019 · 6→11,115.
+
+The four islands worth mapping. Each is **homogeneous in split**, because the 3.0 km location
+grouping in `create_evaluation_splits.py:22,72-92` cut them that way:
+
+| island | area | size | tiles | split | stations |
+|---|---|---|---|---|---|
+| 1 | 19.79 km² | 7.09 × 3.94 km | 7 | **oos** | CR1000-6, CR200-13, CR200-19, CR200-22, CR200-28, CR200-29, LCRA-2 |
+| 3 | 19.52 km² | 4.73 × 5.52 km | 8 | **oos** | CR1000-1, CR200-1, CR200-14, CR200-21, CR200-26, CR200-3, CR200-4, CR200-9 |
+| 11 | 12.97 km² | 4.64 × 3.15 km | 7 | val | CR1000-2, CR200-15, CR200-18, CR200-24, CR200-25, CR200-6, CR200-7 |
+| 9 | 11.57 km² | 3.81 × 4.24 km | 4 | train | CR1000-3, CR200-16, CR200-17, CR200-2 |
+
+Island 13 is a two-tile pair (6.84 km², CR200-11 + CR200-5, train). The remaining **12 islands are
+isolated single tiles** (5.02 km² each): CR1000-4, CR1000-5, CR200-8, CR200-10, CR200-12,
+CR200-23, LCRA-1, LCRA-3, LCRA-4, LCRA-5, LCRA-6, LCRA-7. That is 4 large + 1 pair + 12 singles =
+17. **Islands 1 and 3 are fully out-of-sample** — those are the publishable composites.
+
+### 26.3 The overlap region is the sharpest thing in this run
+
+417 k pixels are predicted by 2–6 *different tiles*. Two tiles seeing the **same ground pixel**
+must paint the same value if §23's structure is real and driven by the land surface. If the
+structure is a decoder positional artefact it is locked to **tile** coordinates, and the two tiles
+will disagree — with the disagreement aligned to tile boundaries.
+
+**This is a decisive test of §23 and it requires no ground truth at all.** It falls out of the
+same forward passes for free. It is the reason this plan runs all 40 tiles rather than a minimal
+covering set.
+
+### 26.4 Compute — and why NOT to deduplicate tiles
+
+Measured throughput from `eval_output/manifest.json`: OOS did 317,521 samples in 29.7 min ⇒
+**~10,700 samples/min**.
+
+| variant | tiles | forward passes | GPU |
+|---|---|---|---|
+| all 40 station tiles | 40 | ~96,000 | **~9 min** |
+| greedy minimum cover | 24 | ~57,600 | ~5.4 min |
+
+Deduplicating saves **4 minutes on a 4-hour allocation** and costs the entire §26.3 analysis:
+27 stations would drop from 2–6 estimates to 1. **Run all 40.** The greedy cover is still computed
+and shipped as an `in_min_cover` column, so it stays a one-line filter.
+
+### 26.5 Implementation
+
+1. **`build_txson_readouts.py`** (CPU) — for each of the 40 tiles read `bounds_utm`/`epsg` from
+   `/projects/prjs1968/satellite_zarr/{dir}.zarr/.zattrs`, project every TxSON station with
+   `pyproj.Transformer(..., always_xy=True)`, keep `0 ≤ row,col < 224` where
+   `col = floor((x − west)/10)`, `row = floor((north − y)/10)`.
+   → `csvs/txson_readouts.csv` (96 rows: `tile, tile_split, station, station_split, row, col,
+   offset_px, dist_m, is_centre, in_min_cover, lat, lon`)
+   → `csvs/txson_mosaic_grid.json` (mosaic origin/size, per-tile paste offsets, island id)
+   Takes `--network TxSON` so Walnut Gulch / FMI Sodankylä reuse it later.
+
+2. **`eval_predict.py` — add `--pixel-csv` and `--save-maps`.** Both guarded, so behaviour is
+   unchanged when absent and §22/§24 artefacts stay reproducible. `--pixel-csv` replaces the
+   single readout at `eval_predict.py:76` with a per-sample gather:
+   ```python
+   idx  = rows_b * 224 + cols_b                                             # (B, K)
+   vals = mu.reshape(B, D, -1).gather(2, idx[:, None, :].expand(-1, D, -1))  # (B, D, K)
+   ```
+   `rows_b`/`cols_b` looked up per batch element from `station_key` (already in the sample dict,
+   `dataset.py:1083-1131`); K = 6, padded with the centre index and masked. Station selection
+   reuses the temp-splits-CSV pattern at `eval_predict.py:242-259`.
+   → `eval_output/predictions_txson.parquet`
+   `--save-maps DATES` dumps whole `(3,224,224)` maps for **12–24 listed dates only** — dense
+   full-domain storage is 146 MB/date, so all 2503 dates would be 366 GB.
+   → `eval_output/txson_maps/{tile}_{date}.npy` fp16
+
+3. **`combine_txson.py`** (CPU) — join observations via `dataset._load_zarr_labels`
+   (`dataset.py:174-188`), `qc == 0` only (matching `dataset.py:961-965`). **Call that function,
+   never read `labels/*` by hand**: `labels/qc` is longer than `labels/sm` in many stations
+   (`trim_pre2016.py` trimmed sm/dates but not qc) and lines 184-186 realign it by taking the
+   trailing `n_sm` days.
+   → `eval_output/txson_timeseries.parquet` (long: `station, date, depth, tile, row, col,
+   offset_px, is_centre, pred, obs, station_split`, plus per-station-day `pred_own_centre,
+   pred_mean_all, n_estimates, spread`)
+   → `eval_output/txson_per_station.csv` via `eval_metrics.metrics_from_arrays`
+   (`eval_metrics.py:53-89`), separately for own-centre and each off-centre estimate
+   → tile-consistency table for the 27 stations with ≥2 estimates
+
+4. **`mosaic_txson.py`** (CPU) — paste into the 3482 × 3499 grid; **drop 8 px from every tile
+   border** before pasting (§23 found a left-edge decoder-padding artefact and the border is
+   exactly where it lives); blend the 32 % overlap by distance-to-tile-centre linear taper; keep
+   the unblended per-tile stack for the disagreement map. GeoTIFF via `rasterio`, EPSG:32614,
+   10 m, with a `count` band and nodata over the 89 % gap.
+   → `eval_output/txson_mosaic/{date}_{depth}.tif`
+   → `eval_output/txson_mosaic/disagreement_{date}.tif` + summary CSV of tile-to-tile std by
+   overlap depth (2,3,4,5,6)
+
+5. **`plot_txson.py`** (CPU) — (a) 40 per-station time-series panels, obs vs own-centre vs
+   neighbour-tile preds coloured by source tile; (b) island composites for the two OOS islands
+   alongside S2 RGB from `/projects/prjs1968/satellite_zarr` (reuse `plot_spatial_heterogeneity.py`
+   / `plot_spatial_sm_meeting.py`); (c) disagreement map with tile-boundary polygons overlaid;
+   (d) ubRMSE / NSE_anom vs `offset_px`.
+
+6. **`slurm/eval_txson.sh`** — copy `slurm/eval_predict.sh`; 1 × H100, `--cpus-per-task=16`,
+   `--time=01:00:00`, mem can drop to 64 G (40 stations, not 774); keep
+   `--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhanal@gmail.com`.
+   Checkpoint `cls_depth_star_reg/best.pt` (e16, `use_cls_depth=True`), years 2016–2022.
+
+### 26.6 Verification (run before trusting any number)
+
+1. **Self-test** — projecting a station into its own tile must return exactly `(112, 112)` for all
+   40. Any failure invalidates everything downstream.
+2. **Symmetry** — for reciprocal tiles, `(row_{A→B} − 112) == −(row_{B→A} − 112)` within 1 px.
+3. **Centre-pixel reproduction** — `is_centre` rows must match existing
+   `eval_output/predictions_{val,oos}.parquet` on `(station_key, year, doy, depth)`.
+
+   **RUN 2026-08-11 on CR200-18 (job 25461484): PASS.** 2500 of 2503 rows are *bit-identical*
+   (Δ = 0 through the 99th percentile). The 3 that differ do so by **exactly 0.000977 = 2⁻¹⁰,
+   one bfloat16 ULP** at that magnitude — a single-ULP rounding difference, because the run is
+   1 station × 2503 samples where the original was 74 stations, so the tail batch has a different
+   shape and cuBLAS picks a different bf16 kernel. It is not a readout error: a standalone unit
+   test shows the gather `mu.reshape(B,D,H*W).gather(2, idx)` is `torch.equal` to direct
+   `mu[b,:,row,col]` indexing.
+
+   **The gate is therefore "≥99.5 % of rows bit-identical AND max |Δ| ≤ 1 bf16 ULP", not
+   `max |Δ| < 1e-4`.** The original threshold was set before measuring and is unachievable for
+   any autocast path whose batching changes; do not re-tighten it.
+4. **Readout count** — exactly 96 distinct `(tile, station)` pairs in the parquet.
+5. **Mosaic registration** — paste a synthetic tile that is 1 at its centre pixel and 0 elsewhere;
+   the mosaic must light up exactly at that station's known UTM coordinate.
+6. **Smoke run** — `--pixel-csv` on CR200-18 alone (6 readouts, 1 year) before the full job.
+
+### 26.7 Decision gates
+
+| tile-to-tile disagreement on the 417 k overlap pixels | reading |
+|---|---|
+| small, and not aligned to tile boundaries | §23's structure is **ground-driven** → the 224² map carries real spatial information; §14's dense-SM deliverable is live and §16.4 Step 1 is refinement, not rescue |
+| large, and aligned to tile boundaries | §23's structure is a **decoder positional artefact** locked to tile coordinates → the model outputs a point estimate dressed as a map; §16.4 Step 1 becomes mandatory and no 10 m map claim may be made |
+| large, not aligned to boundaries | structure is input-driven but unstable → investigate anchor-date staleness (`select_anchor_zarr`, `dataset.py:402-505`) before anything else |
+
+Independently, `ubRMSE` vs `offset_px` on the 56 off-centre readouts answers whether skill decays
+with distance from the supervised pixel.
+
+### 26.8 What this will NOT show — state these in any write-up
+
+- **Nothing at 10-30 or 30-100 cm.** TxSON is surface-only. Deep predictions come out of the model
+  but have no ground truth here.
+- **The composite is 10.7 % of the domain in 17 islands.** It is not a continuous SM map of TxSON
+  and must not be presented as one.
+- **Split contamination.** 14 of 40 stations are `train` (memorised) and 8 are `val` — no
+  gradients, but `best.pt` was *selected* on val loss, and the whole Fredericksburg cluster
+  (island 11) is val. Only the 18 `oos` stations, including islands 1 and 3, are fully clean.
+  Carry the split label on every table and figure; do not pool into one headline number.
+- **One catchment.** Results characterise TxSON, not the model in general.
+
+### 26.9 Deliberately out of scope
+
+A **continuous** mosaic over the full 33 × 33 km domain needs ~225 gridded tile centres with fresh
+S2/S1/DEM/LULC downloads plus TerraMind tokenization — a separate project. §26 mosaics only tiles
+that already exist on disk.
+
+### 26.10 Related colocation inventory (measured, superset of TxSON)
+
+The same projection sweep across **all** 993 pipeline stations plus the 482 level-1 stations that
+never entered the pipeline gives **33 colocation clusters covering 105 stations**, 206 ordered
+in-tile pairs, 164 with an unseen SM target, **95 usable** at ≥365 d record overlap (49 anchors,
+53 targets). Restricting to ≥160 m separation (>1 token) leaves **33 unique pairs / 61 directed
+runs**, of which 25 are TxSON, 13 are val-only, and just 2 have a *trained* anchor tile with a
+never-trained target (`ISMN_ARM_Lamont-CF1 → AmeriFlux_US-ARM` at 351 m;
+`ISMN_LABFLUX_Bussolenobosco → ISMN_LABFLUX_Bussolenoprato` at 176 m). Temporal overlap, not
+geometry, is the binding constraint: 64 in-tile pairs are lost to non-overlapping records,
+including the 7-node SOILSCAPE deployment inside Tonzi Ranch's tile.
+
+### 26.11 Results (run 2026-08-11, jobs 25461484 smoke / 25461750 full)
+
+96 readouts (40 own-centre, 56 off-centre) over 40 tiles, `cls_depth_star_reg/best.pt` e16,
+2016–2022, surface only. `eval_output/manifest.json` records the TxSON split: 40 stations,
+657,354 rows, 90,779 samples, `nan_pred: 0`, 7.5 min, `n_readouts: 96`, `n_offcentre: 56` —
+matching the §26.2 prediction exactly.
+
+**Own-centre vs off-centre** (`eval_output/txson_per_readout.csv`):
+
+| arm | n | stations | ubRMSE | RMSE | RMS bias | R | NSE_anom | pred_sd | obs_sd |
+|---|---|---|---|---|---|---|---|---|---|
+| own_centre | 40 | 40 | 0.0301 | 0.0512 | 0.0511 | 0.868 | 0.727 | 0.0575 | 0.0578 |
+| off_centre | 56 | 27 | 0.0345 | 0.0606 | 0.0623 | 0.825 | 0.577 | 0.0549 | 0.0549 |
+
+Paired on the 27 multi-estimate stations: median ΔubRMSE (off − own) = **+0.0025**, 74% worse
+off-centre. Split-stratified own-centre ubRMSE: train **0.0110** (memorised) vs val 0.0299 vs
+oos 0.0386 — and off-centre for those same train stations degrades to 0.0500. **The
+memorisation does not travel off the supervised pixel.**
+
+**The across-station spread is the finding.** Per `eval_output/txson_timeseries.parquet`,
+depth 0-10, the four densest tiles:
+
+| tile | n_stn | between-station SD pred | obs | % of obs | level range pred / obs | r(pred level, obs level) |
+|---|---|---|---|---|---|---|
+| CR200-18 | 6 | 0.0116 | 0.0661 | **17%** | 0.024 / **0.171** | **−0.135** |
+| CR200-3  | 5 | 0.0111 | 0.0578 | **19%** | 0.013 / 0.120 | +0.012 |
+| CR200-26 | 4 | 0.0103 | 0.0552 | **19%** | 0.008 / 0.123 | **−0.589** |
+| CR1000-2 | 6 | 0.0102 | 0.0661 | **15%** | 0.012 / 0.171 | −0.077 |
+
+Within-station (temporal) SD is reproduced almost perfectly (0.051 vs 0.051; 0.058 vs 0.056)
+while between-station SD is reproduced at 15–19%, and the *ordering* of station levels is
+uncorrelated to anti-correlated with truth. Every tile falls under
+`plot_network_timeseries.py`'s 0.35 threshold ⇒ **"the map repeats ~one series over the whole
+tile."** Figures: `figures/tile_context/ISMN_TxSON_CR200-18.{png,pdf}`,
+`figures/network_timeseries/ISMN_TxSON_CR200-18_0-10.{png,pdf}`.
+
+**§26.3 remains untested.** `mosaic_txson.py` was never written, so the tile-to-tile
+disagreement on the 417 k overlap pixels — the test that decides whether §23's structure is
+ground-driven or a decoder positional artefact — has not been run. §26.7's gate is open.
+
+---
+
+## §27 Is sub-km SM contrast recoverable from TerraMind embeddings? (Session 25, 2026-08-12)
+
+**STATUS: DESIGNED, NOTHING RUN.** Full derivation, flowchart and limitations in
+`text/subkm_design.pdf` (source `text/subkm_design.tex`). Written before code exists, for
+critique. This section is the runbook summary; the PDF is authoritative.
+
+### 27.1 What §26.11 leaves open
+
+§26.11 shows the model reproduces temporal variance at a station almost perfectly and
+between-station variance at 15–19% with the wrong ordering. §23 showed the painted map has
+structure but anti-correlated with the landscape. §24.12 showed site identity dominates.
+None of these say **whether the information to do better exists in the inputs at all.**
+
+Measured 2026-08-12 from `eval_output/predictions_oos.parquet` (depth 0-10, station-mean level):
+
+| scale | n | sd_obs | sd_pred | ratio | r |
+|---|---|---|---|---|---|
+| between networks | 21 | 0.0578 | 0.0525 | 0.91 | **+0.85** |
+| within USCRN | 12 | 0.0967 | 0.0851 | 0.88 | +0.89 |
+| within SCAN | 33 | 0.1029 | 0.0868 | 0.84 | +0.78 |
+| within SNOTEL | 73 | 0.0715 | 0.0442 | 0.62 | +0.31 |
+| within COSMOS-UK | 6 | 0.0525 | 0.0356 | 0.68 | −0.05 |
+| within TxSON | 18 | 0.0633 | 0.0158 | **0.25** | **−0.11** |
+| within one tile | 6 | 0.0601 | 0.0113 | **0.19** | **−0.18** |
+
+**Level skill decays monotonically with separation and vanishes below ~10 km.** It is not a
+readout artefact: reading each TxSON station from its OWN centred patch — the training
+configuration — still gives sd_pred 0.0158 vs sd_obs 0.0633, r = −0.11.
+
+For the six CR200-18 stations, ~95% of the input is shared: ERA5-Land (~9 km) is byte-identical
+(`dataset.py:1045`) and supplies 365 of ~600 tokens; SIF and TWSA identical; OpenLandMap soil
+varies by 3% clay / 4% sand / 1 pH unit; and **the finest satellite scale the model sees is
+320 m, not 160 m** — `dataset.py:212` gives `widths=[1,3,5,7]` ⇒ 2×2/6×6/10×10/14×14 token
+windows, contradicting the `model.py:109` docstring, with `dataset.py:306` dropping 50% of
+tokens *before* pooling. A homogeneous prediction is close to Bayes-optimal given these inputs.
+
+### 27.2 Design — pair differences
+
+Scope is TerraMind embeddings ONLY. Terrain derivatives, 30 m optics, POLARIS soil,
+multi-station supervision and any loss change are out of scope and stay deferred.
+
+Model `y_i = μ(x_i) + b_i` (station offset b: calibration, installation, bulk density),
+field `μ(x) = m(z(x)) + ε(x)` with z regional on scale L≈100 km. For a pair at separation
+d ≪ L, `Δμ = ∇m·Δz + Δε → Δε`: **the pair difference is a high-pass filter** that annihilates
+exactly anything tile-constant — climate, ERA5 cell, season, biome, network, sensor vendor,
+calibration epoch, and (Arm A) the whole image context of the forward pass. Hence
+`Cov(Δe,Δy) = Cov(Δe,Δε) + Cov(Δe,Δb)` with the second term zero in expectation, since sensor
+idiosyncrasy is not visible from orbit. **A significant association at small d can only come
+from genuine short-range field information in the embedding.**
+
+Ceiling: `Var(Δy) = 2γ_ε(d) + 2σ_b²` ⇒ **`R²_max(d) = γ_ε(d)/(γ_ε(d)+σ_b²)`**. As d→0 only
+instrument noise remains, so below some separation NO covariate can predict Δy. σ_b² is the
+variogram nugget and is estimable from labels alone — **this runs first**; a null reported
+without it is uninterpretable. For CR200-18, γ̂(0.6 km) ≈ 0.0601² = 0.0036.
+
+Three arms: **A** both tokens from one tile's 14×14 grid (what TerraMind knows); **B** each
+station's own patch centre token (what the model is fed); **C** the 4-scale pooled pyramid
+(what pooling leaves). Pooling is a fixed map P, so by the data-processing inequality
+`I(P·e;y) ≤ I(e;y)` ⇒ **ρ_C ≤ ρ_A necessarily** — the comparison is one-sided and cannot
+reverse by chance. `ρ_A > 0` with `ρ_C ≈ 0` *proves* pooling is the bottleneck.
+
+Statistic: distance correlation, `dCor = 0 ⟺ independence`, no fitted parameters (overfitting
+structurally impossible), exact permutation null under label exchangeability. Then a 1-dof
+scalar test `corr(‖Δe‖, |Δy|)`, then RidgeCV (no intercept) / PCA(16)→GBM with GroupKFold on
+tile and network. Antisymmetry (both orderings emitted) makes `E[Δy]=E[Δe]=0` exactly, so a
+constant predictor sits exactly at the null.
+
+Verified storage: `s2/{l3,l6,l9,l12}` and `s1_{asc,desc}/{l3,l6,l9,l12}` all present as
+`(N,196,768)` fp16; **`dem` and `lulc` are L12-only** `(196,768)`. Sweep = 14 combinations
+× 3 arms. Hypothesis: **early layers beat L12 on within-tile contrast even though L12 beats
+them on site identity** (§24.12).
+
+### 27.3 Sample size — the number that constrains everything
+
+A great-circle sweep over the 993 pipeline stations gives 126 pairs < 2.24 km across 12
+networks (TxSON 55, FMI 22, SNOTEL 13, AmeriFlux 11, SCAN 5, ICOS 4, ARM 3, FLUXNET-AMERIFLUX
+3, SOILSCAPE 3, iRON 2, Berlin 1, NGARI 1), then 178 at 2.24–5 km, 283 at 5–10, 1420 at 10–30,
+4287 at 30–100, 486,234 beyond.
+
+**But §26.10 already established that geometry is not the binding constraint.** Of 206 ordered
+in-tile pairs, only 95 survive the ≥365 d record-overlap requirement, and requiring ≥160 m
+separation — necessary for Δe ≠ 0 in Arm A, since a token is 160 m — leaves **33 unique pairs**.
+
+> **Arm A's real n is ≈33 (66 antisymmetrised), not 126.** This is the single most important
+> number in the design. It is why the ladder starts with a parameter-free statistic and an
+> exact permutation test, and why Arm B and the ρ(d) curve (n in the thousands) carry the
+> statistical weight. A null on Arm A is underpowered, NOT evidence that TerraMind cannot.
+
+The ~62 sub-token pairs are not wasted: in Arm A they have **Δe ≡ 0 exactly by construction**,
+making them simultaneously a perfect negative control and a direct upper bound on σ_b² via
+`Var(Δy | same token) = 2γ_ε(d<160m) + 2σ_b²`.
+
+**One structural advantage over probing the model:** the TerraMind encoder is frozen and was
+never trained on soil moisture, so train/val/test leakage does not apply. Every colocated
+station is usable regardless of split — which matters when colocated stations are this scarce.
+
+### 27.4 Controls
+
+Antisymmetry (constant predictor ≡ null) · label shuffle within folds (all 14 combinations must
+collapse) · same-token pairs (Δe ≡ 0, any skill is a bug) · **far distance bins must be
+significant — the built-in positive control, since between-network r = +0.85 is already
+measured** · random 768-d vector (dCor ≈ 0) · independent positive control on Δelevation and
+Δsoil-texture at the station pixel, the analogue of §24's ERA5 shuffle.
+
+Pre-registered primary test: **depth 0-10, Arm A, S2, all distance bins.** Everything else is
+exploratory under Benjamini-Hochberg FDR. Do not gate on a max-over-tests.
+
+### 27.5 Decision gate
+
+Read jointly with `R²_max(d)` — a probe that reaches the ceiling has succeeded even if its
+absolute r looks modest.
+
+| Arm A | Arm C | reading | next move |
+|---|---|---|---|
+| signal | signal | tokens carry it, model is fed it, model fails to use it | training/loss problem → multi-station supervision, level/anomaly split |
+| signal | none | **pooling destroys it** (one-sided, by the DPI) | restore a true 1×1 centre scale (`dataset.py:212`), exempt centre token from the 50% dropout (`dataset.py:306`) — cheapest fix in the project |
+| none | none, R²_max ≫ 0 | TerraMind at 160 m does not resolve sub-km SM contrast | state the resolution limit; reframe on ubRMSE / NSE_anom |
+| none | none, R²_max ≈ 0 | the *observations* cannot resolve it — offset noise exceeds field contrast | not a model finding; report the nugget and stop |
+
+Valid only if the far bins are significant and the random-vector control gives dCor ≈ 0.
+
+### 27.6 What gets built (nothing yet)
+
+`build_network_readouts.py --all-networks` → `csvs/all_readouts.csv` (reuse the `:214` centre
+assertion and `:230` symmetry check; must reproduce `csvs/txson_readouts.csv` on TxSON) ·
+`probe_variogram.py` (labels only, minutes, **runs first**) · `probe_terramind_subkm.py`
+(CPU-only, `Pool(64)`, opens zarr directly — never instantiates `SoilMoistureDataset`, which
+eagerly loads ~16 GB of L12 tokens; reuses `_load_zarr_labels` and `_cpu_pyramid_pool`) ·
+`slurm/probe_terramind_subkm.sh`. Outputs `csvs/terramind_subkm_probe.json`,
+`figures/subkm_layer_sweep.png`, `figures/subkm_rho_curve.png`.
+
+DEM/LULC at L3/L6/L9 do not exist; getting them needs a GPU re-run of
+`precompute_terramind.py`. **Gated** — do not pay unless the S2/S1 sweep shows early layers
+matter.
+
+Verification before any number is trusted: (i) every station projects into its own tile at
+exactly (112,112); (ii) the six CR200-18 means reproduce 0.1367 / 0.1197 / 0.1826 / 0.2323 /
+0.1857 / 0.2865 to 1e-3; (iii) a centre station's Arm A and Arm B tokens are bit-identical;
+(iv) ‖Δe‖ = 0 exactly on same-token pairs; (v) Σ Δy = 0 over the antisymmetrised table;
+(vi) all 14 combinations collapse under permuted labels.
+
+### 27.7 Scope narrowed: it is not "is the embedding diverse", it is "is it the RIGHT diversity"
+
+**Decision, 2026-08-12.** An earlier draft of this section proposed a label-free pre-check
+(do the 196 tokens inside a tile differ at all; is the variation structured or noise) before
+spending the scarce colocated stations. **That pre-check is dropped.** §15's Tier-0
+diagnostic already measured per-token L2 norm over the 14×14 grid, PCA→RGB structure,
+off-diagonal cosine and neighbour autocorrelation (`visualize_embeddings.py`,
+`embed_viz_output/`). Token diversity within a tile is established; re-measuring it would
+answer a question we have already answered.
+
+The open question is narrower and is the one §27 exists for:
+
+> The tokens are diverse. Is that diversity **wide enough, and of the right kind, to cover
+> the diversity of soil moisture** — or is it diversity about vegetation and terrain that
+> happens not to track wetness?
+
+This is exactly the Δe-vs-Δy pair test of §27.2. What changes is one cheap addition that
+makes a null interpretable.
+
+**The reference axis.** Run the identical estimator, on the identical tokens and the
+identical pairs, with two *other* targets alongside soil moisture:
+
+| target | source | role |
+|---|---|---|
+| Δ(soil moisture level) | station labels | the question |
+| Δ(land-cover class) at the station's own 160 m token footprint | `lulc` raster, `/projects/prjs1968/satellite_zarr/{station}.zarr` | reference axis |
+| Δ(elevation, slope) at the same footprint | `dem` raster, same store | reference axis |
+
+Token `(r, c)` covers pixels `[16r:16r+16, 16c:16c+16]`; the tile mean must be removed from
+both sides, or the probe wins by recognising *which image* it is looking at rather than
+*where in the image*.
+
+Three readings, and the third is the one worth having:
+
+| SM | land cover / terrain | reading |
+|---|---|---|
+| signal | signal | the diversity covers soil moisture; the failure is the model's |
+| none | **signal** | **the diversity is real but is about vegetation and terrain, not wetness** — the honest answer to "is it diverse enough", and a publishable negative |
+| none | none | the probe or the pairing is broken; fix before interpreting anything |
+
+The land-cover axis doubles as a **guaranteed positive control**: the `lulc` tokens are
+TerraMind's own encoding of the land-cover raster, so `LULC token → LULC class` at 160 m
+must score near-perfectly. If it does not, the fault is in the pipeline, not in the
+representation. It also sets the ceiling against which the S2/S1 tokens are measured.
+
+Cost: nil beyond §27 as already specified — same stations, same tokens, same estimator, two
+extra target columns read from rasters already on disk.
+
+### 27.8 Correction to the pooling claim in §27.1
+
+§27.1 states "the finest satellite scale the model sees is 320 m, not 160 m". Reading
+`model.py:486-530`, that is **wrong as a blanket statement**:
+
+| what the model receives | resolution | where |
+|---|---|---|
+| anchor acquisition, L12 | **all 196 tokens, unpooled**, + 2-D positional encoding | `_get_target_spatial_tokens`, `model.py:497-505` |
+| anchor acquisition, L3/L6/L9 | **all 196 tokens** → (768, 14, 14) decoder skips | `_get_skip_connections`, `model.py:519-530` |
+| S2/S1 **history** | pooled to 4 scales, finest 2×2 = 320 m | `_pyramid_from_l12`, `model.py:446-475` |
+| **DEM and LULC** | pooled to 4 scales, finest 2×2 = 320 m | `_cpu_pyramid_pool`, `dataset.py:190-220` |
+
+The 320 m claim holds for the history and for DEM/LULC; the anchor image arrives at full
+160 m in four layers. This sharpens rather than weakens the hypothesis:
+
+> **DEM and LULC are precisely the static terrain and land-cover signals that would drive
+> persistent within-tile wetness differences — and they are exactly the ones pooled away to
+> ≥320 m.** The anchor, which *is* delivered at 160 m, is one date's reflectance:
+> informative about vegetation state, far less about persistent wetness.
+
+Arm C of §27.2 is therefore a targeted measurement, not a blanket one: run the §27.7 probe
+on DEM and LULC twice — raw 196 tokens, then through `_cpu_pyramid_pool` with and without
+the 50% dropout of `dataset.py:306` — and measure the drop. Pooling can only lose
+information, so the comparison is one-sided by construction. The `model.py:109` docstring
+claiming a 1×1 (160 m) centre scale remains wrong and should be corrected when that file is
+next touched.
+
+## §27a Token PCA→RGB maps, and the massive-activation registers they exposed (Session 25, 2026-08-12)
+
+**STATUS: RUN 2026-08-12.** Jobs 25521508 / 25521717 / 25521875 (figures), 25523711 (§27a.3),
+25525365 (§27a.4), 25525765 (§27a.5), 25526680 (§27a.6).
+
+Code: `plot_token_pca.py`, `audit_static_token_outliers.py`, `audit_layernorm_compression.py`,
+`audit_register_dim_variance.py`, `audit_register_across_modalities.py`, each with a
+`slurm/` wrapper (CPU, `--cpus-per-task=64`, `Pool(64)`).
+Figures: `figures/token_pca/ISMN_TxSON_CR200-18_{s2,s1_asc,s1_desc,static}.{png,pdf}`.
+Tables: `csvs/{static_token_outliers,layernorm_compression,register_dim_variance,register_across_modalities}.*`
+
+Motivation (§27.7): not "are the embeddings diverse" — §15 Tier-0 settled that — but **is the
+diversity of the right kind and magnitude to cover soil moisture**. Look before probing.
+
+### 27a.0 Method
+
+Tile `ISMN_TxSON_CR200-18`, 2019–2020, six stations in **six distinct tokens** (105, 62, 100,
+20, 44, 172), observed mean SM 0.1197–0.2865. One PCA basis per (modality, layer) fitted
+across all four seasons at once, deterministic component sign, each season centred by its own
+valid-token mean, one colour scale per row spanning raw and pooled. `visualize_embeddings.pca_rgb`
+does none of this — it refits per panel with an arbitrary SVD sign, so its colours are not
+comparable between panels. Pooling replicated in numpy and **asserted equal to
+`dataset._cpu_pyramid_pool`**; the 14×14 window equals the plain masked mean. Every symbol on
+the figure is defined in a printed legend block.
+
+### 27a.1 Raw tokens are spatially heterogeneous, and the detail sits in the early layers
+
+**Two statistics were dropped from this section on 2026-08-12 and should not be reinstated:**
+the per-token L2 norm map and Moran's I computed on it. Both are magnitude summaries, and
+§27a.3-27a.6 showed a single register coordinate dominates a token's magnitude by construction
+(one entry at -1671 while every other sits within ±82). They therefore measure the register
+more than the token. Nothing below depends on them.
+
+What the tile figure shows, on evidence independent of any norm:
+
+**1. The tokens are genuinely heterogeneous within the 2.24 km tile.** The 196 tokens differ
+from one another, and PCA variance is spread across many components rather than concentrated
+in one direction — i.e. high effective spatial rank, with sink tokens excluded from the fit:
+
+| modality/layer | PCA top-3 variance ratio |
+|---|---|
+| S2 L3 | 0.13 / 0.07 / 0.06 |
+| S2 L6 | 0.10 / 0.06 / 0.05 |
+| S2 L9 | 0.08 / 0.07 / 0.04 |
+| S2 L12 | 0.45 / 0.05 / 0.04 with sinks, **0.09 / 0.07 / 0.05** without (4 sink tokens) |
+| DEM L12 | 0.65 / 0.05 / 0.04 with sinks, **0.14 / 0.11 / 0.06** without |
+| LULC L12 | 0.36 / 0.13 / 0.07 with sinks, **0.20 / 0.10 / 0.08** without |
+
+The apparent "one dominant component, low spatial rank" at L12 and on the statics was
+**entirely the register artefact**. Once it is excluded, every layer looks high-rank and
+mutually comparable — S2 goes 0.13 / 0.10 / 0.08 / 0.09 across L3 / L6 / L9 / L12. Note the
+sink tokens appear only at L12 (4 of them for S2; none at L3/L6/L9), which is the same depth
+signature §27a.6 finds independently.
+
+**2. The heterogeneity is landscape-correlated** — the two positive controls, both passed
+visually: the LULC PCA→RGB reproduces the land-cover map (rangeland 72%, crops 15%, trees 11%),
+and the DEM PCA→RGB traces the drainage seen in the hillshade (435-481 m, sd 7.9 m).
+
+**3. Spatial detail is richest in the early layers.** L3/L6 show visibly finer texture than
+L12, consistent with the §27.7 prediction logged before running and with §27a.6, where the
+high-magnitude register token is an L12 phenomenon (S2 1.5x at L9 -> 7.2x at L12) while L3/L6
+stay clean.
+
+So: **TerraMind embeddings do carry within-tile spatial heterogeneity at 160 m, and it tracks
+terrain and land cover.** What is NOT shown here is that the heterogeneity tracks soil
+moisture -- that is §27b.
+
+### 27a.2 Pooling destroys 97–98% of within-tile position information
+
+`variance kept` = fraction of within-tile variance surviving when every token is replaced by
+its smallest containing nested window — everything the 4 pooled vectors can express about
+position inside the tile:
+
+| modality | variance kept |
+|---|---|
+| S2 L3 / L6 / L9 | **3%** (all four seasons) |
+| S2 L12 | **2%** |
+| DEM | **1.5%** (3.1% excluding the §27a.3 sink token) |
+| LULC | **2.6%** (3.8% excluding it) |
+
+The pooled panels are four flat nested squares, indistinguishable across seasons — pooling
+removes the seasonal signal along with the spatial one. The 50% token dropout adds a
+draw-to-draw spread of 2–4% of the colour range on top.
+
+Expected in hindsight and no less damning: after the tile mean is removed, three nested annuli
+remain, and they can only express structure that is radially symmetric about the station.
+
+**Scope it correctly (§27.8):** the anchor acquisition enters **unpooled** — 196 tokens
+(`model.py:497-505`) plus L3/L6/L9 as decoder skips (`model.py:519-530`). Only the S2/S1
+**history** and **DEM/LULC** are pooled.
+
+### 27a.3 One token holds most of the variance — and the raw raster is pristine
+
+| modality | top token | ‖e‖ | median ‖e‖ | share of within-tile variance |
+|---|---|---|---|---|
+| DEM | (r10, c2) | 1682.2 | 123.1 | **64.8%** |
+| LULC | (r8, c3) | 999.1 | 124.6 | 35.7% |
+
+**The input is fine.** The DEM under that token is 452.88–454.55 m, 254 distinct values, smooth,
+**zero NaN**. The LULC footprint is uniform class 9 (rangeland). No nodata, no fill, no
+resampling artefact.
+
+**The embedding is not.** `min = −1671.00, max = +82.19, mean = +1.756` — the whole norm is one
+coordinate. That is a ViT massive-activation / attention-sink register.
+
+Sweep over 993 stations: **970 (97.7%)** have a DEM token >3× the median norm; median ratio
+**13.0×**, p90 34×, max 152×; **median variance share 66.7%**, p90 93.1%. LULC: 920 (92.6%),
+median 9.2×, median share 40.4%. **Zero are masked by `dem_token_mask` / `lulc_token_mask`.**
+Only 1–4% sit on the patch border, so it is not a padding artefact.
+
+It contaminated our own numbers: excluding sinks from the PCA fit moved the DEM basis from
+`0.65/0.05/0.04` → `0.14/0.11/0.06` and LULC `0.36/0.13/0.07` → `0.20/0.10/0.08`. The apparent
+"one dominant component, low spatial rank" was **entirely the artefact**.
+
+### 27a.4 LayerNorm is per-token, so pooling is what does the damage
+
+LayerNorm normalises each token over its own 768 features, so a sink token cannot contaminate
+its neighbours — it only wrecks itself (post-LN, **98.9%** of its squared norm is register), and
+it is 1 token in 196. Harmless on the unpooled path.
+
+But pooling is a mean, and a mean does not remove a common offset. Using the **trained**
+`transformer_layers.0.layer.norm1` γ/β from `cls_depth_star_reg/best.pt`:
+
+**DEM** — |sink|/σ_other, compression, and post-LayerNorm share in the register dims:
+
+| window | \|sink\|/σ_other | compression | post-LN share |
+|---|---|---|---|
+| 2×2 (320 m) | 29.3 | 1.46× | **0.489** |
+| 6×6 | 41.7 | 1.83× | 0.670 |
+| 10×10 | 45.7 | 1.98× | 0.714 |
+| 14×14 | 46.9 | 2.00× | **0.720** |
+
+LULC is milder (0.138 → 0.284; compression 1.09–1.22×). The register coordinate is **dim 328**,
+shared by **100%** of affected stations in both modalities — median 4 spiking coordinates per
+tile for DEM, 2 for LULC.
+
+### 27a.5 The register is a near-constant offset: dilution, not signal
+
+Detected here by a different criterion — dims with a large **mean across stations**, i.e. a
+constant offset in every token of every tile. That finds **87 and 126** (DEM), **126** (LULC),
+which are *not* the same as the within-token spike dim 328.
+
+**DEM, 14×14 window:** dims 87+126 carry **88.4% of the mean vector's magnitude** but only
+**13.9% of the across-station variance**; CV 0.315 vs **2.00** for a typical dim (6× less
+variable). Decisively:
+
+> **Median pairwise cosine between stations, post-LayerNorm: 0.783 → 0.157 when those 2 of 768
+> dims are zeroed.** Holds at every window (0.577→0.083 at 2×2).
+
+Two coordinates are what make every station's DEM representation look like every other's.
+LULC is milder: 35.4% of magnitude, 12.5% of variance, 0.694 → 0.604.
+
+Not established: that the residual 16%-cosine content is *informative about soil moisture*. A
+lower cosine means the vectors are no longer dominated by a common direction; it does not prove
+the remainder is useful. That is still §27b's question.
+
+### 27a.6 It is NOT a DEM/LULC problem — it is encoder-wide, and worst at L12
+
+The obvious explanation was that registers get recruited in low-information patches, and
+DEM/LULC are single-band, static and often near-uniform. **That is not what the data says.**
+Sweep over all 993 stations, one acquisition each, every modality × layer:
+
+| modality/layer | register dims | mag share | var share | token max/median L2 norm* |
+|---|---|---|---|---|
+| dem/l12 | 87, 126, 328 | 0.884 | 0.139 | **13.0** |
+| lulc/l12 | 126 | 0.354 | 0.125 | **9.1** |
+| s2/l12 | 9, 87, 126, 328, 329 … | **0.940** | 0.083 | **7.2** |
+| s2/l9 | 9, 126, 329, 723 | 0.615 | 0.041 | 1.4 |
+| s2/l6 | 9, 126, 329, 437 | 0.603 | 0.040 | 1.5 |
+| s2/l3 | 9, 126 | 0.586 | 0.017 | 1.5 |
+| s1_asc/l12 | 87, 126, 716 | **0.912** | 0.038 | 1.2 |
+| s1_asc/l9 | 87, 126, 329 | 0.723 | 0.105 | 1.3 |
+| s1_asc/l6 | 126, 329 | 0.687 | 0.138 | 1.3 |
+| s1_asc/l3 | 126, 459 | 0.715 | 0.038 | 1.2 |
+| s1_desc/* | as s1_asc | 0.69–0.91 | 0.04–0.16 | 1.2–1.4 |
+
+\* the norm column is a **detector**, not a content measure — it is the cheapest way to see the
+L12 spike emerge, but a norm is dominated by the register coordinate by construction, which is
+why §27a.1 no longer reports norm-based statistics.
+
+Three conclusions:
+
+1. **Dim 126 is a register in EVERY modality and EVERY layer.** Dim 87 in every modality at
+   L9/L12. Dim 328 at L12 in dem and s2. These are properties of the TerraMind encoder, not of
+   the input.
+2. **The high-norm TOKEN is an L12 phenomenon.** S2 jumps 1.5× (L9) → **7.2×** (L12); S1 never
+   develops it at any layer (1.2–1.4×); DEM is the extreme at 13.0×. Classic depth signature of
+   massive activations.
+3. **The dilution is universal and worst where it hurts most.** Magnitude share is 0.59–0.94
+   everywhere while variance share stays 0.02–0.16 — near-constant directions dominating the
+   magnitude in every modality. **S2 L12 is the worst of all at 0.940**, and S2 L12 is exactly
+   what `_get_target_spatial_tokens` (`model.py:497`) feeds in as the 196 spatial tokens that
+   become the **decoder bottleneck**. L3/L6/L9 are markedly cleaner (0.59–0.72).
+
+Input redundancy is at best a weak modulator, not the cause: `r(DEM relief, register strength)`
+= **−0.217** (flattest quartile 17.4× vs most-varied 10.2× — right direction, weak), and
+`r(LULC purity, strength)` = **−0.018**, i.e. nothing. Explanation (A), encoder-wide, with a
+minor input modulation for DEM only.
+
+### 27a.7 What this changes
+
+- The earlier framing "a DEM/LULC pooling problem" was too narrow. **The decoder bottleneck
+  (S2 L12, 196 unpooled tokens) is 94% register by magnitude**, which sits directly upstream of
+  §23's finding that the painted 224² structure is anti-correlated with the landscape.
+- **L3/L6 are cleaner on both counts** — more within-tile spatial structure (§27a.1) and far
+  less register dominance (§27a.6). Anything aiming at fine resolution should be built from
+  them, not from L12.
+- **The fix already exists in this codebase.** ERA5 is globally z-scored per variable
+  (`csvs/era5_stats.json`, `dataset.py:1046-1048`); the satellite and static embeddings get **no
+  normalisation at all**. Per-dimension standardisation over the dataset — the same thing
+  `compute_era5_stats.py` does for ERA5 — would put dims 9/87/126/328/329 on the same footing as
+  every other coordinate. It discards nothing: standardisation keeps whatever across-station
+  variance those dims carry, it just stops them dominating the magnitude. Zero training-time cost.
+- **Open item:** `dem_token_mask` / `lulc_token_mask` flag none of these tokens. Whether sink
+  tokens should be excluded from the pooled masked-mean is a separate, cheap decision.
+
+### 27a.8 What this does NOT show
+
+Nothing here shows the token structure tracks **soil moisture**. It demonstrably tracks terrain
+and land cover (the positive controls). Whether wetter stations sit on systematically different
+tokens is §27b, and it is now worth running because §27a.1 removed the reason it might have been
+pointless — but it should lead with **L3/L6**, not L12.
+
+## §27b Do TerraMind embeddings predict mean soil moisture? (Session 25, 2026-08-12)
+
+**STATUS: DESIGNED. Scale A being built; B and C designed, not built.** Written before code
+exists, for critique.
+
+Scales are labelled **A / B / C**, not S1/S2/S3 — S1 and S2 already mean Sentinel-1 and
+Sentinel-2 throughout this project.
+
+### 27b.1 What §27a leaves open
+
+§27a established that the embeddings **do** carry within-tile spatial heterogeneity at 160 m
+and that it tracks the landscape (DEM PCA→RGB traces the drainage; LULC reproduces the tree
+patches). Sink-excluded PCA ratios are high-rank at every depth: S2 L3 0.13 · L6 0.10 ·
+L9 0.08 · L12 0.09. So "the imagery just looks the same at those six spots" is dead.
+
+Nothing in §27a shows the heterogeneity tracks **soil moisture** — it demonstrably tracks
+terrain and land cover. That is what §27b measures.
+
+### 27b.2 One measurement, three scales
+
+The direct framing (token → mean SM) and the pair framing (Δe vs Δy, dCor) are **not
+alternatives**. Differencing a pair *is* removing a group mean. Same measurement, group made
+progressively smaller, trading confound-removal against sample size:
+
+| scale | confound removal | n | question |
+|---|---|---|---|
+| **A — global** | none | ~993 stations | is SM predictable from the embedding at all? |
+| **B — within-network** | subtract the network mean from X and y | ~993 stations | does it survive removal of climate and region? |
+| **C — within-tile** | pair differences inside one 2.24 km tile, dCor | **~33 pairs** | does it separate two places a few hundred metres apart? |
+
+A is well-powered but will partly succeed *via climate* — L12 separates Texas from Norway.
+C removes climate, the ERA5 cell, season, biome, network, vendor and calibration epoch
+**exactly**, because both tokens come out of one forward pass on one image; but §26.10 caps it
+at 33 usable pairs (206 in-tile pairs → 95 with ≥365 d overlap → 33 above 160 m separation,
+the minimum for Δe ≠ 0 since a token *is* 160 m). B is the bridge and would carry the weight.
+
+The scale at which predictability disappears is the result, and it is directly comparable to
+the model's own behaviour: level skill r = **+0.85** between networks, **−0.11** within TxSON,
+**−0.18** within one tile.
+
+### 27b.3 Features — the embedding of the pixel the station stands on
+
+**X = the station's own token.** A station sits at pixel (112, 112) of its own patch = token
+(7, 7) = **index 105**, the 160 m cell it stands in. That single 768-vector is the feature. No
+neighbourhood averaging, no hand-built covariates. Verified on CR200-18: its six stations
+occupy six *distinct* tokens (105, 62, 100, 20, 44, 172) under `(row//16)*14 + (col//16)`.
+
+Sweep: **S2 / S1_ASC / S1_DESC × L3 / L6 / L9 / L12** plus **DEM / LULC at L12** = 14
+combinations. Dynamic modalities use the **multi-year mean** of that token across acquisitions,
+because the target is a multi-year mean and the aggregation must match.
+
+**Lead with L3/L6, not L12** — §27a.1 showed they carry more within-tile structure and §27a.6
+showed far less register dominance.
+
+**Temporal aggregation: multi-year mean, not yearly.** The target is one number per station, so
+a yearly-resolved feature (one row per station-year, ~5000 rows) is **pseudo-replication** — it
+multiplies rows without adding information about a per-station target, and rows within a station
+are near-duplicates. `GroupKFold` would keep the CV honest but the effective sample size stays
+~993. Use the multi-year mean, with two corrections that do matter:
+
+1. **Restrict acquisitions to the station's own label window.** A station with 2016-2018 labels
+   but 2016-2023 imagery would otherwise average the embedding over a different period than the
+   soil moisture. Take the window from `dataset._load_zarr_labels` and filter `{mod}/dates`.
+2. **Two secondary blocks:** seasonal means (4 × 768 — phenology relates to moisture regime, and
+   one annual mean cannot express it) and the temporal SD of the token (1 × 768 — a pixel whose
+   appearance swings through the year is plausibly a different regime from a stable one).
+
+**Cloud-sampling caution.** S2 acquisitions surviving cloud filtering are not an unbiased sample
+of the year: cloudy days are preferentially wet days, so the S2 multi-year mean is really a mean
+*fair-weather* token. **S1 is cloud-immune**, so S1/S2 agreement is the check that this bias is
+not driving the answer. Report them separately, never pooled.
+
+**Yearly-resolved is a different experiment**, not a better version of this one: predicting
+*yearly* mean SM from *yearly* mean embedding with station means removed asks whether the
+embedding tracks year-to-year wetness at a fixed site. §24.12 showed the model's temporal skill
+is reasonable while its site-level skill is not, so the gap worth probing is spatial. Later.
+
+### 27b.3b Scale A part 1 — does the embedding space organise itself by wetness?
+
+Asked **before any model is fitted**: take the station tokens, look at how they arrange
+themselves, and ask whether wet stations sit near other wet stations. No regression, no
+regularisation choice, no p ≫ n concern — the structure is either there or it is not. This is
+the primary presentation of Scale A; the §27b.4 ladder is its quantitative backbone.
+
+**The figure.** 2-D projection of the 993 station tokens, plotted twice: coloured by **mean soil
+moisture**, and coloured by **network / Köppen class**. The second panel is not decoration — it
+is the confound made visible. If the SM colouring looks organised only because the climate
+colouring is organised, the eye sees it immediately.
+
+**Projection: UMAP, with PCA alongside.** `umap-learn` is **not installed** (checked
+2026-08-12: `sklearn` 1.8.0 present; `umap`, `openTSNE`, `pacmap` absent) — needs
+`pip install umap-learn` (pulls `numba` + `pynndescent`) and a line in `environment.yml`.
+Preferred over t-SNE because t-SNE deliberately distorts inter-cluster distances, which is
+exactly the claim being made here; UMAP preserves global structure far better. Set
+`random_state` for reproducibility. Show linear PCA in the same figure as the honest baseline —
+if the structure appears only under UMAP, that is worth knowing.
+
+Two rules that must not be broken:
+
+> **Every statistic is computed in the original 768-d space, never on the 2-D projection.**
+> UMAP/t-SNE coordinates are a visualisation, not data; clustering the 2-D output and reporting
+> it as a result is a standard and serious error.
+
+> **Unsupervised fit, supervised colouring.** `umap-learn` accepts `fit_transform(X, y=sm)`,
+> which uses the target to shape the projection — wet and dry would separate *by construction*
+> and the figure would be circular. Supervised UMAP is legitimate only as a feature extractor
+> evaluated on held-out stations inside CV, which is a different experiment.
+
+**Three statistics, cheapest first:**
+
+1. **k-NN in embedding space** — predict each station's mean SM as the average of its k nearest
+   neighbours (cosine, leave-one-out, k ≈ 10). Report RMSE. Non-parametric, essentially nothing
+   fitted, and it lands on the **same scale as the §27b.4 ladder** (null 0.0752, best tabular
+   0.0576), so it is comparable without any modelling assumption.
+2. **Cluster composition** — k-means into K clusters (sweep K), then one-way ANOVA of station
+   mean SM across clusters: `η² = SS_between / SS_total`, with a permutation null (10,000
+   shuffles of the SM labels). Answers "do wet places fall in the same clusters" with an exact
+   p-value.
+3. **Neighbourhood purity vs distance** — median |ΔSM| between a station and its k-th embedding
+   neighbour as a function of k, against the same for random pairs. Shows how far the
+   organisation extends, not just whether it exists.
+
+**All three repeated on within-network residuals** (SM minus its network mean, tokens likewise).
+That is Scale B applied to the same statistics, and it separates "the embedding knows Norway is
+wet" from "the embedding knows *this field* is wet". Expect a large drop; **the size of the drop
+is the result**.
+
+**Secondary contrast, free:** rerun with the 4-scale pooled pyramid in place of the centre
+token — what the model actually receives for the history and for DEM/LULC. §27a.2 measured that
+as retaining 2–3% of within-tile variance. Centre token predicting while pooled does not ⇒
+pooling is the bottleneck, and the comparison is one-sided by construction.
+
+**No separate normalisation job is needed.** `station_mean_probe.py` already puts a
+`StandardScaler` inside the CV, fitted on the training fold only. This matters: §27a.5 found
+register dims holding 59–94% of the magnitude but 2–16% of the across-station variance, and
+RidgeCV penalises coordinates equally, so unstandardised features would be dominated by them.
+
+### 27b.4 Scale A — extend the existing ladder, against a baseline that already exists
+
+`station_mean_probe.py` gains a **`B9 +terramind`** block. The §20.14 ladder already
+establishes exactly the right baseline (depth 0-10, RMSE of station-mean SM):
+
+| | RMSE |
+|---|---|
+| null (predict the global mean) | 0.0752 |
+| B1 soil | 0.0621 |
+| B5 +derived | 0.0599 |
+| B8 +smap_tb (soil + terrain + land cover + climate + lat/lon + SMAP) | **0.0576** |
+| the trained network's own RMS per-station bias | 0.0618 |
+
+> **The question is concrete and falsifiable: does adding TerraMind tokens beat 0.0576?**
+
+If a foundation-model embedding cannot beat a tabular stack of soil, terrain, climate and SMAP,
+that is a publishable finding about foundation models for soil moisture. If it does, that is
+the justification for the architecture.
+
+Reuse as-is: `fit_block()` (`station_mean_probe.py:199`), `GroupKFold` on `location_group_id`
+(`:212-215`, which already prevents neighbouring stations straddling train/test), RidgeCV as
+the deliberately weak learner, `HistGradientBoostingRegressor` as the nonlinearity control, the
+JSON ladder output, and `NETWORK_RMS_BIAS` (`:37-39`).
+
+### 27b.5 Decision gate for Scale A
+
+| result | reading | next |
+|---|---|---|
+| beats 0.0576 clearly | embeddings carry SM information beyond the tabular stack | run B, then C |
+| ties 0.0576 | embeddings re-encode what soil/terrain/climate already say | run B — does it add anything *locally*? |
+| loses to 0.0576 | at station-mean scale the embeddings add nothing | report it; C only with a specific reason to expect sub-km to differ |
+
+**A strong Scale A result does NOT imply sub-km skill** — L12 separating Texas from Norway
+would produce it. That is why B and C exist and why A alone must not be over-read.
+
+### 27b.6 Limits, on record before running
+
+- Part of every station's mean is instrument, not landscape — calibration, installation depth,
+  and the point-vs-160 m support mismatch. That bounds every scale from above.
+- Tokens are frozen and never saw soil moisture, so **train/val/test leakage does not apply**;
+  every station is usable regardless of split.
+- 768 dims against ~993 stations: RidgeCV under a real L2 penalty is the point, not a
+  limitation — a positive result cannot be memorisation. GBM runs on PCA(32) as the
+  nonlinearity control.
+- Pre-register **depth 0-10, S2 L3, centre token** as primary; the rest exploratory under
+  Benjamini–Hochberg FDR.
+
+### 27b.7 Verification
+
+1. The ladder reproduces the existing B1–B8 numbers with the token block omitted.
+2. Station token index equals `(row//16)*14 + (col//16)`; CR200-18's six give 105, 62, 100, 20,
+   44, 172 with the centre at 105.
+3. Six CR200-18 station means reproduce 0.1367 / 0.1197 / 0.1826 / 0.2323 / 0.1857 / 0.2865
+   to 1e-3.
+4. Every block collapses to the null RMSE under a permuted target.
+
+### 27b.8 Scale A results (run 2026-08-12, jobs 25530917 / 25531584 / 25532410)
+
+`probe_token_sm_structure.py` + `slurm/probe_token_sm_structure.sh` →
+`csvs/token_sm_structure.{csv,json}`, `figures/token_sm/umap_*.png`.
+**842 `sm_only` stations**, depth 0-10, station's own centre token (index 105), multi-year mean
+over acquisitions inside each station's own label window, 24-date subsample.
+
+**Restricted to `sm_only` deliberately.** It is the population the model was trained and
+evaluated on (`eval_output/manifest.json` `category_filter`), and it is the only category free of
+the non-finite tokens found below. With `sm_only` the run has **zero** non-finite warnings.
+
+| modality/layer | null | kNN10 | **skill** | η²(20) | p | null_w | kNN10_w | **skill_w** | η²_w | p_w |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **s2/l12** | 0.0798 | 0.0720 | **9.8%** | **0.156** | 0.0005 | 0.0734 | 0.0713 | 3.0% | 0.038 | 0.034 |
+| s1_desc/l9 | 0.0784 | 0.0718 | 8.4% | 0.052 | 0.0015 | 0.0725 | 0.0694 | **4.2%** | 0.038 | 0.072 |
+| s1_desc/l12 | 0.0784 | 0.0721 | 8.0% | 0.076 | 0.0005 | 0.0725 | 0.0702 | 3.2% | 0.029 | 0.227 |
+| s1_asc/l12 | 0.0797 | 0.0740 | 7.2% | 0.055 | 0.0005 | 0.0735 | 0.0725 | 1.4% | 0.043 | 0.014 |
+| s2/l9 | 0.0798 | 0.0743 | 6.9% | 0.109 | 0.0005 | 0.0734 | 0.0725 | 1.2% | 0.038 | 0.031 |
+| dem/l12 | 0.0798 | 0.0744 | 6.8% | 0.101 | 0.0005 | 0.0734 | 0.0713 | 2.9% | **0.075** | 0.0005 |
+| s1_asc/l9 | 0.0797 | 0.0750 | 6.0% | 0.055 | 0.0015 | 0.0735 | 0.0727 | 1.1% | 0.023 | 0.473 |
+| s2/l3 | 0.0798 | 0.0766 | 4.0% | 0.047 | 0.0035 | 0.0734 | 0.0746 | **−1.6%** | 0.016 | 0.842 |
+| s2/l6 | 0.0798 | 0.0769 | 3.6% | 0.061 | 0.0005 | 0.0734 | 0.0746 | **−1.6%** | 0.023 | 0.412 |
+| lulc/l12 | 0.0798 | 0.0803 | **−0.7%** | 0.062 | 0.0005 | 0.0734 | 0.0753 | **−2.5%** | 0.041 | 0.015 |
+
+(`_w` = within-network residuals: network mean removed from features and target. s1_asc/l3, l6
+and s1_desc/l3, l6 omitted for space; all ≤3.8% global, ≤0.1% within-network.)
+
+**Three readings.**
+
+1. **The embeddings predict SM, but far worse than the tabular stack.** Like-for-like skill:
+   §20.14's B8 (soil + terrain + land cover + climate + lat/lon + SMAP) is 0.0752 → 0.0576 =
+   **23.4%**. The best token is 0.0798 → 0.0720 = **9.8%**. The tabular covariates are ~**2.4×
+   better**. *Caveat: k-NN is a weaker learner than the ladder's RidgeCV/GBM, so 9.8% is a FLOOR,
+   not a ceiling — §27b.4's `B9 +terramind` block is still needed before this becomes a claim.*
+2. **Remove climate and it nearly vanishes.** Within-network skill 0–4.2%, with **four of
+   fourteen combinations negative** (worse than predicting the network mean). η² for s2/l12 falls
+   0.156 → 0.038. This matches the model's own behaviour exactly: level skill r = +0.85 between
+   networks, −0.11 within TxSON, −0.18 within one tile.
+3. **The layer ordering flips versus §27a.** L12/L9 beat L3/L6 here (s2: 9.8%, 6.9% vs 4.0%,
+   3.6%) — the opposite of the within-tile spatial-detail ordering. Consistent: station-mean SM
+   at global scale is largely a climate/biome task, and L12 is where climate lives. §27a's "lead
+   with L3/L6" therefore applies to the **sub-km** question, not this one.
+
+**The figure says it without statistics.** `figures/token_sm/umap_s2_l12_0-10.png`: UMAP and PCA
+fitted **unsupervised** on the tokens, soil moisture used only for colour. The Köppen panel shows
+D, C and B classes in distinct regions; the soil-moisture panel is near-uniform scatter.
+**The embedding organises itself by climate, not by wetness.**
+
+`umap-learn` 0.5.12 was installed into the `terramind` env for this (`pip install umap-learn`,
+pulls `numba` + `pynndescent`); add it to `environment.yml`.
+
+**Data-quality item.** Four stations have non-finite S1 tokens and are **all `sm_and_flux`**:
+`AmeriFlux_US-Ton`, `AmeriFlux_US-Var`, `ICOS_DE-HoH`, `ICOS_FI-Var`. `precompute_terramind.py:427`
+raises on non-finite at write time, so these arrived by another path. Worth tracking down before
+any run that uses `sm_and_flux`.
+
+---
+
+## §28 Replace the U-Net decoder with a per-token head — an honest 160 m map (DESIGNED, not built)
+
+**STATUS: DESIGNED 2026-08-12, NOTHING BUILT.** Recorded before code exists, for critique.
+
+### 28.1 The two defects, stated separately
+
+They are independent, and only the first is pooling:
+
+| | does the information arrive? | is it used? | fix |
+|---|---|---|---|
+| **DEM / LULC / S2-S1 history** | **NO** — pooled to 4 nested-window vectors before the transformer sees them (§27a.2: 1.5% / 2.6% / 2–3% of within-tile variance retained) | — | feed their 196-token grids |
+| **anchor S2/S1** | yes — 196 tokens unpooled, 4 layers (`model.py:497-530`) | **NO** — U-Net decoder to 224², only pixel (112,112) supervised (`model.py:779`) | per-token head |
+
+Supporting measurements: §23 — the 224² map's structure is *anti-correlated with the landscape*
+and **64–83% of its variance already sits on the 14×14 grid**, i.e. effective resolution ≈160 m,
+with the verdict *"do not present this model as producing 10 m soil-moisture maps"*. §26.11 —
+off-centre readouts degrade (median ΔubRMSE +0.0025, 74% of stations worse) and train-station
+memorisation does not travel off the supervised pixel (0.0110 → 0.0500).
+
+### 28.2 The change
+
+Delete `UNetDecoder`. Apply a small **shared** head to the 196 transformer output tokens the model
+already computes (`spatial_ctx`, `model.py:732`). Supervise at the token containing the station.
+At inference the same head runs on all 196 in one pass → a **14×14 map at 160 m**, matching
+TerraMind's patch size and the resolution §23 measured the model as actually having.
+
+**Cost goes DOWN, not up.** The 196 contextualised tokens already exist; we are attaching a head
+to a tensor, not adding 196 forward passes. What is deleted is the dominant cost: four upsampling
+stages to 224² with channels (512, 256, 128, 64) plus three FiLM'd skips. The 224²×64 activation
+is ~3.2 M values per sample per depth; the new head is ~200 K. Expect lower memory and a faster
+step. Only eval storage grows (196 values per sample instead of 1).
+
+### 28.3 What the head receives, per token k
+
+| input | shape | source | why |
+|---|---|---|---|
+| `h_k` contextualised spatial token | 768 | `ctx[:, sp_start+k, :]` (`model.py:732`) | carries the global context attention built |
+| `anchor_l3_k / l6_k / l9_k` | 3 × 768 | `batch["anchor_l3/6/9"][:, k, :]` — **the decoder skips, in token space** | §27a: L3/L6 hold the most within-tile detail and least register dominance; today reachable only via the decoder |
+| `depth_ctx[:, d, :]` | 768 per depth | `ctx[:, :n_depths, :]` (`model.py:723`) | preserves the depth mechanism and star residual |
+
+```
+u_k    = Linear(4·768 → 768)( concat[h_k, l3_k, l6_k, l9_k] )      # SHARED across all k
+base   = head_0( FiLM_0(u_k, depth_ctx[:,0,:]) )                   # depth 0 absolute
+out[d] = base + head_d( FiLM_d(u_k, depth_ctx[:,d,:]) )  for d>0   # zero-init offsets
+```
+
+Weight sharing across k is the whole mechanism: supervising one token teaches the mapping at
+every token, which is what removes the 50,175-unconstrained-pixels problem. `context`
+(`model.py:743`) is dropped — `h_k` already attends to those tokens; keep it as an ablation flag.
+
+### 28.4 Pooling is KEPT, as context
+
+A per-token head is not a per-token model. `_build_sequence` (`model.py:532-574`) already gives
+six layers of **global self-attention** over
+`[DEM×4 | LULC×4 | Soil×4 | spatial×196 | S2 hist | S1 hist | ERA5×365 | SIF | TWSA]`, so each
+output token is contextualised by its own embedding, every other spatial token, the pooled
+statics, the pooled history and the full ERA5 series. Nothing is removed; pooling simply stops
+being the *sole* spatial channel for DEM/LULC.
+
+**Cheap addition, ablatable on its own:** fuse the per-token DEM/LULC grids into the spatial
+tokens by **addition** rather than appending 392 tokens (sequence ~600 → ~1000):
+
+```
+spatial_tokens += W_dem · dem_tokens[:, k, :] + W_lulc · lulc_tokens[:, k, :]
+```
+
+Same pattern as the positional / modality / staleness embeddings at `model.py:503-514`. Zero
+sequence-length cost, and the cheapest available fix for §27a.2.
+
+### 28.5 The trap: position leakage
+
+Patches are station-centred, so the supervised token is **always index 105**. With 2-D positional
+encodings (`model.py:501-505`) the model can learn *"read (7,7)"* rather than a position-general
+mapping — exactly the off-centre degradation §26.11 measures. Needs at least the first two:
+
+1. **Translation augmentation in token space** — feed a random sub-window of the 14×14 grid
+   (e.g. 10×10) so the station lands at varying positions. A slice of an array already in memory;
+   **no re-tokenisation**.
+2. **Multi-station supervision** — k stations in a tile give k supervised tokens from one forward
+   pass. `csvs/txson_readouts.csv` already holds the indices (96 readouts, 56 off-centre).
+3. **Ablate the spatial positional encoding** as a diagnostic.
+
+### 28.6 The risk: global attention may homogenise
+
+`training_runbook.md:1500` (§14) already records *"Global self-attention homogenises predictions →
+nearly uniform SM maps"*. Pushback: the gradient now **penalises** flatness (under the decoder
+only one pixel was supervised, so nothing did); and it is directly measurable — log across-token
+SD of the predicted map and spatial attention entropy each epoch, so collapse is visible
+immediately. **Fallback:** windowed (Swin-style) spatial attention over a k×k neighbourhood while
+keeping full attention to the pooled/ERA5 prefix. Hold in reserve; do not build up front.
+
+### 28.7 Honest limit
+
+§27b.8 measured within-network skill from a station's own token at **0–4.2%**. **This change
+cannot manufacture information.** What it delivers regardless: an output resolution matching the
+input resolution, no unconstrained pixels, and a map that is *validatable* — per-token
+predictions make §26.3's 417 k-pixel tile-overlap disagreement test clean, and TxSON's 56
+off-centre readouts become genuine held-out ground truth rather than an out-of-distribution
+probe. Frame it as removing a defect and making the product honest, not as a fix for
+heterogeneity. State the expected gain on the spread ratio as low **before** the GPU is spent.
+
+### 28.8 Numbers it must beat (TxSON, same checkpointed comparison as §26.11)
+
+| metric | current | target |
+|---|---|---|
+| own-centre ubRMSE (0-10) | 0.0301 | ≤ |
+| off-centre ubRMSE | 0.0345 | materially closer to own-centre |
+| **between-station spread as % of observed** | **15–19%** | **> 35%** (`plot_network_timeseries.py`'s "resolves the tile" threshold) |
+| r(pred level, obs level), CR200-18 | −0.175 | > 0 |
+| tile-to-tile disagreement on overlaps | unmeasured | small, and NOT aligned to tile boundaries |
+
+### 28.9 Implementation and verification
+
+`model.py` — add `TokenHead`, gate on `--head token|unet` so existing checkpoints stay
+reproducible; `forward()` returns `(B, n_depths, 14, 14)` in token mode.
+`masked_huber_loss` — read `pred[:, :, tok_idx]` with a **per-sample** token index instead of the
+hardcoded `(112,112)`; accept padded (token, label) lists for multi-station supervision, as
+`eval_predict.py`'s `PixelMap` already does. `dataset.py` — emit `token_idx = (row//16)*14 +
+(col//16)` and the optional translation crop. `eval_predict.py` — `--pixel-csv` gather switches
+from 224² to token indices.
+
+Verify: (i) with augmentation off and one station per tile, token-mode predictions at index 105
+are statistically comparable to the current `(112,112)`; (ii) after augmentation, error must not
+depend on which token the station occupies — regress error on `offset_px`, slope ≈ 0 against
+§26.11's current positive slope; (iii) CR200-18's six tokens are 105, 62, 100, 20, 44, 172 with
+the centre at 105; (iv) measure step time and peak memory before committing — the claim is that
+both improve; (v) smoke on one tile, one year, before any multi-day allocation.
+
+---
+
+## §29 Does land-surface temperature show within-tile heterogeneity? (PLANNED 2026-08-13 — catalogues verified live, nothing downloaded)
+
+**STATUS: designed 2026-08-12, re-planned against live catalogues 2026-08-13. No pixel has been
+downloaded. Every number in §29.3 was measured, not assumed.**
+
+**Build order, decided 2026-08-13: two strict phases.** Phase A is Landsat end to end — download,
+analysis, both figures, write-up. It needs no credentials, resolves 30 m rather than 70 m, and
+spans the full 2016-01 → 2022-11 label window, so **it answers the question standalone.** Phase B
+is ECOSTRESS and starts only once A is written up; it adds exactly one thing Landsat physically
+cannot provide — night LST, and therefore the diurnal temperature range — and reuses the Phase A
+code with `--sensor ecostress`.
+
+### 29.1 Why LST is the right next input to try
+
+§27a/§27b say the *reflectance* embeddings encode the landscape but not its wetness: within-tile
+heterogeneity is real and tracks terrain and land cover, yet within-network SM skill is 0–4.2%
+and the UMAP organises by Köppen class, not by soil moisture.
+
+**LST is a different physical channel, not another view of the same one.** Wet soil is cooler
+through evaporative cooling, so surface temperature is a direct thermodynamic consequence of soil
+moisture rather than a correlate of vegetation and terrain. If LST shows within-tile structure
+tracking the station-to-station SM differences where the embeddings do not, that is a clear,
+physically-grounded finding about what a soil-moisture model should be fed.
+
+Scope is small: TxSON, 40 stations in a 33 × 33 km domain, labels 2016-01-01 → 2022-11-07.
+The reference case throughout is tile `ISMN_TxSON_CR200-18`, which holds **six** stations —
+CR200-18 at the centre pixel (112,112), then CR200-25 at 405 m, CR1000-2 at 684 m, CR200-24 at
+865 m, CR200-15 at 925 m, CR200-6 at 936 m. Observed mean SM spans 0.1197–0.2865, spread
+**0.0601**; the model predicts spread **0.0113** with **r = −0.175** (§26.11).
+
+### 29.2 Sensor choice — the decisive difference is day/night, not revisit
+
+| | Landsat 8/9 C2 L2 ST | ECOSTRESS (`ECO_L2T_LSTE` C2) |
+|---|---|---|
+| resolution | **30 m** → 76 × 76 px inside a tile | ~70 m → 33 × 33 px |
+| repeat | 16 d per satellite, **halved by the sidelap (§29.3)** | none fixed — ISS orbit precesses |
+| overpass | fixed ~11:00 CST, **DAYTIME ONLY** | **DAY AND NIGHT** — drifts through the diurnal cycle |
+| record vs TxSON labels | **full** | 2018-07 → (~63% of the period) |
+| access | MPC, anonymous — routes this repo already uses | NASA Earthdata via `earthaccess` (credentials needed) |
+
+Landsat is sun-synchronous and the C2 L2 ST product is generated only for daytime scenes.
+**Landsat can never give a diurnal range.** That splits the choice by physical signal:
+
+- **Daytime only (Landsat):** midday is the single best time for *spatial* wet/dry contrast —
+  maximum solar forcing gives maximum evaporative-cooling difference. Classic and strong.
+- **Day + night (ECOSTRESS):** unlocks the **diurnal temperature range**, a thermal-inertia proxy
+  and arguably the strongest LST-based soil-moisture signal — wet soil has high thermal inertia
+  and a small diurnal swing, dry soil swings widely. Night LST is also physically cleaner: no
+  slope/aspect illumination effects, no transpiration confound.
+
+70 m is not a limitation here — CR200-18's stations are 405–936 m apart = **6–13 ECOSTRESS
+pixels**. Landsat is nonetheless built first because it is unblocked, finer, and covers the
+whole label window.
+
+### 29.3 Step 0 — the catalogue census, run live 2026-08-13
+
+Measured rather than argued. Both queries are metadata-only and need no credentials.
+
+**Landsat.** MPC `landsat-c2-l2` over the TxSON bbox `(-98.97, 30.15, -98.59, 30.48)`,
+2016-01-01 → 2022-11-07, returns **625 items**. The decisive finding:
+**path 027/row 039 = 313 and path 028/row 039 = 312 — TxSON sits in a WRS-2 sidelap, so the
+effective revisit is halved.** Landsat-8 = 303, Landsat-9 = 35, Landsat-7 = 287 (excluded);
+Tier-1 = 298, Tier-2 = 40. L8/9 per year 2016:46, 2017:45, 2018:46, 2019:46, 2020:44, 2021:49,
+2022:62. All acquisitions at UTC hour 17 ≈ 11:00 CST. A scene-level `eo:cloud_cover < 20` would
+retain only 141 scenes over seven years — too aggressive to use as the download gate (see §29.5).
+
+Three things the census corrected that would otherwise have cost a debugging cycle:
+
+1. **The asset is `lwir11`, not `ST_B10`.** MPC exposes `lwir11` (Surface Temperature, uint16,
+   scale 0.00341802, offset 149.0, nodata 0, kelvin), `qa` (= ST_QA, int16, scale 0.01, nodata
+   −9999, kelvin) and `qa_pixel` (uint16). **Landsat-7 exposes `lwir` instead and will KeyError** —
+   another reason to exclude it beyond its SLC-off wedges.
+2. **`proj:epsg` is absent** from these items — only `proj:code` and `proj:transform`. `stackstac
+   0.5.1` still works provided `epsg=` is passed explicitly.
+3. **Grid alignment.** All 90 L8/9 scenes checked are EPSG:32614 with `proj:transform` origin
+   ≡ **(15, 15) mod 30**, identically for both paths. The 10 m TxSON grid is *not* on that grid;
+   an unsnapped AOI silently costs a 15 m shift.
+
+Smoke-tested end to end: a 75 × 75 window on 2019-08-16 returned LST 313.7 / 318.3 / 331.0 K,
+ST_QA 2.84 K, `qa_pixel = 21824` (= clear, all confidences "low"). Plausible Texas midday August
+values with the right phase. **The download path is proven.**
+
+**ECOSTRESS.** CMR metadata needs no auth. `ECO_L2T_LSTE` v002 over the same bbox,
+2018-01-01 → 2022-11-07: **1984 granules** (2018:40, 2019:426, 2020:637, 2021:476, 2022:405),
+**DAY 944 / NIGHT 1040**. The local-hour histogram is essentially flat — 61 to 107 granules across
+all 24 bins — so **the day+night advantage is real and is not an artefact of a midday cluster.**
+Two MGRS tiles appear, but **`14RNU` alone covers all of TxSON** (bbox 29.74/−99.00 →
+30.73/−97.85); `14RMU` only clips the western sliver of the search box and adds ~995 redundant
+granules. 989 granules on 14RNU, median 5.07 MB. `day_night_flag` is returned directly in the
+granule metadata — do not try to infer it. One trap: CMR link entries do **not** all carry a
+`title` key, so filter layer links by `href` basename suffix.
+
+The one number still unmeasured, and the one that sizes the DTR test: **how many dates carry both
+a DAY and a NIGHT granule after cloud filtering.** The census script writes it.
+
+**Tooling, now settled.** Downloads run in **`soilmoisture`** (py3.10 — pystac-client,
+planetary-computer, stackstac, rasterio, rioxarray; **no pyarrow, no earthaccess**). Analysis and
+plotting run in **`terramind`** (py3.11 — rasterio, rioxarray, pyarrow, zarr, scipy, sklearn;
+**no STAC, no EDL**). The split is a hard constraint: never combine download and analysis in one
+job. `~/.netrc` currently holds only `machine api.wandb.ai` and must be **appended to**, never
+overwritten.
+
+**Script:** `census_lst_sources.py` → `csvs/lst_census_landsat_scenes.csv`,
+`csvs/lst_census_ecostress_granules.csv`, `csvs/lst_census_summary.json`. It asserts on every
+retained Landsat item that `proj:code == "EPSG:32614"`, that
+`(transform[2] % 30, transform[5] % 30) == (15, 15)`, and that `lwir11` is present — the
+invariants the AOI snap depends on.
+
+### 29.4 Phase A — the Landsat downloader
+
+`download_landsat_st_mpc.py`, forked from `download_s2_mpc.py`. Reuse verbatim: `with_retry`
+(`:123-136`), `save_geotiff` (`:139-145`, float32), `load_checkpoint`/`append_checkpoint_row`
+(`:152-166`), `setup_logging` (`:173-184`), `os.environ.pop("PROJ_DATA", None)` (`:27`), the
+`ThreadPoolExecutor` orchestration (`:400-421`), and — load-bearing — the
+**re-sign-inside-the-loader-closure** idiom (`:217-225`); SAS tokens expire, so `sign_inplace`
+must never be hoisted out of the retry.
+
+**Download one AOI over the whole TxSON domain, not 40 patches** — the tiles overlap heavily
+(§26.2: 131 km² in 17 islands), so per-station patches would re-fetch the same bytes repeatedly.
+Drop `station_grid`, `center_crop`, `process_station`, `download_dem`, `STATION_CSV`; iterate over
+*scenes* instead of stations. Snap `csvs/txson_mosaic_grid.json` `origin_utm` onto the Landsat grid
+with `snap(v, res=30, off=15)`:
+
+> **AOI: EPSG:32614, bounds `(503685.0, 3336015.0, 538545.0, 3371055.0)` = `1162 × 1168` px @ 30 m.**
+> **The CR200-18 tile window inside it: `(527835.0, 3344895.0, 530115.0, 3347175.0)` = `76 × 76` px
+> at `row0 = 796`, `col0 = 805`.**
+
+`stackstac.stack(assets=["lwir11","qa_pixel","qa"], epsg=32614, resolution=30, bounds=AOI,
+rescale=False, resampling=Resampling.nearest, dtype="float64", fill_value=np.nan)`.
+**Nearest, never bilinear** — bilinear would smear cloud edges into the QA band and interpolate
+across ST nodata.
+
+Scale on write: `lst_k = where(dn == 0, nan, dn * 0.00341802 + 149.0)`,
+`st_qa_k = where(dn == -9999, nan, dn * 0.01)`, and keep **`qa_pixel` as raw DN** so the mask
+threshold can be revisited without re-downloading. One 3-band float32 GeoTIFF per scene,
+`[lst_kelvin, st_qa_kelvin, qa_pixel_dn]` — uint16 ≤ 65535 < 2²⁴, so float32 round-trips exactly
+and no mixed-dtype hack is needed. Output
+`/gpfs/scratch1/shared/pkhanal/lst/landsat_st/txson/{YYYYMMDD}_{LC08|LC09}_{path}{row}.tif` plus
+`aoi.json`; path/row and platform go in the filename because the sidelap plus L8+L9 makes same-day
+collisions possible. Resume through `csvs/landsat_st_download_log.csv`, skipping when the file
+exists **or** the item id already has `status in {done, no_data}`.
+
+**298 Tier-1 scenes ≈ 1.5–2 GB, ~20–30 min at `--workers 12`.** `--smoke` (one scene, tile window)
+must reproduce the 2019-08-16 read above before anything is submitted.
+
+### 29.5 How cloud is filtered — three tiers, and why the product QA is the right tool
+
+This is where thermal data goes wrong. **A cloud-contaminated LST pixel is not merely noisy — it is
+several kelvin cold, and it would masquerade as wet soil, manufacturing exactly the negative
+correlation §29.7 is looking for.** Note this is *not* the CloudSEN12 route the repo uses for S2
+(`cloud_masking_inference.py` → `filter_cloudy_tiles.py`): thermal products ship their own QA, and
+a learned RGB cloud mask would be the wrong instrument.
+
+**Tier 1 — scene level, at search time.** `query={"eo:cloud_cover": {"lt": 80}}`. Deliberately
+loose: `eo:cloud_cover` describes a ~180 × 180 km scene, so it says almost nothing about a 2.24 km
+tile. A 70%-cloudy scene is often perfectly clear over TxSON; a 15%-cloudy one can have its one
+cloud sitting on the network. Filter loose here, hard at pixel level.
+
+**Tier 2 — per pixel, Landsat `QA_PIXEL` (uint16).** Bits: 0 Fill, 1 Dilated Cloud, 2 Cirrus,
+3 Cloud, 4 Cloud Shadow, 5 Snow, 6 **Clear**, 7 Water, 8–9 Cloud Confidence, 10–11 Cloud Shadow
+Confidence, 12–13 Snow/Ice Confidence, 14–15 Cirrus Confidence (0 none → 3 high).
+
+```python
+q      = qa.astype(np.uint16)
+single = ~np.any([(q >> b) & 1 for b in (0, 1, 2, 3, 4, 5, 7)], axis=0)   # incl. water
+conf   = (((q >> 8) & 3) <= 1) & (((q >> 10) & 3) <= 1) & (((q >> 14) & 3) <= 1)
+clear  = single & conf & (((q >> 6) & 1) == 1)
+```
+The live-read value 21824 passes (bit 6 set, all confidences "low"). Two filters the bit table does
+not give and which are both necessary: **`ST_QA ≤ 3 K`** per-pixel uncertainty (the 2019-08-16 read
+gave 2.84 K, so 3.0 sits near the mode — run 2/3/5 K and report the sensitivity rather than
+defending one threshold), and a **range guard `250 < LST < 350 K`**.
+
+**Tier 3 — ECOSTRESS.** Separate `cloud` and `water` layers (uint8, 1 = flagged) plus `QC` bits 0–1
+(Mandatory QA, `00` = produced, best quality), and `view_zenith < 25°`. Bits above 3 are
+ASTER-heritage and their layout is **unverified**; treat them as advisory until the LP DAAC v002
+user guide is checked. The mask is instead validated *empirically* by §29.10's no-cold-tail
+histogram check, which is independent of any bit table being right.
+
+**Download-time gating.** For **Landsat, do not gate** — 298 scenes in ~25 min, and a two-pass on
+`qa_pixel` would save bytes while doubling the HTTP round-trips that actually cost the time; keeping
+raw QA DN on disk is worth more than the saving. Do compute and log `frac_clear` per tile at write
+time so analysis-side filtering is free. For **ECOSTRESS, gate** — 989 granules × 6 layers ≈ 5900
+fetches over 6–12 h is the long pole of the whole plan, so fetch `_cloud.tif` first (uint8, a small
+fraction of the granule), compute clear fraction over the **whole AOI** (not per tile — one AOI
+serves all 17 islands, and a granule clear over half the domain is still worth having), and skip the
+other five layers if it fails `--min-aoi-clear` (default 0.30). Log every skipped granule with its
+clear fraction so the decision is auditable and re-runnable at a looser threshold. Expect roughly
+half to fail, roughly halving the job.
+
+### 29.6 Phase B — the ECOSTRESS downloader
+
+`download_ecostress_lste.py`. Add `earthaccess` and `pyarrow` to the `pip:` block of
+`environment-download.yml`, then `conda env update -n soilmoisture`.
+
+**User action, the only hard external blocker in the plan (~3 min):** register at
+`urs.earthdata.nasa.gov`, then Applications → Authorized Apps → approve **"LP DAAC Data Pool"** and
+**"LP DAAC Cumulus (LPCLOUD)"** (downloads 403 without this even with valid credentials), then
+**append** a `machine urs.earthdata.nasa.gov` block to `~/.netrc` — the `api.wandb.ai` entry must
+survive — and `chmod 600`. Worth doing during Phase A so Phase B starts unblocked.
+
+`earthaccess.search_data(short_name="ECO_L2T_LSTE", version="002", bounding_box=…, temporal=…,
+count=-1)`, filtered to `--tiles 14RNU`. Keep layers `_LST, _LST_err, _QC, _cloud, _water,
+_view_zenith`; `earthaccess.download()` fetches *all* granule files, so build an EDL session
+(`get_requests_https_session()`) and stream only the selected hrefs through `with_retry`. LST is
+uint16, **scale 0.02 K, fill 0** — the only factor hardcoded; for `LST_err` and `view_zenith`,
+**read `src.scales`/`src.offsets`/`src.nodatavals` from the COG** and cross-check the user guide
+rather than assuming.
+
+**No reprojection is needed.** MGRS tile 14RNU is UTM zone 14N = EPSG:32614, the same CRS as
+everything else in this project. Assert `crs.to_epsg() == 32614`, derive `off = transform.c % 70`
+**from the file** (40 expected, unverified), snap the mosaic bounds onto that grid → roughly
+500 × 501 px, with the CR200-18 window at 33 × 33. Assert every later granule shares that exact
+transform; `reproject_match` with nearest and log it if one does not.
+
+Output one 6-band float32 GeoTIFF per granule,
+`{YYYYMMDD}T{HHMMSS}_{DAY|NIGHT}_{orbit}_{tile}.tif`, ~1–2 MB deflated; delete the raw per-layer
+downloads after repacking. Keep `--workers 8` — LP DAAC throttles above that. **~1.5 GB retained,
+6–8 GB transient, 6–12 h.**
+
+**If Earthdata never materialises**, say so plainly: there is **no substitute** for the night half.
+Landsat C2 L2 ST is daytime-only by construction. Run §29 Landsat-only — it still answers the core
+question, at *better* resolution — and mark the DTR test deferred. MODIS/VIIRS LST is on MPC
+anonymously with day+night, but at **1 km** it is ~2 pixels across the entire tile and cannot
+resolve 405–936 m separation; it is a domain-mean sanity check, not a substitute.
+
+### 29.7 Analysis
+
+`analyze_lst_heterogeneity.py`, env `terramind`. Reuse the geometry that already exists rather than
+recomputing it: `build_network_readouts.py:59-70` `load_tile_geometry()` reads `epsg`/`bounds_utm`
+from the satellite zarr attrs, and `:75-90` `station_pixel()` returns `(row, col, x, y)` — the
+`x, y` is exactly what the LST grids need, so the projection is shared with `csvs/txson_readouts.csv`
+**by construction rather than by coincidence**. Then `ls_col = floor((x − AOI_W)/30)`,
+`ls_row = floor((AOI_N − y)/30)`, and the same at 70 m.
+
+**Work in LST anomaly, not absolute LST.** Subtract the tile mean on each date — the same
+within-tile differencing used throughout §27, which cancels season, air mass and overpass time
+exactly, leaving the local contrast. Require `tile_frac_clear ≥ 0.70` or drop the date. Compare the
+anomaly magnitude against the sensor noise floor (~1–2 K, and against the measured per-pixel
+`ST_QA`); **if the within-tile SD sits at the floor, the answer is immediate.**
+
+**Observations come from `eval_output/txson_timeseries.parquet`, not the level-1 NetCDFs — this is
+a trap that will otherwise look like a failed verification.** The parquet reproduces §29.10's six
+reference means exactly; the raw `/projects/prjs1968/raw_soil_moisture/TxSON_*.nc` with `qc == 0`
+gives 0.1390 / 0.1209 / 0.1841 / 0.2361 / 0.1857 / 0.2918 instead, because those records start
+2014-10/11, before the 2016-01-01 window. Assert the six means to 1e-3 before doing anything else.
+Keep `combine_network._obs_from_zarr` as fallback only, with a loud warning.
+
+**The tests, in increasing order of statistical power:**
+
+- **Headline (directly comparable to §26.11).** Per tile, per sensor, per day/night: station mean
+  LST anomaly vs station mean observed SM, n = 6 for CR200-18. Report `r`, the LST-anomaly spread
+  in K, and the SM spread 0.0601 — set beside the model's spread 0.0113, r = −0.175, and §27b's
+  0–4.2%.
+- **Per date.** For each (tile, sensor, date, day/night) with ≥ 4 valid stations,
+  `r_date = corr(LST anomaly, observed SM)`; aggregate mean/median `r`, `frac(r < 0)`, a binomial
+  sign test, and a one-sample t on Fisher-z. **The prediction is a NEGATIVE correlation.** The sign
+  is itself a strong control: zero or positive means the signal is not evaporative-cooling driven
+  and the interpretation changes completely.
+- **Pooled.** Across all station-dates, `lst_anom_k` against `obs − tile_mean_obs(date)`. One
+  number, maximum power, no n=6 fragility.
+- **Diurnal range (Phase B).** On dates carrying both DAY and NIGHT, `DTR = lst_day − lst_night`,
+  then `corr(DTR anomaly, SM)`. **Prediction: negative** — wet soil has high thermal inertia and a
+  small swing.
+
+**Controls, all required.** (1) **Label shuffle** — permute station labels within (tile, date),
+1000 draws, empirical p; must destroy the signal. (2) **Clear-sky dry bias** — retained vs dropped
+SM distribution, mean/median/KS, retained counts per year. (3) **Noise floor** — within-tile
+anomaly SD vs median `ST_QA`/`LST_err`. (4) **LST–NDVI (TVDI-style)** using the S2 NDVI already on
+disk, and the partial correlation of LST anomaly with SM controlling for NDVI, since vegetation
+cover confounds the LST–moisture relationship. (5) **Terrain** — partial out elevation, and
+slope/aspect for daytime Landsat; night ECOSTRESS should show *less* terrain dependence, and that
+contrast is itself evidence. (6) **ST_QA sensitivity** at 2/3/5 K.
+
+Outputs: `csvs/lst_station_pixels.csv`, `csvs/lst_station_timeseries.csv`,
+`csvs/lst_per_date_corr.csv`, `csvs/lst_level_correlations.csv`, `csvs/lst_controls.json`,
+`csvs/lst_summary.json`.
+
+### 29.8 Figures — the two deliverables
+
+Both in `terramind`, both importing `mark_stations` (`:132`), `scale_bar` (`:150`), `layout_panel`
+(`:227`), `STATION_COLOURS` (`:45`), `open_raw` (`:61`), `hillshade` (`:84`) from
+`plot_tile_context.py`, and following its conventions (`Agg`, `GridSpec`, 8.2 pt left-aligned
+titles, monospace summary block, dpi 190, save png **and** pdf, the `assert centre == 112` guard).
+
+**`plot_tile_lst.py` → `figures/tile_lst/{tile}.{png,pdf}` — LST at native resolution.** The trick
+that makes native resolution work with the existing station markers: station `row`/`col` in
+`txson_readouts.csv` are 10 m tile pixels, so render each LST panel with `interpolation="nearest"`
+and an `extent=` mapping the 76 × 76 (or 33 × 33) native grid onto the 224 px axis via its UTM
+bounds. **The blocky 30 m / 70 m pixels stay blocky — that is the entire point** — while
+`mark_stations` works unchanged and the 14 × 14 token-grid overlay still lines up, so §29 can be
+read directly against §26/§27. Rows: (1) Landsat absolute, 4 dates auto-picked as the 2 wettest and
+2 driest by tile-mean observed SM among scenes ≥ 90% clear, `inferno`, per-panel colorbar since
+season dominates absolute values; (2) Landsat **anomaly**, same dates, `RdBu_r` symmetric about 0
+with one shared colorbar — this is the row where the heterogeneity either is or is not visible;
+(3) ECOSTRESS day/night absolute and anomaly; (4) DTR, DTR anomaly, day-vs-night scatter, and a
+Landsat-vs-ECOSTRESS cross-sensor check; (5) **the answer three ways** — observed mean SM,
+predicted mean SM, and mean LST anomaly as three `layout_panel` squares in the identical `YlGnBu`
+style, plus the n = 6 scatter of station mean LST anomaly against observed mean SM, **which is the
+scientific claim**; (6) the monospace summary block. Caption must note that the colour scales run
+in opposite senses on purpose — red = hot = expected dry, dark blue = wet.
+
+**`plot_lst_timeseries.py` → `figures/lst_timeseries/{tile}.{png,pdf}` — the whole record.** One
+row per station, ordered by `offset_px` as in `plot_network_timeseries.py`, sharing an x axis over
+the full 2016–2022 label window. Left panel, twin axis: observed SM as a line, LST **anomaly** as
+markers (filled = Landsat day, open = ECOSTRESS day, triangle = ECOSTRESS night) about a zero line
+— anomaly rather than absolute, so all six panels share one y range and the vertical offsets
+between stations are directly readable. Shade the ECOSTRESS-absent years (2016 → mid-2018) so the
+coverage gap is honest. Right panel, narrow: that station's LST anomaly against its SM anomaly over
+all retained dates, with `r` and `n`. Titles carry the §26 supervision language — the centre panel
+reads "centre pixel (112,112) — SUPERVISED", the others "pixel (r,c) — N px off centre". Bottom
+strip: tile-mean absolute LST across the record (the seasonal cycle the anomaly removes) as the
+§29.10 plausibility check made visual, plus a per-year retained-date rug exposing the clear-sky
+sampling.
+
+### 29.9 LST as dense auxiliary supervision (forward-looking; design only)
+
+Recorded now because it changes what "success" in §29 means. If the correlation comes back
+negative-as-predicted, the natural follow-on is not to feed LST in as another input but to
+**supervise on it**.
+
+**The arithmetic is the argument.** The model currently receives **one supervised pixel per tile
+per day** — (112,112). One Landsat scene supplies **76 × 76 = 5776 pixels per tile** (ECOSTRESS
+33 × 33 = 1089). Even at ~25% clear-date retention that is an enormous increase in *spatial*
+supervision density, and it targets precisely the failure §26.11 measured: the decoder produces
+almost no within-tile structure because nothing has ever asked it to. It pairs naturally with §28's
+per-token head — an honest 160 m map needs a target at that resolution, and LST is the only one
+available.
+
+**Input or target? The asymmetry decides it.** As an *input*, LST exists on only ~20–40% of days,
+needs a missingness mask, and is unavailable at inference exactly when it would be wanted. As an
+*auxiliary target* it is training-only: cloudy days contribute no LST term and inference is
+untouched. **Target is the cleaner design.**
+
+Masked loss, `loss = (per_px * mask).sum() / mask.sum().clamp(min=1.0)`, with three things that
+bite. (i) **Empty masks** — a fully-clouded sample gives `mask.sum() == 0`, NaN without the clamp
+and a silently zero gradient with it; under DDP every rank must contribute or gradients go
+inconsistent, so reduce `sum(loss)` and `sum(mask)` **across ranks** and divide once rather than
+averaging per-rank means. (ii) **Weighting** — clear pixels per tile range 0–5776, so a per-sample
+mean weights a 3%-clear tile equally with a fully clear one; global sum/sum is usually right, but
+state which was chosen. (iii) **The dry-sky bias becomes a *training* bias, not merely a reporting
+caveat** — LST supervision exists only on clear days, which skew dry, so the model would learn
+thermal structure conditioned on dry conditions. Measure it; do not assume it benign.
+
+### 29.10 Honest limits
+
+Clear-sky sampling is biased toward dry days — the same bias flagged for S2 in §27b.3, and it works
+*against* detecting wet anomalies; report retained-date counts and the SM distribution on retained
+versus dropped dates. **n = 6 per date gives a 95% CI of roughly ±0.7 on a single-date `r`** —
+one date proves nothing, power comes only from aggregating hundreds of dates plus the pooled test
+plus the sign test, and no single impressive `r` may be quoted. One catchment (TxSON rangeland,
+Texas), exactly as §26.8 states for the model. LST responds to albedo, vegetation, roughness, slope
+and aspect as well as moisture — station-pair differencing removes what is tile-constant but not
+these. Timing mismatch: Landsat samples ~11:00 CST instantaneously, labels are daily means; for
+ECOSTRESS nights, report the headline under both `--night-assign same` and `prev`, since a 02:00
+overpass arguably reflects the previous day's drydown. ECOSTRESS covers only ~63% of the label
+window and CR1000-2's record ends 2021-06 (n = 1983 against 2503 for the others), so report
+per-station retained-date counts, not tile totals.
+
+### 29.11 Verification
+
+Station pixels project correctly into the LST grid — recomputing at 10 m must reproduce all 96 rows
+of `csvs/txson_readouts.csv` exactly, and the six CR200-18 stations must land at (112,112),
+(72,105), (114,43), (25,109), (62,33), (193,65). Absolute LST plausible for Texas (~270–330 K) with
+the right seasonal phase and amplitude. Cloud-flagged pixels excluded — **the retained-LST histogram
+must have no cold tail**, which validates the mask independently of any bit table. The six CR200-18
+SM means must reproduce **0.1367 / 0.1197 / 0.1826 / 0.2323 / 0.1857 / 0.2865** to 1e-3 **from the
+parquet**. Shuffle control — permuting station labels within a tile must destroy `r_date`. Census
+assertions on every Landsat item: EPSG 32614, `(15,15) mod 30` origin, `lwir11` present. ECOSTRESS:
+`crs.to_epsg() == 32614` and an identical transform on every 14RNU granule, with `day_night_flag`
+consistent with local hour. And `--smoke` must reproduce the already-verified 2019-08-16 read —
+LST ≈ 313.7 / 318.3 / 331.0 K, ST_QA ≈ 2.84 K, `qa_pixel = 21824`.
+
+### 29.12 Sequencing
+
+**Phase A.** (0) Census — `slurm/census_lst.sh`, < 5 min, both sensors since neither half needs
+auth. (1) `--smoke`, then `jobs/landsat_st_mpc.sh` — 298 scenes, 1.5–2 GB, ~25 min at 12 workers.
+(2) `slurm/lst_heterogeneity.sh --sensor landsat` — minutes with Pool(64). (3) `slurm/plot_lst.sh`
+→ both figures. (4) Write up. **Phase A alone answers the question.**
+
+**Phase B.** (5) Earthdata registration — do it during Phase A. (6) `conda env update` for
+`earthaccess` + `pyarrow`. (7) `--smoke`, then `jobs/ecostress_lste.sh` — the long pole at 6–12 h,
+roughly halved by the `_cloud.tif` gate. (8) Re-run the analysis and figures with `--sensor both`;
+the DTR test and figure rows 3–4 light up. (9) Extend the write-up.
+
+All jobs on `rome` with `--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhanal@gmail.com`;
+download jobs `conda activate soilmoisture` per the `jobs/` idiom, analysis jobs
+`conda run -n terramind` per the `slurm/` idiom. Total scratch < 15 GB against 1.9 P free.
+
+---
+
+## §30 Per-location processor — resolving within-tile heterogeneity (DESIGNED 2026-08-13, nothing built)
+
+Written before code exists, for critique.
+
+### 30.1 The problem
+
+The model reproduces **temporal** variation almost perfectly and **spatial** variation barely at all.
+§26.11: within-station temporal SD 0.051 vs observed 0.051; between-station SD **15–19% of observed**;
+station level ordering **anti-correlated** with truth (r = −0.175 at CR200-18).
+
+Three measured facts define it:
+
+- **Pooling destroys most within-tile position information** — but only for S2/S1 *history* and
+  DEM/LULC (`_cpu_pyramid_pool`, `dataset.py:190-220`; 97–98% of variance lost, §27a.2). The anchor
+  already arrives un-pooled (`model.py:497-530`). Killing pooling is necessary, not sufficient.
+- **The map is not flat, it is wrong.** §23: norm-std 0.093–0.524, strongest where the landscape is
+  most uniform (flat control SCAN Crossroads Δ 0.188 m³/m³, 5× its own ubRMSE); `r(anomaly, DEM)` =
+  −0.04…+0.21.
+- **The temporal path is spatially constant.** `context` is a masked mean over all non-spatial tokens
+  (`model.py:738-743`) applied through FiLM as a uniform per-channel scale/shift. **100% of the
+  temporal signal reaches the decoder through one vector.** Two stations 500 m apart therefore cannot
+  have different *response functions*, only different means — exactly the observed signature:
+  temporal SD perfect, between-station SD 15–19%.
+
+**Why §27b does not close this off.** §27b time-averaged each station's centre token and asked
+whether it predicts that station's multi-year mean SM (9.8% global, 0–4.2% within-network).
+Time-averaging deletes the wetness signal and leaves a landscape descriptor — hence the UMAP
+organising by Köppen class. Station-mean SM at global scale is a climate/texture/sensor-depth
+quantity, not the within-tile anomaly. Within-network is ~100 km, not 500 m. And it tested
+**TerraMind embeddings, not terrain derivatives** — TerraMind was trained on a generic reconstruction
+objective, so there is no reason L12 linearly exposes convergence or insolation. Independent claims;
+only the first was tested.
+
+**The data is already on disk.** `/projects/prjs1968/satellite_zarr` — **993/993 stations**,
+station-centred, 224×224 @ 10 m: `dem/data (1,224,224) float32` (real elevation, 0 NaN),
+`lulc/data (4,224,224) uint8`, `s1_asc/data (N,2,224,224)`, `s2/data (N,12,224,224)`. Plus
+`soil (21,74,74)` @ 30 m in `zarr_tokens`. All 40 TxSON stations, relief 46–88 m, mean slope
+2.5–4.1°. `plot_tile_context.py` already reads this store. **Zero downloads** except MERIT Hydro.
+
+### 30.2 Current architecture and where it fails
+
+```
+[DEM×4 | LULC×4 | Soil×4 | anchor×196 | S2hist×4N | S1hist×4N | ERA5×365 | SIF×50 | TWSA×12]
+                            ~1035 tokens @ 768,  spatial_start = 12
+                                          |
+                          6 × full self-attention over ALL of it
+                                          |
+                    +---------------------+---------------------+
+          bottleneck (B,768,14,14)                      context (B,768)
+          = ctx[:, 12:208] reshaped                     = masked mean of all
+                                                          NON-spatial tokens
+                                          |
+                    UNetDecoder  14->28->56->112->224 (bilinear)
+                    skips L9/L6/L3 (14×14, interpolated), FiLM'd by `context`
+                                          |
+                              1×1 conv -> (B,3,224,224)
+                                          |
+                            loss reads (112,112) — 1 of 50,176
+```
+
+### 30.3 Proposed architecture
+
+Contextformer's split (Benson et al., CVPR 2024, GreenEarthNet): context encoded once, temporal model
+run **per location in parallel attending over time only**, weather shared.
+
+```
+BLOCK 1 — CONTEXT ENCODER              (once per sample, whole tile)
+  anchor L12 (196,768)
+  + dem_tok, lulc_tok (196,768)        additive, zero-init
+  + terrain_stem(static_hr) stride-16  additive, zero-init
+  + soil, pooled pyramid (tile context)
+        |  6 × self-attention
+        v
+  S (B,196,768)  one context vector PER LOCATION
+  g (B,768)      tile-level summary
+
+BLOCK 2 — WEATHER ENCODER              (once per sample, SHARED across locations)
+  ERA5 (B,365,19), SIF, TWSA  -->  W (B,T,768)      never replicated per location
+
+BLOCK 3 — PROCESSOR                    (per location k, weights SHARED)
+  seq_k = [ S[:,k,:] , g , s2_hist[:,:,k,:] , s1_hist[:,:,k,:] ]   ~102 tokens
+            varies   const    varies             varies
+        |  L × ( self-attn over seq_k -> cross-attn into W )
+        v
+  h_k (B,768)
+
+BLOCK 4 — PER-PIXEL HEAD               (no upsampling anywhere)
+  input(i,j) = [ S[:, i//16, j//16, :] , raster_stack[:, :, i, j] ]
+                 nearest GATHER (index op)   measured 10 m pixels
+        v  shared MLP / 1×1 conv
+  (B,3,224,224)
+```
+
+**What varies per location — the whole mechanism.**
+
+| fed to the processor at location k | varies with k? |
+|---|---|
+| `S[:, k, :]` own context token | **yes** |
+| `s2_hist[:, :, k, :]`, `s1_hist[:, :, k, :]` own history | **yes** |
+| `g` tile summary | no |
+| `W` weather | no |
+
+The encoders run **once**; the *slice* differs. If everything fed to the processor were
+tile-constant, every location would emit an identical trajectory and today's failure would be rebuilt
+with more machinery. **The fix is not per-pixel inputs, it is per-pixel *temporal* inputs.** Static
+per-location features can only shift a location's mean; what lets two stations respond differently to
+the same rain is that each carries its own S2/S1 history column.
+
+**Why one-pixel supervision suffices.** The processor is one shared f(local context, weather) →
+SM(t), fitted at supervised locations across **993 stations** spanning a huge context range. Running
+it at an unsupervised location inside a tile is **interpolation in context space**, not
+extrapolation. The training signal for within-tile heterogeneity comes from between-station variation
+across the whole dataset — no mean-zero anomaly constraint and no dense LST supervision needed to
+make it honest.
+
+**Terrain enters at the context encoder, not at the end.** Conv stem stride-16 over the 224²
+`static_hr` stack → `(768,14,14)`, added into the 196 spatial tokens like `dem_tok`. Only then can
+terrain change the **response function** — a hollow should drain more slowly after rain, not merely
+sit wetter. Bolted on after the fact it is a static offset. A *learned* stem beats hand-picked
+pooling because curvature is a signed second derivative whose block mean largely cancels. MERIT's
+90 m aggregates into 160 m tokens with no meaningful loss. Expect **`dem_tok` to become redundant** —
+explicit slope/curvature/TWI encodes terrain far more directly than a TerraMind reconstruction
+embedding, and §27a measured that DEM token as 13× register-dominated with 1.5% of variance surviving
+pooling. Feed both, ablate `dem_tok`.
+
+**No upsampling — and why Contextformer's head does not transfer.** L12 is 14×14 by construction
+(16×16 px per token), so 160 m is a hard floor and upsampling adds nothing — §23's
+64–83%-of-variance-at-14×14 is that measured. The **raw rasters are different**: `s1_asc` 10 m native
+RTC, `s2` 10 m (20 m red-edge/SWIR), `lulc` 10 m, `dem` 30 m in a 10 m array, `soil` 30 m native.
+Those are genuine carriers. Contextformer's per-token unpatchify head works because **every pixel has
+an NDVI label**. Ours is one point sensor in 50,176 pixels, so unpatchify would invent sub-token
+structure with nothing to check it — §17.7's objection to the DiVAE, and what §23 caught the decoder
+doing.
+
+| | 14×14 token out | unpatchify | **token gather + 10 m rasters** |
+|---|---|---|---|
+| resolution | 160 m | 224 | 224 |
+| sub-token detail from | — | token embedding | measured pixels |
+| defensible under point supervision | yes | **no** | **yes** |
+
+**S1 is the source that matters** — DEM/soil/LULC are static and can only paint a fixed offset; S1
+backscatter responds to surface wetness *and changes date to date*, the only **time-varying 10 m**
+carrier available. Mild circularity (S1 already enters via tokens) but at 160 m, so the 10 m pixels
+are new information. Handle **speckle** (multi-look or short temporal median) or the added detail is
+variance, not signal.
+
+**Blockiness becomes a diagnostic.** With nearest gather, inert fine rasters show as visible 16-px
+blocking. Bilinear hides exactly that failure behind a smooth ramp — which is how the current map
+looks plausible while being anti-correlated with the landscape. Do not smooth it away; report it.
+**Do not add a within-block coordinate feature** `(i%16, j%16)` — it lets the model paint arbitrary
+sub-token patterns from position alone.
+
+**Cost.**
+
+| | training | inference |
+|---|---|---|
+| context encoder | full tile, once | once |
+| weather encoder | once | once |
+| processor | **1 location** | 196 |
+| per-pixel head | **1 pixel** | 50,176 (one batched 1×1 conv) |
+
+Un-pooling **reduces** payload: emit the supervised location's own history column
+`s2_tok_k (60,768)` = 92 KB against `s2_pyr (60,4,768)` = 184 KB. The ~30 MB/sample IPC blowup
+`_cpu_pyramid_pool` was built to prevent only occurs if all 196 columns ship, and training needs one.
+`UNetDecoder` is deleted (four upsampling stages at 512/256/128/64 + three FiLM'd skips); §28.2's
+figure is ~3.2 M activations/sample/depth against ~200 K. **Training should get cheaper than today.**
+
+### 30.4 Terrain derivatives
+
+**Slope: Horn (1981). Curvature: Zevenbergen & Thorne (1987).**
+
+```python
+s  = max(1, int(round(native_m / px_m)))          # dilate stencil: 3 px
+h  = px_m * s                                      # effective spacing = 30 m
+zp = np.pad(z.astype(np.float64), s, mode="edge")
+def sh(di, dj): return zp[s+di*s : s+di*s+H, s+dj*s : s+dj*s+W]
+z1,z2,z3 = sh(-1,-1), sh(-1,0), sh(-1,1)           # row 0 = north
+z4,z5,z6 = sh( 0,-1), sh( 0,0), sh( 0,1)
+z7,z8,z9 = sh( 1,-1), sh( 1,0), sh( 1,1)
+
+p = ((z3 + 2*z6 + z9) - (z1 + 2*z4 + z7)) / (8*h)       # Horn dz/d(east)
+q = ((z1 + 2*z2 + z3) - (z7 + 2*z8 + z9)) / (8*h)       # Horn dz/d(north)
+D = ((z4 + z6)/2 - z5) / h**2                           # ZT 1/2 d2z/dx2
+E = ((z2 + z8)/2 - z5) / h**2                           # ZT 1/2 d2z/dy2
+F = (-z1 + z3 + z7 - z9) / (4*h**2)                     # ZT     d2z/dxdy
+
+g2, g = p*p + q*q, np.hypot(p, q)
+flat  = g2 < 1e-8                                       # curvature UNDEFINED on flat ground
+g2s   = np.where(flat, 1.0, g2); gs = np.where(g < 1e-8, 1.0, g)
+slope_deg = np.degrees(np.arctan(g))
+northness = np.where(g < 1e-8, 0.0, -q/gs)              # +1 faces north
+eastness  = np.where(g < 1e-8, 0.0, -p/gs)
+curv_plan = np.where(flat, 0.0,  2*(D*q*q + E*p*p - F*p*q) / g2s)   # <0 convergent
+curv_prof = np.where(flat, 0.0, -2*(D*p*p + E*q*q + F*p*q) / g2s)
+curv_lap  = 2*(D + E)                                   # no denominator — always safe
+tpi_r     = z - uniform_filter(z, size=int(round(2*r_m/px_m))|1, mode="nearest")
+```
+
+Plus **TWI = ln(upa / tan β)** and **HAND** from MERIT Hydro (`MERIT/Hydro/v1_0_1` on GEE). Upslope
+contributing area is non-local and genuinely not computable from an isolated 2.24 km tile, but it is
+precomputed globally, so **no wide DEM window is needed**. The earlier rejection ("not computable
+from an isolated 2.24 km tile") is true of the tile, not of the problem.
+
+Four gotchas: **(i)** the `s=3` dilation is load-bearing — `download_dem_cdse.py:202` fetched
+`COPERNICUS_30 + resample_spatial(10m, bilinear)`, so the array is 10 m but the information is 30 m;
+a 10 m stencil differentiates the interpolant. **(ii)** curvature divides by (p²+q²) and TxSON mean
+slope is 2.5–4.1°, so near-flat pixels give ±10⁶ spikes without the `flat` mask. **(iii)** aspect as
+sin/cos, never degrees. **(iv)** verify plan curvature is negative in a known hollow — ZT and ArcGIS
+conventions differ.
+
+**Which grid to derive on.** Correct order is derive at native resolution, then resample. Decimating
+the 10 m array does not recover the native grid: GLO-30 ships in geographic coordinates at 1
+arc-second and `download_dem_cdse.py` reprojects per-station to UTM (`get_utm_epsg`), so the 10 m
+grid is not aligned to the source postings. The risk is artefacts, not accuracy — bilinear is
+piecewise-linear inside each source cell, so curvature can acquire a periodic moiré against the
+rotated UTM grid, and §23 already caught the decoder painting a padding artefact. **Decide by
+measurement (~20 min):** curvature both ways on 3–4 TxSON tiles, look for a spectral peak at the
+source-cell spacing. Clean → dilated stencil. Dirty → Gaussian low-pass at σ ≈ 15 m, or re-fetch
+native GLO-30.
+
+### 30.5 Not doing
+
+**A water-movement loss.** A prior pushing predicted SM toward convergent terrain **asserts** the
+relationship rather than measuring it — a plausible map with no evidence it is right, i.e. §23's
+failure better dressed, and the liability §17.7 flagged. The honest version is TWI/HAND **as inputs**.
+
+**Off-centre supervision as a load-bearing element.** The **train** split has only **12** off-centre
+pairs on 12 tiles, and `location_group_id` never spans splits (0 of 906), so no reshuffle creates
+more. Build the `pixel_idx` machinery (§28.9) because it is ~80 lines and eval already gathers this
+way (`eval_predict.py:167-169`), but do not expect it to carry the run.
+
+### 30.6 Risks
+
+- **Position leakage.** Patches are station-centred, so the supervised location is always k=105 and
+  the pixel always (112,112). The model can learn "read the centre" instead of the mapping. Requires
+  a token-space translation crop (random 10×10 sub-window of the 14×14 grid — a slice of tensors
+  already in memory), with `spatial_row_emb`/`spatial_col_emb` (`model.py:403-404`) indexed by
+  **absolute** row/col. Not optional.
+- **Weather may dominate.** 365 shared weather tokens against ~102 local ones. Log across-location SD
+  of predictions every epoch; near-zero means the cross-attention is being ignored.
+- **§27b's ceiling may be real.** If a station's own token genuinely carries 0–4.2% within-network
+  skill, no architecture manufactures information. Fallback is §29 (ECOSTRESS/Landsat LST) — a
+  different physical channel, not already a model input. §16.4 proved the decoder paints correct
+  structure under dense supervision (norm-std 0.0061 → 0.2504, corr 1.000).
+
+### 30.7 Files
+
+| File | Change |
+|---|---|
+| `build_static_stack.py` | **new** — terrain derivatives + soil + LULC + TWI/HAND → `static_hr (C,224,224)` fp16 in `satellite_zarr`; `Pool(64)` |
+| `compute_static_stats.py` | **new** — per-channel stats; template `compute_era5_stats.py` |
+| `download_merit_hydro_gee.py` | **new** — `upa`/`hnd`; template `download_smap_gee.py`; `soilmoisture` env |
+| `plot_architecture.py` | **new** — `figures/architecture_{current,proposed}.{png,pdf}` |
+| `model.py` | split into context / weather / processor blocks; per-pixel gather head; delete `UNetDecoder` behind `--head token\|pixel\|unet`; `pixel_idx` in `masked_huber_loss` (replaces hardcoded `model.py:779`) |
+| `dataset.py` | emit `s2_tok_k`/`s1_tok_k`, `dem_tok`/`lulc_tok`, `static_hr`, per-sample supervised index; translation crop; `anchor_valid` (`dataset.py:483-486` silently returns zero anchors as a real S2 anchor) |
+| `train.py` | flags; `load_static_stats` after `.to(device)` (`train.py:899`) |
+| `ckpt_utils.py` | new param names into the `new_keys` allowlist (`ckpt_utils.py:52`) |
+
+Reuse: `load_tile_geometry()`/`station_pixel()` (`build_network_readouts.py:59-75`), the zarr read
+pattern in `plot_tile_context.py`, `compute_era5_stats.py` as the stats template, the gather at
+`eval_predict.py:167-169`.
+
+**All heavy work via `sbatch`** — nothing long-running on the login/compute node. CPU jobs `Pool(64)`
++ `--cpus-per-task=64`; every job carries `--mail-type=BEGIN,END,FAIL` and
+`--mail-user=ktm.prajwalkhanal@gmail.com`. Env: `terramind` for build/train, `soilmoisture` for
+downloads.
+
+### 30.8 Plan of action
+
+**Phase 0 — rollback point + write-up, no compute.** Commit and tag the current tree before any
+surgery, then branch `feat/per-location-processor` and push after each phase. Rollback has three
+layers: **code** via git, **the trained model** (`checkpoints/cls_depth_star_reg/best.pt`, on disk,
+not in git), and the `--head unet` flag, which keeps the old architecture runnable *inside* the new
+codebase rather than only in history. Then this section, then the architecture figures.
+
+**Phase 1 — data prep (CPU, sbatch).** Grid check (§30.4) → `download_merit_hydro_gee.py` →
+`build_static_stack.py` + `compute_static_stats.py` over 993 stations, target **C ≤ 24**.
+
+**Phase 2 — model surgery, all behind flags.** `dataset.py` emissions + translation crop +
+`anchor_valid`; then `model.py` block split, processor, per-pixel gather head, `pixel_idx` loss.
+
+**Phase 3 — validate before spending the allocation.** Regression gates (§30.9) → smoke (20 stations,
+3 epochs), **measuring `data=` and peak RAM against the 540 GB baseline** → full run, budget ~42
+GPU-h ≈ 10.5 h wallclock on one 4×H100 node (measured, job 25235976); expect less, decoder gone.
+
+**Phase 4 — evaluate.** `sbatch slurm/eval_txson.sh` → `combine_network.py` →
+`plot_network_timeseries.py`; re-run §23 `plot_spatial_heterogeneity.py`; leakage check; ablate the
+flags; result back here as §30.n.
+
+### 30.9 Verification
+
+**Regression gates.** All flags off → one training step bit-identical to `main`; zero-init projections
+and stem loaded from `best.pt` → forward bit-identical; `--head unet` reproduces
+`cls_depth_star_reg`. Reuse the §26 provenance gate unchanged — **≥99.5% of rows bit-identical AND
+max |Δ| ≤ 1 bf16 ULP** (0.000977); **do not re-tighten it.**
+
+| metric | current | target |
+|---|---|---|
+| own-centre ubRMSE (0-10) | 0.0301 | ≤ |
+| off-centre ubRMSE | 0.0345 | materially closer to own-centre |
+| between-station spread, % of observed | **15–19%** | **> 35%** |
+| r(pred level, obs level), CR200-18 | **−0.175** | **> 0** |
+
+**Report 14×14 and 224 separately.** If 224 helps only via the static branch, that is a
+resolution-limited offset, not resolved dynamics — §23 is explicit the distinction must not be
+blurred.
+
+**Physicality, not just variance.** norm-std should *drop* at SCAN Crossroads (the flat control
+currently receiving the most painted variation, 0.52) and `r(anomaly, DEM)` should rise from
+−0.04…+0.21. A run that increases spread while `r(anomaly, DEM)` stays near zero has made the map
+more variable, not more correct, and **must not be reported as success**.
+
+**Leakage.** Regress per-readout error on `offset_px` (a column in `csvs/txson_readouts.csv`);
+§26.11 shows a positive slope today. Slope must fall to ~0 under the translation crop. If spread
+improves while the slope stays positive, the gain is memorisation.
+
+**Sanity constants.** CR200-18's six station tokens are **105, 62, 100, 20, 44, 172**; observed means
+**0.1367 / 0.1197 / 0.1826 / 0.2323 / 0.1857 / 0.2865**.
