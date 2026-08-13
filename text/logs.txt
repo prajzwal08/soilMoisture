@@ -3910,3 +3910,111 @@ NEXT, IN ORDER
   3. §28 per-token head.
   Still open from earlier: §26.3's 417k-pixel tile-overlap disagreement test —
   mosaic_txson.py was never written, so §26.7's gate is unresolved.
+
+================================================================================
+2026-08-13  SESSION 26 — §30 designed: per-location processor. No code, no GPU.
+================================================================================
+
+Whole session was diagnosis + design + write-up. Nothing was trained, nothing on the
+GPU. §30 is in the runbook (line ~6181) with two architecture figures.
+
+THE DIAGNOSIS THAT CHANGED THE PLAN
+  * Verified at model.py:736-743 (read the source, did not trust a summary): `context`
+    is the masked mean of EVERY valid non-CLS, non-spatial, non-pad token, applied
+    through FiLM as a uniform per-channel scale/shift.
+    -> ALL of the time-series signal (ERA5 365 d, S2/S1 history, SIF, TWSA) reaches the
+       decoder through ONE SPATIALLY CONSTANT VECTOR. Two stations 500 m apart cannot
+       have different RESPONSE FUNCTIONS, only different means. That is exactly the
+       observed signature: temporal SD 0.051 vs 0.051 perfect, between-station SD 15-19%.
+  * CORRECTION on record: I first wrote "100% of the temporal signal". Wrong — the anchor
+    contributes one date's spatial snapshot with a staleness embedding, so the bottleneck
+    IS date-dependent. The pattern can change between samples; the response to weather
+    cannot vary across the tile. Also: that mean includes the pooled STATIC tokens
+    (idx 0-11), which the code comment "temporal context for FiLM" glosses over.
+  * The current model already HAS an S-like object (196 spatial tokens, model.py:731-734)
+    and a g-like object (context). What is missing is per-location PROCESSING. They meet
+    only inside FiLM, where the temporal half is broadcast uniformly.
+
+WHY §27b DOES NOT CLOSE THE QUESTION (revised view)
+  Time-averaging the embedding deletes the wetness signal and leaves a landscape
+  descriptor — hence the Koppen-organised UMAP. Station-mean SM at global scale is a
+  climate/texture/sensor-depth quantity, not the within-tile anomaly. Within-network is
+  ~100 km, not 500 m. And it tested TERRAMIND EMBEDDINGS, NOT TERRAIN DERIVATIVES —
+  independent claims, only the first was tested.
+  Dropped the probe_variogram gate: the terrain probe is benchmarked against the model's
+  own 15-19% / r=-0.18 on the SAME stations, so R^2_max is a thesis-writing number, not a
+  build-decision number.
+
+DATA FINDING — nothing needs downloading
+  /projects/prjs1968/satellite_zarr has 993/993 stations of RAW 224x224 @10 m rasters:
+  dem/data (1,224,224) float32 REAL ELEVATION 0 NaN, lulc (4,224,224), s1_asc (N,2,...),
+  s2 (N,12,...). The full-resolution carrier §17.7 ranked as constraint #2 was on disk the
+  whole time. I initially and wrongly said scratch purge had lost it — project_data_backup
+  memory already said otherwise. Only MERIT Hydro (upa/hnd for TWI/HAND) needs fetching;
+  that also kills the "TWI not computable from an isolated tile" rejection, since MERIT
+  publishes routed flow accumulation globally.
+
+MEASURED — sub-token variance fraction (§30.3a, 4 dense TxSON tiles)
+  Share of each channel's variance surviving removal of its 16x16 token mean, i.e. the
+  part a 160 m token CANNOT carry:
+    curv_lap 0.96 | curv_plan 0.95 | tpi_100m 0.79 | S1 VV 0.76   <- tier 1
+    socd 0.54 | soc 0.50 | northness 0.51 | S2 B08 0.47 | bd 0.44 | slope 0.42 | LULC 0.40
+    ph 0.36 | clay/sand/silt 0.29/0.27/0.26  <- context encoder only
+    ELEVATION 0.05  <- DROP from the per-pixel head, the token already has all of it
+  THE METRIC MEASURES NON-REDUNDANCY, NOT USEFULNESS. Curvature scores ~0.95 almost
+  tautologically (second derivative = high-pass, token means ~0). S1's 0.76 includes
+  speckle. 4 semi-arid Texas tiles are not globally representative — elevation 0.05 and
+  curvature 0.95 are structural, S1/LULC are landscape-dependent. Sufficiency still needs
+  a regression of observed within-tile SM contrast on these channels. NOT YET RUN.
+  Corrects subkm_design.tex "soil is noise" (3% clay across 6 stations): the full-tile
+  range is 11 wt% clay / 22.75 wt% sand.
+
+COLOCATION GEOMETRY (recomputed, correct station keys + %Y%m%d date parsing)
+  Pairs with >=365 d overlap: 13 at 0-50 m (nugget, 5 networks) | 4 at 50-160 m |
+  16 at 160-500 m | 29 at 500-1120 m. Signal pairs span 8 networks (ARM, AmeriFlux, ICOS,
+  NGARI, SCAN, SMOSMANIA, SNOTEL, TxSON) — so a terrain probe is not confined to
+  semi-arid Texas. Train split has only 12 off-centre pairs on 12 tiles, and
+  location_group_id never spans splits (0 of 906) — multi-station supervision cannot
+  carry a run.
+
+§30 ARCHITECTURE (Contextformer-style, Benson et al. CVPR 2024)
+  B1 context encoder, once/tile   -> S (196,768) per-location + g tile summary
+  B2 weather encoder, once, SHARED -> W; ERA5 is 9 km, identical over the tile, never replicated
+  B3 processor per location k, weights shared: [S_k, g, s2_hist_k, s1_hist_k] ~102 tokens,
+     self-attn then cross-attn into W.  train 1 location / infer 196
+  B4 per-pixel head, NO UPSAMPLING: nearest GATHER S[i//16,j//16] + measured 10 m rasters
+     -> (B,3,224,224).  train 1 pixel / infer 50,176
+  * Terrain enters at B1, not at the output — only then can it change the RESPONSE
+    FUNCTION (a hollow drains slower), not just the mean.
+  * Contextformer's unpatchify head does NOT transfer: it works because every pixel has an
+    NDVI label. We have 1 point sensor in 50,176 pixels, so unpatchify would invent
+    sub-token structure — §17.7's DiVAE objection.
+  * Blockiness from the nearest gather is a DIAGNOSTIC, not a defect. Do not smooth it.
+  * Un-pooling REDUCES payload: one history column (60,768)=92 KB vs the 4-scale pyramid
+    (60,4,768)=184 KB. Training should get CHEAPER — UNetDecoder deleted.
+  * NOT doing a water-movement loss: it asserts the relationship instead of measuring it.
+    Honest version is TWI/HAND as INPUTS.
+  * Expected gain is LOW and stated before the GPU is spent (§27b.8: own-token
+    within-network skill 0-4.2%). Fallback stays §29 LST.
+
+GIT / ROLLBACK (new standing preference)
+  Tag `pre-s30-architecture` at 61c1773 = rollback point for cls_depth_star_reg.
+  Three rollback layers: code (git), the trained model (checkpoints/, NOT in git),
+  and --head token|pixel|unet keeping the old architecture runnable in the new codebase.
+  Commits 61c1773, 14dcbed, 02f4bc9 pushed to origin/feat/per-depth-loss-reporting.
+
+NEXT, IN ORDER (nothing started)
+  0. Branch feat/per-location-processor.
+  1. Grid check (~20 min, 3-4 tiles): curvature via dilated stencil vs native-derived,
+     look for a spectral peak at the source-cell spacing. download_dem_cdse.py:202 fetched
+     COPERNICUS_30 resampled to 10 m bilinear, so the array is 10 m but the information is
+     30 m — derive on a 3-px dilated stencil, never a 10 m one. Decides a GLO-30 re-fetch.
+  2. download_merit_hydro_gee.py — upa/hnd, 993 stations (soilmoisture env, GEE).
+  3. build_static_stack.py + compute_static_stats.py -> static_hr (C<=24, 224x224) fp16.
+  4. dataset.py emissions + translation crop + anchor_valid (dataset.py:483-486 silently
+     returns all-zero anchors with orbit_id=0, indistinguishable from a real S2 anchor —
+     latent bug, fix regardless).
+  5. model.py block split + per-pixel gather head + pixel_idx loss.
+  6. Regression gates -> smoke (20 stations, 3 epochs, measure data= and peak RAM against
+     the 540 GB baseline) -> full run ~42 GPU-h.
+  Untouched from earlier: §27b.4 B9 block; §29 Step 0; §26.3's mosaic_txson.py gate.
