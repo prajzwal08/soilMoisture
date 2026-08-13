@@ -177,7 +177,13 @@ def scene_records(tif: Path, st: pd.DataFrame, tiles: list, max_st_qa: float,
                 "wrs": f"{tags.get('wrs_path','')}/{tags.get('wrs_row','')}",
                 "tile": tile, "station": stn.station,
                 "station_name": stn.station_name, "split": stn.station_split,
-                "row": int(rr), "col": int(cc),
+                # lst_row/col index the 30 m LST raster; tile_row/col index the 224 px
+                # 10 m tile grid used by txson_readouts.csv and every §26/§27 figure.
+                # Keeping both named explicitly - conflating them puts every station
+                # marker in the top-left corner of a tile plot.
+                "lst_row": int(rr), "lst_col": int(cc),
+                "tile_row": int(math.floor((n - stn.utm_y) / TILE_RES_M)),
+                "tile_col": int(math.floor((stn.utm_x - w) / TILE_RES_M)),
                 "lst_k": round(v, 3), "st_qa_k": round(q, 3),
                 "tile_mean_k": round(tile_mean, 3),
                 "lst_anom_k": round(v - tile_mean, 3),

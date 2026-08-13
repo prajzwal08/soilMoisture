@@ -5787,10 +5787,11 @@ both improve; (v) smoke on one tile, one year, before any multi-day allocation.
 
 ---
 
-## §29 Does land-surface temperature show within-tile heterogeneity? (PLANNED 2026-08-13 — catalogues verified live, nothing downloaded)
+## §29 Does land-surface temperature show within-tile heterogeneity? (Phase A RUN 2026-08-13 — YES it does, but it does NOT track soil moisture)
 
-**STATUS: designed 2026-08-12, re-planned against live catalogues 2026-08-13. No pixel has been
-downloaded. Every number in §29.3 was measured, not assumed.**
+**STATUS: Phase A RUN 2026-08-13. 246 Landsat scenes downloaded (tile + full AOI), station
+series extracted, tests executed, both figures made. Result in §29.13 — the answer is NO, and
+the reason the naive pooled test said otherwise is instructive.**
 
 **Build order, decided 2026-08-13: two strict phases.** Phase A is Landsat end to end — download,
 analysis, both figures, write-up. It needs no credentials, resolves 30 m rather than 70 m, and
@@ -6048,6 +6049,14 @@ Keep `combine_network._obs_from_zarr` as fallback only, with a loud warning.
   and the interpretation changes completely.
 - **Pooled.** Across all station-dates, `lst_anom_k` against `obs − tile_mean_obs(date)`. One
   number, maximum power, no n=6 fragility.
+
+> **AMENDED 2026-08-13 after running it — read §29.14 before trusting the two tests above.**
+> Neither the per-date nor the pooled test as written is a valid test of the hypothesis: both are
+> dominated by *between-station* offsets, and on the real data they return `+0.244` and `+0.167`
+> while the mechanism they were meant to detect is absent. The station-identity component must be
+> removed first — **de-mean both variables by station** (fixed effects), which turns `+0.167` into
+> `−0.077`. "Maximum power, no n=6 fragility" was wrong: the 546 records are five stations
+> replicated 116 times, not 546 independent samples, so the p-value was inflated too.
 - **Diurnal range (Phase B).** On dates carrying both DAY and NIGHT, `DTR = lst_day − lst_night`,
   then `corr(DTR anomaly, SM)`. **Prediction: negative** — wet soil has high thermal inertia and a
   small swing.
@@ -6176,6 +6185,158 @@ All jobs on `rome` with `--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhana
 download jobs `conda activate soilmoisture` per the `jobs/` idiom, analysis jobs
 `conda run -n terramind` per the `slurm/` idiom. Total scratch < 15 GB against 1.9 P free.
 
+
+### 29.13 RESULT — Phase A, run 2026-08-13
+
+**Answer: no. Within-tile LST anomaly does not track station-to-station soil moisture.** The
+apparent positive pooled correlation is a Simpson's-paradox artefact of station identity.
+
+**What ran.** 246 Landsat 8/9 C2 L2 Tier-1 scenes over 2016-01-12 → 2022-10-27, downloaded twice
+— once as the 76×76 CR200-18 tile window and once as the full 1162×1168 AOI (962 MB). Both jobs
+finished in **under one minute**, not the 20–30 min estimated in §29.12. 116 dates survived the
+clear-sky filter; 546 station-date records carry both clear LST and same-day observed SM.
+
+**Verification, all passed.** All 96 readout pixels round-trip exactly; the six CR200-18 reference
+pixels land at (112,112) (72,105) (114,43) (25,109) (62,33) (193,65); the six reference SM means
+reproduce to 1e-3 **from the parquet**; LST spans 280.9–332.0 K with correct seasonal phase;
+median per-pixel ST_QA 2.13 K.
+
+**The thermal pattern is real and well resolved.** Station-mean anomalies span **1.80 K** with a
+standard error of ~0.07 K — **27× the standard error**. Single-date within-tile spread is 2.26 K
+median against a ~2 K noise floor, so no single date means much, but the persistent pattern is
+unambiguous. LST at 30 m *is* spatially heterogeneous inside the tile, exactly as §27a found for
+the reflectance embeddings.
+
+**But it does not track soil moisture.**
+
+| test | r | verdict |
+|---|---|---|
+| station level (n = 5, spatial) | **+0.327** (p = 0.59) | not significant |
+| pooled station-dates (n = 546) | **+0.167** (p = 9e-5) | **confounded — see below** |
+| per-date across stations (115 dates) | mean **+0.244**, 83% positive | same confound |
+| **within-station (fixed effects)** | **−0.077** (p = 0.07) | ~zero, marginally negative |
+
+Per-station, over time: CR1000-2 −0.39, CR200-15 −0.09, CR200-18 +0.06, CR200-24 −0.12,
+CR200-25 +0.32 — mean −0.042, three of five negative.
+
+**The confound, stated plainly.** The pooled and per-date tests mix two different questions:
+*between* stations (does a persistently warmer pixel sit on persistently wetter soil?) and *within*
+a station (when this pixel runs warm for its own average, is its soil drier?). Station identity
+dominates: de-meaning both variables by station moves the correlation from **+0.167 to −0.077**, a
+swing of 0.244 that is entirely between-station. **§29.7's per-date test as designed was not a
+valid test of the hypothesis** — it must be run with station fixed effects, and the runbook design
+should be read as amended. The shuffle control (empirical p = 0.0000) confirms the pooled number
+is not noise; it is real structure answering a question nobody asked.
+
+**A product limitation that costs the most informative station.** **18.2% of the CR200-18 tile has
+no Landsat ST retrieval at all** — permanently, identically across all 246 scenes from *two*
+different WRS-2 path/rows, so it is ground-fixed, and confirmed present as zeros in the raw
+`lwir11` COG at source (1027/5776), not introduced by this pipeline. The hole occupies the southern
+part of the tile, and the only station inside it is **CR200-6 — the wettest of the six at 0.2865**.
+So the test ran on 5 stations spanning SM 0.114–0.221 instead of 6 spanning 0.114–0.287, losing
+both the extreme and a third of the dynamic range. A side effect worth remembering: `tile_frac_clear`
+can never exceed **0.818** for this tile, so any absolute clear-fraction threshold must be taken
+relative to that ceiling, not to 1.0.
+
+**Clear-sky bias measured, and it is mild.** Retained dates 116 of 2503; mean SM on retained days
+0.1837 versus 0.1913 on dropped days — retained days are **drier by 0.0076 m³/m³** (KS = 0.054,
+p = 0.049). Real, in the expected direction, small.
+
+**What this means for the model.** LST does not rescue the §26.11 failure the way §29.1 hoped. The
+model's within-tile spread is 0.0213 against an observed 0.1076 (20%), and LST offers no signal to
+close that gap through this route. The finding does *not* touch **§29.9** — LST as a dense
+auxiliary target is about supervision density (5776 px/tile against 1), not about LST correlating
+with SM, and remains the more promising use.
+
+**Honest limits on this negative.** Five stations in one tile in one catchment. Landsat samples
+~11:00 CST instantaneously against daily-mean labels. The skin/5 cm decoupling is unaddressed and
+is the most likely physical explanation — LST sees the top millimetres, TxSON sensors sit at 5 cm,
+and a dry crust over moist soil breaks the chain. The NDVI/TVDI and terrain partials of §29.7 have
+**not** been run. Phase B (ECOSTRESS night LST and diurnal range) is untouched and is the arm that
+would test thermal inertia rather than instantaneous midday cooling.
+
+**Artefacts.** `download_landsat_st_mpc.py`, `extract_lst_timeseries.py`,
+`analyze_lst_heterogeneity.py`, `plot_lst.py`; `slurm/landsat_st.sh`, `slurm/lst_pipeline.sh`,
+`slurm/plot_lst.sh`; `csvs/lst_station_timeseries.csv`, `csvs/lst_per_date_corr.csv`,
+`csvs/lst_level_correlations.csv`, `csvs/lst_summary.json`;
+`figures/tile_lst/ISMN_TxSON_CR200-18.png`, `figures/lst_timeseries/ISMN_TxSON_CR200-18.png`;
+rasters at `/gpfs/scratch1/shared/pkhanal/lst/landsat_st/txson/{aoi,ISMN_TxSON_CR200-18}/`.
+
+### 29.14 The confound, named — and why the two results are one story
+
+§29.13 reports a pooled `r = +0.167` and a within-station `r = −0.077` on the *same 546 records*.
+Both are arithmetically correct. They differ because they answer different questions, and the
+design in §29.7 asked the wrong one.
+
+The five stations each carry a nearly fixed offset in **both** variables:
+
+| station | mean LST anomaly | mean SM anomaly |
+|---|---|---|
+| CR1000-2 | +1.43 K | ≈ +0.010 |
+| CR200-15 | +1.35 K | ≈ +0.015 |
+| CR200-18 | −0.37 K | ≈ −0.030 |
+| CR200-25 | −0.27 K | ≈ −0.045 |
+| CR200-24 | −0.28 K | ≈ +0.060 |
+
+Read down the columns and the two persistently warm pixels sit on slightly wetter soil while two
+of the three cool pixels sit on drier soil — a positive **between-station** relationship. The
+pooled correlation is measuring that, i.e. **five points replicated 116 times each**, and its
+significance (p = 9e-5) is inflated by treating 546 non-independent records as independent.
+
+Read *within* one station over time and the relationship is gone: CR1000-2 −0.39, CR200-15 −0.09,
+CR200-18 +0.06, CR200-24 −0.12, CR200-25 +0.32; mean −0.042.
+
+**Which one tests the hypothesis?** §29.1 proposed a *mechanism* — wet soil evaporates, so it
+cools. A mechanism acts through time at a place: if it is real, a pixel must be cooler on its own
+wet days than on its own dry days. That is the within-station number, and it is ≈ 0. The
+between-station number cannot distinguish evaporative cooling from any static covariate — soil
+type, slope, canopy — that happens to co-vary with mean wetness across five points.
+
+This is the standard Simpson's-paradox correction: **de-mean both variables by station before
+pooling.** §29.7's per-date and pooled tests must be read as amended; the per-date test in
+particular inherits the same confound, which is why 83% of its dates came out positive while the
+mechanism it was meant to test is absent.
+
+### 29.15 Seasonal climatology — the pattern is landscape, not weather (run 2026-08-13)
+
+Prompted by the obvious follow-up: is the tile heterogeneous at all times of year, or only in
+summer? All 246 scenes pooled by calendar month, mean anomaly per month, native 30 m
+(`plot_lst_seasonal.py` → `figures/tile_lst_seasonal/ISMN_TxSON_CR200-18.png`).
+
+| | Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | Nov | Dec |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| n scenes | 17 | 9 | 12 | 12 | 11 | 13 | 17 | 10 | 5 | 16 | 3 | 11 |
+| mean LST (K) | 293 | 295 | 305 | 309 | 313 | 321 | 324 | 318 | 311 | 306 | 298 | 294 |
+| spatial SD (K) | 2.10 | 2.31 | 2.13 | 2.34 | 2.65 | 2.66 | **2.96** | 2.59 | 2.37 | 2.53 | 2.07 | 2.08 |
+| spatial r vs annual | +.959 | +.955 | +.950 | +.988 | +.971 | +.956 | +.955 | +.977 | +.976 | +.983 | +.968 | +.963 |
+
+**The tile is heterogeneous in every month** — p95−p5 spread runs from 5.6 K in December to 9.5 K
+in July across just 2.24 km, always above the ~2.1 K single-date noise floor.
+
+**And it is the same pattern in every month.** Spatial correlation against the annual mean map is
+**+0.95 to +0.99 in all twelve months** (mean **+0.967**). The cool region east of centre and the
+warm western and southern margins are present in January, July and December alike; only the
+*amplitude* changes, scaling with insolation (SD 2.1 K midwinter → 3.0 K midsummer). Station ranks
+never flip: CR1000-2 and CR200-15 are the warm pair in all twelve months, CR200-18/24/25 the cool
+trio in all twelve. Annual-mean pattern SD = 2.32 K.
+
+**This closes §29 more firmly than §29.13's correlation did, and it explains it.** A pattern that
+is 0.967-coherent across the seasonal cycle is a *static landscape property* — terrain, canopy,
+soil, land cover — that breathes with solar forcing but does not move. **A static field cannot
+track a dynamic variable.** It will correlate with the time-invariant component of soil moisture
+(station identity — hence the pooled +0.167) and with nothing else (hence within-station −0.077).
+The two results of §29.13 are not in tension; they are the same fact seen twice.
+
+**It also flips the sign of the argument for §29.9.** For LST-as-*input* to a soil-moisture model,
+a static field is nearly worthless — it duplicates what DEM and LULC already supply. But for
+LST-as-*auxiliary-dense-target*, stability is a virtue: the model's within-tile spread is 20% of
+observed because nothing supplies spatial structure at all, and a high-contrast (5–9 K),
+physically-grounded, temporally *consistent* 30 m texture is easier to learn than a noisy one.
+§29.9 survives this negative result better than it entered it.
+
+**Caveats.** Nov (n = 3) and Sep (n = 5) are thin; their maps are noisier than the rest and their
+SD is correspondingly less certain. The permanent 18.2% nodata region blanks the southern third of
+every panel, so "the pattern" is characterised over 82% of the tile. One tile, one catchment.
 ---
 
 ## §30 Per-location processor — resolving within-tile heterogeneity (DESIGNED 2026-08-13, nothing built)
@@ -6569,3 +6730,4 @@ improves while the slope stays positive, the gain is memorisation.
 
 **Sanity constants.** CR200-18's six station tokens are **105, 62, 100, 20, 44, 172**; observed means
 **0.1367 / 0.1197 / 0.1826 / 0.2323 / 0.1857 / 0.2865**.
+
