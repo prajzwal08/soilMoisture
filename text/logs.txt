@@ -3843,3 +3843,70 @@ NEXT SESSION — start here:
      (adapt station_mean_probe.py). Decides fix-vs-reframe for retargeting.
   6. Reporting decisions, free: stratify every §22 metric SNOTEL vs non-SNOTEL;
      mask frozen days; stop claiming 10 m spatial maps.
+
+================================================================================
+2026-08-12  Session 25 — why is the within-tile prediction flat?
+================================================================================
+Trigger: figures/tile_context/ISMN_TxSON_CR200-18.png — six stations in one 2.24 km
+tile, observed mean SM 0.137-0.287 (spread 0.0601), predicted spread 0.0113 = 19% of
+observed, r(pred level, obs level) = -0.175.
+
+MEASURED FIRST (rules out the easy explanations)
+  * Not a readout artefact: reading each station from its OWN centred patch still
+    collapses — sd_pred 0.0158 vs sd_obs 0.0633, r = -0.11 over 18 OOS TxSON stations.
+  * Not a general failure: level skill by scale, depth 0-10, predictions_oos.parquet —
+    between networks r=+0.85 (ratio 0.91), within SCAN +0.78, SNOTEL +0.31,
+    COSMOS-UK -0.05, TxSON -0.11 (ratio 0.25), one tile -0.18 (ratio 0.19).
+    Skill decays monotonically with separation and vanishes below ~10 km.
+
+§27a  TOKEN PCA->RGB MAPS  (plot_token_pca.py, figures/token_pca/)
+  * Embeddings ARE spatially heterogeneous at 160 m, at every layer, and track the
+    landscape — DEM PCA->RGB traces the drainage, LULC reproduces the tree patches.
+    Sink-excluded PCA ratios high-rank throughout: S2 L3 .13 / L6 .10 / L9 .08 / L12 .09.
+  * Pooling destroys it: variance kept 3% (S2 L3/L6/L9), 2% (L12), 1.5% DEM, 2.6% LULC.
+  * Correction on record: the ANCHOR is NOT pooled (196 tokens, 4 layers, model.py:497-530).
+    Only the history and DEM/LULC are. Earlier blanket "320 m" claim was wrong.
+  * Dropped Moran's I and the per-token norm panel — magnitude statistics that a single
+    register coordinate dominates by construction.
+
+§27a.3-.6  MASSIVE-ACTIVATION REGISTERS  (three audit scripts + csvs/)
+  * A DEM token at norm 1682 vs median 123 — but the raw raster under it is pristine
+    (452.88-454.55 m, 254 unique values, no NaN). The spike is ONE coordinate at -1671.
+  * Systematic: 970/993 stations (97.7%), median ratio 13x, median variance share 66.7%,
+    ZERO masked by dem_token_mask.
+  * Encoder-wide, not DEM/LULC-specific: dim 126 in every modality and layer, 87/328 at
+    L9/L12. High-norm TOKEN is an L12 phenomenon (S2 1.5x at L9 -> 7.2x at L12; S1 never).
+  * Dilution proven: dims 87/126 hold 88.4% of DEM's mean magnitude but 13.9% of the
+    across-station variance; zeroing 2 of 768 dims drops median inter-station cosine
+    0.783 -> 0.157. Input redundancy is only a weak modulator (r(DEM relief) = -0.217).
+  * Fix available and cheap: per-dimension standardisation, exactly as ERA5 already gets.
+
+§27b  DO EMBEDDINGS PREDICT MEAN SM?  (probe_token_sm_structure.py, 842 sm_only stations)
+  * Global k-NN skill 9.8% (s2/l12) against 23.4% for the B8 tabular stack — ~2.4x worse.
+    CAVEAT: k-NN is weaker than the ladder's ridge/GBM, so 9.8% is a FLOOR. B9 block not run.
+  * Within-network 0-4.2%, FOUR of fourteen combinations negative.
+  * Layer ordering flips vs §27a: L12/L9 beat L3/L6 here — global station-mean SM is a
+    climate task and L12 is where climate lives.
+  * UMAP (unsupervised fit, SM only for colour): Koppen classes separate cleanly, soil
+    moisture is near-uniform scatter. The embedding organises by climate, not wetness.
+  * Data quality: 4 stations with non-finite S1 tokens, ALL sm_and_flux (AmeriFlux_US-Ton,
+    US-Var, ICOS_DE-HoH, FI-Var). sm_only is clean.
+  * umap-learn 0.5.12 installed into the terramind env; add to environment.yml.
+
+DESIGNED, NOT BUILT
+  §28  Replace the U-Net decoder with a shared per-token head -> honest 160 m map. Cost
+       goes DOWN (the decoder is the expensive part). Two independent defects: pooling
+       (information never arrives) and the decoder (information arrives, 1 of 50,176
+       pixels supervised). Position leakage is the trap; token-space translation crops +
+       multi-station supervision are the mitigations.
+  §29  LST over TxSON. Decisive difference is day/night, not revisit: Landsat C2 L2 ST is
+       DAYTIME ONLY so it can never give a diurnal range; ECOSTRESS gives day and night
+       (ISS orbit precesses). 70 m is fine here — stations are 6-13 pixels apart.
+       Step 0 is a catalogue query to measure actual overpass-hour distribution.
+
+NEXT, IN ORDER
+  1. §27b.4 B9 +terramind ridge/GBM block (few CPU-hours) — turns the k-NN floor into a claim.
+  2. §29 Step 0 catalogue query (minutes) — settles the sensor choice with evidence.
+  3. §28 per-token head.
+  Still open from earlier: §26.3's 417k-pixel tile-overlap disagreement test —
+  mosaic_txson.py was never written, so §26.7's gate is unresolved.

@@ -1,0 +1,36 @@
+{
+  "dem": {
+    "n_with_sink": 897,
+    "n_total": 993,
+    "median_n_sink_dim": 4.0,
+    "top_sink_dim": 328,
+    "top_sink_dim_frac": 1.0,
+    "raw_compression_median": 11.650619506835938,
+    "raw_post_ln_share_median": 0.9890569448471069,
+    "p2_post_ln_share_median": 0.48872965574264526,
+    "p6_post_ln_share_median": 0.6697725653648376,
+    "p10_post_ln_share_median": 0.7141711115837097,
+    "p14_post_ln_share_median": 0.7203694581985474,
+    "p2_compression_median": 1.4598565101623535,
+    "p6_compression_median": 1.8341065645217896,
+    "p10_compression_median": 1.9809191226959229,
+    "p14_compression_median": 2.003826141357422
+  },
+  "lulc": {
+    "n_with_sink": 765,
+    "n_total": 993,
+    "median_n_sink_dim": 2.0,
+    "top_sink_dim": 328,
+    "top_sink_dim_frac": 1.0,
+    "raw_compression_median": 8.938448905944824,
+    "raw_post_ln_share_median": 0.983536422252655,
+    "p2_post_ln_share_median": 0.13759352266788483,
+    "p6_post_ln_share_median": 0.26933446526527405,
+    "p10_post_ln_share_median": 0.2894405424594879,
+    "p14_post_ln_share_median": 0.2838501036167145,
+    "p2_compression_median": 1.0896930694580078,
+    "p6_compression_median": 1.1968238353729248,
+    "p10_compression_median": 1.2152421474456787,
+    "p14_compression_median": 1.2094730138778687
+  }
+}

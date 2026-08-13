@@ -1,0 +1,8 @@
+{
+  "n_stations": 993,
+  "n_dropped": 0,
+  "dem_ratio_median": 13.015929222106934,
+  "lulc_ratio_median": 9.145092010498047,
+  "dem_frac_ratio_gt3": 0.9768378650553877,
+  "lulc_frac_ratio_gt3": 0.9264853977844915
+}

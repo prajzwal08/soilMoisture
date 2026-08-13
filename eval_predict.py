@@ -45,6 +45,11 @@ EVAL_SPLITS = {
     "oot":  dict(split_filter=["train", "val"], years=[2023]),
     "oost": dict(split_filter=["oos"],          years=[2023]),
     "val":  dict(split_filter=["val"],          years=list(range(2016, 2023))),
+    # §26.  A dense network spans all three splits, so the station set comes from
+    # --pixel-csv rather than from the `split` column.  The per-station split is
+    # still carried into the output as `tile_split` / `station_split`.
+    "network": dict(split_filter=["train", "val", "oos"],
+                    years=list(range(2016, 2023))),
 }
 
 # Expected station counts from the zarr probe (§22.2).  A large miss means the
@@ -94,6 +99,139 @@ def run_split(model, loader, device) -> dict:
         years   = np.concatenate(years,   axis=0),   # (N,)
         doys    = np.concatenate(doys,    axis=0),   # (N,)
     )
+
+
+# ---------------------------------------------------------------------------
+# §26 multi-pixel readout
+#
+# The model emits a full (B, n_depths, 224, 224) map but only pixel (112, 112)
+# is ever supervised or read.  In a dense network the 2.24 km tiles overlap, so
+# one tile's map also covers *other* stations at pixels that received no
+# supervision.  This reads all of them out of the same forward pass.
+# ---------------------------------------------------------------------------
+class PixelMap:
+    """Per-tile table of (row, col) readouts, padded to a fixed width K."""
+
+    def __init__(self, df: pd.DataFrame):
+        need = {"tile", "station", "row", "col"}
+        missing = need - set(df.columns)
+        if missing:
+            raise SystemExit(f"--pixel-csv is missing column(s): {sorted(missing)}")
+
+        self.tiles = sorted(df["tile"].unique())
+        self.index = {t: i for i, t in enumerate(self.tiles)}
+        n = len(self.tiles)
+        self.K = int(df.groupby("tile").size().max())
+
+        # Pad with the centre pixel; the mask decides what is emitted, so the
+        # padded lanes are computed and discarded (cheap, keeps the gather dense).
+        c = SoilMoistureModel.STATION_ROW
+        self.rows  = np.full((n, self.K), c, np.int64)
+        self.cols  = np.full((n, self.K), c, np.int64)
+        self.valid = np.zeros((n, self.K), bool)
+        self.meta: list[list[dict | None]] = [[None] * self.K for _ in range(n)]
+
+        for tile, g in df.groupby("tile"):
+            i = self.index[tile]
+            for k, r in enumerate(g.itertuples()):
+                self.rows[i, k]  = int(r.row)
+                self.cols[i, k]  = int(r.col)
+                self.valid[i, k] = True
+                self.meta[i][k]  = {
+                    "station":    str(r.station),
+                    "row":        int(r.row),
+                    "col":        int(r.col),
+                    "offset_px":  int(getattr(r, "offset_px", 0)),
+                    "is_centre":  bool(getattr(r, "is_centre", r.station == tile)),
+                }
+
+    def keys(self) -> list[str]:
+        return list(self.tiles)
+
+
+@torch.no_grad()
+def run_split_pixels(model, loader, device, pmap: PixelMap) -> dict:
+    """Like run_split, but reads K pixels per sample out of the same map."""
+    rows_t = torch.from_numpy(pmap.rows).to(device)      # (n_tiles, K)
+    cols_t = torch.from_numpy(pmap.cols).to(device)
+    preds, tiles, years, doys = [], [], [], []
+
+    t0, n_batches = time.time(), len(loader)
+    for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            mu = model(batch)                            # (B, D, 224, 224)
+        B, D, H, W = mu.shape
+
+        ti  = torch.as_tensor([pmap.index[k] for k in batch["station_key"]],
+                              device=device)             # (B,)
+        idx = rows_t[ti] * W + cols_t[ti]                 # (B, K) flat pixel index
+        val = mu.reshape(B, D, H * W).gather(
+            2, idx[:, None, :].expand(-1, D, -1))         # (B, D, K)
+
+        preds.append(val.float().cpu().numpy())
+        tiles.append(ti.cpu().numpy().astype(np.int32))
+        years.append(np.asarray(batch["year"].cpu() if torch.is_tensor(batch["year"])
+                                else batch["year"], dtype=np.int32))
+        doys.append(np.asarray(batch["doy"].cpu() if torch.is_tensor(batch["doy"])
+                               else batch["doy"], dtype=np.int32))
+
+        if i % 200 == 0 and i:
+            rate = (i + 1) / (time.time() - t0)
+            eta  = (n_batches - i - 1) / max(rate, 1e-9) / 60
+            print(f"    batch {i+1}/{n_batches}  {rate:.1f} b/s  ETA {eta:.1f} min",
+                  flush=True)
+
+    return dict(
+        preds = np.concatenate(preds, axis=0),   # (N, D, K)
+        tiles = np.concatenate(tiles, axis=0),   # (N,)
+        years = np.concatenate(years, axis=0),
+        doys  = np.concatenate(doys,  axis=0),
+    )
+
+
+def to_long_frame_pixels(res: dict, pmap: PixelMap) -> pd.DataFrame:
+    """(N, D, K) -> one row per (tile, station, date, depth).
+
+    Observations are NOT joined here: an off-centre readout is scored against a
+    *different* station's record, which lives in that station's own zarr.  That
+    join happens in combine_network.py.
+    """
+    n_depths = res["preds"].shape[1]
+    frames = []
+    for i_tile, tile in enumerate(pmap.tiles):
+        sel = res["tiles"] == i_tile
+        if not sel.any():
+            continue
+        yrs, dys = res["years"][sel], res["doys"][sel]
+        for k in range(pmap.K):
+            m = pmap.meta[i_tile][k]
+            if m is None:
+                continue
+            for d, depth in enumerate(SM_DEPTHS[:n_depths]):
+                frames.append(pd.DataFrame({
+                    "tile":      tile,
+                    "station":   m["station"],
+                    "row":       np.int16(m["row"]),
+                    "col":       np.int16(m["col"]),
+                    "offset_px": np.int16(m["offset_px"]),
+                    "is_centre": m["is_centre"],
+                    "year":      yrs,
+                    "doy":       dys,
+                    "depth":     depth,
+                    "pred":      res["preds"][sel, d, k].astype(np.float32),
+                }))
+
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+    df["date"] = (pd.to_datetime(df["year"].astype(str) + "-01-01")
+                  + pd.to_timedelta(df["doy"] - 1, unit="D"))
+    df["depth"]   = df["depth"].astype("category")
+    df["tile"]    = df["tile"].astype("string")
+    df["station"] = df["station"].astype("string")
+    return df[["tile", "station", "row", "col", "offset_px", "is_centre",
+               "year", "doy", "date", "depth", "pred"]]
 
 
 def to_long_frame(res: dict, split_name: str, train_split_map: dict) -> pd.DataFrame:
@@ -168,6 +306,15 @@ def main():
                         "(kills temporal state)")
     p.add_argument("--seed",        type=int, default=0,
                    help="permutation seed -- run several, one shuffle can be lucky")
+    # §26 multi-pixel readout.  The CSV comes from build_network_readouts.py and
+    # lists, per tile, every station that falls inside that tile's 224x224 map.
+    # The station set for the run is the CSV's `tile` column, so --pixel-csv
+    # implies --splits network.
+    p.add_argument("--pixel-csv", default=None,
+                   help="read out every (row, col) in this table from each tile's "
+                        "map, not just the centre pixel (§26)")
+    p.add_argument("--pixel-tiles", nargs="*", default=None,
+                   help="restrict --pixel-csv to these tiles (smoke test)")
     p.add_argument("--station-flag", default=None,
                    help="restrict to stations flagged true in this station_splits.csv "
                         "column, e.g. ablation_oos (50 stratified OOS stations). The "
@@ -177,6 +324,23 @@ def main():
     if args.station_flag and (args.csv_start_idx is not None
                               or args.csv_end_idx is not None):
         raise SystemExit("--station-flag and --csv-start/end-idx are mutually exclusive")
+
+    pmap = None
+    if args.pixel_csv:
+        if args.ablate != "none":
+            raise SystemExit("--pixel-csv and --ablate are not supported together")
+        pix = pd.read_csv(args.pixel_csv)
+        if args.pixel_tiles:
+            pix = pix[pix["tile"].isin(args.pixel_tiles)]
+            if pix.empty:
+                raise SystemExit(f"no rows left after --pixel-tiles {args.pixel_tiles}")
+        pmap = PixelMap(pix)
+        args.splits = ["network"]
+        print(f"Pixel readout: {len(pix)} (tile, station) pairs over "
+              f"{len(pmap.tiles)} tiles, K={pmap.K}, "
+              f"{int(pix['is_centre'].sum()) if 'is_centre' in pix else 0} centre / "
+              f"{len(pix) - (int(pix['is_centre'].sum()) if 'is_centre' in pix else 0)}"
+              f" off-centre")
 
     # auto-tag so an ablation can never overwrite the baseline artefacts
     if args.ablate != "none":
@@ -239,6 +403,20 @@ def main():
         # temporary CSV holding only this chunk's stations, so it preloads
         # only their L12 tokens.
         active_csv = str(SPLITS_CSV)
+        if pmap is not None:
+            # The station set IS the tile set: hand the dataset only those rows so
+            # it preloads only their L12 tokens.
+            keys = splits_df.apply(_make_key, axis=1)
+            sub  = splits_df[keys.isin(pmap.keys())]
+            miss = set(pmap.keys()) - set(keys[keys.isin(pmap.keys())])
+            if miss:
+                print(f"  WARNING {len(miss)} tiles not in station_splits.csv: "
+                      f"{sorted(miss)[:5]}")
+            tile_csv = out_dir / f"_tiles_{split_name}.csv"
+            sub.to_csv(tile_csv, index=False)
+            active_csv = str(tile_csv)
+            print(f"  Pixel-csv tiles: {len(sub)} stations "
+                  f"({dict(sub['split'].value_counts())})")
         if args.station_flag:
             sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
             keep = sub[args.station_flag].astype(str).str.lower().isin(
@@ -297,9 +475,15 @@ def main():
             prefetch_factor    = 2 if args.num_workers > 0 else None,
         )
 
-        t0  = time.time()
-        res = run_split(model, loader, device)
-        df  = to_long_frame(res, split_name, train_split_map)
+        t0 = time.time()
+        if pmap is not None:
+            res = run_split_pixels(model, loader, device, pmap)
+            df  = to_long_frame_pixels(res, pmap)
+            key_col = "station"
+        else:
+            res = run_split(model, loader, device)
+            df  = to_long_frame(res, split_name, train_split_map)
+            key_col = "station_key"
         mins = (time.time() - t0) / 60
 
         if df.empty:
@@ -314,8 +498,13 @@ def main():
         out_path = out_dir / f"predictions_{split_name}{suffix}.parquet"
         df.to_parquet(out_path, index=False, compression="snappy")
 
-        print(f"  {len(df):,} rows | {df['station_key'].nunique()} stations | "
+        print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
               f"{mins:.1f} min")
+        if pmap is not None:
+            print(f"  readouts: {df.groupby(['tile','station']).ngroups} "
+                  f"(tile, station) pairs | "
+                  f"centre {int(df.is_centre.sum()):,} rows / "
+                  f"off-centre {int((~df.is_centre).sum()):,} rows")
         print(f"  rows per depth: "
               f"{df.groupby('depth', observed=True).size().to_dict()}")
         print(f"  Saved: {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
@@ -323,13 +512,18 @@ def main():
         manifest["splits"][f"{split_name}{suffix}"] = {
             "split_filter": scfg["split_filter"],
             "years":        [int(scfg["years"][0]), int(scfg["years"][-1])],
-            "n_stations":   int(df["station_key"].nunique()),
+            "n_stations":   int(df[key_col].nunique()),
             "n_rows":       int(len(df)),
             "n_samples":    int(len(ds)),
             "rows_by_depth": {str(k): int(v) for k, v in
                               df.groupby("depth", observed=True).size().items()},
             "nan_pred":     n_nan_pred,
             "minutes":      round(mins, 1),
+            **({"pixel_csv":   args.pixel_csv,
+                "n_readouts":  int(df.groupby(["tile", "station"]).ngroups),
+                "n_offcentre": int(df.groupby(["tile", "station"])
+                                   .is_centre.first().eq(False).sum())}
+               if pmap is not None else {}),
         }
 
     manifest_path = out_dir / "manifest.json"

@@ -30,3 +30,4 @@ dependencies:
     - icoscp-core
     - ismn
     - scienceplots
+    - umap-learn        # §27b.8 token structure figure; pulls numba + pynndescent

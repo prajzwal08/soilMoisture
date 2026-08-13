@@ -1,0 +1,57 @@
+# Tokenisation + training + analysis environment.
+#
+#   conda env create -f environment-terramind.yml
+#   conda activate terramind
+#
+# Used by: precompute_terramind.py, consolidate_tokens.py, cleanup_tokens.py,
+# convert_satellite_to_zarr.py, dataset.py, model.py, train.py, eval_predict.py,
+# eval_metrics.py, cloud_masking_inference.py, and the §27 analysis probes
+# (station_mean_probe.py, probe_token_sm_structure.py, plot_token_pca.py,
+# audit_*_token_*.py, audit_register_*.py).
+#
+# Deliberately has NO cdsapi / earthengine-api / pystac-client / stackstac / ismn —
+# downloading and preprocessing run in the `soilmoisture` env instead
+# (environment-download.yml), which pins Python 3.10 for those APIs.
+#
+# Verified against the live env 2026-08-12.
+name: terramind
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - h5py
+  - rasterio
+  - rioxarray
+  - pyproj
+  - geopandas
+  - scipy
+  - matplotlib
+  - pillow
+  - requests
+  - tqdm
+  - joblib
+  # token store. Pinned to zarr 2.x: the code uses v2 semantics throughout
+  # (zarr.open_consolidated on a .zmetadata store), and zarr 3 changes them.
+  - zarr=2.18
+  - numcodecs
+  - pyarrow                  # parquet — eval_output/predictions_*.parquet
+  - py-opencv                # cloud_masking_inference.py
+  - pip
+  - pip:
+    # GPU stack. torch is the CUDA 12.4 wheel, NOT the default PyPI build —
+    # without the index URL below pip installs a CPU-only torch and every
+    # training/tokenisation run silently falls back to CPU.
+    - --extra-index-url https://download.pytorch.org/whl/cu124
+    - torch==2.6.0+cu124
+    - terratorch==1.2.7      # provides BACKBONE_REGISTRY -> terramind_v1_base
+    - timm==1.0.27
+    - einops==0.8.2
+    # analysis probes
+    - scikit-learn==1.8.0
+    - umap-learn==0.5.12     # §27b.8 token-structure figure; pulls pynndescent
+    - numba==0.67.0          # umap dependency, pinned to the tested version

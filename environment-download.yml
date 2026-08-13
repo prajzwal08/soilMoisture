@@ -1,0 +1,55 @@
+# Download + preprocessing environment.
+#
+#   conda env create -f environment-download.yml
+#   conda activate soilmoisture
+#
+# Used by: preprocessing_ISMN_soilMoisture.py, preprocessing_icos.py,
+# preprocessing_ameriflux.py, download_s2_mpc.py, download_s1_lulc_mpc.py,
+# download_era5land*.py, download_smap_gee.py, download_sif_tropomi.py,
+# download_soil_openlandmap.py, download_dem_cdse.py, download_icos.py,
+# download_ameriflux.py, compile_station_inventory.py, and the plotting scripts
+# that do not touch the token store.
+#
+# Deliberately has NO torch / zarr / terratorch — tokenisation, training and the
+# analysis probes run in the `terramind` env instead (environment-terramind.yml).
+# The two are separate because the download APIs pin an older Python (3.10) than
+# the TerraMind stack wants, and because the download nodes need no GPU stack.
+#
+# Verified against the live env 2026-08-12.
+name: soilmoisture
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - h5py
+  - rasterio
+  - rioxarray
+  - pyproj
+  - geopandas
+  - scipy
+  - matplotlib
+  - pillow
+  - requests
+  - python-dotenv
+  - tqdm
+  - joblib
+  - pip
+  - pip:
+    # data-source APIs
+    - cdsapi                 # ERA5-Land via CDS
+    - earthengine-api        # SMAP / ERA5-Land via GEE
+    - openeo
+    - pystac-client          # Microsoft Planetary Computer STAC
+    - planetary-computer
+    - stackstac
+    # in-situ networks
+    - icoscp
+    - icoscp-core
+    - ismn
+    # plotting
+    - scienceplots

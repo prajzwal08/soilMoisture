@@ -1,0 +1,428 @@
+{
+ "epsg": 32614,
+ "origin_utm": {
+  "west": 503713.6055170685,
+  "north": 3371033.1181199118,
+  "east": 538535.3643578344,
+  "south": 3336038.631674586
+ },
+ "shape": {
+  "ny": 3499,
+  "nx": 3482
+ },
+ "res_m": 10,
+ "patch_px": 224,
+ "tile_offsets": {
+  "ISMN_TxSON_CR1000-1": {
+   "row0": 452,
+   "col0": 1406,
+   "island": 3
+  },
+  "ISMN_TxSON_CR1000-2": {
+   "row0": 2390,
+   "col0": 2346,
+   "island": 11
+  },
+  "ISMN_TxSON_CR1000-3": {
+   "row0": 2053,
+   "col0": 2169,
+   "island": 9
+  },
+  "ISMN_TxSON_CR1000-4": {
+   "row0": 15,
+   "col0": 86,
+   "island": 2
+  },
+  "ISMN_TxSON_CR1000-5": {
+   "row0": 686,
+   "col0": 3258,
+   "island": 5
+  },
+  "ISMN_TxSON_CR1000-6": {
+   "row0": 213,
+   "col0": 1027,
+   "island": 1
+  },
+  "ISMN_TxSON_CR200-1": {
+   "row0": 262,
+   "col0": 1380,
+   "island": 3
+  },
+  "ISMN_TxSON_CR200-10": {
+   "row0": 1706,
+   "col0": 1725,
+   "island": 8
+  },
+  "ISMN_TxSON_CR200-11": {
+   "row0": 2543,
+   "col0": 1744,
+   "island": 13
+  },
+  "ISMN_TxSON_CR200-12": {
+   "row0": 2776,
+   "col0": 1123,
+   "island": 14
+  },
+  "ISMN_TxSON_CR200-13": {
+   "row0": 317,
+   "col0": 877,
+   "island": 1
+  },
+  "ISMN_TxSON_CR200-14": {
+   "row0": 511,
+   "col0": 1414,
+   "island": 3
+  },
+  "ISMN_TxSON_CR200-15": {
+   "row0": 2338,
+   "col0": 2336,
+   "island": 11
+  },
+  "ISMN_TxSON_CR200-16": {
+   "row0": 1967,
+   "col0": 2001,
+   "island": 9
+  },
+  "ISMN_TxSON_CR200-17": {
+   "row0": 2058,
+   "col0": 2144,
+   "island": 9
+  },
+  "ISMN_TxSON_CR200-18": {
+   "row0": 2387,
+   "col0": 2414,
+   "island": 11
+  },
+  "ISMN_TxSON_CR200-19": {
+   "row0": 485,
+   "col0": 917,
+   "island": 1
+  },
+  "ISMN_TxSON_CR200-2": {
+   "row0": 1901,
+   "col0": 1969,
+   "island": 9
+  },
+  "ISMN_TxSON_CR200-21": {
+   "row0": 437,
+   "col0": 1592,
+   "island": 3
+  },
+  "ISMN_TxSON_CR200-22": {
+   "row0": 330,
+   "col0": 857,
+   "island": 1
+  },
+  "ISMN_TxSON_CR200-23": {
+   "row0": 2867,
+   "col0": 2844,
+   "island": 15
+  },
+  "ISMN_TxSON_CR200-24": {
+   "row0": 2301,
+   "col0": 2412,
+   "island": 11
+  },
+  "ISMN_TxSON_CR200-25": {
+   "row0": 2348,
+   "col0": 2408,
+   "island": 11
+  },
+  "ISMN_TxSON_CR200-26": {
+   "row0": 465,
+   "col0": 1393,
+   "island": 3
+  },
+  "ISMN_TxSON_CR200-28": {
+   "row0": 0,
+   "col0": 1004,
+   "island": 1
+  },
+  "ISMN_TxSON_CR200-29": {
+   "row0": 140,
+   "col0": 976,
+   "island": 1
+  },
+  "ISMN_TxSON_CR200-3": {
+   "row0": 365,
+   "col0": 1375,
+   "island": 3
+  },
+  "ISMN_TxSON_CR200-4": {
+   "row0": 348,
+   "col0": 1637,
+   "island": 3
+  },
+  "ISMN_TxSON_CR200-5": {
+   "row0": 2472,
+   "col0": 1729,
+   "island": 13
+  },
+  "ISMN_TxSON_CR200-6": {
+   "row0": 2468,
+   "col0": 2368,
+   "island": 11
+  },
+  "ISMN_TxSON_CR200-7": {
+   "row0": 2541,
+   "col0": 2323,
+   "island": 11
+  },
+  "ISMN_TxSON_CR200-8": {
+   "row0": 1968,
+   "col0": 2533,
+   "island": 10
+  },
+  "ISMN_TxSON_CR200-9": {
+   "row0": 325,
+   "col0": 1309,
+   "island": 3
+  },
+  "ISMN_TxSON_LCRA-1": {
+   "row0": 335,
+   "col0": 3227,
+   "island": 4
+  },
+  "ISMN_TxSON_LCRA-2": {
+   "row0": 451,
+   "col0": 940,
+   "island": 1
+  },
+  "ISMN_TxSON_LCRA-3": {
+   "row0": 3208,
+   "col0": 3237,
+   "island": 16
+  },
+  "ISMN_TxSON_LCRA-4": {
+   "row0": 1319,
+   "col0": 786,
+   "island": 6
+  },
+  "ISMN_TxSON_LCRA-5": {
+   "row0": 1450,
+   "col0": 3250,
+   "island": 7
+  },
+  "ISMN_TxSON_LCRA-6": {
+   "row0": 2439,
+   "col0": 3122,
+   "island": 12
+  },
+  "ISMN_TxSON_LCRA-7": {
+   "row0": 3275,
+   "col0": 0,
+   "island": 17
+  }
+ },
+ "coverage": {
+  "covered_px": 1309031,
+  "total_px": 12183518,
+  "covered_frac": 0.1074,
+  "covered_km2": 130.9,
+  "multi_px": 416951,
+  "multi_frac_of_covered": 0.3185,
+  "depth_histogram": {
+   "1": 892080,
+   "2": 257834,
+   "3": 83425,
+   "4": 40558,
+   "5": 24019,
+   "6": 11115
+  }
+ },
+ "islands": [
+  {
+   "island": 1,
+   "km2": 19.79,
+   "h_km": 7.09,
+   "w_km": 3.94,
+   "n_tiles": 7,
+   "tiles": [
+    "ISMN_TxSON_CR1000-6",
+    "ISMN_TxSON_CR200-13",
+    "ISMN_TxSON_CR200-19",
+    "ISMN_TxSON_CR200-22",
+    "ISMN_TxSON_CR200-28",
+    "ISMN_TxSON_CR200-29",
+    "ISMN_TxSON_LCRA-2"
+   ]
+  },
+  {
+   "island": 3,
+   "km2": 19.52,
+   "h_km": 4.73,
+   "w_km": 5.52,
+   "n_tiles": 8,
+   "tiles": [
+    "ISMN_TxSON_CR1000-1",
+    "ISMN_TxSON_CR200-1",
+    "ISMN_TxSON_CR200-14",
+    "ISMN_TxSON_CR200-21",
+    "ISMN_TxSON_CR200-26",
+    "ISMN_TxSON_CR200-3",
+    "ISMN_TxSON_CR200-4",
+    "ISMN_TxSON_CR200-9"
+   ]
+  },
+  {
+   "island": 11,
+   "km2": 12.97,
+   "h_km": 4.64,
+   "w_km": 3.15,
+   "n_tiles": 7,
+   "tiles": [
+    "ISMN_TxSON_CR1000-2",
+    "ISMN_TxSON_CR200-15",
+    "ISMN_TxSON_CR200-18",
+    "ISMN_TxSON_CR200-24",
+    "ISMN_TxSON_CR200-25",
+    "ISMN_TxSON_CR200-6",
+    "ISMN_TxSON_CR200-7"
+   ]
+  },
+  {
+   "island": 9,
+   "km2": 11.57,
+   "h_km": 3.81,
+   "w_km": 4.24,
+   "n_tiles": 4,
+   "tiles": [
+    "ISMN_TxSON_CR1000-3",
+    "ISMN_TxSON_CR200-16",
+    "ISMN_TxSON_CR200-17",
+    "ISMN_TxSON_CR200-2"
+   ]
+  },
+  {
+   "island": 13,
+   "km2": 6.84,
+   "h_km": 2.95,
+   "w_km": 2.39,
+   "n_tiles": 2,
+   "tiles": [
+    "ISMN_TxSON_CR200-11",
+    "ISMN_TxSON_CR200-5"
+   ]
+  },
+  {
+   "island": 2,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_CR1000-4"
+   ]
+  },
+  {
+   "island": 4,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_LCRA-1"
+   ]
+  },
+  {
+   "island": 5,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_CR1000-5"
+   ]
+  },
+  {
+   "island": 6,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_LCRA-4"
+   ]
+  },
+  {
+   "island": 7,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_LCRA-5"
+   ]
+  },
+  {
+   "island": 8,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_CR200-10"
+   ]
+  },
+  {
+   "island": 10,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_CR200-8"
+   ]
+  },
+  {
+   "island": 12,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_LCRA-6"
+   ]
+  },
+  {
+   "island": 14,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_CR200-12"
+   ]
+  },
+  {
+   "island": 15,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_CR200-23"
+   ]
+  },
+  {
+   "island": 16,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_LCRA-3"
+   ]
+  },
+  {
+   "island": 17,
+   "km2": 5.02,
+   "h_km": 2.24,
+   "w_km": 2.24,
+   "n_tiles": 1,
+   "tiles": [
+    "ISMN_TxSON_LCRA-7"
+   ]
+  }
+ ]
+}

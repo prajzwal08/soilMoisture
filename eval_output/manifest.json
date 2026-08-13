@@ -11,7 +11,7 @@
     "10-30",
     "30-100"
   ],
-  "generated": "2026-08-10T18:18:52",
+  "generated": "2026-08-11T17:08:56",
   "max_stations": null,
   "splits": {
     "val": {
@@ -127,6 +127,54 @@
       },
       "nan_pred": 0,
       "minutes": 8.9
+    },
+    "network_txson_smoke": {
+      "split_filter": [
+        "train",
+        "val",
+        "oos"
+      ],
+      "years": [
+        2016,
+        2022
+      ],
+      "n_stations": 6,
+      "n_rows": 45054,
+      "n_samples": 2503,
+      "rows_by_depth": {
+        "0-10": 15018,
+        "10-30": 15018,
+        "30-100": 15018
+      },
+      "nan_pred": 0,
+      "minutes": 0.3,
+      "pixel_csv": "csvs/txson_readouts.csv",
+      "n_readouts": 6,
+      "n_offcentre": 5
+    },
+    "network_txson": {
+      "split_filter": [
+        "train",
+        "val",
+        "oos"
+      ],
+      "years": [
+        2016,
+        2022
+      ],
+      "n_stations": 40,
+      "n_rows": 657354,
+      "n_samples": 90779,
+      "rows_by_depth": {
+        "0-10": 219118,
+        "10-30": 219118,
+        "30-100": 219118
+      },
+      "nan_pred": 0,
+      "minutes": 7.5,
+      "pixel_csv": "csvs/txson_readouts.csv",
+      "n_readouts": 96,
+      "n_offcentre": 56
     }
   }
 }
