@@ -4026,3 +4026,152 @@ NEXT, IN ORDER (nothing started)
   on §29.9 (LST as a DENSE AUXILIARY TARGET: 5776 px/tile vs 1 — supervision density, not
   correlation). Phase B (ECOSTRESS night + diurnal range) is the only untested arm that
   could still give a direct LST<->SM link. §30.6 amended in place.
+
+
+================================================================================
+2026-08-17  SESSION 27 — §31 ARCHITECTURE SPECIFIED END TO END.  NOTHING BUILT.
+No GPU spent.  No pipeline code changed (only plot_architecture.py, figures).
+main @ 1c23bf9, pushed, clean.
+================================================================================
+
+PRIMARY OUTPUT
+  text/architecture_per_location.txt — 1286 lines, restructured to be read cold,
+  front to back: Part 1 summary → Part 2 symbols/grids → Part 3 flowcharts →
+  Parts 4-15 detail.  figures/architecture_proposed.{png,pdf} regenerated to match.
+  training_runbook.md §31 (~line 6772) is the OLD pre-DEM version and now carries
+  a SUPERSEDED header pointing at the .txt.  DO NOT read §31 as current.
+
+FOUR DECISIONS REVERSED OR CHANGED FROM §30, each argued rather than assumed
+
+  1. OUTPUT IS 70x70 @ 32 m, not 224x224 @ 10 m.
+     30 m does not divide the 2240 m tile — 74.67 cells, ragged 5.33 per token.
+     32 m gives exactly 70 cells and exactly 5x5 per token, so the gather is an
+     integer divide with no remainder.  6.7% coarser than 30 m, immaterial when
+     the thermal band is 100 m.  Makes the resolution claim need no asterisk:
+     every channel is at or below 32 m except the token and LST.
+
+  2. BLOCK 4 DROPPED, THEN REINSTATED.
+     Dropped when terrain was MERIT-only at 90 m — with no real sub-160 m carrier
+     a 224 output is a 9x-upsampled 90 m field, i.e. §17.7's DiVAE objection.
+     Reinstated once (a) terrain is computed at 30 m ourselves and (b) it was
+     noticed S1/S2 at 10 m were on disk all along.  §30's criterion was never
+     resolution, it was whether sub-token detail is MEASURED or INVENTED.  C=17.
+
+  3. MERIT BECOMES VALIDATOR/CALIBRATOR, NOT PRODUCT.
+     upa inside the tile  -> does this tile contain a channel? (the risk criterion)
+     upa at the station   -> how wide the window must be
+     ours vs MERIT's      -> per-station boundary-capture PASS/FAIL, ground truth
+     hnd ~ 0              -> calibrates our stream threshold instead of guessing
+     TWI/HAND from our own conditioned wide DEM at native 30 m.  10 km window =
+     333^2 cells ~ 0.44 MB/station, ~440 MB for all 993.  Compute was NEVER the
+     constraint — I said "multi-day build" early on and that conflated code effort
+     with resources.  Corrected.
+
+  4. LST IS NOW A COMPONENT, not merely the §29 fallback.
+     Side branch off S — NOT off h_k, which would need Block 3 run at all 196
+     locations and destroy the reason training is cheap.  S already exists.
+     Linear(768->1) over 196 vectors -> (14,14) predicted anomaly.
+     TARGET = Landsat ST per token MINUS THE TILE MEAN.  Subtracting the mean is
+     load-bearing: absolute LST is season and time-of-day, readable off ERA5, and
+     removing it kills exactly the Simpson's-paradox artefact §29 found.
+     Nothing downstream reads it; it only makes gradient.
+     Plus the time-averaged anomaly map as a Block-4 INPUT channel regardless —
+     the cheap, risk-free half.
+
+MEASURED THIS SESSION
+
+  * LOWEST CELL LIES ON THE TILE BOUNDARY IN 25 OF 30 SAMPLED TILES = 83.3%.
+    Median relief 188 m (13.5-797 m).  Flow leaves the 2.24 km window, so neither
+    TWI nor HAND is computable from the current tile.  Not approximately — the
+    quantities are defined by structure outside the box.
+    Refinement that makes modest windows viable: the non-local error is largely
+    COMMON-MODE within a tile (two cells on one hillslope both miss the same
+    upstream inflow, so their DIFFERENCE survives).  It breaks specifically at
+    CHANNEL cells.  Hence: a tile is at risk IFF it contains a channel, readable
+    from MERIT upa inside the tile.
+
+  * THE U-NET HAS NO HIGH-RESOLUTION SKIP PATH AT ALL.  Verified in source:
+    _get_skip_connections returns anchor_l3/l6/l9 (model.py:530), all 14x14,
+    F.interpolate'd up at model.py:258,261,264.  TerraMind is a ViT and never
+    downsamples, so L3/L6/L9/L12 are ALL at 14x14.  A CNN U-Net's power comes from
+    skips at 224/112/56; ours has none.  This is an architectural reason to drop
+    the decoder INDEPENDENT of the supervision argument.
+
+  * Landsat TIRS is 100 m.  §29.9's "5776 px vs 1" is the GRID, not the
+    information — ~22x22 ~ 500 independent values per tile.  Still ~500x better
+    than 1, but the honest number is 500.
+
+THEORY — added, and it was missing entirely before
+
+  TOPMODEL (Beven & Kirkby 1979): R*a = T0 exp(-fz) tan beta  =>
+  z = (1/f)[ln(T0/R) - TWI].  DEPTH TO WATER TABLE IS LINEAR IN -TWI.  That is
+  the entire theoretical content — TWI is a water-table-depth index, not a soil
+  moisture index.
+  HAND (Renno 2008, Nobre 2011) approximates the same thing more directly and is
+  numerically more robust (a height difference; TWI's `a` is very sensitive to the
+  flow algorithm).
+  Capillary rise ~0.1-0.3 m sand, 1-2 m silt, 3-10 m clay — above a few metres
+  HAND the top 10 cm is hydraulically DECOUPLED.  TxSON has 46-88 m relief.
+
+  GRAYSON ET AL. (1997) + Tarrawarra (Western, Grayson & Bloschl): terrain control
+  of SURFACE moisture is STATE-DEPENDENT.  Wet -> lateral flow organises the
+  pattern, terrain explains much.  Dry -> soil and vegetation dominate, terrain
+  explains ~nothing.
+
+  ==> THIS IS WHY BLOCK 3 IS THE RIGHT ARCHITECTURE, and it is a stronger argument
+      than anything in §30.  A state-dependent effect requires terrain INTERACTED
+      WITH WETNESS STATE.  Cross-attention provides that; a uniform FiLM
+      scale/shift structurally cannot express it.  It also means a STATIC terrain
+      input is the wrong functional form — it would fit the average of two regimes
+      and match neither.
+
+  Consequence for the gate: the sufficiency test MUST be split wet/dry.  A pooled
+  regression would average the two regimes into nothing.
+
+NEXT, IN ORDER — NOTHING STARTED
+  0. branch feat/per-location-processor from tag pre-s30-architecture (61c1773)
+  1. download_merit_hydro_gee.py — needed in EVERY scenario, so start first.
+     Template is download_soil_openlandmap.py (read_patch :171, process_station
+     :207), NOT download_smap_gee.py — that samples POINTS via reduceRegions and
+     has no retry, no resume, no checkpointing.  ~8-16 workers, NOT Pool(64):
+     remote API, it will throttle.  (Deliberate departure from the standing
+     Pool(64) rule, which is for local CPU scans.)
+  2. PLOT THE upa DISTRIBUTION across 993 stations — the per-station go/no-go for
+     self-computing terrain at all.  Report how many are tractable at 5/10/50 km.
+  3. wide-DEM fetch at native 30 m.  CONFIRM FABDEM ACCESS FIRST — GLO-30 is a
+     DSM, canopy dams streams, and this is the largest correctness risk in the
+     whole derivation.  Fallback is aggressive breaching over filling.
+  4. build_twi_hand.py + build_fine_stack.py.  None of pyflwdir / richdem /
+     whitebox / pysheds is installed in either env.
+  5. SUFFICIENCY GATE — 62 colocated pairs, dSM on dTWI/dHAND under station fixed
+     effects, SPLIT WET/DRY.  Runs on MERIT 90 m in PARALLEL with 3-4.  The pair
+     list was computed in-session in §26 and never persisted — write
+     csvs/colocated_pairs.csv this time.
+  6. dataset.py -> model.py -> regression gates -> smoke (20 stn, 3 ep) -> full
+     run ~42 GPU-h.
+
+RISK, STATED BEFORE ANY GPU
+  TWI and HAND are saturation-excess concepts; our labels are the top 10 cm.  Same
+  shape as §29, which tested evaporative cooling and measured -0.077.  No amount of
+  DEM engineering addresses this, which is why the gate runs on 90 m data in
+  parallel with the 30 m build rather than after it.
+  BUT A TERRAIN FAILURE DOES NOT KILL THE PROJECT.  Ablation row 2 — Block 3 on,
+  terrain off — isolates the architecture from the hydrology, because the
+  per-location S2/S1 history columns do not depend on terrain at all.  Unlike §29,
+  a negative result prunes ONE INPUT.
+
+  Second risk, on the LST auxiliary: if the target is a fixed map per station and
+  the model can identify the station — §24.12 found identity dominates at depth —
+  it can MEMORISE 993 maps rather than learn structure.  Likely, not hypothetical.
+  Test in the first smoke run: LST-head skill on validation vs training stations.
+  Third: the 18.2% no-retrieval region CONTAINS THE WETTEST STATION, so the
+  missingness correlates with the target.
+
+STILL OPEN / UNTOUCHED
+  dataset.py:483-486 — all-zero anchors returned with orbit_id=0, indistinguishable
+  from a real S2 anchor.  Latent bug, fix regardless.
+  Git identity on all of today's commits is pkhanal@int6.local.snellius.surf.nl,
+  auto-derived from hostname — GitHub is probably not attributing them.
+  Earlier items untouched: §27b.4 B9 block, §29 Step 0 and Phase B (ECOSTRESS),
+  §26.3's mosaic_txson.py gate.
+
