@@ -1,628 +1,272 @@
 ================================================================================
-PER-LOCATION PROCESSOR — DETAILED ARCHITECTURE, INPUT TO OUTPUT
-Written 2026-08-17.  Designed, not built.
+PER-LOCATION PROCESSOR — END-TO-END ARCHITECTURE
+Written 2026-08-17.  Designed, not built.  Nothing here has run.
+
+Read in order.  Part 1 is the whole story in a page.  Part 2 defines the symbols.
+Part 3 is the picture.  Everything after that is detail you can dip into.
 ================================================================================
 
-WHAT THE MODEL DOES
-  One sample = one station, one target date.  It reads a 2.24 km x 2.24 km tile
-  centred on that station (satellite imagery history, terrain, soil, weather)
-  and predicts volumetric soil moisture at 3 depth bins (0-10, 10-30, 30-50 cm)
-  for that date, at every location in the tile.  Supervision is ONE point
-  sensor.
 
-WHAT IS BEING FIXED
-  Today all time-series signal (ERA5 365 days, S2/S1 history, SIF, TWSA) reaches
-  the decoder through ONE SPATIALLY CONSTANT VECTOR — `context` at
-  model.py:736-743, applied by FiLM as a uniform per-channel scale/shift.
-  Consequence: the spatial pattern can change between samples, but the RESPONSE
-  TO WEATHER cannot vary across the tile.  Two stations 500 m apart can have
-  different means, never different response functions.
-
-  Measured signature (§26.11, §23):
-    within-station temporal SD  0.051  vs observed 0.051   <- essentially perfect
-    between-station SD          15-19% of observed         <- the failure
-    r(pred level, obs level) at CR200-18   -0.175          <- ANTI-correlated
-    norm-std across tiles       0.093-0.524, strongest where terrain is flattest
-
-  The delta of this design: the model already has S (196 per-location tokens,
-  model.py:731-734) and g (`context`).  Nothing ever combines A SPECIFIC
-  LOCATION's context with THAT LOCATION's history.  Block 3 below is that, and
-  it is the entire architectural change.  Everything else is inputs to it.
 
 ================================================================================
-PART 1 — INPUTS.  Every tensor `__getitem__` emits.
+PART 1 — SUMMARY
 ================================================================================
 
-  [*] = new or changed relative to today.  B = batch.
+1.1  WHAT THE MODEL DOES
 
-1.1 SATELLITE TOKENS (TerraMind ViT-Base L12 output, 16x16 px per token)
-  ------------------------------------------------------------------------
-  anchor_l3/l6/l9/l12   (196, 768)  fp16   the target-date spatial snapshot
-  anchor_rel_pos        ()          long   staleness: days between anchor and target
-  anchor_orbit          ()          long   0=S2, 1=S1_asc, 2=S1_desc
-  anchor_valid      [*] ()          bool   NEW — see 1.6
+One sample is one station on one date.  The model reads a 2.24 km x 2.24 km tile
+centred on that station — satellite image history, terrain, soil, a year of
+weather — and predicts volumetric soil moisture at three depths (0-10, 10-30,
+30-50 cm) for that date, at every location in the tile.
 
-  s2_tok_k          [*] (60, 768)   fp32   column k of the L12 grid, ALL dates
-  s1_tok_k          [*] (40, 768)   fp32   ditto
-  s2_doys/valid/rel_pos (60,)       long/bool/long
-  s1_doys/valid/rel_pos (40,)       long/bool/long
+It is trained against ONE point sensor.  That single fact drives every design
+decision below.
 
-  dem_pyr, lulc_pyr     (4, 768)    fp32   pooled statics, unchanged
 
-  WHY s2_tok_k REPLACES s2_pyr (60,4,768):
-    _cpu_pyramid_pool (dataset.py:190-220) collapses (M,196,768) into 4
-    concentric-crop scales and destroys 97-98% of position information (§27a.2).
-    Indexing column k BEFORE pooling preserves position AND halves the payload:
-      60 x 768        =  92 KB      <- one location's own history column
-      60 x 4 x 768    = 184 KB      <- the 4-scale pyramid it replaces
-    The ~30 MB/sample IPC blowup that _cpu_pyramid_pool was built to prevent
-    only occurs if all 196 columns ship.  Training needs one.
+1.2  WHAT IS WRONG WITH THE CURRENT MODEL
 
-1.2 TERRAIN [*]  (TWI, HAND — see PART 2 for how they are produced)
-  ------------------------------------------------------------------------
-  terrain_lo        [*] (3, 28, 28)   fp32   80 m grid  -> Block 1
-  terrain_hi        [*] (3, 224, 224) fp16   30 m info  -> Block 4
+It gets time almost perfectly right and space almost entirely wrong.
 
-  Channels in both: [ TWI , HAND , valid_mask ]
+    within-station temporal SD    0.051  against observed 0.051    <- near perfect
+    between-station SD            15-19% of observed               <- the failure
+    r(predicted level, observed level) at CR200-18    -0.175       <- BACKWARDS
+    norm-std across tiles         0.093-0.524, and highest at the FLATTEST site
 
-  valid_mask IS A CHANNEL, not merely a filter, so the network can tell
-  "imputed" from "average terrain".  Invalid cells (water, no-data, stations
-  that failed the boundary QC) are set to 0 AFTER standardisation — i.e. the
-  channel mean — and the mask channel says so.
-  HAND is log1p'd before standardising (heavy-tailed in metres).  TWI is
-  already a log, so it is roughly symmetric and needs no transform.
+The last two lines matter more than the second.  The map is not merely flat; it
+is wrong, and it is most confidently wrong where the landscape is most uniform.
+The model is painting variation that has nothing to do with the ground.
 
-1.3 FINE RASTERS FOR THE PER-PIXEL HEAD [*]  (all measured, none learned)
-  ------------------------------------------------------------------------
-  s1_hi   [*] (5, 224, 224) fp16   vv_now, vh_now, vv_med, vh_med, days_since
-  s2_hi   [*] (3, 224, 224) fp16   ndvi, swir_index, days_since
-  lulc_hi [*] (2, 224, 224) fp16   learned 2-d embedding of the LULC class
-  soil_hi [*] (3, 224, 224) fp16   soc, socd, bd — nearest from 74x74 @ 30 m
+The cause is one line of code.  At model.py:736-743 a vector called `context` is
+built as the masked mean of every non-spatial token, and FiLM applies it to the
+decoder as a uniform per-channel scale and shift.  So the ENTIRE time series —
+365 days of ERA5, all the S2 and S1 history, SIF, TWSA — reaches the output
+through a single vector that is the same everywhere in the tile.
 
-  S1 IS FED AS (latest, long-term median) DELIBERATELY.
-    current minus baseline IS the wetness anomaly; the baseline alone is
-    roughness + vegetation.  Letting the model difference them itself is
-    strictly more expressive than feeding either one.
+The consequence is precise: the spatial pattern may change from sample to sample,
+but the RESPONSE TO WEATHER cannot vary across the tile.  Two stations 500 m
+apart can be assigned different mean values.  They cannot be assigned different
+behaviour.  A hollow that drains slowly and a ridge that dries in a day are, to
+this model, the same place with different offsets.
 
-  days_since IS REQUIRED.  "Latest clear" has variable staleness; without it,
-  three-week-old imagery reads as current.  Reuse the staleness embedding
-  already at model.py:505-514.
+That is exactly the observed signature: temporal variation right, spatial
+variation absent or inverted.
 
-  SPECKLE MUST BE HANDLED (multi-look or a short temporal median).  S1's 0.76
-  sub-token variance fraction (§30.3a) partly IS speckle, which is sub-token
-  noise by definition — so 0.76 is an upper bound and unhandled speckle turns
-  the added detail into variance rather than signal.
 
-  ELEVATION IS EXCLUDED from Block 4.  Measured sub-token fraction 0.05: the
-  160 m token already carries essentially all of it, so including it at 10 m is
-  pure redundancy.  It stays in Block 1.
+1.3  WHAT THE FIX IS
 
-1.4 WEATHER AND TABULAR (unchanged)
-  ------------------------------------------------------------------------
-  era5, era5_doys     (365, 19), (365,)   9 km — ONE value per tile
-  sif   + doys/rel_pos/valid   (50, .)
-  twsa  + doys/rel_pos/valid   (12, .)
-  soil_patch          (21, 74, 74)  fp32  30 m, 3 depths x 7 properties
+The model already computes almost everything needed.  It has 196 per-location
+token vectors (model.py:731-734).  It has a tile summary (`context`).  What it
+has never had is anything that combines A PARTICULAR LOCATION's context with THAT
+LOCATION's history.
 
-  ERA5 IS 9 km.  It is IDENTICAL over a 2.24 km tile.  It is encoded once and
-  shared, never replicated per location — see Block 2.
+So we split the model into four blocks:
 
-1.5 SUPERVISION
-  ------------------------------------------------------------------------
-  label         (3,)   fp32   3 depth bins, NaN where a depth is absent
-  pixel_idx [*] (2,)   long   (row, col) of the supervised station in 224x224
-  token_idx [*] ()     long   (row//16)*14 + col//16  — the supervised location k
+  BLOCK 1  encodes the tile once, producing one context vector per location
+  BLOCK 2  encodes the weather once, shared by every location
+  BLOCK 3  runs a small transformer PER LOCATION, attending over that location's
+           own context and its own image history, cross-attending into weather
+  BLOCK 4  turns each location's output into a map by combining it with MEASURED
+           fine-resolution channels at each 32 m cell
 
-  Both derive from station_pixel() (build_network_readouts.py:75), which maps
-  lat/lon -> tile UTM -> (row, col) using epsg + bounds_utm from the tile
-  .zattrs.  pixel_idx REPLACES the hardcoded (112,112) at model.py:779.
+Block 3 is the whole change.  Blocks 1, 2 and 4 exist to feed it or to read it.
 
-1.6 anchor_valid — A LATENT BUG, FIX REGARDLESS OF THIS DESIGN
-  ------------------------------------------------------------------------
-  dataset.py:483-486 — when no acquisition exists in the rolling window:
-      return (zeros, zeros, zeros, zeros,
-              torch.tensor(0),        <- rel_pos
-              torch.tensor(0))        <- orbit_id: "S2"
-  But dataset.py:504 encodes a GENUINE S2 anchor as orbit_id=0 too.  So an
-  all-zero "no data" anchor is indistinguishable from a real S2 acquisition,
-  and at model.py:498,508 it silently receives the "S2" modality embedding.
-  Emit an explicit bool.
+The reason this works is that Block 3 sees things that differ between locations —
+S_k, and that location's own S2 and S1 history columns — while weather and the
+tile summary stay shared.  So the same shared function, given the same weather,
+can produce different trajectories at different places.  That is the capability
+the current model structurally lacks.
 
-================================================================================
-PART 2 — PRODUCING TWI AND HAND
-================================================================================
+Crucially: the fix is not per-location INPUTS, it is per-location TEMPORAL
+inputs.  Static terrain can only shift a mean.  What lets two places respond
+differently to the same rain is that each carries its own image history.
 
-2.1 WHY THE CURRENT 2.24 km TILE IS NOT ENOUGH  (measured 2026-08-17)
-  ------------------------------------------------------------------------
-  Both quantities funnel through FLOW ACCUMULATION, which is non-local.
-  Sampled 30 tiles from satellite_zarr:
-      lowest cell lies ON THE TILE BOUNDARY in 25 of 30  = 83.3%
-      relief: median 188 m, range 13.5-797 m
-  Flow leaves the window.  The channel a station drains to is outside it.
 
-  TWI:  the error would be ALIGNED WITH THE SIGNAL.  A valley cell that really
-        drains 50 km2 gets only what leaks in from the tile edge, so the
-        underestimate is largest exactly where TWI should be HIGH.  Not noise —
-        a bias that flattens the very contrast being measured.  §23 again.
-  HAND: often UNDEFINED, not merely inaccurate.  A 2.24 km headwater tile may
-        hold no cell above any sensible stream threshold.  Lower the threshold
-        until one qualifies and you have invented a stream; HAND then degenerates
-        to "height above the lowest cell in the box" = local relief renamed.
+1.4  THE DECODER IS GONE
 
-2.2 THE RECIPE
-  ------------------------------------------------------------------------
-    0. hydro-condition FIRST      breach (preferred) or fill depressions
-    1. flow direction             MFD/D-inf for accumulation
-                                  D8        for the HAND trace     <- BOTH
-    2. flow accumulation  A
-    3. a = A_cells * cellsize     specific catchment area [m]
-    4. beta = Horn(dem)           s=1 — the wide DEM is fetched at NATIVE 30 m
-    5. TWI  = ln( a / max(tan beta, 1e-3) )
-    6. streams = A > threshold    threshold calibrated against MERIT hnd ~ 0
-    7. HAND = elev - elev(first stream cell reached by the D8 trace)
+The current model upsamples 14x14 -> 224x224 with a U-Net.  We remove it, for two
+reasons.
 
-  FOUR THINGS THE BARE RECIPE NEEDS:
-    (i)   HAND NEEDS D8 EVEN THOUGH TWI NEEDS MFD.  Under MFD flow splits across
-          several downslope neighbours, so there is no single "the stream cell it
-          drains to" to trace.  Two flow-direction products from one conditioned
-          DEM.  pyflwdir and WhiteboxTools both do exactly this.
-    (ii)  CONDITION ON A BUFFER, THEN CROP.  A window edge otherwise acts as a
-          wall: flow that should exit ponds, and depressions touching the edge
-          fill to spurious levels.
-    (iii) ASSERT THE ACCUMULATION UNIT.  Libraries return cell COUNTS or AREA.
-          a = n*cellsize is the count version.  A factor of 30 inside a log is a
-          silent constant offset that nothing downstream will catch.
-    (iv)  SLOPE FLOOR 1e-3 (0.057 deg) and A FLOORED AT ONE CELL AREA.  TxSON
-          mean slope is 2.5-4.1 deg so near-flat cells are common and
-          tan beta -> 0 sends TWI to +inf.  REPORT THE PER-TILE FRACTION HITTING
-          THE FLOOR — a large fraction means TWI is degenerate there, not clipped.
+First, it has nowhere to get fine detail from.  A CNN U-Net works because its
+encoder downsamples 224->112->56->28->14 and the skip connections carry genuine
+high-resolution features.  TerraMind is a Vision Transformer; it does not
+downsample.  L3, L6, L9 and L12 are ALL at 14x14 (model.py:530).  So the decoder
+was upsampling a 14x14 bottleneck using skips that were themselves 14x14,
+interpolated up (model.py:258,261,264).  There was never any 10 m information in
+that path.
 
-2.3 WINDOW SIZE — the load-bearing choice
-  ------------------------------------------------------------------------
-  KEY REFINEMENT: the non-local error is LARGELY COMMON-MODE within a tile.
-  The model uses within-tile contrast:
-        dTWI = d ln(a) - d ln(tan beta)
-  Two cells on the same hillslope both have small local catchments and neither
-  receives the upstream inflow, so a truncated window gets their DIFFERENCE
-  right while getting both absolute values wrong.  A tile-constant offset is
-  removed by standardisation anyway.
+Second, we already tested it under both supervision regimes without meaning to.
+Given DENSE targets (§16.4) it reproduced structure almost perfectly — norm-std
+0.0061 -> 0.2504, correlation 1.000.  Given ONE label per tile (§23) it produced
+maps anti-correlated with the terrain.  Same decoder.  The problem was never the
+decoder; it was asking a generative upsampler to invent 50,176 values from one
+measurement.
 
-  It breaks specifically at CHANNEL CELLS, which receive the outside inflow
-  while adjacent hillslope cells do not.  Hence a checkable criterion:
+In its place, each output cell is computed independently: look up the token that
+covers it, attach the measured channels at that cell, run a small shared MLP.
+Nothing upsamples.  If the measured channels carry nothing, the output shows
+visible 5x5 blocks — which is the map telling you so.  A decoder would have
+smoothed that into a plausible gradient and told you nothing.
 
-      A TILE IS AT RISK IFF IT CONTAINS A CHANNEL
-      — read directly from MERIT `upa` inside the 2.24 km tile.
 
-  Headwater tiles are computable from a modest window with the contrast
-  essentially correct.
+1.5  THE OUTPUT IS 70x70 AT 32 m
 
-  BUT `a` STILL MATTERS WITHIN A TILE — it cannot be left at 90 m.
-  Order of magnitude across one hillslope:
-      a    ~30 m at the top  ->  ~500 m near the base   =>  d ln(a)       ~ 2.8
-      tanb  0.02             ->   0.10                  =>  d ln(tan b)   ~ 1.6
-  The `a` term carries AT LEAST AS MUCH within-tile contrast as the slope term.
+Not 10 m, and not 30 m.
 
-  PROPOSED WINDOW: 10 km at 30 m = 333^2 cells ~ 0.44 MB/station,
-                   ~440 MB for all 993.  Sized up per station where MERIT `upa`
-                   says the catchment is larger.
-  Compute and storage were never the constraint.
+Not 10 m because after the token gather the finest real carriers are S1/S2/LULC
+at 10 m but terrain and soil at 30 m, so most of a 10 m grid would be
+interpolation.  Not 30 m because 2240/30 = 74.67 — it does not divide the tile,
+and each token would straddle a ragged 5.33 cells.
 
-2.4 MERIT'S ROLE — VALIDATOR AND CALIBRATOR, NOT PRODUCT
-  ------------------------------------------------------------------------
-    upa INSIDE the tile        -> does this tile contain a channel? (2.3)
-    upa AT the station         -> how wide the window must be
-    our accumulation vs MERIT  -> PER-STATION BOUNDARY-CAPTURE PASS/FAIL,
-                                  with ground truth
-    hnd ~ 0 cells              -> calibrates our stream threshold instead of us
-                                  picking it by hand
-    —                          -> fallback product where no window is practical
-  ~10 KB per station, and it makes every downstream choice measurable rather
-  than assumed.
+32 m divides exactly: 2240/32 = 70 cells, and 70/14 = 5.  Every token covers
+precisely a 5x5 block, the gather is an integer divide, and there is no ragged
+edge anywhere.  32 m is 6.7% coarser than 30 m, which is nothing when the thermal
+band is 100 m.
 
-2.5 THE LARGEST CORRECTNESS RISK: GLO-30 IS A DSM
-  ------------------------------------------------------------------------
-  Copernicus GLO-30 includes CANOPY AND BUILDINGS.  A 20 m tree line dams a
-  stream, and conditioning then routes flow around a ridge that does not exist.
-  This is precisely why MERIT Hydro exists as a separate product — it removed
-  absolute bias, stripes, speckle AND tree height.
+This also makes the resolution claim honest without an asterisk: at 32 m, every
+channel feeding the output is at or below the output resolution.
 
-  Prefer FABDEM (GLO-30 with forest and buildings removed; CC-BY-NC, fine for
-  research — CONFIRM THE ACCESS ROUTE, do not assume it).
-  Failing that, BREACH rather than fill (whitebox BreachDepressionsLeastCost, or
-  richdem Priority-Flood): breaching carves through obstructions instead of
-  drowning them in flat filled areas, and behaves markedly better under canopy.
 
-  NONE of pyflwdir / richdem / whitebox / pysheds is installed in either env
-  (verified).  pyflwdir (Deltares) is the best single fit: flow direction,
-  accumulation and hand() in one numba-backed library, developed against MERIT
-  so the conventions match.
+1.6  TERRAIN: TWI AND HAND, COMPUTED OURSELVES
 
-2.6 THEORETICAL BASIS — AND WHY IT DICTATES BLOCK 3
-  ------------------------------------------------------------------------
-  TWI is TOPMODEL (Beven & Kirkby 1979).  Assuming the water table parallels
-  the surface, steady state, and T = T0*exp(-f*z):
-        R*a = T0 exp(-f z) tan beta
-          z = (1/f) [ ln(T0/R) - ln(a/tan beta) ]
-            = (1/f) [ ln(T0/R) - TWI ]
-  DEPTH TO WATER TABLE IS LINEAR IN -TWI.  That is the entire theoretical
-  content: TWI is a WATER-TABLE-DEPTH index.
+Two hydrological descriptors enter at Block 1 so that terrain can modify the
+RESPONSE to weather rather than paint an offset on the output.
 
-  HAND (Renno et al. 2008; Nobre et al. 2011) approximates the same quantity
-  more directly — the stream is the local hydraulic datum — with no steady-state,
-  recharge or transmissivity assumption.  It is also numerically more robust: a
-  height difference, whereas TWI's `a` is very sensitive to the flow algorithm.
+  TWI   ln(a / tan beta)     high in convergent hollows, low on ridges
+  HAND  height above the nearest drainage, following the flow path
 
-  NEITHER PREDICTS *SURFACE* MOISTURE except through water-table coupling.
-  Capillary rise: ~0.1-0.3 m sand, ~1-2 m silt, 3-10 m clay.  Once HAND exceeds
-  a few metres the top 10 cm is hydraulically DECOUPLED and is governed instead
-  by infiltration, evaporative demand and the retention curve — a 1-D VERTICAL
-  process, not TOPMODEL's lateral one.  TxSON has 46-88 m relief.
+Both depend on flow accumulation, which is non-local: it needs everything
+upslope.  Our tile does not contain it.  Measured on 30 sampled tiles, THE LOWEST
+CELL LIES ON THE TILE BOUNDARY IN 25 OF 30 (83.3%) — water leaves the box, so the
+stream a station drains to is outside it.
 
-  THE EMPIRICAL RESULT THAT MATTERS MOST — Grayson et al. (1997), and the
-  Tarrawarra work of Western, Grayson & Bloschl: terrain control of surface soil
-  moisture is STATE-DEPENDENT.
-      WET state -> lateral flow organises the pattern, terrain explains much of
-                   the variance                          ("nonlocal control")
-      DRY state -> soil and vegetation dominate, terrain explains ~nothing
-                                                          ("local control")
+So we fetch a wider DEM at native 30 m, condition it, and route flow ourselves.
+MERIT Hydro is used as the REFEREE rather than the source: its upslope area tells
+us how wide each station's window must be, its value at the station tells us
+whether our window was wide enough, and its drainage network calibrates our
+stream threshold so we are not inventing one.
 
-  ==> THIS IS WHY THE ARCHITECTURE BELOW IS THE RIGHT ONE.
-      If the effect is state-dependent, feeding TWI as a static input that
-      shifts a mean is the WRONG FUNCTIONAL FORM — it fits the average of two
-      regimes and matches neither.  What is required is terrain INTERACTED WITH
-      WETNESS STATE.  That is exactly what Block 3's cross-attention provides,
-      and exactly what a uniform FiLM scale/shift structurally cannot express.
 
-  TESTABLE PREDICTIONS this generates — terrain should explain dSM better:
-      in WET periods than dry           (sharpest; split by antecedent precip)
-      at 30-50 cm than at 0-10 cm       (deeper is closer to saturation deficit)
-      where HAND is SMALL               (metres, not tens of metres)
-      in humid low-relief settings      (vs semi-arid)
-  If dSM is flat across all four splits the mechanism is absent, and no DEM
-  resolution rescues it.
+1.7  LST AS AN AUXILIARY TARGET
 
-  THE COMPETING MECHANISM, STATED FAIRLY.  If lateral flow does not reach
-  0-10 cm, heterogeneity still comes from somewhere — Grayson's "local controls":
-  texture, vegetation, aspect-driven insolation.  §30.3a measured these varying
-  within our tiles (texture 0.26-0.29, socd/soc 0.50-0.54, northness 0.51), and
-  CR200-18's full-tile range is 11 wt% clay / 22.75 wt% sand.  TWI and HAND
-  address ONLY ONE of the two candidate mechanisms.
+Block 1 currently receives feedback about one location per sample.  We attach a
+second head to its 196 output vectors predicting the within-tile land surface
+temperature anomaly, giving it a few hundred supervised values per sample instead
+of one.
+
+This is NOT because temperature predicts soil moisture.  We tested that in §29
+and it does not: within-station correlation is -0.077, and the apparent +0.167
+across stations is a Simpson's-paradox artefact of station identity.  The
+auxiliary is about SUPERVISION DENSITY, not correlation.
+
+It is a side branch.  Nothing downstream reads it; it only produces gradient.
+
+
+1.8  WHAT COULD MAKE ALL OF THIS POINTLESS, STATED UP FRONT
+
+TWI and HAND are saturation-excess concepts.  They predict where the water table
+is shallow.  Our labels are the top 10 cm, which in most settings is governed by
+rain and evaporation, not lateral flow — and once HAND exceeds a few metres the
+surface is hydraulically decoupled from the water table entirely.
+
+There is an empirical result that says exactly when terrain does and does not
+work (Grayson et al. 1997): terrain organises surface moisture when the landscape
+is WET, and explains almost nothing when it is DRY.
+
+So before any of this is built, we run a gate: does terrain actually predict the
+observed difference in soil moisture between our 62 pairs of nearby stations,
+split by wet and dry?  It costs an afternoon and no GPU.  §29 was this same gate
+and it killed that arm before anyone wrote model code.
+
+If the gate fails, we lose one input — not the architecture.  Block 3 works
+through per-location image history, which has nothing to do with terrain.
+
+
 
 ================================================================================
-PART 3 — BLOCK 1: CONTEXT ENCODER   (runs ONCE per sample, whole tile)
+PART 2 — SYMBOLS AND GRIDS
 ================================================================================
 
-3.1 TERRAIN STEM [*]
-  ------------------------------------------------------------------------
-    terrain_lo (B,3,28,28)
-      -> Conv2d(3, 768, k=3, stride=2, pad=1)     28x28 -> 14x14
-      -> GELU
-      -> Conv2d(768, 768, k=1)                    <- ZERO-INIT weight AND bias
-      -> reshape                                  (B, 196, 768) = terrain_tokens
+2.1  SYMBOLS
 
-  A LEARNED stem, not hand-picked pooling: it decides for itself how to reduce
-  80 m -> 160 m.  stride-2 because 28 is exactly 2x14, so there is no resampling
-  ambiguity anywhere in the path.
+  B             batch size
+  d_model=768   width of every token vector, everywhere
 
-3.2 WHERE TERRAIN IS ADDED
-  ------------------------------------------------------------------------
-  At model.py:501-505, where spatial_pe is already applied:
+  k             A LOCATION INDEX, 0..195 — one of the 196 tokens in the tile.
+                Training supervises ONE k per sample; inference runs all 196.
+  i, j          an OUTPUT CELL index, 0..69, on the 70x70 grid at 32 m
 
-    spatial_tokens = anchor_l12 + spatial_pe + modality_emb + terrain_tokens
-                                                              ^^^^^^^^^^^^^^ NEW
+  ctx           the full transformer output, <=1035 tokens.  Block 1's raw
+                output, before anything is sliced from it.
+  S             (B,196,768)  PER-LOCATION CONTEXT.  ctx sliced at the 196 spatial
+                positions.  S[:,k,:] describes location k: how it looks, its
+                terrain, and what it absorbed from the rest of the tile through
+                six layers of attention.
+  S_k           shorthand for S[:,k,:] — one location's own 768-vector
+  g             (B,768)  TILE SUMMARY.  Masked mean of ctx over every valid
+                non-spatial, non-CLS, non-pad token.  Same for every k.
+                This is today's `context` (model.py:736-743), unchanged.
+  W             (B,T_w,768)  ENCODED WEATHER — ERA5 + SIF + TWSA.  Computed once
+                and SHARED.  Never replicated per location.
+  seq_k         the ~102-token sequence Block 3 attends over for location k:
+                [ S_k | g | s2_tok_k | s1_tok_k ]
+  h_k           (B,768)  Block 3's output for location k.  Still 160 m.  The last
+                thing the transformer stack produces.
 
-  THREE CONSEQUENCES, EACH LOAD-BEARING:
+  fine[:,i,j]   the C=17 MEASURED channels at output cell (i,j).  THIS, not the
+                transformer, is where sub-160 m detail comes from.
+  terrain_lo    (3,28,28)   TWI, HAND, valid_mask at 80 m   -> Block 1 stem
+  terrain_hi    (3,70,70)   the same three at 32 m          -> Block 4
+  s2_tok_k      (60,768)    location k's OWN S2 history column, all dates
+  s1_tok_k      (40,768)    location k's OWN S1 history column
+  pixel_idx     (2,)  (i,j) of the supervised station on the 70x70 grid
+  token_idx     ()    k of the supervised station = (row//5)*14 + col//5
 
-  (a) BIT-IDENTITY IS FREE.  With the final 1x1 zero-initialised,
-      terrain_tokens == 0 at init.  No sequence-length change, no new token, no
-      perturbed attention => the forward pass is EXACTLY best.pt's.  This is
-      what makes terrain a safe additive change rather than a rewrite, and it is
-      what the regression gate checks.
+  a             specific catchment area [m] — the NON-LOCAL half of TWI
+  beta          local slope angle — the LOCAL half of TWI
+  lambda        weight on the LST auxiliary loss (Part 10)
 
-  (b) PER-LOCATION ALIGNMENT.  Added INTO the 196 spatial tokens, so token k's
-      terrain lands on token k.  Appending 4 pooled terrain tokens the way
-      dem_pyr / lulc_pyr are handled would make terrain TILE-LEVEL, able only to
-      shift the mean — the exact failure being fixed.
 
-  (c) NO EXTRA TOKEN IS NEEDED FOR g.  `context` is computed from the encoder
-      OUTPUT (model.py:736-743), so the non-spatial tokens have already attended
-      over the spatial tokens by then.  Terrain reaches g through attention.
+2.2  GRIDS, AND HOW THEY NEST
 
-3.3 SEQUENCE ASSEMBLY  (model.py:532-666, order and length unchanged)
-  ------------------------------------------------------------------------
-   idx      block                     tokens   built from
-   -----    ----------------------    ------   ----------------------------------
-   0-3      DEM pyramid                  4     dem_pyr + scale_emb + static_mod[0]
-   4-7      LULC pyramid                 4     lulc_pyr + scale_emb + static_mod[1]
-   8-11     Soil                         4     SoilEncoder(21,74,74) (model.py:287)
-   12-207   SPATIAL  <- spatial_start  196     anchor_l12 + spatial_pe
-                                               + spatial_modality_emb(anchor_orbit)
-                                               + staleness(anchor_rel_pos)
-                                               + terrain_tokens              [*]
-   ...      S2 history                 240     60 acq x 4 scales  (-> 60 with [*])
-   ...      S1 history                 160     40 acq x 4 scales  (-> 40 with [*])
-   ...      ERA5                       365     one token per day
-   ...      SIF                      <= 50
-   ...      TWSA                     <= 12
-                                    -------
-                                    <= 1035 tokens @ d_model = 768
+  grid              cells       cell size   note
+  ----------------  ----------  ----------  -----------------------------------
+  raw imagery        224 x 224      10 m    S1, S2, LULC native
+  TOKEN GRID          14 x 14      160 m    TerraMind patch — A HARD FLOOR
+  OUTPUT              70 x 70       32 m    EXACTLY 5x5 cells per token
+  soil                74 x 74       30 m    OpenLandMap native
+  thermal (LST)      ~22 x 22      100 m    Landsat TIRS native.  The ST product
+                                            ships at 30 m but the INFORMATION is
+                                            100 m.
 
-  Depth-CLS tokens (use_cls_depth) are prepended; `depth_offset` shifts
-  spatial_start accordingly, so downstream code uses
-  sp_start = spatial_start + depth_offset.
+  THE ONE SENTENCE THAT EXPLAINS THE WHOLE DESIGN:
 
-  POSITION EMBEDDING for the 196 spatial tokens (model.py:403-404, 501-505):
-      spatial_row_emb = nn.Embedding(14, 768)
-      spatial_col_emb = nn.Embedding(14, 768)
-      spatial_pe = (row_emb[r].unsqueeze(1) + col_emb[c].unsqueeze(0))
-                     .reshape(196, 768)
-  A SEPARABLE 2-D additive embedding.  MUST BE INDEXED BY ABSOLUTE ROW/COL, not
-  crop-relative — see 3.5.
+      The transformer says what is happening in each 160 m neighbourhood.
+      The measured channels say how this particular 32 m cell differs from it.
 
-3.4 ENCODER AND OUTPUTS
-  ------------------------------------------------------------------------
-    6 x DropPathTransformerLayer, full self-attention over the whole sequence
-        (model.py:59)
+  All 25 cells inside one token receive the IDENTICAL h_k.  They can differ ONLY
+  through `fine`.  Nothing upsamples.  Nothing is invented.
 
-    ctx = encoder(sequence)
 
-    S = ctx[:, sp_start : sp_start+196, :]        (B, 196, 768)
-        ONE CONTEXT VECTOR PER LOCATION.  Each S[:,k,:] now carries: that
-        location's satellite appearance, its terrain (TWI/HAND), and whatever it
-        absorbed from weather/soil/static tokens through 6 layers of attention.
+2.3  DIAGRAM NOTATION USED IN PART 3
 
-    g = masked mean of ctx over all NON-spatial, non-CLS, non-pad tokens
-                                                  (B, 768)
-        The tile summary.  This is today's `context`, unchanged.
-        NOTE it includes the pooled DEM/LULC/soil tokens at indices 0-11 — the
-        code comment calling it "temporal context" is imprecise.
-
-3.5 POSITION LEAKAGE — MUST BE FIXED HERE, NOT OPTIONAL
-  ------------------------------------------------------------------------
-  Patches are STATION-CENTRED, so the supervised location is ALWAYS token
-  k = 105 and pixel (112,112).  The model can learn "read the centre" instead of
-  learning the mapping.
-
-  FIX: a token-space TRANSLATION CROP — a random 10x10 sub-window of the 14x14
-  grid.  This is a slice of tensors already in memory, so it costs nothing.
-  spatial_row_emb / spatial_col_emb are then indexed by ABSOLUTE row/col so the
-  model still knows where it sits within the tile.
-
-  CHECK: regress per-readout error on offset_px (a column in
-  csvs/txson_readouts.csv).  §26.11 shows a POSITIVE slope today; it must fall
-  to ~0.  IF SPREAD IMPROVES WHILE THAT SLOPE STAYS POSITIVE, THE GAIN IS
-  MEMORISATION.
-
-================================================================================
-PART 4 — BLOCK 2: WEATHER ENCODER   (runs ONCE, SHARED across all locations)
-================================================================================
-
-    ERA5 (365,19) + SIF (<=50) + TWSA (<=12)   ->   W  (B, T_w, 768)
-
-  NEVER REPLICATED PER LOCATION.  ERA5 is 9 km, i.e. IDENTICAL over a 2.24 km
-  tile, so replicating it 196x would cost 196x the memory for exactly zero
-  additional information.  This is the single largest saving in the design and
-  it is what makes running the processor 196x at inference affordable.
-
-================================================================================
-PART 5 — BLOCK 3: PER-LOCATION PROCESSOR   <<< THE ARCHITECTURAL DELTA >>>
-         (per location k, weights SHARED across all k)
-================================================================================
-
-    seq_k = [ S[:,k,:] ,   g   ,  s2_tok_k (60) ,  s1_tok_k (40) ]
-              varies      const     varies           varies
-                                                    ~102 tokens
-
-    L x (
-          self-attention over seq_k
-          cross-attention:  query = seq_k,  key/value = W      <-- INTERACTION
-        )
-
-    h_k  (B, 768)   ->  linear  ->  SM(3 depths) at location k
-
-  WHAT VARIES WITH k — THE WHOLE MECHANISM:
-    S[:,k,:]     own context, now carrying TWI/HAND    YES
-    s2_tok_k     own S2 history column                 YES
-    s1_tok_k     own S1 history column                 YES
-    g            tile summary                          no
-    W            weather                               no
-
-  The encoders run ONCE; only the SLICE differs.  If everything fed to the
-  processor were tile-constant, every location would emit an identical
-  trajectory and today's failure would be rebuilt with more machinery.
-
-  THE FIX IS NOT PER-LOCATION INPUTS, IT IS PER-LOCATION *TEMPORAL* INPUTS.
-  Static terrain alone can only shift a location's mean.  What lets two
-  locations respond differently to the same rain is that each carries its own
-  S2/S1 HISTORY COLUMN, read through its own terrain context.
-
-  THE CROSS-ATTENTION IS WHERE THE PHYSICS LIVES.  A query derived from S_k —
-  which now encodes "this location is a hollow, TWI 12, HAND 3 m" — can attend
-  differently to the weather sequence than a ridge's query does.  A hollow can
-  learn "after three days of rain I stay wet a week longer"; a ridge learns
-  "I dry in a day".  Per 2.6, that state-dependent interaction IS the effect.
-
-  TERRAIN IS NOT FED INTO seq_k SEPARATELY.  It is already inside S_k; re-adding
-  it is parameters for no new information.
-
-  WHY ONE-PIXEL SUPERVISION SUFFICES.  The processor is ONE SHARED function
-  f(local context, weather) -> SM(t), fitted at supervised locations across 993
-  STATIONS spanning a huge context range.  Running it at an unsupervised
-  location inside a tile is INTERPOLATION IN CONTEXT SPACE, not extrapolation.
-
-  COST:
-                            training        inference
-    Block 1 context         full tile, once      once
-    Block 2 weather         once                 once
-    Block 3 processor       1 LOCATION           196
-    Block 4 per-pixel head  1 PIXEL              50,176 (one batched 1x1 conv)
-
-================================================================================
-PART 6 — BLOCK 4: PER-PIXEL HEAD, NO UPSAMPLING ANYWHERE
-================================================================================
-
-  for pixel (i,j):
-      tok  = h[:, i//16, j//16, :]        NEAREST GATHER — an index op
-      fine = concat( terrain_hi[:,:,i,j],   # TWI, HAND, valid       3
-                     s1_hi[:,:,i,j],        # vv/vh now+median, dt    5
-                     s2_hi[:,:,i,j],        # ndvi, swir, dt          3
-                     lulc_hi[:,:,i,j],      # class embedding         2
-                     soil_hi[:,:,i,j] )     # soc, socd, bd           3
-                                            #                     C = 16
-      out(i,j) = MLP([tok, fine])           shared weights = 1x1 conv
-
-  -> (B, 3, 224, 224)
-
-6.1 THE RULE THAT MAKES A 10 m OUTPUT DEFENSIBLE
-  ------------------------------------------------------------------------
-  The criterion was never resolution.  It is WHERE SUB-TOKEN DETAIL COMES FROM:
-
-                        | 14x14 out | unpatchify   | token gather + rasters
-    --------------------|-----------|--------------|------------------------
-    output grid         |   160 m   |    10 m      |        10 m
-    sub-token detail    |     —     | token embed  |   MEASURED PIXELS
-    defensible under    |    yes    |     NO       |        YES
-    1 label / 50,176 px |           |              |
-
-  Unpatchify is rejected because the network would INVENT sub-token structure
-  with nothing to check it — §17.7's objection to the DiVAE, and what §23 caught
-  the decoder actually doing.  A nearest gather of the 160 m token concatenated
-  with MEASURED 10-30 m rasters invents nothing: every sub-token variation
-  traces to a measurement.
-
-6.2 NON-NEGOTIABLE RULES
-  ------------------------------------------------------------------------
-  * NEAREST GATHER, NEVER BILINEAR.
-  * BLOCKINESS IS A DIAGNOSTIC, NOT A DEFECT.  If the fine rasters are inert,
-    the output shows visible 16-px blocking.  That IS the signal that Block 4 is
-    doing nothing.  Bilinear hides exactly that failure behind a smooth ramp —
-    which is how the current map looks plausible while being anti-correlated
-    with the landscape.  DO NOT SMOOTH IT AWAY.  REPORT IT.
-  * NO WITHIN-BLOCK COORDINATE FEATURE (i%16, j%16).  It would let the model
-    paint arbitrary sub-token patterns from position alone, i.e. invent
-    structure, which is the whole thing being avoided.
-  * EVERY FINE CHANNEL MUST BE MEASURED.  No learned upsampling anywhere.
-
-6.3 UNetDecoder IS DELETED
-  ------------------------------------------------------------------------
-  model.py:188 — four upsampling stages at 512/256/128/64 plus three FiLM'd
-  skips (L9/L6/L3), all modulated by the spatially-constant `context`.  Kept
-  runnable behind --head unet for the regression gate and rollback.
-  §28.2's figure: ~3.2 M activations/sample/depth against ~200 K here.
-  TRAINING GETS CHEAPER, not more expensive.
-
-================================================================================
-PART 7 — LOSS AND SUPERVISION
-================================================================================
-
-  masked_huber_loss (model.py:751) currently reads the HARDCODED (112,112) at
-  model.py:779.  Replace with a gather at pixel_idx (1.5).  ~80 lines;
-  eval_predict.py:167-169 already gathers this way.
-  NaN labels are masked per depth, as today.
-
-  OFF-CENTRE SUPERVISION IS BUILT BUT MUST NOT BE LOAD-BEARING.
-  The TRAIN split has only 12 off-centre pairs on 12 tiles, and
-  location_group_id NEVER spans splits (0 of 906) — so no reshuffle creates
-  more.  Build the machinery because it is cheap; do not expect it to carry the
-  run.
-
-================================================================================
-PART 8 — TRAIN VS INFERENCE
-================================================================================
-
-  TRAINING (one sample):
-    Block 1  full tile                       -> S (196,768), g (768)
-    Block 2  weather                         -> W
-    Block 3  ONE location, k = token_idx     -> h_k
-    Block 4  ONE pixel, (i,j) = pixel_idx    -> 3 values
-    loss vs label (3,), NaN-masked
-
-  INFERENCE (one sample):
-    Block 1  identical
-    Block 2  identical
-    Block 3  all 196 locations, batched over k   -> h (196,768)
-    Block 4  all 50,176 pixels, one batched 1x1 conv -> (3,224,224)
-
-  Block 1 and Block 2 are IDENTICAL in both paths — that is what makes the
-  196x inference cost affordable and the 1x training cost cheap.
-
-================================================================================
-PART 9 — FLOWCHART
-================================================================================
-
---------------------------------------------------------------------------------
-9.0  LEGEND
---------------------------------------------------------------------------------
-
-   ┌────────┐   a tensor, or a store on disk.  Shape is printed inside.
+   ┌────────┐   a tensor, or a store on disk.  Shape printed inside.
    └────────┘
-
    ╔════════╗   a NEW or CHANGED block.  Everything else exists today.
    ╚════════╝
+      │  ▼      solid arrow — a tensor flows along it, once per sample
+      ┆  ▽      dashed arrow — SHARED / broadcast; computed once, read many times
+      (+)       element-wise addition, NOT concatenation
+      [k]       this quantity is SLICED at location k — it VARIES with k
+      (=)       this quantity is the SAME for every k
 
-      │  ▼      solid arrow = a tensor flows along it, once per sample.
-      ┆  ▽      dashed arrow = SHARED / broadcast — computed once, read many times.
-      (+)       element-wise addition (not concatenation).
-      [k]       this quantity is SLICED at location k — it VARIES with k.
-      (=)       this quantity is the SAME for every k.
 
-   Read every diagram top to bottom.  Widths are ~92 columns.
 
---------------------------------------------------------------------------------
-9.1  STAGE 0 — FROM DISK TO ONE TRAINING SAMPLE
---------------------------------------------------------------------------------
-
-  ┌──────────────────────────────┐ ┌──────────────────────────────┐ ┌──────────────────────┐
-  │ satellite_zarr    PERMANENT  │ │ token store        (scratch) │ │ MERIT + wide GLO-30  │
-  │ /projects/prjs1968/          │ │ /gpfs/scratch1/…/zarr/{cat}  │ │              NEW     │
-  ├──────────────────────────────┤ ├──────────────────────────────┤ ├──────────────────────┤
-  │ s2   (N,12,224,224)    10 m  │ │ anchor L3/L6/L9/L12 (196,768)│ │ upa, hnd        90 m │
-  │ s1   (N, 2,224,224)    10 m  │ │ s2 L12 grid   (N,196,768)    │ │ GLO-30 wide     30 m │
-  │ lulc (4,   224,224)    10 m  │ │ s1 L12 grid   (N,196,768)    │ │ 10 km window         │
-  │ dem  (1,   224,224)    30 m  │ │ soil  (21,74,74)        30 m │ └──────────┬───────────┘
-  │ .zattrs: epsg, bounds_utm    │ │ era5 (365,19) sif twsa   9 km│            │
-  └──────────────┬───────────────┘ └──────────────┬───────────────┘            ▼
-                 │                                │              ╔══════════════════════════╗
-                 ▼                                │              ║ build_twi_hand.py        ║
-  ╔══════════════════════════════╗                │              ║  condition (breach)      ║
-  ║ build_fine_stack.py          ║                │              ║  → MFD route  → a, TWI   ║
-  ║  speckle multi-look          ║                │              ║  → D8 trace   → HAND     ║
-  ║  long-term medians           ║                │              ║  → QC vs MERIT upa/hnd   ║
-  ║  days_since                  ║                │              ╚══════════════╤═══════════╝
-  ╚══════════════┬═══════════════╝                │                             │
-                 │                                │                             │
-                 │  s1_hi (5,224,224)             │  anchor, s2/s1 grids,       │ terrain_lo
-                 │  s2_hi (3,224,224)             │  soil, era5, sif, twsa      │  (3,28,28)
-                 │  lulc_hi, soil_hi              │                             │ terrain_hi
-                 │                                │                             │  (3,224,224)
-                 └────────────────┬───────────────┴─────────────────────────────┘
-                                  ▼
-                 ┌──────────────────────────────────────────┐
-                 │ dataset.__getitem__                      │
-                 │                                          │
-                 │  station lat/lon ──► station_pixel()     │
-                 │        └─► pixel_idx (row,col)   in 224  │
-                 │        └─► token_idx k = (r//16)*14+c//16│
-                 │                                          │
-                 │  s2 L12 (N,196,768) ──► INDEX COLUMN k   │
-                 │        └─► s2_tok_k (60,768)   92 KB     │
-                 │            NOT _cpu_pyramid_pool, which  │
-                 │            gave (60,4,768) 184 KB and    │
-                 │            destroyed 97-98% of position  │
-                 │                                          │
-                 │  translation crop: random 10x10 of 14x14 │
-                 │        (breaks the always-k=105 leak)    │
-                 └────────────────────┬─────────────────────┘
-                                      ▼
-                              one training sample
-
-  WHY THE STORES ARE SPLIT.  dataset.py reads ONLY the token store (dataset.py:39).  So the
-  derived arrays (terrain_lo/hi, the fine stacks) are written THERE, needing no new read path,
-  while the raw MERIT and wide DEM stay on /projects.  A scratch purge then costs a CPU re-run,
-  never a re-download.
+================================================================================
+PART 3 — FLOWCHARTS
+================================================================================
 
 --------------------------------------------------------------------------------
-9.2  MASTER FLOWCHART — ALL FOUR BLOCKS
+3.1  MASTER — INPUTS TO OUTPUT
 --------------------------------------------------------------------------------
 
    anchor_l12   terrain_lo    dem_pyr        soil        s2_tok_k   s1_tok_k    era5/sif/twsa
@@ -651,192 +295,219 @@ PART 9 — FLOWCHART
           │ S  (196,768)   │  │ g   (768)    │               │          │   │ W  (T_w,768)     │
           │ per-location   │  │ tile summary │               │          │   │ SHARED, never    │
           │ context        │  │              │               │          │   │ replicated       │
-          └───────┬────────┘  └──────┬───────┘               │          │   └────────┬─────────┘
-                  │ [k]              │ (=)                   │[k]       │[k]         ┆ (=)
-                  └──────────┬───────┴───────────────────────┴──────────┘            ┆
-                             ▼                                                       ┆
-   ╔═════════════════════════════════════════════════════════════════════════════╗   ┆
-   ║ BLOCK 3 · PER-LOCATION PROCESSOR        weights SHARED across all k          ║   ┆
-   ║                                                                             ║   ┆
-   ║   seq_k = [ S[:,k,:] │ g │ s2_tok_k (60) │ s1_tok_k (40) ]   ~102 tokens    ║   ┆
-   ║              [k]      (=)      [k]             [k]                          ║   ┆
-   ║                                                                             ║   ┆
-   ║   L x (  self-attention over seq_k  ──►  cross-attention into W  ) ◄┄┄┄┄┄┄┄┄─╫┄┄┄┘
-   ║                                          ^^^^^^^^^^^^^^^^^^^^^^              ║
-   ║                                          terrain x weather INTERACTION       ║
-   ║   → h_k (B,768)          train: 1 location    ·    infer: all 196            ║
-   ╚═════════════════════════════════════╤═══════════════════════════════════════╝
-                                         │
-            terrain_hi ┐                 ▼
-            s1_hi      │  ╔══════════════════════════════════════════════════════╗
-            s2_hi      ├─►║ BLOCK 4 · PER-PIXEL HEAD    no upsampling anywhere   ║
-            lulc_hi    │  ║                                                      ║
-            soil_hi    ┘  ║  out(i,j) = MLP([ h[i//16, j//16] , fine[:,i,j] ])   ║
-              C=16        ║               nearest GATHER      measured 10-30 m   ║
-            MEASURED      ║  train: 1 pixel   ·   infer: 50,176 (batched 1x1)    ║
-                          ╚══════════════════════╤═══════════════════════════════╝
-                                                 ▼
-                                    ┌─────────────────────────┐
-                                    │  (B, 3, 224, 224)       │
-                                    │  3 depths @ 10 m grid   │
-                                    └────────────┬────────────┘
-                                                 ▼
-                          ┌──────────────────────────────────────────┐
-                          │ masked Huber loss @ pixel_idx            │
-                          │ 1 label in 50,176 pixels · NaN-masked    │
-                          └──────────────────────────────────────────┘
+          └──┬──────┬──────┘  └──────┬───────┘               │          │   └────────┬─────────┘
+             │      │ [k]            │ (=)                   │[k]       │[k]         ┆ (=)
+             │      └────────┬───────┴───────────────────────┴──────────┘            ┆
+             │               ▼                                                       ┆
+     ╔═══════▼══════╗ ╔═════════════════════════════════════════════════════════╗    ┆
+     ║ LST HEAD     ║ ║ BLOCK 3 · PER-LOCATION PROCESSOR                        ║    ┆
+     ║ Linear 768→1 ║ ║          weights SHARED across all k                    ║    ┆
+     ║ over all 196 ║ ║                                                         ║    ┆
+     ║   ↓          ║ ║  seq_k = [ S_k │ g │ s2_tok_k(60) │ s1_tok_k(40) ]      ║    ┆
+     ║ (14,14) pred ║ ║             [k]  (=)      [k]           [k]  ~102 tok   ║    ┆
+     ║ LST anomaly  ║ ║                                                         ║    ┆
+     ║   ↓          ║ ║  L x ( self-attn  ──►  cross-attn into W ) ◄┄┄┄┄┄┄┄┄┄┄┄─╫┄┄┄┄┘
+     ║ loss_LST     ║ ║                        ^^^^^^^^^^^^^^^^^                ║
+     ║ @196 tokens  ║ ║                        terrain x weather INTERACTION    ║
+     ╚═══════╤══════╝ ║  → h_k (B,768)     train: 1 location · infer: all 196   ║
+             ┆        ╚════════════════════════╤════════════════════════════════╝
+             ┆                                 │
+             ┆       terrain_hi ┐              ▼
+             ┆       s1_hi      │ ╔═══════════════════════════════════════════╗
+             ┆       s2_hi      ├►║ BLOCK 4 · PER-CELL HEAD                   ║
+             ┆       lulc_hi    │ ║   no upsampling anywhere                  ║
+             ┆       soil_hi    │ ║                                           ║
+             ┆       lst_hi     ┘ ║ out(i,j) = MLP([ h[i//5, j//5],           ║
+             ┆         C=17       ║                  fine[:,i,j] ])           ║
+             ┆       MEASURED     ║        nearest GATHER    measured 32 m    ║
+             ┆                    ║ train: 1 cell  ·  infer: 4,900            ║
+             ┆                    ╚════════════════════════╤══════════════════╝
+             ┆                                             ▼
+             ┆                              ┌───────────────────────────┐
+             ┆                              │  (B, 3, 70, 70)  @ 32 m   │
+             ┆                              └─────────────┬─────────────┘
+             ┆                                            ▼
+             ┆                              ┌───────────────────────────┐
+             ┆                              │ loss_SM @ pixel_idx       │
+             ┆                              │ 1 label · NaN-masked      │
+             ┆                              └─────────────┬─────────────┘
+             └──────────────────┬───────────────────────── ┘
+                                ▼
+                  L = loss_SM  +  lambda · loss_LST
 
-  THE ONE ARROW THAT MATTERS is the dashed one into Block 3's cross-attention.  W is computed
-  ONCE and read by every location, but each location queries it with its OWN S_k — which now
-  carries that location's TWI and HAND.  That is the only place in the graph where terrain can
-  modify the RESPONSE TO WEATHER rather than add an offset.  In the current model this arrow
-  does not exist: `context` is a single vector applied uniformly by FiLM.
+READ THE THREE ARROWS INTO BLOCK 3.  S_k varies with location, the histories vary
+with location, g and W do not.  The encoders run ONCE; only the SLICE differs.
+If everything entering the processor were tile-constant, every location would
+emit an identical trajectory and today's failure would be rebuilt with more
+machinery.
+
+THE DASHED ARROW IS THE POINT.  W is computed once and read by every location,
+but each location queries it with its OWN S_k — which carries that location's TWI
+and HAND.  That is the only place in the entire graph where terrain can change
+the RESPONSE to weather rather than add an offset.  In the current model this
+arrow does not exist: `context` is one vector applied uniformly by FiLM.
+
 
 --------------------------------------------------------------------------------
-9.3  BLOCK 1 ZOOM — SEQUENCE ASSEMBLY
+3.2  BLOCK 1 ZOOM — HOW THE SEQUENCE IS BUILT
 --------------------------------------------------------------------------------
 
    anchor_l12 (196,768) ──┐
-   spatial_pe (196,768) ──┤   row_emb[r] + col_emb[c], ABSOLUTE index (not crop-relative)
+   spatial_pe (196,768) ──┤  row_emb[r] + col_emb[c], ABSOLUTE index
    modality_emb           ├──(+)──► spatial_tokens (196,768)
    staleness(rel_pos)   ──┤                    │
-   terrain_tokens ────────┘  ◄── ZERO-INIT     │
+   terrain_tokens ────────┘ ◄── ZERO-INIT      │
                                                │
-   idx    tokens   content                     │
-   ─────  ──────   ───────────────────────     │
-   0-3       4     DEM pyramid                 │
-   4-7       4     LULC pyramid                │
-   8-11      4     Soil (SoilEncoder)          │
-   12-207  196     SPATIAL  ◄──────────────────┘   spatial_start = 12
-   …       240     S2 history      (→ 60 with the column-k change)
-   …       160     S1 history      (→ 40 with the column-k change)
-   …       365     ERA5
-   …     <= 50     SIF
-   …     <= 12     TWSA
-         ───────
-         <=1035 tokens @ 768
-              │
-              ▼
+   idx     tokens   content                    │
+   ─────   ──────   ──────────────────────     │
+   0-3        4     DEM pyramid                │
+   4-7        4     LULC pyramid               │
+   8-11       4     Soil (SoilEncoder)         │
+   12-207   196     SPATIAL ◄───────────────────┘   spatial_start = 12
+   …        240     S2 history   (→ 60 with the column-k change)
+   …        160     S1 history   (→ 40 with the column-k change)
+   …        365     ERA5
+   …      <= 50     SIF
+   …      <= 12     TWSA
+          ───────
+          <=1035 tokens @ 768
+               │
+               ▼
    ┌──────────────────────────────┐
-   │ 6 x DropPathTransformerLayer │   full bidirectional self-attention
+   │ 6 x DropPathTransformerLayer │  full bidirectional self-attention
    └──────────────┬───────────────┘
                   ▼
                  ctx
                   │
         ┌─────────┴──────────┐
         ▼                    ▼
-   S = ctx[:, 12:208, :]   g = masked mean over ALL NON-spatial, non-CLS, non-pad tokens
-   (196,768)               (768)
+   S = ctx[:, 12:208, :]   g = masked mean over ALL non-spatial, non-CLS,
+   (196,768)                   non-pad tokens          (768)
 
-  WHY TERRAIN IS ADDED, NOT APPENDED.  Three reasons, each load-bearing:
-    1. BIT-IDENTITY.  terrain_tokens == 0 at init, and adding zero changes nothing.  No new
-       token, no sequence-length change, no perturbed attention → the forward pass is EXACTLY
-       best.pt's.  Appending a token would change the sequence and break the regression gate.
-    2. ALIGNMENT.  Token k's terrain must land on token k.  Appending 4 POOLED terrain tokens
-       (the dem_pyr / lulc_pyr pattern) would make terrain TILE-LEVEL — able only to shift the
-       mean, which is the exact failure being fixed.
-    3. g GETS IT ANYWAY.  g is computed from the encoder OUTPUT, so the non-spatial tokens have
-       already attended over the spatial tokens.  Terrain reaches g through attention; no extra
-       token is required.
 
 --------------------------------------------------------------------------------
-9.4  BLOCK 3 ZOOM — THE DELTA
+3.3  BLOCK 3 ZOOM — THE DELTA, DRAWN
 --------------------------------------------------------------------------------
 
    location k = 40                          location k = 141
    ┌────────────────────────┐               ┌────────────────────────┐
-   │ S[:,40,:]   a HOLLOW   │               │ S[:,141,:]  a RIDGE    │
+   │ S_40        a HOLLOW   │               │ S_141       a RIDGE    │
    │  TWI 12, HAND 3 m      │               │  TWI 6, HAND 28 m      │
    │ s2_tok_40  own history │               │ s2_tok_141 own history │
    │ s1_tok_40  own history │               │ s1_tok_141 own history │
    │ g          (=) SAME    │               │ g          (=) SAME    │
    └───────────┬────────────┘               └───────────┬────────────┘
                │                                        │
-               ▼         SHARED WEIGHTS                  ▼
-        ┌─────────────┐   (one function)          ┌─────────────┐
-        │ self-attn   │                           │ self-attn   │
-        └──────┬──────┘                           └──────┬──────┘
+               ▼        SHARED WEIGHTS                  ▼
+        ┌─────────────┐  (one single function)   ┌─────────────┐
+        │ self-attn   │                          │ self-attn   │
+        └──────┬──────┘                          └──────┬──────┘
                │                                        │
                ▼                                        ▼
-        ┌─────────────┐      ┌──────────┐        ┌─────────────┐
-        │ cross-attn  │◄┄┄┄┄┄┤ W        ├┄┄┄┄┄┄┄►│ cross-attn  │
-        └──────┬──────┘      │ (=) same │        └──────┬──────┘
-               │             │ weather  │               │
-               ▼             └──────────┘               ▼
-          h_40 (768)                              h_141 (768)
+        ┌─────────────┐     ┌──────────┐         ┌─────────────┐
+        │ cross-attn  │◄┄┄┄┄┤ W        ├┄┄┄┄┄┄┄┄►│ cross-attn  │
+        └──────┬──────┘     │ (=) same │         └──────┬──────┘
+               │            │ weather  │                │
+               ▼            └──────────┘                ▼
+          h_40 (768)                               h_141 (768)
                │                                        │
                ▼                                        ▼
-     "after 3 d of rain I stay             "I dry in a day"
-      wet a week longer"
+   "after 3 days of rain I stay             "I dry in a day"
+    wet a week longer"
 
-  SAME weather, SAME weights, DIFFERENT response.  That is the whole point, and it is only
-  possible because S_k, s2_tok_k and s1_tok_k differ.  If every input to the processor were
-  tile-constant, both columns would emit identical trajectories and today's failure would be
-  rebuilt with more machinery.
+SAME weather.  SAME weights.  DIFFERENT response.  That is the entire point, and
+it is possible only because S_k and the two history columns differ.
 
-  THE FIX IS NOT PER-LOCATION INPUTS, IT IS PER-LOCATION *TEMPORAL* INPUTS.  Static terrain
-  alone shifts a mean.  What lets the two columns diverge is that each carries its own S2/S1
-  HISTORY, read through its own terrain context.  (Theory: 2.6 — Grayson's wet/dry state
-  dependence means the terrain effect IS an interaction, so a static input is the wrong form.)
 
 --------------------------------------------------------------------------------
-9.5  BLOCK 4 ZOOM — NEAREST GATHER, AND THE BLOCKINESS DIAGNOSTIC
+3.4  BLOCK 4 ZOOM — WHERE THE 32 m COMES FROM
 --------------------------------------------------------------------------------
 
-   the 14x14 token grid                 the 224x224 output grid
-   (each token = 16x16 px = 160 m)      (each cell = 10 m)
+   the 14x14 token grid                the 70x70 output grid
+   (1 token = 160 m)                   (1 cell = 32 m, 5x5 per token)
 
-   ┌────┬────┬────┐                     ┌────────┬────────┬────────┐
-   │h[0,│h[0,│h[0,│                     │████████│▓▓▓▓▓▓▓▓│░░░░░░░░│  16 px
-   │  0]│  1]│  2]│      GATHER         │████████│▓▓▓▓▓▓▓▓│░░░░░░░░│  each
-   ├────┼────┼────┤   ──────────►       ├────────┼────────┼────────┤
-   │h[1,│h[1,│h[1,│   h[i//16, j//16]   │▒▒▒▒▒▒▒▒│████████│▓▓▓▓▓▓▓▓│
-   │  0]│  1]│  2]│   an INDEX OP       │▒▒▒▒▒▒▒▒│████████│▓▓▓▓▓▓▓▓│
-   └────┴────┴────┘   no interpolation  └────────┴────────┴────────┘
-                                          within one block the token is CONSTANT;
-                                          all variation must come from `fine`
+   ┌─────┬─────┬─────┐                 ┌───────┬───────┬───────┐
+   │h[0, │h[0, │h[0, │                 │███████│▓▓▓▓▓▓▓│░░░░░░░│  5x5 cells
+   │  0] │  1] │  2] │    GATHER       │███████│▓▓▓▓▓▓▓│░░░░░░░│  each
+   ├─────┼─────┼─────┤  ─────────►     ├───────┼───────┼───────┤
+   │h[1, │h[1, │h[1, │  h[i//5, j//5]  │▒▒▒▒▒▒▒│███████│▓▓▓▓▓▓▓│
+   │  0] │  1] │  2] │  an INDEX OP    │▒▒▒▒▒▒▒│███████│▓▓▓▓▓▓▓│
+   └─────┴─────┴─────┘  no interp      └───────┴───────┴───────┘
+                                        inside one block h is CONSTANT;
+                                        ALL variation must come from `fine`
 
-   at every pixel (i,j):
-   ┌──────────────────────┐     ┌───────────────────────────────────────────────┐
-   │ h[i//16, j//16]      │  +  │ fine[:, i, j]                          C = 16 │
-   │ 160 m, gathered      │     ├───────────────────────────────────────────────┤
-   └──────────────────────┘     │ terrain_hi  TWI, HAND, valid          30 m  3 │
-              │                 │ s1_hi       vv_now vh_now vv_med             │
-              │                 │             vh_med days_since         10 m  5 │
-              │                 │ s2_hi       ndvi swir days_since   10/20 m  3 │
-              │                 │ lulc_hi     class embedding           10 m  2 │
-              │                 │ soil_hi     soc socd bd               30 m  3 │
-              │                 │ ─────────────────────────────────────────────│
-              │                 │ elevation   EXCLUDED — sub-token frac 0.05,  │
-              │                 │             the token already carries it      │
-              │                 └───────────────────────┬───────────────────────┘
-              └───────────────┬───────────────────────────┘
+   at every output cell (i,j):
+
+   ┌──────────────────────┐    ┌────────────────────────────────────────────────┐
+   │ h[i//5, j//5]        │ +  │ fine[:, i, j]                           C = 17 │
+   │ 768 numbers          │    ├────────────────────────────────────────────────┤
+   │ "what this 160 m     │    │ terrain_hi  TWI, HAND, valid           30 m  3 │
+   │  neighbourhood is    │    │ s1_hi       vv_now vh_now vv_med              │
+   │  doing, this date"   │    │             vh_med days_since          10 m  5 │
+   └──────────┬───────────┘    │ s2_hi       ndvi swir days_since    10/20 m  3 │
+              │                │ lulc_hi     class embedding            10 m  2 │
+              │                │ soil_hi     soc socd bd                30 m  3 │
+              │                │ lst_hi      time-averaged anomaly     100 m  1 │
+              │                │ ──────────────────────────────────────────────│
+              │                │ elevation   EXCLUDED — sub-token frac 0.05,   │
+              │                │             the token already carries it       │
+              │                └────────────────────────┬───────────────────────┘
+              └────────────────┬─────────────────────────┘
+                               ▼
+                  ┌────────────────────────┐
+                  │ shared MLP / 1x1 conv  │   same weights at every cell
+                  └───────────┬────────────┘
                               ▼
-                  ┌──────────────────────┐
-                  │ shared MLP / 1x1 conv│    same weights at every pixel
-                  └──────────┬───────────┘
-                             ▼
-                      (B, 3, 224, 224)
+                      (B, 3, 70, 70)
 
-  BLOCKINESS IS A DIAGNOSTIC, NOT A DEFECT.  If the fine channels are inert, the output shows
-  the 16-px blocks above.  THAT IS THE SIGNAL that Block 4 is contributing nothing.  Bilinear
-  interpolation would hide exactly that failure behind a smooth ramp — which is how the current
-  map looks plausible while being anti-correlated with the landscape (§23).  DO NOT SMOOTH IT.
-
-  NO (i%16, j%16) COORDINATE FEATURE.  It would let the model paint arbitrary sub-token patterns
-  from position alone — inventing structure, which is the entire thing being avoided.
-
-  WHY THIS IS DEFENSIBLE AND UNPATCHIFY IS NOT:
-
-                        │ 14x14 out │ unpatchify  │ gather + measured rasters
-    ────────────────────┼───────────┼─────────────┼──────────────────────────
-    output grid         │   160 m   │    10 m     │        10 m
-    sub-token detail    │     —     │ token embed │   MEASURED PIXELS
-    defensible under    │    yes    │     NO      │        YES
-    1 label / 50,176 px │           │             │
 
 --------------------------------------------------------------------------------
-9.6  TRAIN VS INFERENCE — THE SAME GRAPH, DIFFERENT COUNTS
+3.5  THE LST BRANCH — IT ONLY MAKES GRADIENT
+--------------------------------------------------------------------------------
+
+                    transformer — 6 layers of self-attention
+                                   │
+                                  ctx
+                       ┌───────────┴───────────┐
+                       │                       │
+                S (B, 196, 768)           g (B, 768)
+                       │
+           ┌───────────┴────────────┐
+           │                        │
+     SIDE BRANCH                MAIN PATH
+           │                        │
+     Linear(768 → 1)           S[:, k, :]  ← pick the supervised location
+           │                        │
+     (B,196) → (14,14)          Block 3 → h_k
+           │                        │
+           │                    Block 4 → 70x70 map
+           │                        │
+     loss_LST                   loss_SM
+     over 196 tokens            at 1 cell
+           │                        │
+           └──────────┬─────────────┘
+                      ▼
+             L = loss_SM + lambda · loss_LST
+
+NOTHING DOWNSTREAM READS THE LST PREDICTION.  Block 3 does not see it, Block 4
+does not see it, the soil moisture map does not see it.  It produces one number
+that enters the total loss, and that is all.
+
+What it does is change the GRADIENTS.  Backpropagating loss_LST enters at S and
+flows backwards through the six transformer layers, into the token embeddings and
+into the terrain stem.  It never flows into Block 3 or Block 4, because it never
+passed through them.
+
+Which is the point: it tells Block 1 that its 196 location vectors had better
+encode something real about how this tile varies in space, because 196 of them
+get checked against measured temperature every step.  Without it, Block 1 only
+ever hears about one location per sample, filtered through everything downstream.
+
+At inference the branch is simply not computed.
+
+
+--------------------------------------------------------------------------------
+3.6  TRAIN VS INFERENCE — SAME GRAPH, DIFFERENT COUNTS
 --------------------------------------------------------------------------------
 
         TRAINING                                  INFERENCE
@@ -851,172 +522,764 @@ PART 9 — FLOWCHART
    │ BLOCK 3  ★ 1 loc │  k = token_idx       │ BLOCK 3  196 loc │  batched over k
    └────────┬─────────┘                      └────────┬─────────┘
    ┌────────▼─────────┐                      ┌────────▼─────────┐
-   │ BLOCK 4  ★ 1 px  │  (i,j) = pixel_idx   │ BLOCK 4  50,176  │  one 1x1 conv
+   │ BLOCK 4  ★ 1 cell│  (i,j) = pixel_idx   │ BLOCK 4  4,900   │  one 1x1 conv
    └────────┬─────────┘                      └────────┬─────────┘
             ▼                                         ▼
-      3 values  vs  label (3,)                  (3, 224, 224) map
+      3 values vs label (3,)                    (3, 70, 70) map
 
-  Blocks 1 and 2 are IDENTICAL in both paths.  That is what makes training cheap (one location,
-  one pixel) and 196x inference affordable — the expensive encoders are never repeated.
+Blocks 1 and 2 are IDENTICAL in both paths.  That is what makes training cheap —
+one location, one cell — and 196x inference affordable: the expensive encoders
+are never repeated.
 
-  WHY ONE-PIXEL SUPERVISION SUFFICES.  Block 3 is ONE SHARED function f(local context, weather)
-  → SM(t), fitted at supervised locations across 993 STATIONS spanning a huge context range.
-  Running it at an unsupervised location inside a tile is INTERPOLATION IN CONTEXT SPACE, not
-  extrapolation.  The training signal for within-tile heterogeneity comes from BETWEEN-station
-  variation across the whole dataset.
+WHY ONE-CELL SUPERVISION SUFFICES.  Block 3 is ONE SHARED function
+f(local context, weather) -> SM(t), fitted at supervised locations across 993
+STATIONS spanning a huge range of contexts.  Running it at an unsupervised
+location inside a tile is INTERPOLATION IN CONTEXT SPACE, not extrapolation.  The
+training signal for within-tile variation comes from BETWEEN-station variation
+across the whole dataset.
+
+
 
 ================================================================================
-PART 10 — RESOLUTION ACCOUNTING: WHAT MAY HONESTLY BE CLAIMED
+PART 4 — INPUTS IN DETAIL
 ================================================================================
 
-  quantity                native     limited by
-  ----------------------  ---------  ----------------------------
-  S1 VV/VH RTC              10 m     —
-  S2 (NDVI, SWIR)        10 / 20 m   band
-  LULC                      10 m     —
-  TWI, HAND (own routing)   30 m     wide-DEM fetch
-  soil (soc/socd/bd)        30 m     OpenLandMap
-  token gather             160 m     TerraMind patch size
-  ERA5                      9 km     one value per tile
+  [*] marks new or changed relative to the current model.
 
-  OUTPUT GRID: 224x224 @ 10 m.
-  EFFECTIVE RESOLUTION IS CHANNEL-DEPENDENT — ~10 m where S1/S2 drive the
-  prediction, ~30 m where terrain does, 160 m elsewhere.
-  REPORT IT THAT WAY.  NEVER CLAIM 10 m SKILL.
+4.1  SATELLITE TOKENS (TerraMind ViT-Base L12, 16x16 px per token)
+
+  anchor_l3/l6/l9/l12  (196,768) fp16  the target-date spatial snapshot
+  anchor_rel_pos       ()        long  days between anchor date and target date
+  anchor_orbit         ()        long  0=S2, 1=S1_asc, 2=S1_desc
+  anchor_valid     [*] ()        bool  NEW — see 4.6
+
+  s2_tok_k         [*] (60,768)  fp32  column k of the L12 grid, all dates
+  s1_tok_k         [*] (40,768)  fp32  ditto
+  s2_doys/valid/rel_pos  (60,)
+  s1_doys/valid/rel_pos  (40,)
+  dem_pyr, lulc_pyr    (4,768)   fp32  pooled statics, unchanged
+
+  WHY s2_tok_k REPLACES s2_pyr (60,4,768).  _cpu_pyramid_pool
+  (dataset.py:190-220) collapses (M,196,768) into four concentric-crop scales and
+  destroys 97-98% of position information (§27a.2).  Indexing column k BEFORE
+  pooling preserves position AND halves the payload:
+
+      60 x 768      =  92 KB    one location's own history column
+      60 x 4 x 768  = 184 KB    the 4-scale pyramid it replaces
+
+  The ~30 MB/sample IPC blowup that _cpu_pyramid_pool exists to prevent only
+  happens if all 196 columns ship.  Training needs one.
+
+
+4.2  TERRAIN  [*]
+
+  terrain_lo  (3,28,28)  fp32   80 m  -> Block 1 stem
+  terrain_hi  (3,70,70)  fp16   32 m  -> Block 4
+
+  Channels in both: [ TWI , HAND , valid_mask ]
+
+  valid_mask IS A CHANNEL, not merely a filter, so the model can distinguish
+  "imputed" from "average terrain".  Invalid cells — water, no-data, or stations
+  that failed the boundary-capture test — are set to 0 after standardisation,
+  which is the channel mean, and the mask says so.
+
+  HAND is log1p'd before standardising (heavy-tailed in metres).  TWI is already
+  a log and needs no transform.
+
+
+4.3  FINE CHANNELS FOR BLOCK 4  [*]   all measured, none learned
+
+  s1_hi    (5,70,70)  vv_now, vh_now, vv_med, vh_med, days_since
+  s2_hi    (3,70,70)  ndvi, swir_index, days_since
+  lulc_hi  (2,70,70)  learned 2-d embedding of the class
+  soil_hi  (3,70,70)  soc, socd, bd
+  lst_hi   (1,70,70)  time-averaged within-tile LST anomaly
+
+  S1 IS FED AS (latest, long-term median) DELIBERATELY.  Current minus baseline
+  IS the wetness anomaly; the baseline alone is roughness and vegetation.
+  Letting the model difference them is strictly more expressive than feeding
+  either one.
+
+  days_since IS REQUIRED.  "Latest clear" has variable staleness; without it,
+  three-week-old imagery reads as current.  Reuse the staleness embedding already
+  at model.py:505-514.
+
+  SPECKLE MUST BE HANDLED (multi-look, or a short temporal median).  S1's 0.76
+  sub-token variance fraction (§30.3a) partly IS speckle, which is sub-token
+  noise by definition — so 0.76 is an upper bound, and unhandled speckle turns
+  the added detail into variance rather than signal.  Aggregating 10 m to 32 m
+  helps here for free.
+
+  ELEVATION IS EXCLUDED.  Measured sub-token fraction 0.05: the 160 m token
+  already carries essentially all of it.  It stays in Block 1.
+
+
+4.4  WEATHER AND TABULAR (unchanged)
+
+  era5, era5_doys   (365,19), (365,)   9 km — ONE value per tile
+  sif  + doys/rel_pos/valid   (50,·)
+  twsa + doys/rel_pos/valid   (12,·)
+  soil_patch        (21,74,74) fp32    30 m, 3 depths x 7 properties
+
+  ERA5 IS 9 km.  It is IDENTICAL over a 2.24 km tile.  Encoded once and shared,
+  never replicated per location.
+
+
+4.5  SUPERVISION
+
+  label         (3,)   fp32   3 depth bins, NaN where a depth is absent
+  pixel_idx [*] (2,)   long   (i,j) of the station on the 70x70 grid
+  token_idx [*] ()     long   (row//5)*14 + col//5
+
+  Both derive from station_pixel() (build_network_readouts.py:75), which maps
+  lat/lon -> tile UTM -> row/col using epsg and bounds_utm from the tile .zattrs.
+  pixel_idx REPLACES the hardcoded (112,112) at model.py:779.
+
+
+4.6  anchor_valid — A LATENT BUG.  FIX IT REGARDLESS OF THIS DESIGN.
+
+  dataset.py:483-486 — when no acquisition exists in the rolling window:
+
+      return (zeros, zeros, zeros, zeros,
+              torch.tensor(0),      <- rel_pos
+              torch.tensor(0))      <- orbit_id, i.e. "S2"
+
+  But dataset.py:504 encodes a GENUINE S2 anchor as orbit_id=0 as well.  So an
+  all-zero "no data" anchor is indistinguishable from a real S2 acquisition, and
+  at model.py:498,508 it silently receives the "S2" modality embedding.
+
+
+
+================================================================================
+PART 5 — PRODUCING TWI AND HAND
+================================================================================
+
+5.1  WHY THE CURRENT 2.24 km TILE IS NOT ENOUGH   (measured 2026-08-17)
+
+  Both quantities funnel through FLOW ACCUMULATION, which is non-local.
+  Sampled 30 tiles from satellite_zarr:
+
+      lowest cell lies ON THE TILE BOUNDARY in 25 of 30  =  83.3%
+      relief: median 188 m, range 13.5-797 m
+
+  Flow leaves the window.  The channel a station drains to is outside it.
+
+  TWI:  the error would be ALIGNED WITH THE SIGNAL.  A valley cell that really
+        drains 50 km2 receives only what leaks in from the tile edge, so the
+        underestimate is largest exactly where TWI should be HIGH.  Not noise —
+        a bias that flattens the very contrast being measured, and that would
+        look entirely plausible.  §23 all over again.
+
+  HAND: often UNDEFINED, not merely inaccurate.  A 2.24 km headwater tile may
+        contain no cell above any sensible stream threshold.  Lower the threshold
+        until one qualifies and you have invented a stream; HAND then degenerates
+        into "height above the lowest cell in the box" — local relief renamed.
+
+
+5.2  THE RECIPE
+
+    0. hydro-condition FIRST     breach (preferred) or fill depressions
+    1. flow direction            MFD/D-inf for accumulation
+                                 D8        for the HAND trace      <- BOTH
+    2. flow accumulation  A
+    3. a = A_cells * cellsize    specific catchment area [m]
+    4. beta = Horn(dem)          s=1 — the wide DEM is fetched at NATIVE 30 m
+    5. TWI  = ln( a / max(tan beta, 1e-3) )
+    6. streams = A > threshold   threshold calibrated against MERIT hnd ~ 0
+    7. HAND = elev - elev(first stream cell reached by the D8 trace)
+
+  FOUR THINGS THE BARE RECIPE NEEDS:
+
+  (i)   HAND NEEDS D8 EVEN THOUGH TWI NEEDS MFD.  Under MFD flow splits across
+        several downslope neighbours, so there is no single "the stream cell it
+        drains to" to trace.  Two flow-direction products from one conditioned
+        DEM.  pyflwdir and WhiteboxTools both do exactly this.
+
+  (ii)  CONDITION ON A BUFFER, THEN CROP.  A window edge otherwise behaves as a
+        wall: flow that should leave ponds against it, and depressions touching
+        the edge fill to spurious levels.
+
+  (iii) ASSERT THE ACCUMULATION UNIT.  Libraries return cell COUNTS or AREA.
+        a = n*cellsize is the count version.  A factor of 30 inside a log is a
+        silent constant offset that nothing downstream will catch.
+
+  (iv)  SLOPE FLOOR 1e-3 (0.057 deg), and A FLOORED AT ONE CELL AREA.  TxSON mean
+        slope is 2.5-4.1 deg, so near-flat cells are common and tan beta -> 0
+        sends TWI to +inf.  REPORT THE PER-TILE FRACTION HITTING THE FLOOR — a
+        large fraction means TWI is degenerate there, not merely clipped.
+
+
+5.3  WINDOW SIZE — THE LOAD-BEARING CHOICE
+
+  KEY REFINEMENT: the non-local error is LARGELY COMMON-MODE within a tile.  The
+  model uses within-tile contrast:
+
+        dTWI = d ln(a) - d ln(tan beta)
+
+  Two cells on the same hillslope both have small local catchments, and neither
+  receives the upstream inflow, so a truncated window gets their DIFFERENCE right
+  while getting both absolute values wrong.  A tile-constant offset is removed by
+  standardisation anyway.
+
+  It breaks specifically at CHANNEL CELLS, which receive the outside inflow while
+  adjacent hillslope cells do not.  Hence a checkable criterion:
+
+      A TILE IS AT RISK IF AND ONLY IF IT CONTAINS A CHANNEL
+      — read straight off MERIT `upa` inside the 2.24 km tile.
+
+  BUT `a` STILL MATTERS WITHIN A TILE, so it cannot be left at MERIT's 90 m.
+  Order of magnitude across one hillslope:
+
+      a     ~30 m at the top  ->  ~500 m near the base   =>  d ln(a)      ~ 2.8
+      tanb   0.02             ->   0.10                  =>  d ln(tan b)  ~ 1.6
+
+  The `a` term carries AT LEAST AS MUCH within-tile contrast as the slope term.
+
+  PROPOSED WINDOW: 10 km at 30 m = 333^2 cells ~ 0.44 MB/station, ~440 MB for all
+  993.  Sized up per station where MERIT `upa` says the catchment is larger.
+  Compute and storage were never the constraint.
+
+
+5.4  MERIT'S ROLE — VALIDATOR AND CALIBRATOR, NOT PRODUCT
+
+    upa INSIDE the tile       -> does this tile contain a channel?  (5.3)
+    upa AT the station        -> how wide the window must be
+    our accumulation vs MERIT -> PER-STATION BOUNDARY-CAPTURE PASS/FAIL,
+                                 against ground truth
+    hnd ~ 0 cells             -> calibrates our stream threshold instead of us
+                                 picking one by hand
+    —                         -> fallback product where no window is practical
+
+  ~10 KB per station, and it turns every downstream choice from an assumption
+  into a measurement.
+
+
+5.5  THE LARGEST CORRECTNESS RISK: GLO-30 IS A DSM
+
+  Copernicus GLO-30 INCLUDES CANOPY AND BUILDINGS.  A 20 m tree line dams a
+  stream and conditioning then routes flow around a ridge that does not exist.
+  This is precisely why MERIT Hydro exists as a separate product — it removed
+  absolute bias, stripes, speckle AND tree height.
+
+  Prefer FABDEM (GLO-30 with forest and buildings removed; CC-BY-NC, fine for
+  research — CONFIRM THE ACCESS ROUTE, do not assume it).  Failing that, BREACH
+  rather than fill (whitebox BreachDepressionsLeastCost, or richdem
+  Priority-Flood): breaching carves through obstructions instead of drowning them
+  in flat filled areas, and behaves markedly better under canopy.
+
+  NONE of pyflwdir / richdem / whitebox / pysheds is installed in either conda
+  env (verified).  pyflwdir (Deltares) is the best single fit — flow direction,
+  accumulation and hand() in one numba-backed library, developed against MERIT so
+  the conventions match.
+
+
+5.6  THE THEORY, AND WHY IT DICTATES BLOCK 3
+
+  TWI is TOPMODEL (Beven & Kirkby 1979).  Assuming the water table parallels the
+  surface, steady state, and T = T0*exp(-f*z):
+
+        R*a = T0 exp(-f z) tan beta
+          z = (1/f) [ ln(T0/R) - ln(a/tan beta) ]
+            = (1/f) [ ln(T0/R) - TWI ]
+
+  DEPTH TO WATER TABLE IS LINEAR IN -TWI.  That is the entire theoretical
+  content.  TWI is a WATER-TABLE-DEPTH index.
+
+  HAND (Renno et al. 2008; Nobre et al. 2011) approximates the same quantity more
+  directly — the stream is the local hydraulic datum — with no steady-state,
+  recharge or transmissivity assumption.  It is also numerically more robust: a
+  height difference, where TWI's `a` is very sensitive to the flow algorithm.
+
+  NEITHER PREDICTS *SURFACE* MOISTURE except through water-table coupling.
+  Capillary rise is ~0.1-0.3 m in sand, ~1-2 m in silt, 3-10 m in clay.  Once
+  HAND exceeds a few metres the top 10 cm is hydraulically DECOUPLED, and is
+  governed instead by infiltration, evaporative demand and the retention curve —
+  a 1-D VERTICAL process, not TOPMODEL's lateral one.  TxSON has 46-88 m relief.
+
+  THE EMPIRICAL RESULT THAT MATTERS MOST — Grayson et al. (1997), and the
+  Tarrawarra work of Western, Grayson & Bloschl: terrain control of surface soil
+  moisture is STATE-DEPENDENT.
+
+      WET state -> lateral flow organises the pattern, terrain explains much of
+                   the variance                            ("nonlocal control")
+      DRY state -> soil and vegetation dominate, terrain explains ~nothing
+                                                            ("local control")
+
+  ==> THIS IS WHY BLOCK 3 IS THE RIGHT ARCHITECTURE.
+      If the effect is state-dependent, feeding TWI as a static input that shifts
+      a mean is the WRONG FUNCTIONAL FORM — it fits the average of two regimes
+      and matches neither.  What is required is terrain INTERACTED WITH WETNESS
+      STATE.  That is exactly what Block 3's cross-attention provides and exactly
+      what a uniform FiLM scale/shift cannot express.
+
+  TESTABLE PREDICTIONS.  Terrain should explain dSM better:
+      in WET periods than dry        (sharpest; split by antecedent precipitation)
+      at 30-50 cm than at 0-10 cm    (deeper is closer to saturation deficit)
+      where HAND is SMALL            (metres, not tens of metres)
+      in humid low-relief settings   (rather than semi-arid)
+  If dSM is flat across all four splits the mechanism is absent, and no DEM
+  resolution rescues it.
+
+  THE COMPETING MECHANISM, STATED FAIRLY.  If lateral flow does not reach 0-10 cm,
+  heterogeneity still comes from somewhere — Grayson's "local controls": texture,
+  vegetation, aspect-driven insolation.  §30.3a measured these varying within our
+  tiles (texture 0.26-0.29, socd/soc 0.50-0.54, northness 0.51), and CR200-18's
+  full-tile range is 11 wt% clay / 22.75 wt% sand.  TWI and HAND address ONLY ONE
+  of the two candidate mechanisms.
+
+
+
+================================================================================
+PART 6 — BLOCK 1: CONTEXT ENCODER   (once per sample, whole tile)
+================================================================================
+
+6.1  TERRAIN STEM  [*]
+
+    terrain_lo (B,3,28,28)
+      -> Conv2d(3, 768, k=3, stride=2, pad=1)    28x28 -> 14x14
+      -> GELU
+      -> Conv2d(768, 768, k=1)                   <- ZERO-INIT weight AND bias
+      -> reshape                                 (B,196,768) = terrain_tokens
+
+  A LEARNED stem rather than hand-picked pooling: it decides for itself how to
+  reduce 80 m to 160 m.  stride-2 because 28 is exactly 2x14, so there is no
+  resampling ambiguity anywhere in the path.
+
+
+6.2  WHERE TERRAIN IS ADDED, AND WHY THERE
+
+  At model.py:501-505, where spatial_pe is already applied:
+
+    spatial_tokens = anchor_l12 + spatial_pe + modality_emb + terrain_tokens
+                                                              ^^^^^^^^^^^^^^ NEW
+
+  THREE CONSEQUENCES, EACH LOAD-BEARING:
+
+  (a) BIT-IDENTITY IS FREE.  With the final 1x1 zero-initialised,
+      terrain_tokens == 0 at init, and adding zero changes nothing.  No new
+      token, no sequence-length change, no perturbed attention — the forward pass
+      is EXACTLY best.pt's.  Appending a token instead would change the sequence
+      and break the regression gate.
+
+  (b) ALIGNMENT.  Token k's terrain must land on token k.  Appending four POOLED
+      terrain tokens — the dem_pyr / lulc_pyr pattern — would make terrain
+      TILE-LEVEL, able only to shift the mean.  That is the exact failure being
+      fixed.
+
+  (c) g GETS IT ANYWAY.  g is computed from the encoder OUTPUT, so the
+      non-spatial tokens have already attended over the spatial tokens by then.
+      Terrain reaches g through attention; no extra token is needed.
+
+
+6.3  POSITION LEAKAGE — MUST BE FIXED HERE.  NOT OPTIONAL.
+
+  Patches are STATION-CENTRED, so the supervised location is ALWAYS token k=105
+  and the centre cell.  The model can learn "read the centre" instead of learning
+  the mapping.
+
+  FIX: a token-space TRANSLATION CROP — a random 10x10 sub-window of the 14x14
+  grid.  It is a slice of tensors already in memory, so it costs nothing.
+  spatial_row_emb / spatial_col_emb are then indexed by ABSOLUTE row and column
+  so the model still knows where it sits within the tile.
+
+  CHECK: regress per-readout error on offset_px (a column in
+  csvs/txson_readouts.csv).  §26.11 shows a POSITIVE slope today; it must fall to
+  ~0.  IF SPREAD IMPROVES WHILE THAT SLOPE STAYS POSITIVE, THE GAIN IS
+  MEMORISATION.
+
+
+
+================================================================================
+PART 7 — BLOCK 2: WEATHER ENCODER   (once, SHARED)
+================================================================================
+
+    ERA5 (365,19) + SIF (<=50) + TWSA (<=12)   ->   W  (B, T_w, 768)
+
+  NEVER REPLICATED PER LOCATION.  ERA5 is 9 km, i.e. identical over a 2.24 km
+  tile, so replicating it 196 times would cost 196x the memory for exactly zero
+  additional information.  This is the single largest saving in the design and it
+  is what makes running the processor 196 times at inference affordable.
+
+
+
+================================================================================
+PART 8 — BLOCK 3: PER-LOCATION PROCESSOR      <<< THE DELTA >>>
+================================================================================
+
+    seq_k = [ S[:,k,:] ,   g   ,  s2_tok_k (60) ,  s1_tok_k (40) ]
+              varies      const     varies           varies
+                                                    ~102 tokens
+
+    L x (  self-attention over seq_k
+           cross-attention:  query = seq_k,  key/value = W        <-- INTERACTION
+        )
+
+    h_k (B,768)  ->  linear  ->  SM(3 depths) at location k
+
+  WHAT VARIES WITH k:
+    S[:,k,:]   own context, now carrying TWI/HAND       YES
+    s2_tok_k   own S2 history column                    YES
+    s1_tok_k   own S1 history column                    YES
+    g          tile summary                             no
+    W          weather                                  no
+
+  TERRAIN IS NOT FED INTO seq_k SEPARATELY.  It is already inside S_k; adding it
+  again is parameters for no new information.
+
+  COST:
+                          training          inference
+    Block 1 context       full tile, once   once
+    Block 2 weather       once              once
+    Block 3 processor     1 LOCATION        196
+    Block 4 head          1 CELL            4,900 (one batched 1x1 conv)
+
+
+
+================================================================================
+PART 9 — BLOCK 4: PER-CELL HEAD, NO UPSAMPLING
+================================================================================
+
+  for output cell (i,j):
+      tok  = h[:, i//5, j//5, :]        NEAREST GATHER — an index op
+      fine = concat( terrain_hi, s1_hi, s2_hi, lulc_hi, soil_hi, lst_hi )[:,i,j]
+      out(i,j) = MLP([tok, fine])       shared weights = 1x1 conv
+
+  -> (B, 3, 70, 70)
+
+9.1  THE RULE THAT MAKES A 32 m OUTPUT DEFENSIBLE
+
+  The criterion was never resolution.  It is WHERE SUB-TOKEN DETAIL COMES FROM:
+
+                        │ 14x14 out │ unpatchify   │ gather + measured rasters
+    ────────────────────┼───────────┼──────────────┼──────────────────────────
+    output grid         │   160 m   │     32 m     │         32 m
+    sub-token detail    │     —     │ token embed  │    MEASURED PIXELS
+    defensible under    │    yes    │      NO      │         YES
+    1 label per tile    │           │              │
+
+  Unpatchify is rejected because the network would INVENT sub-token structure
+  with nothing to check it — §17.7's objection to the DiVAE, and what §23 caught
+  the decoder actually doing.  A nearest gather of the 160 m token concatenated
+  with MEASURED 32 m channels invents nothing: every variation traces to a
+  measurement.
+
+9.2  NON-NEGOTIABLE RULES
+
+  * NEAREST GATHER, NEVER BILINEAR.
+  * BLOCKINESS IS A DIAGNOSTIC, NOT A DEFECT.  If the fine channels are inert,
+    the output shows 5x5 blocks.  THAT IS THE SIGNAL that Block 4 is contributing
+    nothing.  Bilinear would hide exactly that failure behind a smooth ramp —
+    which is how the current map looks plausible while being anti-correlated with
+    the landscape.  DO NOT SMOOTH IT AWAY.  REPORT IT.
+  * NO WITHIN-BLOCK COORDINATE FEATURE (i%5, j%5).  It would let the model paint
+    arbitrary sub-token patterns from position alone.
+  * EVERY FINE CHANNEL MUST BE MEASURED.  No learned upsampling anywhere.
+
+9.3  UNetDecoder IS DELETED FROM THE FORWARD PATH
+
+  model.py:188 — four upsampling stages at 512/256/128/64 plus three FiLM'd skips
+  (L3/L6/L9), all modulated by the spatially-constant `context`.  Kept runnable
+  behind --head unet for the regression gate and rollback.
+
+  §28.2's figure is ~3.2 M activations/sample/depth against ~200 K here, and the
+  history payload halves, so TRAINING GETS CHEAPER, not dearer.
+
+
+
+================================================================================
+PART 10 — THE LST AUXILIARY
+================================================================================
+
+10.1  WHERE IT ATTACHES
+
+  A side branch off S — NOT off h_k.  Hanging it off h_k would require running
+  Block 3 at all 196 locations every training step, destroying the entire reason
+  training is cheap.  S is already computed for every location, so the branch
+  costs one linear layer.
+
+      head_LST = Linear(768 -> 1)  applied to each of the 196 vectors in S
+               -> (B,196) -> reshape (B,14,14)
+
+10.2  THE TARGET
+
+  Landsat surface temperature, averaged into each 160 m token to give a 14x14
+  map, then MINUS THE TILE MEAN FOR THAT DATE.
+
+  Subtracting the tile mean is not a detail.  Absolute LST is dominated by
+  season, time of day and air temperature — all of which the model can already
+  read off ERA5, so predicting it teaches nothing about space.  The deviation
+  from the tile mean is the ONLY part that carries spatial information.  It also
+  removes precisely the thing that manufactured §29's spurious +0.167.
+
+  Mask the tokens with no retrieval.
+
+10.3  THE LOSS
+
+      L = L_SM  +  lambda * L_LST
+
+  lambda balanced by GRADIENT MAGNITUDE, not by counting pixels — ~196 LST values
+  against 1 SM value means a naive sum drowns soil moisture completely.  Decay
+  lambda over training: early for representation learning, late to avoid
+  contaminating the soil moisture map.
+
+10.4  WHY IT IS SMALLER THAN IT LOOKS
+
+  In the §30 design, with the U-Net, a dense target was LOAD-BEARING: it was the
+  only thing preventing the decoder from inventing sub-token structure, which is
+  what §16.4 demonstrated.
+
+  But Block 4 is not a decoder.  It is a small function of measured channels.  It
+  has nothing to paint with.  So the problem LST was meant to solve has largely
+  dissolved on its own, and the auxiliary's job changes from CONSTRAINING THE
+  DECODER to GIVING BLOCK 1 DENSE GRADIENT.  Real, but a nice-to-have rather than
+  structural.
+
+10.5  FOUR HONEST CAVEATS
+
+  (i)   "5776 px vs 1" IS THE GRID, NOT THE INFORMATION.  Landsat TIRS is 100 m;
+        the ST product ships at 30 m but is resampled.  Real independent values
+        are ~22x22 ~ 500 per tile.  Still ~500x better than 1 — but quote the
+        honest number.
+
+  (ii)  THE PATTERN IS STATIC, so it disciplines the WRONG BRANCH.  §29 measured
+        +0.967 month-to-month spatial correlation.  Predicting LST therefore
+        reduces to predicting a time-invariant map, which the model can learn
+        from terrain/LULC/soil without engaging the temporal pathway at all.  It
+        constrains the STATIC representation.  §31's thesis is that the RESPONSE
+        FUNCTION is what is spatially constant.  Useful, but not the headline.
+
+  (iii) THE MISSINGNESS IS BIASED.  18.2% of the tile has no ST retrieval, and
+        §29 found that region CONTAINS THE WETTEST STATION.  That is structured
+        missingness correlated with the target — it would teach a map with a hole
+        exactly where the wet places are.
+
+  (iv)  IT MAY BE MEMORISED RATHER THAN LEARNED.  If the target is a fixed map
+        per station, and the model can identify the station — §24.12 found
+        identity dominates the representation at depth, and §27b's UMAP organised
+        cleanly by Koppen class — then it can memorise 993 maps instead of
+        learning anything about landscape structure.  This is likely, not
+        hypothetical.  TEST IT IN THE FIRST SMOKE RUN by comparing LST-head skill
+        on validation stations against training stations.  A large gap means
+        memorisation, and the auxiliary should be dropped or switched to per-date
+        targets, which vary and are harder to memorise.
+
+10.6  THE CHEAP HALF, WORTH DOING REGARDLESS
+
+  Because the pattern is static, the time-averaged anomaly map is a perfectly
+  good INPUT channel — lst_hi in 4.3.  A measured ~100 m landscape descriptor,
+  one extra column in Block 4.  No loss balancing, no lambda, no contamination
+  risk.  It does nothing for supervision density, so it is not a substitute for
+  the auxiliary head, but it is nearly free.
+
+
+
+================================================================================
+PART 11 — LOSS AND TRAINING
+================================================================================
+
+11.1  THE SOIL MOISTURE LOSS
+
+  masked_huber_loss (model.py:751) currently reads the HARDCODED (112,112) at
+  model.py:779.  Replace with a gather at pixel_idx (4.5).  ~80 lines;
+  eval_predict.py:167-169 already gathers this way.  NaN labels are masked per
+  depth, as today.
+
+  OFF-CENTRE SUPERVISION IS BUILT BUT MUST NOT BE LOAD-BEARING.  The TRAIN split
+  has only 12 off-centre pairs on 12 tiles, and location_group_id NEVER spans
+  splits (0 of 906) — no reshuffle creates more.  Build the machinery because it
+  is cheap; do not expect it to carry the run.
+
+11.2  ONE TRAINING STEP
+
+  The dataloader worker opens the station's zarr, pulls the anchor tokens,
+  indexes column k out of the S2 and S1 token grids, takes the terrain and fine
+  stacks, ERA5, SIF, TWSA, soil and the three depth labels, computes pixel_idx
+  and token_idx, and applies the translation crop.  The prefetcher moves the
+  batch to GPU while the previous step is still computing.
+
+  Forward: Block 1 over the whole sequence -> S, g.  Block 2 -> W.  Block 3 at
+  ONE location.  Block 4 at ONE cell.  Huber against the label.  If the auxiliary
+  is on, the LST head runs over all 196 vectors of S and adds its term.
+
+  Backward, step.  Four H100s, DDP, bf16 autocast.
+
+11.3  WHAT TO WATCH EVERY EPOCH, NOT AT THE END
+
+  * PEAK MEMORY AND DATA-LOADING TIME against the 540 GB baseline.  What crosses
+    the dataloader boundary has changed.  It should DROP — the payload halves and
+    the decoder is gone — but "should" is not "did".
+
+  * STANDARD DEVIATION OF PREDICTIONS ACROSS LOCATIONS.  If this sits near zero,
+    Block 3's cross-attention is being ignored, every location is emitting the
+    same trajectory, and the model has quietly reverted to today's behaviour with
+    all the new machinery still burning compute.  THIS IS THE FAILURE MODE THAT
+    LOOKS LIKE SUCCESS UNTIL YOU PLOT A MAP.  Print it on every epoch line.
+
+
+
+================================================================================
+PART 12 — RESOLUTION: WHAT MAY HONESTLY BE CLAIMED
+================================================================================
+
+  quantity                   native     limited by
+  -------------------------  ---------  ---------------------------
+  S1 VV/VH RTC                 10 m     —
+  S2 (NDVI, SWIR)           10 / 20 m   band
+  LULC                         10 m     —
+  TWI, HAND (own routing)      30 m     wide-DEM fetch
+  soil (soc/socd/bd)           30 m     OpenLandMap
+  LST anomaly                 100 m     Landsat TIRS
+  token gather                160 m     TerraMind patch size
+  ERA5                         9 km     one value per tile
+
+  OUTPUT: 70x70 at 32 m.  EVERY CHANNEL FEEDING IT IS AT OR BELOW 32 m EXCEPT THE
+  TOKEN AND LST.  That is why 32 m was chosen: the claim needs no asterisk.
 
   HOW WELL-ESTIMATED EACH 160 m TOKEN VALUE IS:
+
                        cells per token    cells per tile
       MERIT 90 m             ~3               25x25
       own 30 m              ~28               75x75
-  At ~3 samples you are POINT-SAMPLING MERIT, not averaging it.  At ~28 you get
-  a real block statistic — and that is where the tan(beta) and HAND
-  NONLINEARITIES are handled correctly, since derive-fine-then-average is NOT
-  equal to derive-coarse.
 
-  AGGREGATE BEFORE THE NONLINEARITY.  Average tan(beta) and HAND over each 80 m
-  block BEFORE the log/ratio, never after.
+  At ~3 samples you are POINT-SAMPLING MERIT, not averaging it.  At ~28 you get a
+  real block statistic — and that is where the tan(beta) and HAND NONLINEARITIES
+  are handled correctly, because derive-fine-then-average is NOT the same as
+  derive-coarse.
 
-  A COMPOSITE IS ONLY AS FINE AS ITS COARSEST INGREDIENT.  If `a` came from
-  MERIT at 90 m while beta came from our tile at 30 m, TWI would be 90 m with a
-  better-estimated slope term — NOT 30 m TWI.  This is why `a` is recomputed at
+  AGGREGATE BEFORE THE NONLINEARITY.  Average tan(beta) and HAND over each block
+  BEFORE the log/ratio, never after.
+
+  A COMPOSITE IS ONLY AS FINE AS ITS COARSEST INGREDIENT.  If `a` came from MERIT
+  at 90 m while beta came from our tile at 30 m, TWI would be 90 m with a
+  better-estimated slope term — NOT 30 m TWI.  That is why `a` is recomputed at
   30 m rather than taken from MERIT.
 
-  §23 measured 64-83% of variance already sitting at 14x14.  REPORT 14x14 AND
-  224 SEPARATELY: if 224 helps only via the static branch, that is a
-  resolution-limited offset, not resolved dynamics, and §23 is explicit the
+  REPORT 14x14 AND 70x70 SEPARATELY.  §23 measured 64-83% of variance already
+  sitting at 14x14.  If 70x70 helps only through the static branch, that is a
+  resolution-limited offset, not resolved dynamics, and §23 is explicit that the
   distinction must not be blurred.
 
+
+
 ================================================================================
-PART 11 — ABLATION GRID.  The point is to test this, not to ship it.
+PART 13 — ABLATION GRID.  The point is to test this, not to ship it.
 ================================================================================
 
-  Block3  terrain  head    tests
-  ------  -------  ------  --------------------------------------------------
-  off     off      unet    regression gate — must be BIT-IDENTICAL to today
-  ON      off      token   DOES PER-LOCATION *TEMPORAL* PROCESSING ALONE MOVE
-                           SPREAD?   <-- §30's actual thesis, isolated
-  on      ON       token   does terrain add anything beyond that? <- hydrology
-  on      on       PIXEL   does the 10-30 m head add anything beyond 160 m?
-  on      on       pixel   ...with dem_tok OFF.  §30 predicts it becomes
-                           redundant once explicit terrain exists — §27a
-                           measured that token 13x register-dominated with 1.5%
-                           of variance surviving pooling.
+  Block3  terrain  aux-LST  head    tests
+  ------  -------  -------  ------  ------------------------------------------
+  off     off      off      unet    regression gate — BIT-IDENTICAL to today
+  ON      off      off      token   DOES PER-LOCATION *TEMPORAL* PROCESSING
+                                    ALONE MOVE SPREAD?   <-- the actual thesis
+  on      ON       off      token   does terrain add anything beyond that?
+  on      on       ON       token   does dense LST supervision add anything?
+  on      on       on       CELL    does the 32 m head add anything beyond 160 m?
+  on      on       on       cell    ...with dem_tok OFF.  §30 predicts it becomes
+                                    redundant once explicit terrain exists —
+                                    §27a measured that token 13x
+                                    register-dominated with 1.5% of variance
+                                    surviving pooling.
 
   ROW 2 IS THE IMPORTANT ONE.  It isolates the architecture from the hydrology.
-  Consequence: IF THE TERRAIN SUFFICIENCY GATE FAILS, BLOCK 3 IS STILL WORTH
-  BUILDING — the per-location S2/S1 history columns do not depend on terrain at
-  all.  A negative terrain result prunes ONE INPUT, unlike §29 where the
-  negative result killed the whole arm.
+
+  CONSEQUENCE: IF THE TERRAIN GATE FAILS, BLOCK 3 IS STILL WORTH BUILDING.  The
+  per-location S2/S1 history columns do not depend on terrain at all.  A negative
+  terrain result prunes ONE INPUT — unlike §29, where the negative result killed
+  the whole arm.
+
+
 
 ================================================================================
-PART 12 — GATES BEFORE ANY GPU TIME
+PART 14 — GATES BEFORE ANY GPU TIME
 ================================================================================
 
-  REGRESSION
-    * all flags off -> one training step BIT-IDENTICAL to main
-    * terrain_stem zero-init + weights from best.pt -> forward BIT-IDENTICAL
-    * --head unet reproduces cls_depth_star_reg
-    * reuse the §26 provenance gate UNCHANGED: >=99.5% of rows bit-identical
-      AND max |delta| <= 1 bf16 ULP (0.000977).  DO NOT RE-TIGHTEN IT.
+14.1  REGRESSION
+  * all flags off -> one training step BIT-IDENTICAL to main
+  * terrain_stem zero-init + weights from best.pt -> forward BIT-IDENTICAL
+  * --head unet reproduces cls_depth_star_reg
+  * reuse the §26 provenance gate UNCHANGED: >=99.5% of rows bit-identical AND
+    max |delta| <= 1 bf16 ULP (0.000977).  DO NOT RE-TIGHTEN IT.
 
-  TERRAIN DERIVATION
-    * boundary capture per station: our 30 m accumulation vs MERIT upa.  Report
-      pass rate + ratio distribution.  Failures masked or fall back to MERIT —
-      NEVER silently used.
-    * stream threshold calibrated against MERIT hnd~0.  A threshold that cannot
-      be made to agree means CONDITIONING FAILED — not a reason to tune harder.
-    * conditioning worked: compare a forested station against an open one.
-      Routing that detours around tree lines => the DSM problem is unsolved and
-      FABDEM is required.
-    * physical sanity: TWI high in valley bottoms / low on ridges on 3-4 TxSON
-      tiles against plot_tile_context.py's hillshade; HAND ~ 0 along mapped
-      drainage; no inf/NaN; per-tile slope-floor fraction.
-      §30.4 gotcha (iv): SIGN CONVENTIONS DIFFER BETWEEN REFERENCES — verify
-      against a KNOWN HOLLOW, do not trust the formula.
-    * sub-token variance fraction of TWI/HAND via §30.3a's decomposition.  NOT
-      YET MEASURED for these channels; it decides whether they belong in Block 4.
+14.2  TERRAIN DERIVATION
+  * boundary capture per station: our 30 m accumulation vs MERIT upa.  Report
+    pass rate and ratio distribution.  Failures masked or fall back to MERIT —
+    NEVER silently used.
+  * stream threshold calibrated against MERIT hnd~0.  A threshold that cannot be
+    made to agree means CONDITIONING FAILED — not a reason to tune harder.
+  * conditioning worked: compare a forested station against an open one.  Routing
+    that detours around tree lines means the DSM problem is unsolved and FABDEM
+    is required.
+  * physical sanity: TWI high in valley bottoms and low on ridges on 3-4 TxSON
+    tiles against plot_tile_context.py's hillshade; HAND ~ 0 along mapped
+    drainage; no inf/NaN; per-tile slope-floor fraction.
+    SIGN CONVENTIONS DIFFER BETWEEN REFERENCES — verify against a KNOWN HOLLOW,
+    do not trust the formula.
+  * sub-token variance fraction of TWI/HAND (§30.3a's decomposition).  NOT YET
+    MEASURED for these channels; it decides whether they belong in Block 4.
 
-  SUFFICIENCY (no GPU; runs on MERIT 90 m in parallel with the 30 m build)
-    §30.3a states plainly that its channel ranking "measures non-redundancy, NOT
-    usefulness" and that sufficiency is NOT YET RUN.  Regress observed dSM
-    across the 62 COLOCATED PAIRS (13 at 0-50 m, 4 at 50-160 m, 16 at 160-500 m,
-    29 at 500-1120 m; 8 networks) on dTWI/dHAND under station fixed effects —
-    SPLIT BY WET/DRY STATE, since 2.6 says a pooled regression washes the effect
-    out.  The pair list was computed in-session in §26 and NEVER PERSISTED —
-    recompute from station_splits.csv (location_group_id, lat/lon) and write
-    csvs/colocated_pairs.csv this time.
-    §29 Phase A was this same gate and it killed that arm before the build.
+14.3  SUFFICIENCY — no GPU, runs on MERIT 90 m in parallel with the 30 m build
 
-  SKILL TARGETS (§30.9)
-    metric                                    current    target
-    ------------------------------------      -------    ---------------------
-    own-centre ubRMSE (0-10)                   0.0301    <=
-    off-centre ubRMSE                          0.0345    closer to own-centre
-    between-station spread, % of observed      15-19%    > 35%
-    r(pred level, obs level), CR200-18         -0.175    > 0
+  §30.3a states plainly that its channel ranking "measures non-redundancy, NOT
+  usefulness" and that sufficiency is NOT YET RUN.
 
-  PHYSICALITY, NOT JUST VARIANCE
-    * norm-std must DROP at SCAN Crossroads — the flat control currently
-      receiving the most painted variation (0.52).
-    * r(anomaly, TWI) should be positive AND STRONGER IN WET PERIODS THAN DRY
-      (2.6).  A flat wet/dry profile means the model learned a static offset
-      dressed up as terrain.
-    * MORE VARIANCE THAT IS STILL ANTI-CORRELATED WITH THE LANDSCAPE IS §23
-      REPEATED, NOT PROGRESS, AND MUST NOT BE REPORTED AS SUCCESS.
-    * weather dominance: 365 shared weather tokens against ~102 local ones.  Log
-      across-location SD of predictions EVERY EPOCH; near-zero means Block 3's
-      cross-attention is being ignored and the architecture has silently
-      collapsed back to today's behaviour.
+  Regress observed dSM across the 62 COLOCATED PAIRS (13 at 0-50 m, 4 at
+  50-160 m, 16 at 160-500 m, 29 at 500-1120 m; 8 networks) on dTWI/dHAND under
+  station fixed effects — SPLIT BY WET/DRY STATE, since 5.6 says a pooled
+  regression washes the effect out.
 
-  SANITY CONSTANTS
+  The pair list was computed in-session in §26 and NEVER PERSISTED — recompute
+  from station_splits.csv (location_group_id, lat/lon) and write
+  csvs/colocated_pairs.csv this time.
+
+  §29 Phase A was this same gate, and it killed that arm before the build.
+
+14.4  SKILL TARGETS (§30.9)
+
+    metric                                   current    target
+    -------------------------------------    -------    ---------------------
+    own-centre ubRMSE (0-10)                  0.0301    <=
+    off-centre ubRMSE                         0.0345    closer to own-centre
+    between-station spread, % of observed     15-19%    > 35%
+    r(pred level, obs level), CR200-18        -0.175    > 0
+
+14.5  PHYSICALITY, NOT JUST VARIANCE
+  * norm-std must DROP at SCAN Crossroads — the flat control currently receiving
+    the most painted variation (0.52).
+  * r(anomaly, TWI) should be positive AND STRONGER IN WET PERIODS THAN DRY
+    (5.6).  A flat wet/dry profile means the model learned a static offset
+    dressed up as terrain.
+  * MORE VARIANCE THAT IS STILL ANTI-CORRELATED WITH THE LANDSCAPE IS §23
+    REPEATED, NOT PROGRESS, AND MUST NOT BE REPORTED AS SUCCESS.
+
+14.6  SANITY CONSTANTS
     CR200-18 station tokens: 105, 62, 100, 20, 44, 172
     observed means: 0.1367 / 0.1197 / 0.1826 / 0.2323 / 0.1857 / 0.2865
 
+
+
 ================================================================================
-PART 13 — RISKS, STATED BEFORE THE GPU IS SPENT
+PART 15 — RISKS, STATED BEFORE THE GPU IS SPENT
 ================================================================================
 
-  THE PHYSICS MAY NOT REACH 0-10 cm — the largest risk, and INDEPENDENT OF DEM
-  RESOLUTION.  TWI and HAND are saturation-excess concepts (2.6).  Our labels
-  are the top 10 cm, governed in most settings by rainfall and evaporation, not
-  lateral redistribution.  Same shape as §29: a mechanism real in the
-  literature, plausible here, possibly absent from THIS signal at THIS depth.
-  §29.13 tested evaporative cooling and measured -0.077.  This is why the
-  sufficiency gate runs on 90 m data IN PARALLEL with the 30 m build, not after.
+THE PHYSICS MAY NOT REACH 0-10 cm.  The largest risk, and INDEPENDENT OF DEM
+RESOLUTION.  TWI and HAND are saturation-excess concepts (5.6).  Our labels are
+the top 10 cm, governed in most settings by rainfall and evaporation rather than
+lateral redistribution.  Same shape as §29: a mechanism real in the literature,
+plausible here, possibly absent from THIS signal at THIS depth.  §29.13 tested
+evaporative cooling and measured -0.077.  This is why 14.3 runs on 90 m data IN
+PARALLEL with the 30 m build, not after it.
 
-  §27b's CEILING MAY BE REAL.  Own-token within-network skill measured 0-4.2%.
-  If a location's token carries that little, no architecture manufactures
-  information.
+§27b's CEILING MAY BE REAL.  Own-token within-network skill measured 0-4.2%.  If
+a location's token carries that little, no architecture manufactures information.
 
-  BUT A TERRAIN FAILURE DOES NOT KILL THE PROJECT.  See PART 11 row 2.
+BUT A TERRAIN FAILURE DOES NOT KILL THE PROJECT.  See PART 13, row 2.
 
-  THE §29 FALLBACK IS WEAKER THAN §30.6 ORIGINALLY CLAIMED.  §29.13 ran Phase A:
-  daytime Landsat LST does NOT track within-tile SM (within-station fixed
-  effects -0.077; the +0.167 pooled figure is a Simpson's-paradox artefact of
-  station identity).  It survives only on §29.9's grounds — LST as a DENSE
-  AUXILIARY TARGET, 5776 px/tile against 1, i.e. supervision density rather than
-  correlation.  Phase B (ECOSTRESS night LST + diurnal range) is untouched and
-  is the only arm that could still recover a direct LST<->SM link.
+THE §29 FALLBACK IS WEAKER THAN §30.6 ORIGINALLY CLAIMED.  §29.13 ran Phase A:
+daytime Landsat LST does NOT track within-tile SM (within-station fixed effects
+-0.077; the +0.167 pooled figure is a Simpson's-paradox artefact of station
+identity).  It survives only on §29.9's grounds — LST as a DENSE AUXILIARY
+TARGET, i.e. supervision density rather than correlation.  Phase B (ECOSTRESS
+night LST and diurnal range) is untouched and is the only arm that could still
+recover a direct LST<->SM link.
 
 ================================================================================
 END
