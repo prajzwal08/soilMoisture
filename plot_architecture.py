@@ -1,14 +1,14 @@
 """
 Publication-quality architecture flowcharts for the soil moisture model.
 
-Emits two standalone figures (§30.7):
+Emits two standalone figures:
   figures/architecture_current.{png,pdf}   — the shipped model (cls_depth_star_reg)
-  figures/architecture_proposed.{png,pdf}  — the §30 per-location processor
+  figures/architecture_proposed.{png,pdf}  — the per-location processor
 
-Boxes are annotated with tensor shapes so the resolution argument can be read
-straight off the figure: the current design's only spatial carrier is a 14x14
-token grid, and 100% of the temporal signal reaches the decoder through one
-spatially constant vector.
+Kept in step with text/architecture_per_location.txt. Boxes are annotated with
+tensor shapes so the resolution argument can be read straight off the figure: the
+current design's only spatial carrier is a 14x14 token grid, and every bit of the
+time-series signal reaches the decoder through one spatially constant vector.
 
 Usage:
   python plot_architecture.py [--dpi 400] [--out figures]
@@ -200,98 +200,116 @@ def figure_current():
 # ============================================================
 
 def figure_proposed():
-    fig, ax = blank_ax((7.6, 9.2))
+    fig, ax = blank_ax((7.9, 10.2))
 
     # ---- inputs : block-1 group (left) and weather group (right) ---------
     b1 = [("anchor L12", "(196, 768)", C_INPUT, C_INPUT_E),
-          ("dem_tok", "(196, 768)", C_NEW, C_NEW_E),
-          ("lulc_tok", "(196, 768)", C_NEW, C_NEW_E),
-          ("terrain stem\nstride-16", "→ (768,14,14)", C_NEW, C_NEW_E),
-          ("soil + pooled\npyramid", "tile context", C_INPUT, C_INPUT_E)]
-    w, gap = 11.4, 1.5
-    xs = [8.7 + i * (w + gap) for i in range(len(b1))]
+          ("terrain_lo  stem\nTWI · HAND · mask", "(3,28,28) → 196", C_NEW, C_NEW_E),
+          ("dem_pyr\nlulc_pyr", "(4, 768) each", C_INPUT, C_INPUT_E),
+          ("soil", "(21, 74, 74)", C_INPUT, C_INPUT_E)]
+    w, gap = 14.0, 1.6
+    xs = [12.0 + i * (w + gap) for i in range(len(b1))]
     for (lab, shp, fc, ec), x in zip(b1, xs):
-        box(ax, x, 92.0, w, 7.4, lab, shp, fc=fc, ec=ec, fs=7.0)
-        arrow(ax, x, 88.2, x, 85.6)
-    box(ax, 84, 92.0, 30, 7.4, "ERA5 (365,19) · SIF (50,1)\nTWSA (12,1)",
-        "9 km — constant over the tile", fc=C_INPUT, ec=C_INPUT_E, fs=7.0)
-    arrow(ax, 84, 88.2, 84, 85.6)
+        box(ax, x, 94.5, w, 7.2, lab, shp, fc=fc, ec=ec, fs=6.9)
+        arrow(ax, x, 90.9, x, 88.4)
+    box(ax, 86, 94.5, 26, 7.2, "ERA5 · SIF · TWSA", "(365,19)   9 km",
+        fc=C_INPUT, ec=C_INPUT_E, fs=6.9)
+    arrow(ax, 86, 90.9, 86, 88.4)
 
     # ---- block 1 / block 2 encoders --------------------------------------
-    box(ax, 34.5, 82.4, 63, 5.6, "BLOCK 1 · Context encoder — 6 × self-attention",
-        "runs ONCE per sample, over the whole tile", fc=C_PROC, ec=C_PROC_E, bold=True, fs=8.0)
-    box(ax, 84, 82.4, 30, 5.6, "BLOCK 2 · Weather encoder",
-        "runs ONCE — shared, never replicated", fc=C_PROC, ec=C_PROC_E, bold=True, fs=8.0)
+    box(ax, 38, 85.4, 60, 5.4, "BLOCK 1 · Context encoder — 6 × self-attention",
+        "runs ONCE per sample, over the whole tile", fc=C_PROC, ec=C_PROC_E,
+        bold=True, fs=8.0)
+    box(ax, 86, 85.4, 26, 5.4, "BLOCK 2 · Weather encoder",
+        "runs ONCE, shared", fc=C_PROC, ec=C_PROC_E, bold=True, fs=7.6)
 
-    arrow(ax, 24, 79.5, 18, 75.6)
-    arrow(ax, 46, 79.5, 52, 75.6)
-    arrow(ax, 84, 79.5, 84, 75.6)
+    arrow(ax, 30, 82.6, 30, 79.3)
+    arrow(ax, 56, 82.6, 62, 79.3)
+    arrow(ax, 86, 82.6, 86, 79.3)
 
-    box(ax, 18, 72.6, 28, 5.8, "S   one context vector\nPER LOCATION", "(B, 196, 768)",
-        fc=C_OUT, ec=C_OUT_E, fs=7.6)
-    box(ax, 52, 72.6, 16, 5.8, "g   tile summary", "(B, 768)", fc=C_PROC, ec=C_PROC_E, fs=7.6)
-    box(ax, 84, 72.6, 26, 5.8, "W   weather sequence", "(B, T, 768)",
-        fc=C_PROC, ec=C_PROC_E, fs=7.6)
+    box(ax, 30, 76.4, 26, 5.6, "S   one context vector\nPER LOCATION",
+        "(B, 196, 768)", fc=C_OUT, ec=C_OUT_E, fs=7.5)
+    box(ax, 62, 76.4, 15, 5.6, "g   tile summary", "(B, 768)",
+        fc=C_PROC, ec=C_PROC_E, fs=7.5)
+    box(ax, 86, 76.4, 24, 5.6, "W   weather sequence", "(B, T, 768)",
+        fc=C_PROC, ec=C_PROC_E, fs=7.5)
 
-    # ---- three clean verticals into the processor -------------------------
-    arrow(ax, 18, 69.4, 18, 64.2)
-    arrow(ax, 52, 69.4, 52, 64.2)
-    arrow(ax, 84, 69.4, 84, 64.2)
-    note(ax, 20.0, 66.6, "varies with k", color=C_OUT_E, fs=6.8)
-    note(ax, 54.0, 66.6, "constant", color=C_MUTE, fs=6.8)
-    note(ax, 86.0, 66.6, "cross-attn", color=C_MUTE, fs=6.8)
+    # ---- LST auxiliary : a side branch off S, gradient only ---------------
+    arrow(ax, 20.5, 73.6, 12.5, 70.4, rad=0.18, color=C_NEW_E)
+    box(ax, 11.5, 66.4, 17, 6.6, "LST head\nLinear 768→1", "(14,14) · 196 targets",
+        fc=C_NEW, ec=C_NEW_E, fs=6.9)
+    note(ax, 7.5, 58.0, "side branch —\nonly makes gradient",
+         color=C_NEW_E, fs=6.3, ha="left")
+    # long dashed run down the far left, then right into the loss box
+    arrow(ax, 4.0, 63.0, 4.0, 9.4, color=C_NEW_E, ls=(0, (2.5, 2)), lw=1.0,
+          style="-")
+    arrow(ax, 4.0, 9.4, 8.6, 9.4, color=C_NEW_E, ls=(0, (2.5, 2)), lw=1.0)
+
+    # ---- three verticals into the processor -------------------------------
+    arrow(ax, 34, 73.6, 34, 68.2)
+    arrow(ax, 62, 73.6, 62, 68.2)
+    arrow(ax, 86, 73.6, 86, 68.2)
+    note(ax, 35.6, 71.0, "varies with k", color=C_OUT_E, fs=6.6)
+    note(ax, 63.6, 71.0, "constant", color=C_MUTE, fs=6.6)
+    note(ax, 87.6, 71.0, "cross-attn", color=C_MUTE, fs=6.6)
 
     # ---- BLOCK 3 : processor ----------------------------------------------
-    ax.add_patch(FancyBboxPatch((3, 47.5), 94, 16.4,
+    ax.add_patch(FancyBboxPatch((23, 51.0), 74, 16.2,
                                 boxstyle="round,pad=0.4,rounding_size=1.2",
                                 facecolor=C_NEW, edgecolor=C_NEW_E,
                                 linewidth=1.3, zorder=2))
-    ax.text(50, 61.2, "BLOCK 3 · Processor      per location k  ·  weights SHARED across all k",
-            ha="center", va="center", fontsize=8.6, color=C_TXT,
-            fontweight="bold", zorder=3)
-    ax.text(50, 57.6, "seq$_k$  =  [  S[:, k, :]   |   g   |   s2_hist[:, :, k, :]   |   "
-                      "s1_hist[:, :, k, :]  ]      ≈ 102 tokens",
-            ha="center", va="center", fontsize=7.8, color=C_TXT, zorder=3)
-    ax.text(50, 55.0, "varies            constant        varies                     varies",
-            ha="center", va="center", fontsize=6.6, color=C_MUTE,
-            family="monospace", zorder=3)
-    ax.text(50, 52.1, "L × (  self-attention over seq$_k$   →   cross-attention into W  )",
+    ax.text(60, 64.6, "BLOCK 3 · Processor    per location k  ·  weights SHARED",
             ha="center", va="center", fontsize=8.4, color=C_TXT,
             fontweight="bold", zorder=3)
-    ax.text(50, 49.2, "→  h$_k$  (B, 768)          train: 1 location   ·   infer: all 196",
-            ha="center", va="center", fontsize=FS_BOX, color=C_TXT, zorder=3)
+    ax.text(60, 61.2, "seq$_k$ = [  S[:, k, :]  |  g  |  s2_tok$_k$(60)  |  "
+                      "s1_tok$_k$(40)  ]   ≈ 102 tokens",
+            ha="center", va="center", fontsize=7.4, color=C_TXT, zorder=3)
+    ax.text(60, 58.8, "varies      constant     varies           varies",
+            ha="center", va="center", fontsize=6.4, color=C_MUTE,
+            family="monospace", zorder=3)
+    ax.text(60, 55.8, "L × ( self-attention over seq$_k$  →  cross-attention into W )",
+            ha="center", va="center", fontsize=8.0, color=C_TXT,
+            fontweight="bold", zorder=3)
+    ax.text(60, 52.8, "→ h$_k$ (B, 768) @ 160 m     train: 1 location  ·  infer: all 196",
+            ha="center", va="center", fontsize=7.6, color=C_TXT, zorder=3)
 
-    # ---- BLOCK 4 : per-pixel head -------------------------------------------
-    arrow(ax, 50, 47.2, 50, 42.3)
-    ax.add_patch(FancyBboxPatch((3, 26.0), 94, 16.0,
+    # ---- BLOCK 4 : per-cell head -------------------------------------------
+    arrow(ax, 60, 50.7, 60, 45.8)
+    ax.add_patch(FancyBboxPatch((23, 28.5), 74, 17.0,
                                 boxstyle="round,pad=0.4,rounding_size=1.2",
                                 facecolor=C_OUT, edgecolor=C_OUT_E,
                                 linewidth=1.3, zorder=2))
-    ax.text(50, 39.4, "BLOCK 4 · Per-pixel head      no upsampling anywhere — nearest GATHER, "
-                      "an index op",
-            ha="center", va="center", fontsize=8.6, color=C_TXT,
+    ax.text(60, 42.9, "BLOCK 4 · Per-cell head    nearest GATHER, no upsampling",
+            ha="center", va="center", fontsize=8.4, color=C_TXT,
             fontweight="bold", zorder=3)
-    ax.text(50, 35.4, "input(i, j)  =  [   S[:, i//16, j//16, :]   |   raster_stack[:, :, i, j]   ]",
-            ha="center", va="center", fontsize=8.2, color=C_TXT, zorder=3)
-    ax.text(50, 32.4, "the token covering (i,j)                measured 10 m pixels:  "
-                      "S1 VV/VH · S2 · DEM · soil · LULC",
-            ha="center", va="center", fontsize=FS_SHAPE, color=C_MUTE, zorder=3)
-    ax.text(50, 28.6, "shared MLP / 1×1 conv        train: 1 pixel   ·   infer: 50,176",
-            ha="center", va="center", fontsize=FS_BOX, color=C_TXT, zorder=3)
+    ax.text(60, 39.2, "out(i, j) = MLP( [  h[:, i//5, j//5, :]  |  fine[:, i, j]  ] )",
+            ha="center", va="center", fontsize=8.0, color=C_TXT, zorder=3)
+    ax.text(60, 36.4, "the 160 m token covering (i,j)      C = 17 MEASURED channels",
+            ha="center", va="center", fontsize=6.8, color=C_MUTE, zorder=3)
+    ax.text(60, 33.9, "TWI · HAND 30 m · S1 vv/vh + median 10 m · S2 10/20 m · "
+                      "soil 30 m · LULC · LST",
+            ha="center", va="center", fontsize=6.2, color=C_MUTE, zorder=3)
+    ax.text(60, 30.8, "shared MLP / 1×1 conv      train: 1 cell  ·  infer: 4,900",
+            ha="center", va="center", fontsize=7.6, color=C_TXT, zorder=3)
+    note(ax, 14, 26.4, "elevation EXCLUDED — token already carries it (0.05)",
+         color=C_MUTE, fs=6.3)
 
-    arrow(ax, 50, 25.7, 50, 21.8)
-    box(ax, 50, 18.4, 66, 5.4, "(B, 3, 224, 224)",
-        "every value = measured token  +  measured 10 m pixels",
-        fc=C_OUT, ec=C_OUT_E, bold=True)
-    arrow(ax, 50, 15.5, 50, 12.2)
-    box(ax, 50, 9.0, 66, 5.0, "masked Huber loss  @  per-sample pixel index",
-        "translation crop breaks the always-(112,112) position leak",
-        fc=C_NEW, ec=C_NEW_E)
+    arrow(ax, 60, 28.2, 60, 24.0)
+    box(ax, 60, 20.6, 58, 5.4, "(B, 3, 70, 70)   @ 32 m",
+        "70 = 2240/32 exactly · 5×5 cells per token", fc=C_OUT, ec=C_OUT_E,
+        bold=True, fs=8.0)
+    arrow(ax, 60, 17.7, 60, 12.6)
+
+    # ---- combined loss ------------------------------------------------------
+    box(ax, 52, 9.4, 84, 5.6, "L  =  masked Huber @ pixel_idx   +   λ · LST anomaly loss",
+        "1 label vs 196 tokens · λ balanced by gradient, not pixel count",
+        fc=C_NEW, ec=C_NEW_E, fs=8.0)
 
     # ---- footnote legend ----------------------------------------------------
-    note(ax, 50, 2.4,
-         "orange = new  ·  slope · curvature · TPI · TWI · HAND enter at the CONTEXT ENCODER, "
-         "not at the output", color=C_NEW_E, ha="center")
+    note(ax, 50, 2.6,
+         "orange = new  ·  TWI and HAND enter at the CONTEXT ENCODER, not at the output — "
+         "only there can terrain change the response to weather",
+         color=C_NEW_E, ha="center", fs=6.8)
 
     fig.tight_layout(pad=0.4)
     return fig
