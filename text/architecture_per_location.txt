@@ -547,39 +547,323 @@ PART 8 — TRAIN VS INFERENCE
   196x inference cost affordable and the 1x training cost cheap.
 
 ================================================================================
-PART 9 — END-TO-END SHAPE TRACE
+PART 9 — FLOWCHART
 ================================================================================
 
-  anchor_l12      (196,768) ---+
-  spatial_pe      (196,768) ---+
-  modality/stale  (196,768) ---+--> spatial_tokens (196,768)
-  terrain_lo (3,28,28)->stem---+                     |
-                                                     |
-  dem_pyr (4,768), lulc_pyr (4,768), soil (21,74,74)->(4,768)
-  s2/s1 history, era5 (365,19), sif, twsa              |
-        |                                              |
-        +------------> SEQUENCE (<=1035, 768) <--------+
-                              |
-                       6x self-attention
-                              |
-              +---------------+---------------+
-              |                               |
-        S (196,768)                       g (768)
-              |                               |
-              |        W (T_w,768) <---- Block 2 (era5/sif/twsa)
-              |               |               |
-              +--> seq_k = [S_k, g, s2_tok_k(60), s1_tok_k(40)]  ~102
-                            |
-                    L x (self-attn -> cross-attn into W)
-                            |
-                        h_k (768)          [train: 1 k | infer: 196]
-                            |
-            +---------------+
-            |  nearest gather h[i//16, j//16]
-            |  concat measured fine rasters (C=16) at (i,j)
-            |  shared MLP / 1x1 conv
-            v
-        (B, 3, 224, 224)     [train: read 1 pixel | infer: all 50,176]
+--------------------------------------------------------------------------------
+9.0  LEGEND
+--------------------------------------------------------------------------------
+
+   ┌────────┐   a tensor, or a store on disk.  Shape is printed inside.
+   └────────┘
+
+   ╔════════╗   a NEW or CHANGED block.  Everything else exists today.
+   ╚════════╝
+
+      │  ▼      solid arrow = a tensor flows along it, once per sample.
+      ┆  ▽      dashed arrow = SHARED / broadcast — computed once, read many times.
+      (+)       element-wise addition (not concatenation).
+      [k]       this quantity is SLICED at location k — it VARIES with k.
+      (=)       this quantity is the SAME for every k.
+
+   Read every diagram top to bottom.  Widths are ~92 columns.
+
+--------------------------------------------------------------------------------
+9.1  STAGE 0 — FROM DISK TO ONE TRAINING SAMPLE
+--------------------------------------------------------------------------------
+
+  ┌──────────────────────────────┐ ┌──────────────────────────────┐ ┌──────────────────────┐
+  │ satellite_zarr    PERMANENT  │ │ token store        (scratch) │ │ MERIT + wide GLO-30  │
+  │ /projects/prjs1968/          │ │ /gpfs/scratch1/…/zarr/{cat}  │ │              NEW     │
+  ├──────────────────────────────┤ ├──────────────────────────────┤ ├──────────────────────┤
+  │ s2   (N,12,224,224)    10 m  │ │ anchor L3/L6/L9/L12 (196,768)│ │ upa, hnd        90 m │
+  │ s1   (N, 2,224,224)    10 m  │ │ s2 L12 grid   (N,196,768)    │ │ GLO-30 wide     30 m │
+  │ lulc (4,   224,224)    10 m  │ │ s1 L12 grid   (N,196,768)    │ │ 10 km window         │
+  │ dem  (1,   224,224)    30 m  │ │ soil  (21,74,74)        30 m │ └──────────┬───────────┘
+  │ .zattrs: epsg, bounds_utm    │ │ era5 (365,19) sif twsa   9 km│            │
+  └──────────────┬───────────────┘ └──────────────┬───────────────┘            ▼
+                 │                                │              ╔══════════════════════════╗
+                 ▼                                │              ║ build_twi_hand.py        ║
+  ╔══════════════════════════════╗                │              ║  condition (breach)      ║
+  ║ build_fine_stack.py          ║                │              ║  → MFD route  → a, TWI   ║
+  ║  speckle multi-look          ║                │              ║  → D8 trace   → HAND     ║
+  ║  long-term medians           ║                │              ║  → QC vs MERIT upa/hnd   ║
+  ║  days_since                  ║                │              ╚══════════════╤═══════════╝
+  ╚══════════════┬═══════════════╝                │                             │
+                 │                                │                             │
+                 │  s1_hi (5,224,224)             │  anchor, s2/s1 grids,       │ terrain_lo
+                 │  s2_hi (3,224,224)             │  soil, era5, sif, twsa      │  (3,28,28)
+                 │  lulc_hi, soil_hi              │                             │ terrain_hi
+                 │                                │                             │  (3,224,224)
+                 └────────────────┬───────────────┴─────────────────────────────┘
+                                  ▼
+                 ┌──────────────────────────────────────────┐
+                 │ dataset.__getitem__                      │
+                 │                                          │
+                 │  station lat/lon ──► station_pixel()     │
+                 │        └─► pixel_idx (row,col)   in 224  │
+                 │        └─► token_idx k = (r//16)*14+c//16│
+                 │                                          │
+                 │  s2 L12 (N,196,768) ──► INDEX COLUMN k   │
+                 │        └─► s2_tok_k (60,768)   92 KB     │
+                 │            NOT _cpu_pyramid_pool, which  │
+                 │            gave (60,4,768) 184 KB and    │
+                 │            destroyed 97-98% of position  │
+                 │                                          │
+                 │  translation crop: random 10x10 of 14x14 │
+                 │        (breaks the always-k=105 leak)    │
+                 └────────────────────┬─────────────────────┘
+                                      ▼
+                              one training sample
+
+  WHY THE STORES ARE SPLIT.  dataset.py reads ONLY the token store (dataset.py:39).  So the
+  derived arrays (terrain_lo/hi, the fine stacks) are written THERE, needing no new read path,
+  while the raw MERIT and wide DEM stay on /projects.  A scratch purge then costs a CPU re-run,
+  never a re-download.
+
+--------------------------------------------------------------------------------
+9.2  MASTER FLOWCHART — ALL FOUR BLOCKS
+--------------------------------------------------------------------------------
+
+   anchor_l12   terrain_lo    dem_pyr        soil        s2_tok_k   s1_tok_k    era5/sif/twsa
+   (196,768)    (3,28,28)     lulc_pyr    (21,74,74)     (60,768)   (40,768)    (365,19) 9 km
+       │            │          (4,768)         │             │          │             │
+       │            ▼             │            │             │          │             │
+       │      ╔═══════════╗       │            │             │          │             │
+       │      ║terrain    ║       │            │             │          │             │
+       │      ║stem       ║       │            │             │          │             │
+       │      ║conv s2    ║       │            │             │          │             │
+       │      ║ZERO-INIT  ║       │            │             │          │             │
+       │      ║→(196,768) ║       │            │             │          │             │
+       │      ╚═════╤═════╝       │            │             │          │             │
+       │            │             │            │             │          │             │
+       └────(+)─────┘             │            │             │          │             │
+             │                    │            │             │          │             │
+             ▼                    ▼            ▼             │          │             ▼
+   ┌─────────────────────────────────────────────────┐       │          │   ┌──────────────────┐
+   │ BLOCK 1 · CONTEXT ENCODER                       │       │          │   │ BLOCK 2          │
+   │ 6 x self-attention over <=1035 tokens           │       │          │   │ WEATHER ENCODER  │
+   │ runs ONCE per sample, over the whole tile       │       │          │   │ runs ONCE        │
+   └───────────────┬─────────────────┬───────────────┘       │          │   └────────┬─────────┘
+                   │                 │                       │          │            ┆
+                   ▼                 ▼                       │          │            ▽
+          ┌────────────────┐  ┌──────────────┐               │          │   ┌──────────────────┐
+          │ S  (196,768)   │  │ g   (768)    │               │          │   │ W  (T_w,768)     │
+          │ per-location   │  │ tile summary │               │          │   │ SHARED, never    │
+          │ context        │  │              │               │          │   │ replicated       │
+          └───────┬────────┘  └──────┬───────┘               │          │   └────────┬─────────┘
+                  │ [k]              │ (=)                   │[k]       │[k]         ┆ (=)
+                  └──────────┬───────┴───────────────────────┴──────────┘            ┆
+                             ▼                                                       ┆
+   ╔═════════════════════════════════════════════════════════════════════════════╗   ┆
+   ║ BLOCK 3 · PER-LOCATION PROCESSOR        weights SHARED across all k          ║   ┆
+   ║                                                                             ║   ┆
+   ║   seq_k = [ S[:,k,:] │ g │ s2_tok_k (60) │ s1_tok_k (40) ]   ~102 tokens    ║   ┆
+   ║              [k]      (=)      [k]             [k]                          ║   ┆
+   ║                                                                             ║   ┆
+   ║   L x (  self-attention over seq_k  ──►  cross-attention into W  ) ◄┄┄┄┄┄┄┄┄─╫┄┄┄┘
+   ║                                          ^^^^^^^^^^^^^^^^^^^^^^              ║
+   ║                                          terrain x weather INTERACTION       ║
+   ║   → h_k (B,768)          train: 1 location    ·    infer: all 196            ║
+   ╚═════════════════════════════════════╤═══════════════════════════════════════╝
+                                         │
+            terrain_hi ┐                 ▼
+            s1_hi      │  ╔══════════════════════════════════════════════════════╗
+            s2_hi      ├─►║ BLOCK 4 · PER-PIXEL HEAD    no upsampling anywhere   ║
+            lulc_hi    │  ║                                                      ║
+            soil_hi    ┘  ║  out(i,j) = MLP([ h[i//16, j//16] , fine[:,i,j] ])   ║
+              C=16        ║               nearest GATHER      measured 10-30 m   ║
+            MEASURED      ║  train: 1 pixel   ·   infer: 50,176 (batched 1x1)    ║
+                          ╚══════════════════════╤═══════════════════════════════╝
+                                                 ▼
+                                    ┌─────────────────────────┐
+                                    │  (B, 3, 224, 224)       │
+                                    │  3 depths @ 10 m grid   │
+                                    └────────────┬────────────┘
+                                                 ▼
+                          ┌──────────────────────────────────────────┐
+                          │ masked Huber loss @ pixel_idx            │
+                          │ 1 label in 50,176 pixels · NaN-masked    │
+                          └──────────────────────────────────────────┘
+
+  THE ONE ARROW THAT MATTERS is the dashed one into Block 3's cross-attention.  W is computed
+  ONCE and read by every location, but each location queries it with its OWN S_k — which now
+  carries that location's TWI and HAND.  That is the only place in the graph where terrain can
+  modify the RESPONSE TO WEATHER rather than add an offset.  In the current model this arrow
+  does not exist: `context` is a single vector applied uniformly by FiLM.
+
+--------------------------------------------------------------------------------
+9.3  BLOCK 1 ZOOM — SEQUENCE ASSEMBLY
+--------------------------------------------------------------------------------
+
+   anchor_l12 (196,768) ──┐
+   spatial_pe (196,768) ──┤   row_emb[r] + col_emb[c], ABSOLUTE index (not crop-relative)
+   modality_emb           ├──(+)──► spatial_tokens (196,768)
+   staleness(rel_pos)   ──┤                    │
+   terrain_tokens ────────┘  ◄── ZERO-INIT     │
+                                               │
+   idx    tokens   content                     │
+   ─────  ──────   ───────────────────────     │
+   0-3       4     DEM pyramid                 │
+   4-7       4     LULC pyramid                │
+   8-11      4     Soil (SoilEncoder)          │
+   12-207  196     SPATIAL  ◄──────────────────┘   spatial_start = 12
+   …       240     S2 history      (→ 60 with the column-k change)
+   …       160     S1 history      (→ 40 with the column-k change)
+   …       365     ERA5
+   …     <= 50     SIF
+   …     <= 12     TWSA
+         ───────
+         <=1035 tokens @ 768
+              │
+              ▼
+   ┌──────────────────────────────┐
+   │ 6 x DropPathTransformerLayer │   full bidirectional self-attention
+   └──────────────┬───────────────┘
+                  ▼
+                 ctx
+                  │
+        ┌─────────┴──────────┐
+        ▼                    ▼
+   S = ctx[:, 12:208, :]   g = masked mean over ALL NON-spatial, non-CLS, non-pad tokens
+   (196,768)               (768)
+
+  WHY TERRAIN IS ADDED, NOT APPENDED.  Three reasons, each load-bearing:
+    1. BIT-IDENTITY.  terrain_tokens == 0 at init, and adding zero changes nothing.  No new
+       token, no sequence-length change, no perturbed attention → the forward pass is EXACTLY
+       best.pt's.  Appending a token would change the sequence and break the regression gate.
+    2. ALIGNMENT.  Token k's terrain must land on token k.  Appending 4 POOLED terrain tokens
+       (the dem_pyr / lulc_pyr pattern) would make terrain TILE-LEVEL — able only to shift the
+       mean, which is the exact failure being fixed.
+    3. g GETS IT ANYWAY.  g is computed from the encoder OUTPUT, so the non-spatial tokens have
+       already attended over the spatial tokens.  Terrain reaches g through attention; no extra
+       token is required.
+
+--------------------------------------------------------------------------------
+9.4  BLOCK 3 ZOOM — THE DELTA
+--------------------------------------------------------------------------------
+
+   location k = 40                          location k = 141
+   ┌────────────────────────┐               ┌────────────────────────┐
+   │ S[:,40,:]   a HOLLOW   │               │ S[:,141,:]  a RIDGE    │
+   │  TWI 12, HAND 3 m      │               │  TWI 6, HAND 28 m      │
+   │ s2_tok_40  own history │               │ s2_tok_141 own history │
+   │ s1_tok_40  own history │               │ s1_tok_141 own history │
+   │ g          (=) SAME    │               │ g          (=) SAME    │
+   └───────────┬────────────┘               └───────────┬────────────┘
+               │                                        │
+               ▼         SHARED WEIGHTS                  ▼
+        ┌─────────────┐   (one function)          ┌─────────────┐
+        │ self-attn   │                           │ self-attn   │
+        └──────┬──────┘                           └──────┬──────┘
+               │                                        │
+               ▼                                        ▼
+        ┌─────────────┐      ┌──────────┐        ┌─────────────┐
+        │ cross-attn  │◄┄┄┄┄┄┤ W        ├┄┄┄┄┄┄┄►│ cross-attn  │
+        └──────┬──────┘      │ (=) same │        └──────┬──────┘
+               │             │ weather  │               │
+               ▼             └──────────┘               ▼
+          h_40 (768)                              h_141 (768)
+               │                                        │
+               ▼                                        ▼
+     "after 3 d of rain I stay             "I dry in a day"
+      wet a week longer"
+
+  SAME weather, SAME weights, DIFFERENT response.  That is the whole point, and it is only
+  possible because S_k, s2_tok_k and s1_tok_k differ.  If every input to the processor were
+  tile-constant, both columns would emit identical trajectories and today's failure would be
+  rebuilt with more machinery.
+
+  THE FIX IS NOT PER-LOCATION INPUTS, IT IS PER-LOCATION *TEMPORAL* INPUTS.  Static terrain
+  alone shifts a mean.  What lets the two columns diverge is that each carries its own S2/S1
+  HISTORY, read through its own terrain context.  (Theory: 2.6 — Grayson's wet/dry state
+  dependence means the terrain effect IS an interaction, so a static input is the wrong form.)
+
+--------------------------------------------------------------------------------
+9.5  BLOCK 4 ZOOM — NEAREST GATHER, AND THE BLOCKINESS DIAGNOSTIC
+--------------------------------------------------------------------------------
+
+   the 14x14 token grid                 the 224x224 output grid
+   (each token = 16x16 px = 160 m)      (each cell = 10 m)
+
+   ┌────┬────┬────┐                     ┌────────┬────────┬────────┐
+   │h[0,│h[0,│h[0,│                     │████████│▓▓▓▓▓▓▓▓│░░░░░░░░│  16 px
+   │  0]│  1]│  2]│      GATHER         │████████│▓▓▓▓▓▓▓▓│░░░░░░░░│  each
+   ├────┼────┼────┤   ──────────►       ├────────┼────────┼────────┤
+   │h[1,│h[1,│h[1,│   h[i//16, j//16]   │▒▒▒▒▒▒▒▒│████████│▓▓▓▓▓▓▓▓│
+   │  0]│  1]│  2]│   an INDEX OP       │▒▒▒▒▒▒▒▒│████████│▓▓▓▓▓▓▓▓│
+   └────┴────┴────┘   no interpolation  └────────┴────────┴────────┘
+                                          within one block the token is CONSTANT;
+                                          all variation must come from `fine`
+
+   at every pixel (i,j):
+   ┌──────────────────────┐     ┌───────────────────────────────────────────────┐
+   │ h[i//16, j//16]      │  +  │ fine[:, i, j]                          C = 16 │
+   │ 160 m, gathered      │     ├───────────────────────────────────────────────┤
+   └──────────────────────┘     │ terrain_hi  TWI, HAND, valid          30 m  3 │
+              │                 │ s1_hi       vv_now vh_now vv_med             │
+              │                 │             vh_med days_since         10 m  5 │
+              │                 │ s2_hi       ndvi swir days_since   10/20 m  3 │
+              │                 │ lulc_hi     class embedding           10 m  2 │
+              │                 │ soil_hi     soc socd bd               30 m  3 │
+              │                 │ ─────────────────────────────────────────────│
+              │                 │ elevation   EXCLUDED — sub-token frac 0.05,  │
+              │                 │             the token already carries it      │
+              │                 └───────────────────────┬───────────────────────┘
+              └───────────────┬───────────────────────────┘
+                              ▼
+                  ┌──────────────────────┐
+                  │ shared MLP / 1x1 conv│    same weights at every pixel
+                  └──────────┬───────────┘
+                             ▼
+                      (B, 3, 224, 224)
+
+  BLOCKINESS IS A DIAGNOSTIC, NOT A DEFECT.  If the fine channels are inert, the output shows
+  the 16-px blocks above.  THAT IS THE SIGNAL that Block 4 is contributing nothing.  Bilinear
+  interpolation would hide exactly that failure behind a smooth ramp — which is how the current
+  map looks plausible while being anti-correlated with the landscape (§23).  DO NOT SMOOTH IT.
+
+  NO (i%16, j%16) COORDINATE FEATURE.  It would let the model paint arbitrary sub-token patterns
+  from position alone — inventing structure, which is the entire thing being avoided.
+
+  WHY THIS IS DEFENSIBLE AND UNPATCHIFY IS NOT:
+
+                        │ 14x14 out │ unpatchify  │ gather + measured rasters
+    ────────────────────┼───────────┼─────────────┼──────────────────────────
+    output grid         │   160 m   │    10 m     │        10 m
+    sub-token detail    │     —     │ token embed │   MEASURED PIXELS
+    defensible under    │    yes    │     NO      │        YES
+    1 label / 50,176 px │           │             │
+
+--------------------------------------------------------------------------------
+9.6  TRAIN VS INFERENCE — THE SAME GRAPH, DIFFERENT COUNTS
+--------------------------------------------------------------------------------
+
+        TRAINING                                  INFERENCE
+        ────────                                  ─────────
+   ┌──────────────────┐                      ┌──────────────────┐
+   │ BLOCK 1  context │  full tile, ONCE     │ BLOCK 1  context │  IDENTICAL
+   └────────┬─────────┘                      └────────┬─────────┘
+   ┌────────▼─────────┐                      ┌────────▼─────────┐
+   │ BLOCK 2  weather │  ONCE                │ BLOCK 2  weather │  IDENTICAL
+   └────────┬─────────┘                      └────────┬─────────┘
+   ┌────────▼─────────┐                      ┌────────▼─────────┐
+   │ BLOCK 3  ★ 1 loc │  k = token_idx       │ BLOCK 3  196 loc │  batched over k
+   └────────┬─────────┘                      └────────┬─────────┘
+   ┌────────▼─────────┐                      ┌────────▼─────────┐
+   │ BLOCK 4  ★ 1 px  │  (i,j) = pixel_idx   │ BLOCK 4  50,176  │  one 1x1 conv
+   └────────┬─────────┘                      └────────┬─────────┘
+            ▼                                         ▼
+      3 values  vs  label (3,)                  (3, 224, 224) map
+
+  Blocks 1 and 2 are IDENTICAL in both paths.  That is what makes training cheap (one location,
+  one pixel) and 196x inference affordable — the expensive encoders are never repeated.
+
+  WHY ONE-PIXEL SUPERVISION SUFFICES.  Block 3 is ONE SHARED function f(local context, weather)
+  → SM(t), fitted at supervised locations across 993 STATIONS spanning a huge context range.
+  Running it at an unsupervised location inside a tile is INTERPOLATION IN CONTEXT SPACE, not
+  extrapolation.  The training signal for within-tile heterogeneity comes from BETWEEN-station
+  variation across the whole dataset.
 
 ================================================================================
 PART 10 — RESOLUTION ACCOUNTING: WHAT MAY HONESTLY BE CLAIMED
