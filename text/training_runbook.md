@@ -7004,6 +7004,9 @@ architecture has silently reverted — the failure that looks like success until
 > **SUPERSEDED BY §32.7** (2026-08-23). The architecture in §31.1–31.8 stands unchanged; only this
 > ordering is replaced. MERIT no longer runs first as a window-sizer — it is now a **required gate**
 > on the derived terrain (§32.6), and the DEM is fetched per *region* rather than per station.
+> **Step 0 below is also wrong**: branch from `main`, not from the tag — the tag and `main` carry
+> byte-identical training code, so branching from the tag would only discard §31/§32 and the logs.
+> See §32.7 step 0.
 
 0. Branch `feat/per-location-processor` from tag `pre-s30-architecture` (61c1773).
 1. `download_merit_hydro_gee.py` — needed in **every** scenario, so start first.
@@ -7292,7 +7295,20 @@ lazy `ee.Initialize(project=...)` pattern `:83`, plus `_gee_credentials()` from
 
 ### 32.7 Sequence
 
-0. Branch `feat/per-location-processor` from tag `pre-s30-architecture` (61c1773).
+0. Branch `feat/per-location-processor` **from `main`, NOT from the tag.** §31.9 step 0 said to
+   branch from `pre-s30-architecture` (61c1773); that is wrong and was carried over unchecked.
+   **Verified 2026-08-23:** `model.py`, `dataset.py`, `train.py`, `ckpt_utils.py` and `utils.py` are
+   **byte-identical** between the tag and `main` — everything that changed since is docs, figures
+   and analysis scripts (`analyze_lst_heterogeneity.py`, `plot_lst*.py`, `plot_architecture.py`,
+   the runbook, the architecture doc, `logs.txt`). Branching from the tag would discard §31, §32,
+   `text/architecture_per_location.txt`, every session log and the whole §29 LST analysis, while
+   gaining **nothing** for §31.8's bit-identity gate, since main's training code already *is* the
+   tag's training code.
+   **Branch strategy:** one long-lived branch, merged to `main` once the §32 gates pass — it exists
+   so `main` stays runnable mid-rebuild, not for isolation. **Rollback is by TAG, not branch:** tag
+   every run that produces a reported number (`run/<run_name>`) and every milestone worth returning
+   to (`s32/…`), and record the tag name in this runbook beside the result. `git switch --detach
+   <tag>` then reaches any past state without a zoo of branches.
 1. Install `pyflwdir` 0.5.12 + `whitebox` 2.3.6 into `terramind`.
 2. ~~`earthengine authenticate`~~ **DONE 2026-08-23**, notebook mode. Then
    `download_merit_hydro_gee.py`, in parallel with 3. No longer blocking.
