@@ -39,3 +39,9 @@ figures/
 demo_output/
 meeting_output/
 .ipynb_checkpoints/
+
+# Model checkpoints and weights — never commit, .git is already 422 MB
+checkpoints/
+*.pt
+*.pth
+*.ckpt
