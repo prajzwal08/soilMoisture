@@ -4298,3 +4298,36 @@ STILL OPEN / UNTOUCHED — carried from Session 27
   Git identity on recent commits is pkhanal@int6.local.snellius.surf.nl,
   auto-derived from hostname — GitHub is probably not attributing them.
   §27b.4 B9 block, §29 Step 0 and Phase B (ECOSTRESS), §26.3's mosaic_txson.py.
+
+--- ADDENDUM, same evening: GEE RE-AUTHENTICATED AND MERIT PROBED ---
+
+  `earthengine authenticate` failed first in its DEFAULT mode: gcloud is not on
+  the login node and the default auth_mode shells out to it
+  ("FileNotFoundError: 'gcloud'").  Fix is --auth_mode=notebook, which is the
+  headless paste-a-code flow and needs no gcloud.  DONE.  ee.Initialize now
+  succeeds against project 1066500857818 via ~/.config/earthengine/credentials
+  — exactly _CREDENTIALS_FILE at download_era5land_gee.py:43, so the existing
+  scripts pick it up unchanged.  §32.7 step 2 is no longer blocking.
+
+  MERIT/Hydro/v1_0_1 confirmed reachable: 3 arcsec (90 m), bands
+  elv, dir, wth, wat, upa, upg, hnd, viswth.  25 km window returns 271x436.
+
+  TWO CORRECTIONS TO §32 AS FIRST WRITTEN, both from the probe:
+
+  1. upa IS IN km2, NOT m2.  §32.6 originally said m2.  Measured, not assumed:
+     upa/upg matches the 3-arcsec cell area in km2 to four decimals across
+     30-52 N (0.005292 vs 0.005283 at 52 N; 0.007389 vs 0.007402 at 30 N), and
+     the ratio TRACKING CELL AREA WITH LATITUDE is what makes it decisive.
+     upg is the pixel count.  This is §32.4's cells-vs-area trap landing on the
+     REFERENCE side — a factor of 1e6 inside a log, not 900.  download_merit
+     now fetches upg alongside upa so the assertion is reproducible offline.
+
+  2. THE GATE MUST NOT POINT-SAMPLE MERIT.  Four probe points placed on named
+     large rivers all returned upg of 1-8, i.e. hillslope cells — the
+     coordinates missed the channels by a couple of hundred metres.  At 90 m,
+     two cells off a river drops upa by ORDERS OF MAGNITUDE.  Some ISMN stations
+     sit near channels, so a point comparison would manufacture spurious
+     failures out of georeferencing error.  §32.6 rewritten to compare over the
+     2.24 km footprint instead: spatial correlation of ln(upa) plus magnitude at
+     matched quantiles, with snap-to-nearest-stream and a reported snap distance
+     where a station-level number is wanted.

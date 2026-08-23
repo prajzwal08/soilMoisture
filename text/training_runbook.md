@@ -7242,37 +7242,60 @@ Plus a forested-vs-open station on the same landform, to size the DSM error.
 
 ### 32.6 THE MERIT GATE — necessary condition, no station passes without it
 
-Aggregate our 30 m accumulation to MERIT's 90 m grid and compare to `upa` **per station**, all 993:
+**Access verified 2026-08-23** after re-auth in notebook mode (`gcloud` is absent on the login node
+and the default auth mode shells out to it; `--auth_mode=notebook` avoids it). `ee.Initialize`
+succeeds against project `1066500857818` via `~/.config/earthengine/credentials`, which is exactly
+`_CREDENTIALS_FILE` at `download_era5land_gee.py:43`. `MERIT/Hydro/v1_0_1` is 3 arcsec (90 m),
+bands `elv, dir, wth, wat, upa, upg, hnd, viswth`; a 25 km window returns 271×436.
 
-- Boundary capture is **per-station pass/fail**. A station whose upslope area disagrees with MERIT
-  in *magnitude* did not capture its catchment, whatever the region-edge pre-test said. Failures
-  are **masked or fall back to MERIT — never silently used** (§31.8's rule, unchanged).
-- Report the pass fraction and the distribution of `ln(our upa) − ln(MERIT upa)` at the stations. A
-  tile-constant offset is tolerable and removed by standardisation; a station-varying one is not.
+**`upa` IS IN km², NOT m² — measured, not assumed.** `upa/upg` matches the 3-arcsec cell area in
+km² to four decimals across latitudes 30–52°N (0.005292 vs 0.005283 at 52°N; 0.007389 vs 0.007402
+at 30°N), and the ratio *tracking cell area with latitude* is what makes it decisive. `upg` is the
+pixel count. This is §32.4's cells-vs-area trap landing on the reference side: a factor of **10⁶**
+inside a log, not 900. Convert explicitly at the comparison, and assert it in a test.
+
+Aggregate our 30 m accumulation to MERIT's 90 m grid and compare **over the tile, not at a point**:
+
+- **Do not sample MERIT at the station coordinate.** Verified failure mode: four points placed on
+  named large rivers all returned `upg` of 1–8, i.e. hillslope cells — the coordinates missed the
+  channels by a couple of hundred metres. At 90 m, two cells off a river drops `upa` by orders of
+  magnitude. Some ISMN stations sit near channels, so a point comparison would manufacture spurious
+  failures out of georeferencing error.
+- Compare instead across the 2.24 km footprint: **spatial correlation of ln(upa)** between ours and
+  MERIT's, plus **magnitude agreement at matched quantiles**. This is robust to sub-cell
+  registration and uses far more information than one cell. Where a station-level number is wanted,
+  snap to the nearest MERIT stream cell within a stated radius and report the snap distance.
+- Boundary capture stays **per-station pass/fail**. A station whose upslope area disagrees with
+  MERIT in *magnitude* did not capture its catchment, whatever the region-edge pre-test said.
+  Failures are **masked or fall back to MERIT — never silently used** (§31.8's rule, unchanged).
+- Report the pass fraction and the distribution of `ln(our upa) − ln(MERIT upa)`. A tile-constant
+  offset is tolerable and removed by standardisation; a station-varying one is not.
 - **Stream threshold calibrated against `hnd ≈ 0`**, not invented and not swept as a substitute.
   Sweep {1, 5, 10, 50} ha additionally to report HAND's sensitivity alongside the calibrated value.
   §31.8's rule stands: a threshold that cannot be made to agree means conditioning failed, not that
   it needs more tuning.
 - MERIT is a comparison at 90 m carrying its own errors, so disagreement in sub-90 m **structure**
-  is expected and fine. The gate is on the **magnitude of `upa` at the station** — exactly the
-  non-local quantity the region was built to capture.
+  is expected and fine. The gate is on the **magnitude of upslope area** — exactly the non-local
+  quantity the region was built to capture.
 
 Nothing downstream — not the sufficiency gate, not `dataset.py` — consumes TWI/HAND for a station
 that has not passed this.
 
-`download_merit_hydro_gee.py` is new: `upa`, `hnd`, `elv`, `dir` from `MERIT/Hydro/v1_0_1` at 90 m,
-25 km window per station. Template is `download_soil_openlandmap.py`, **not**
-`download_smap_gee.py` (which samples points via `reduceRegions` with no retry, resume or
-checkpointing); take only its lazy `ee.Initialize(project=...)` pattern `:83`, plus
-`_gee_credentials()` from `download_era5land_gee.py:45`. **8–16 workers with backoff, not
-`Pool(64)`** — remote API.
+`download_merit_hydro_gee.py` is new: `upa`, `upg`, `hnd`, `elv`, `dir` from `MERIT/Hydro/v1_0_1`
+at 90 m, 25 km window per station (`upg` fetched alongside `upa` so the unit assertion is
+reproducible offline). Template is `download_soil_openlandmap.py`, **not** `download_smap_gee.py`
+(which samples points via `reduceRegions` with no retry, resume or checkpointing); take only its
+lazy `ee.Initialize(project=...)` pattern `:83`, plus `_gee_credentials()` from
+`download_era5land_gee.py:45`. **8–16 workers with backoff, not `Pool(64)`** — remote API.
+`sampleRectangle` is fine at 25 km (118k cells, under the request cap); larger windows would need
+`getDownloadURL` / `computePixels`.
 
 ### 32.7 Sequence
 
 0. Branch `feat/per-location-processor` from tag `pre-s30-architecture` (61c1773).
 1. Install `pyflwdir` 0.5.12 + `whitebox` 2.3.6 into `terramind`.
-2. **`earthengine authenticate` — BLOCKING for §32.6.** Then `download_merit_hydro_gee.py`, in
-   parallel with 3.
+2. ~~`earthengine authenticate`~~ **DONE 2026-08-23**, notebook mode. Then
+   `download_merit_hydro_gee.py`, in parallel with 3. No longer blocking.
 3. `download_wide_dem.py` — 353 regions, GLO-30 from AWS, LAEA @ 30 m. Provenance-check against
    the zarr `dem` at the same footprint for ~5 stations.
 4. `build_twi_hand.py` + Tier-1/2/3 validation.
