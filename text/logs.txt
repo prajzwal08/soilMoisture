@@ -4175,3 +4175,126 @@ STILL OPEN / UNTOUCHED
   Earlier items untouched: §27b.4 B9 block, §29 Step 0 and Phase B (ECOSTRESS),
   §26.3's mosaic_txson.py gate.
 
+
+================================================================================
+2026-08-23  SESSION 28 — §32 PLANNED: TERRAIN, DEM-FIRST, MERIT AS A GATE.
+NOTHING BUILT.  No GPU spent.  No pipeline code changed (only the runbook).
+Build starts next session.
+================================================================================
+
+PRIMARY OUTPUT
+  text/training_runbook.md §32 — refines §31's SEQUENCE, not its architecture.
+  §31.1-31.8 stand unchanged; §31.9 is marked superseded by §32.7.
+
+FOUR ACCESS PROBES RUN — all read-only, all conclusive
+
+  1. GEE IS DEAD.  The stored refresh token returns
+     "invalid_grant: Token has been expired or revoked".  Every MERIT route is
+     blocked behind a manual `earthengine authenticate`.  This is a BLOCKING user
+     action for §32.6, and GEE is also where ERA5-Land / SMAP / Landsat ST came
+     from, so it is needed regardless.
+
+  2. GLO-30 IS DIRECTLY READABLE FROM AWS AS A PUBLIC COG.
+     copernicus-dem-30m.s3.amazonaws.com — opens in 0.2 s, 10 km window in 0.3 s,
+     no auth, no request signing.  The 993-job openEO/CDSE manager in
+     download_dem_cdse.py is not needed for the wide fetch.  Same product, so
+     download_dem_cdse.py is left untouched for the existing 10 m tiles.
+
+  3. FABDEM ACCESS CONFIRMED — §31.4's "confirm FABDEM access first" DISCHARGED.
+     zip+https://data.bris.ac.uk/datasets/s5hqmjcdj8yo2ibzi9b4ew3sn/
+     N50E000-N60E010_FABDEM_V1-2.zip!N52E006_FABDEM_V1-2.tif opens in 0.4 s, a
+     10 km window reads in 0.6 s, Accept-Ranges: bytes, HTTP 206, no auth.
+     49 zips ~39 GB would mirror every station at 50 km half-width.
+     NOT adopted — kept as the mitigation if the OSM stream check fails.
+
+  4. TERRAMIND PRETRAINED ON GLO-30, AND GLO-30 IS A DSM.
+     TerraMesh's DEM modality is Copernicus WorldDEM-30 ("produced using
+     Copernicus WorldDEM-30 (c) DLR e.V."); the shipped tokenizer config carries
+     domain="dem@264", data_path="./data/TerraMesh/train" at
+     terratorch/.../terramind/tokenizer/tokenizer_register.py:240.
+     => The DEM CHANNEL MUST STAY GLO-30 (no pretraining distribution shift).
+     => But that says NOTHING about routing water through it.  The wide DEM is an
+        INTERMEDIATE, not an input — nothing downstream sees those elevations,
+        only TWI and HAND — so swapping only the derivation step to FABDEM costs
+        no consistency.  This split is the useful result.
+
+FOUR THINGS MEASURED
+
+  - GLOBAL 30 m ROUTING SIZED AND REJECTED.  166e9 cells, 0.66 TB for the DEM
+    array, ~4.6 TB working set against ~1 TB on a fat node; and conditioning is
+    non-local so it cannot be naively tiled.  The download would be fine; the
+    routing is not.  MERIT Hydro IS this problem solved at 90 m.
+
+  - REGIONS BEAT PER-STATION WINDOWS.  Single-linkage clustering of the 993:
+      25 km  -> 537 regions, 0.34e9 cells, largest  155 km
+      50 km  -> 353 regions, 0.84e9 cells, largest  559 km   <- CHOSEN
+     100 km  -> 202 regions, 2.76e9 cells, largest 1112 km
+    50 km: every region ~10 GB working or less, Pool(16) on one ordinary node.
+    Needs per-region Lambert Azimuthal Equal Area at 30 m — a UTM zone is only
+    ~500 km wide and cannot carry a 559 km region.
+
+  - COLOCATED PAIRS RECOMPUTED (§26's list was never persisted).  KD-tree on
+    ECEF, 1120 m cutoff: 75 pairs across 84 distinct stations —
+    15 at 0-50 m, 6 at 50-160 m, 25 at 160-500 m, 29 at 500-1120 m.
+    §31.8 records 62 (13/4/16/29), so §26 applied a further filter, most likely
+    overlapping observation periods.  RECONCILE when csvs/colocated_pairs.csv is
+    finally written.
+    ==> THE REASON THE SEQUENCE CHANGED: 21 of 75 pairs are under 160 m apart,
+        i.e. under TWO MERIT cells, so dTWI is ~0 for them by construction, and
+        the 25 at 160-500 m span 2-5 cells.  §31.8's gate on MERIT 90 m was
+        really only powered on the 29 pairs beyond 500 m.  Our own 30 m terrain
+        restores ~50 usable pairs.  A false negative there would have killed a
+        valid arm of the architecture.
+
+  - GLO-30 GRID TRAPS.  The N52 tile is 2400x3600 at (0.000417 lon, 0.000278
+    lat) — longitude is DECIMATED POLEWARD, 1.5 arcsec in x above 50 deg, again
+    at 60/70/80.  Cells are not square in metres anywhere and 56 STATIONS ARE
+    ABOVE 60 N.  Flow routing and Horn slope assume square cells.  Also a 10 km
+    window straddles 1-degree tile boundaries often — direct COG reads must
+    mosaic up to four neighbours.
+
+  - NO ROUTING LIBRARY IS INSTALLED, re-verified.  pyflwdir 0.5.12 needs numba,
+    which exists ONLY in `terramind` (0.67.0; soilmoisture has none).  So the
+    download scripts run in `soilmoisture`, build_twi_hand.py in `terramind`.
+
+THE ONE DECISION THE USER MADE
+  MERIT IS A NECESSARY CONDITION, not a deferred cross-check.  No station's
+  TWI/HAND may be used by anything — not the sufficiency gate, not dataset.py —
+  until its accumulation has been checked against MERIT `upa` per station.
+  Failures are masked or fall back to MERIT, never silently used.  This makes
+  the GEE re-auth blocking.
+
+NEXT, IN ORDER — NOTHING STARTED
+  0. Branch feat/per-location-processor from tag pre-s30-architecture (61c1773).
+  1. Install pyflwdir 0.5.12 + whitebox 2.3.6 into `terramind`.
+  2. earthengine authenticate  <- BLOCKING.  Then download_merit_hydro_gee.py.
+  3. download_wide_dem.py — 353 regions, GLO-30 from AWS, LAEA @ 30 m.
+  4. build_twi_hand.py + Tier 1/2/3 validation (synthetic DEMs, mass
+     conservation, HAND >= 0, pyflwdir vs WhiteboxTools).
+  5. Pilot on ~12 stations; Tier 4 (OSM waterways overlay, TWI over hillshade);
+     sub-token variance fraction of TWI/HAND — NEVER YET COMPUTED, and it decides
+     whether they belong in Block 4 at all.
+  6. THE MERIT GATE.
+  7. csvs/colocated_pairs.csv — persist, reconcile 75-vs-62.
+  8. Sufficiency gate on the 84 pair stations, split wet/dry.  No GPU.
+  9. Only if 8 passes: build_fine_stack.py -> dataset.py -> model.py -> smoke.
+
+RISK, RESTATED
+  The physics may not reach 0-10 cm — unchanged from §31.10, independent of DEM
+  resolution, same shape as §29 (-0.077).  §32's contribution is that the gate
+  now runs on ~50 resolvable pairs at 30 m instead of 29 at 90 m, so a negative
+  result is trustworthy rather than possibly a resolution artefact.
+  A terrain failure prunes ONE INPUT, not the architecture — ablation row 2
+  (Block 3 on, terrain off) isolates it, since the per-location S2/S1 history
+  columns do not depend on terrain.
+  The DSM problem is the failure most likely to actually happen and no care in
+  the routing code fixes it.  Decision rule is pre-committed: if the OSM overlay
+  shows streams leaving mapped channels in forested regions, swap THOSE REGIONS'
+  DERIVATION to FABDEM rather than tuning the breaching.
+
+STILL OPEN / UNTOUCHED — carried from Session 27
+  dataset.py:483-486 — all-zero anchors returned with orbit_id=0,
+  indistinguishable from a real S2 anchor.  Latent bug, fix regardless.
+  Git identity on recent commits is pkhanal@int6.local.snellius.surf.nl,
+  auto-derived from hostname — GitHub is probably not attributing them.
+  §27b.4 B9 block, §29 Step 0 and Phase B (ECOSTRESS), §26.3's mosaic_txson.py.

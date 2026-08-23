@@ -7001,6 +7001,10 @@ architecture has silently reverted — the failure that looks like success until
 
 ### 31.9 Sequence
 
+> **SUPERSEDED BY §32.7** (2026-08-23). The architecture in §31.1–31.8 stands unchanged; only this
+> ordering is replaced. MERIT no longer runs first as a window-sizer — it is now a **required gate**
+> on the derived terrain (§32.6), and the DEM is fetched per *region* rather than per station.
+
 0. Branch `feat/per-location-processor` from tag `pre-s30-architecture` (61c1773).
 1. `download_merit_hydro_gee.py` — needed in **every** scenario, so start first.
 2. **Plot the `upa` distribution across 993 stations** — the per-station go/no-go for self-computing
@@ -7032,3 +7036,271 @@ LST, diurnal range) is untouched and is the only arm that could still recover a 
 **Latent bug, fix regardless:** `dataset.py:483-486` returns all-zero anchors with `orbit_id=0`,
 indistinguishable from a real S2 anchor (`dataset.py:504`), so a missing anchor silently receives
 the "S2" modality embedding at `model.py:498,508`.
+
+## §32 Terrain, DEM-first — compute TWI/HAND ourselves, MERIT as a required gate (PLANNED 2026-08-23, nothing built)
+
+Refines §31's **sequence**, not its architecture. §31.1–31.7 stand unchanged: Block 3, the 70×70
+@ 32 m output, terrain entering Block 1 zero-init, the LST side branch. What changes is the order
+of the terrain build and what MERIT is for.
+
+Nothing built. No GPU spent. No pipeline code changed.
+
+### 32.1 What changed from §31.9, and why
+
+§31.9 put `download_merit_hydro_gee.py` first, because MERIT `upa` at the station was to size each
+DEM window. Three measurements this session invert that, and a fourth changes MERIT's role.
+
+**(a) GEE is currently unusable.** The stored refresh token returns
+`invalid_grant: Token has been expired or revoked` (`download_era5land_gee.py:45` credential path,
+project `1066500857818`). Every MERIT route is blocked behind a manual `earthengine authenticate`.
+The DEM route is blocked behind nothing.
+
+**(b) Window sizing dissolves once the processing unit is a region rather than a station.** See
+§32.3. Boundary capture then has a self-contained pre-test — trace the station's upslope mask and
+check whether it reaches the region edge — which front-loads the cheap half of the MERIT gate but
+does **not** replace it.
+
+**(c) The sufficiency gate is materially stronger at 30 m than at MERIT's 90 m.** Recomputing the
+colocated pairs from `station_splits.csv` (KD-tree on ECEF, 1120 m cutoff): **75 pairs across 84
+distinct stations** — 15 at 0–50 m, 6 at 50–160 m, 25 at 160–500 m, 29 at 500–1120 m. **21 of 75
+are separated by under 160 m**, i.e. under two MERIT cells, so ΔTWI is ≈0 for them by construction;
+the 25 at 160–500 m span 2–5 cells. At 90 m the gate is really only powered on the 29 pairs beyond
+500 m. Our own 30 m terrain restores ~50 usable pairs. §31.8's gate would have risked a **false
+negative that killed a valid arm**.
+
+(§31.8 records 62 pairs as 13/4/16/29. The recomputation gives 75 as 15/6/25/29, so §26 applied a
+further filter — most plausibly overlapping observation periods. Reconcile and record it when
+`csvs/colocated_pairs.csv` is finally written.)
+
+**(d) MERIT is promoted, not demoted — from window-sizer to necessary condition.** It no longer
+runs first, but **no station's TWI/HAND may be used by anything until its accumulation has been
+checked against MERIT `upa`**. §32.6. This is a stronger requirement than §31.8's, which framed the
+comparison as a per-station pass/fail among several derivation gates.
+
+### 32.2 DEM source — GLO-30, and the TerraMind consistency argument
+
+Same product already in the pipeline: `COPERNICUS_30` via `download_dem_cdse.py:197`, stored per
+station as 224×224 @ 10 m bilinear, now living in `/projects/prjs1968/satellite_zarr/*.zarr/dem`.
+
+**TerraMind pretrained on this same surface — verified this session.** TerraMesh's DEM modality is
+Copernicus WorldDEM-30 ("produced using Copernicus WorldDEM-30 © DLR e.V."), and the shipped
+tokenizer config carries `domain="dem@264"`, `data_path="./data/TerraMesh/train"`
+(`terratorch/models/backbones/terramind/tokenizer/tokenizer_register.py:240`). So `dem_L12.pt` and
+`dem_pyr` sit on exactly the surface the frozen encoder expects. **The DEM channel stays GLO-30**;
+substituting FABDEM there would introduce a pretraining distribution shift for no gain.
+
+**That argument carries no weight for the terrain derivation, and the split is load-bearing.**
+TerraMind used elevation as texture and context; it never routed water through it. GLO-30 is
+officially a **DSM** — TanDEM-X X-band scatters near canopy top — so a tree line dams a stream and
+conditioning routes flow around a ridge that does not exist. This is precisely why MERIT Hydro
+exists as a separate product.
+
+In our pipeline the wide DEM is an **intermediate, not an input**: nothing downstream sees those
+elevations, only TWI and HAND. So the mitigation costs nothing in consistency — breach aggressively
+per §31.4, run §32.7's OSM stream check, and if that fails, swap **only the derivation step** to
+FABDEM. FABDEM access was probed and confirmed: `zip+https://data.bris.ac.uk/datasets/
+s5hqmjcdj8yo2ibzi9b4ew3sn/N50E000-N60E010_FABDEM_V1-2.zip!N52E006_FABDEM_V1-2.tif` opens in 0.4 s
+and a 10 km window reads in 0.6 s, no auth, HTTP range supported. **§31.4's "confirm FABDEM access
+first" is discharged.** 49 zips ≈ 39 GB would mirror every station at 50 km half-width if wanted.
+
+### 32.3 Transport — same product, and the openEO job manager is not needed
+
+GLO-30 is published as **public COGs on AWS**, verified this session:
+`https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N52_00_E006_00_DEM/…_DEM.tif`
+opens in 0.2 s and a 10 km window reads in 0.3 s, **no auth, no request signing**. So the wide
+fetch reuses `download_soil_openlandmap.py`'s windowed-COG pattern (`station_bbox_wgs84()` `:147`,
+`read_patch()` `:171` with 3-attempt exponential backoff, `process_station()` `:207`) rather than
+`download_dem_cdse.py`'s 993-job `MultiBackendJobManager`. `download_dem_cdse.py` is left untouched
+and keeps serving the existing 10 m tiles; CDSE remains the fallback.
+
+**Two traps in the GLO-30 grid, both measured.** The N52 tile is 2400×3600 at
+(0.000417° lon, 0.000278° lat) — GLO-30 **decimates longitude poleward**, 1.5 arcsec in x above
+50°, changing again at 60/70/80°. Cells are not square in metres anywhere, and **56 stations are
+above 60°N**. Flow routing and Horn slope assume square cells. Second, a 10 km window straddles 1°
+tile boundaries often; `download_dem_cdse.py:105-116` buffers the bbox for CDSE, but direct COG
+reads must open and mosaic up to four neighbouring tiles.
+
+**Global routing was sized and rejected.** Global land at 30 m is 166 × 10⁹ cells: 0.66 TB for the
+DEM array and ~4.6 TB working set against ~1 TB on a Snellius fat node — and conditioning is
+non-local, so it cannot be naively tiled. The download would be fine; the routing is not. MERIT
+Hydro *is* this problem solved at 90 m.
+
+**The processing unit is a region.** Single-linkage clustering of the 993 stations:
+
+| linkage | regions | cells | DEM | working set | largest region |
+|---|---|---|---|---|---|
+| 25 km | 537 | 0.34 e9 | 1.4 GB | 9 GB | 155 km |
+| **50 km** | **353** | **0.84 e9** | **3.4 GB** | **24 GB** | **559 km** |
+| 100 km | 202 | 2.76 e9 | 11 GB | 77 GB | 1112 km |
+| global | — | 166 e9 | 0.66 TB | 4.6 TB | — |
+
+**50 km / 353 regions** is chosen: the largest single region is ~3.5 × 10⁸ cells ≈ 10 GB working,
+so every region fits an ordinary node under `Pool(16)`, while the ocean-and-empty-land overhead
+stays near 2× the tight-window area. Per region: bbox + 10 km buffer → mosaic the covering GLO-30
+COGs → reproject to a **per-region Lambert Azimuthal Equal Area at exactly 30 m**. A UTM zone is
+only ~500 km wide and cannot carry a 559 km region.
+
+Regions beat per-station windows on three counts, the third being the reason: boundary capture
+becomes self-testable before MERIT arrives; **the 75 colocated pairs land inside one continuous
+flow field**, so ΔTWI carries no differential boundary error exactly where the gate is most
+sensitive; and there are no seams inside a region.
+
+### 32.4 Producing TWI and HAND — the recipe, with the reason each choice is not the obvious one
+
+```python
+dem_raw  = read(region_dem)              # equal-area, 30 m, SQUARE cells
+dem_cond = breach_least_cost(dem_raw)    # whitebox; then fill residual pits
+flw   = pyflwdir.from_dem(dem_cond, nodata=..., transform=..., latlon=False)
+acc   = flw.upstream_area(unit="m2")     # <- assert unit, do not trust the name
+a     = acc / 30.0                       # m^2 -> specific catchment area, units of LENGTH
+beta  = horn_slope(dem_raw, 30.0)        # RAW dem -- conditioning flattens valleys
+twi   = np.log(a / np.clip(np.tan(beta), 1e-3, None))
+streams = acc > (10 * 1e4)               # 10 ha = 111 cells at 30 m
+hand    = flw.hand(drain=streams, elevtn=dem_raw)
+```
+
+1. **Breach, do not fill.** Filling raises a pit until it spills over its rim; breaching carves
+   down through the obstruction. Our obstructions are canopy, because GLO-30 is a DSM — a 20 m tree
+   line across a valley is a 20 m dam. Filling floods the valley into a fake lake and routes flow
+   around the hill; breaching cuts a notch, which is what the real stream does under the canopy.
+   `BreachDepressionsLeastCost`, then fill residuals.
+2. **MFD for accumulation, D8 for the HAND trace.** D8 sends all water to the steepest of 8
+   neighbours (compare steepest *slope* — diagonals are 42.4 m away, not 30), which stripes smooth
+   hillslopes. MFD (Quinn 1991, slope^p, p≈1.1) splits among all downslope neighbours and is more
+   physical for `a`. But under MFD there is no single downstream path, and HAND is *defined* by
+   following one — hence a second D8-only field purely for tracing.
+3. **Accumulation** is one topological-order pass, high to low. Assert cells-vs-area: a factor of
+   900 is a constant 6.8 inside a log — harmless after standardisation, poisonous when mixing
+   conventions between regions or comparing against MERIT.
+4. **`a` is area per unit contour width**, so `a = A_cells · cellsize`, units of **metres, not m²**.
+   Ridge 30 m, valley bottom thousands — that spread *is* §31.4's Δln(a) ≈ 2.8.
+5. **Slope from the RAW DEM.** Horn 3×3, `β = atan(√((dz/dx)²+(dz/dy)²))`, 8·Δ denominators.
+   Conditioning deliberately flattens things; taking slope off the conditioned surface puts
+   artificial zeros exactly in the valleys where TWI matters most. Route on conditioned, measure
+   slope on raw.
+6. **Floor `tan β` at 1e-3**, and report the per-tile fraction hitting the floor — a large fraction
+   means TWI is degenerate there, not merely clipped.
+7. **HAND** = elevation − elevation of the first stream cell on the D8 trace. Zero on streams,
+   **≥ 0 everywhere**; any negative value is a conditioning bug, not a feature. `log1p` before
+   standardising.
+
+Run once per region on the buffered mosaic, then crop each station's 2.24 km tile out of the
+regional rasters — the region edge is the only wall and it is 10 km beyond the buffer. Outputs
+`terrain_lo` (3,28,28) @ 80 m and `terrain_hi` (3,70,70) @ 32 m, channels `[TWI, HAND, valid_mask]`.
+
+**Only the non-local terms need the wide DEM.** `a` must be integrated over tens of km, and HAND's
+trace must reach a stream that lies outside the tile in **25 of 30** sampled cases (§31.4). The
+local term `tan β` needs a one-cell halo and is already covered by the 10 m `dem` in the zarr.
+Taking `a` from MERIT at 90 m and keeping only β fine was reconsidered and rejected again:
+Δln(a) ≈ 2.8 across a hillslope against Δln(tan β) ≈ 1.6, so `a` is simultaneously the non-local
+term *and* the larger sub-tile gradient. That combination is what makes it expensive.
+
+**Environment split.** None of `pyflwdir` / `richdem` / `whitebox` / `pysheds` is installed in
+either env (re-verified). `pyflwdir` 0.5.12 needs numba, which exists **only in `terramind`**
+(0.67.0; `soilmoisture` has none). So `download_wide_dem.py` and `download_merit_hydro_gee.py` run
+in `soilmoisture`, `build_twi_hand.py` in `terramind`. `whitebox` 2.3.6 as an independent second
+opinion on breaching.
+
+*API caveat:* `pyflwdir.from_dem` returns D8 with its own internal filling, so MFD accumulation
+likely needs WhiteboxTools `FD8FlowAccumulation` / `DInfFlowAccumulation`. Verify in the pilot.
+
+### 32.5 Validation — five tiers, cheapest and most decisive first
+
+Two questions kept apart: **is the derivation correct** (tiers 1–5), and **does terrain matter for
+soil moisture** (§32.8). A perfectly correct TWI can still fail the sufficiency gate.
+
+**Tier 1 — synthetic DEMs with analytic answers.** Seconds to run; catches what real terrain hides.
+
+| surface | required result |
+|---|---|
+| inclined plane, slope s | `a` per row = distance from top edge; slope exactly s; TWI linear downslope |
+| cone (divergent) | `a` ≈ one cell everywhere; TWI low and near-uniform |
+| V-valley | TWI maximal on the axis and **symmetric** — asymmetry = direction-encoding bug |
+| single pit in a plane | after breaching, zero cells lack a downstream neighbour |
+
+Plus the only exact test in the pipeline: **mass conservation** — accumulation summed over all
+outlets equals the total cell count, to the integer.
+
+**Tier 2 — internal consistency, no external truth.** HAND ≥ 0 and non-increasing downstream;
+accumulation non-decreasing downstream; `a` ≥ 30 m everywhere; **buffer-doubling invariance**
+(recompute at 20 km instead of 10 km — TWI/HAND at the stations must not move); catchment-inside-
+region for every station; slope-floor fraction per tile.
+
+**Tier 3 — two independent implementations.** pyflwdir vs WhiteboxTools on the identical
+conditioned DEM, correlating ln(a) and HAND. The codebases share no lineage. Disagreement on flats
+and where MFD/D8 genuinely differ is expected; disagreement on ordinary hillslopes is a bug.
+
+**Tier 4 — independent external data, no GEE needed.** The tier that tests our largest exposure.
+**OpenStreetMap waterways overlay** — does the derived stream network follow mapped rivers? If
+canopy has dammed a valley, the derived stream visibly leaves the mapped channel. Plus **TWI over
+hillshade** for ~20 stations spanning flat/steep/forested/arid, reusing `hillshade()` at
+`plot_tile_context.py:84` — no numeric test catches a global sign flip, a person looking at a
+picture does; verify against a *known* hollow, since sign conventions differ between references.
+Plus a forested-vs-open station on the same landform, to size the DSM error.
+
+**Tier 5 — the MERIT gate.** §32.6.
+
+### 32.6 THE MERIT GATE — necessary condition, no station passes without it
+
+Aggregate our 30 m accumulation to MERIT's 90 m grid and compare to `upa` **per station**, all 993:
+
+- Boundary capture is **per-station pass/fail**. A station whose upslope area disagrees with MERIT
+  in *magnitude* did not capture its catchment, whatever the region-edge pre-test said. Failures
+  are **masked or fall back to MERIT — never silently used** (§31.8's rule, unchanged).
+- Report the pass fraction and the distribution of `ln(our upa) − ln(MERIT upa)` at the stations. A
+  tile-constant offset is tolerable and removed by standardisation; a station-varying one is not.
+- **Stream threshold calibrated against `hnd ≈ 0`**, not invented and not swept as a substitute.
+  Sweep {1, 5, 10, 50} ha additionally to report HAND's sensitivity alongside the calibrated value.
+  §31.8's rule stands: a threshold that cannot be made to agree means conditioning failed, not that
+  it needs more tuning.
+- MERIT is a comparison at 90 m carrying its own errors, so disagreement in sub-90 m **structure**
+  is expected and fine. The gate is on the **magnitude of `upa` at the station** — exactly the
+  non-local quantity the region was built to capture.
+
+Nothing downstream — not the sufficiency gate, not `dataset.py` — consumes TWI/HAND for a station
+that has not passed this.
+
+`download_merit_hydro_gee.py` is new: `upa`, `hnd`, `elv`, `dir` from `MERIT/Hydro/v1_0_1` at 90 m,
+25 km window per station. Template is `download_soil_openlandmap.py`, **not**
+`download_smap_gee.py` (which samples points via `reduceRegions` with no retry, resume or
+checkpointing); take only its lazy `ee.Initialize(project=...)` pattern `:83`, plus
+`_gee_credentials()` from `download_era5land_gee.py:45`. **8–16 workers with backoff, not
+`Pool(64)`** — remote API.
+
+### 32.7 Sequence
+
+0. Branch `feat/per-location-processor` from tag `pre-s30-architecture` (61c1773).
+1. Install `pyflwdir` 0.5.12 + `whitebox` 2.3.6 into `terramind`.
+2. **`earthengine authenticate` — BLOCKING for §32.6.** Then `download_merit_hydro_gee.py`, in
+   parallel with 3.
+3. `download_wide_dem.py` — 353 regions, GLO-30 from AWS, LAEA @ 30 m. Provenance-check against
+   the zarr `dem` at the same footprint for ~5 stations.
+4. `build_twi_hand.py` + Tier-1/2/3 validation.
+5. Pilot on ~12 stations spanning flat (TxSON) / steep / forested / arid; Tier 4; sub-token
+   variance fraction of TWI/HAND (§30.3a's decomposition, **never yet computed for these
+   channels**) — it decides whether they belong in Block 4 at all.
+6. **The MERIT gate**, §32.6.
+7. `csvs/colocated_pairs.csv` — persist, and reconcile 75-vs-62 against §26.
+8. **Sufficiency gate** on the 84 pair stations that passed §32.6: ΔSM on ΔTWI/ΔHAND under station
+   fixed effects, **split wet/dry** per §31.5. No GPU. This is the science go/no-go.
+9. Only if 8 passes: `build_fine_stack.py`, then `dataset.py` → `model.py` → §31.8's regression
+   gates → smoke (20 stations, 3 epochs, measuring `data=` and peak RAM against the 540 GB
+   baseline) → full run ~42 GPU-h. Evaluate, ablate, write back as §32.n.
+
+### 32.8 Risks, unchanged from §31.10 except where noted
+
+**The physics may not reach 0–10 cm** — still the largest risk, still independent of DEM
+resolution, still the same shape as §29 (which tested evaporative cooling and measured −0.077).
+§32's contribution is that the gate now runs on 30 m terrain over ~50 resolvable pairs instead of
+90 m terrain over 29, so a negative result is trustworthy rather than possibly an artefact of
+resolution.
+
+**A terrain failure does not kill the project.** Ablation row 2 — Block 3 on, terrain off —
+isolates the architecture from the hydrology, because the per-location S2/S1 history columns do not
+depend on terrain at all. A negative result prunes **one input**.
+
+**The DSM problem is the failure most likely to actually occur**, and no care in the routing code
+fixes it. Decision rule: if Tier 4's OSM overlay shows streams leaving mapped channels in forested
+regions, switch **those regions' derivation** to FABDEM rather than tuning the breaching.
+Everything downstream is unaffected, because the wide DEM is an intermediate and the encoder's DEM
+channel stays GLO-30 regardless (§32.2).
