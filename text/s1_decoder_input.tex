@@ -1,0 +1,450 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.0cm,top=2.0cm,bottom=2.2cm]{geometry}
+\usepackage{fontspec}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage[colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!45!black]{hyperref}
+
+\setmainfont{DejaVu Sans}[Scale=0.88]
+\setsansfont{DejaVu Sans}[Scale=0.88]
+\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+
+\definecolor{rulegray}{gray}{0.72}
+\newenvironment{quoting}%
+  {\begin{list}{}{\setlength{\leftmargin}{1.4em}\setlength{\rightmargin}{1.4em}%
+   \setlength{\topsep}{5pt}}\item[]\itshape}%
+  {\end{list}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\renewcommand{\arraystretch}{1.18}
+
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\footnotesize\sffamily Sentinel-1 input to the decoder}
+\fancyhead[R]{\footnotesize\sffamily 2026-08-24}
+\fancyfoot[C]{\footnotesize\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\DefineVerbatimEnvironment{blk}{Verbatim}%
+  {fontsize=\scriptsize,frame=leftline,framerule=0.6pt,%
+   rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt}
+
+\title{\bfseries\sffamily Computing the Sentinel-1 input\\to the decoder}
+\author{\sffamily Soil moisture project}
+\date{\sffamily 2026-08-24}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+{\small\tableofcontents}
+\medskip\hrule\medskip
+
+\textbf{Scope.} This document defines one thing only: what is computed from the Sentinel-1
+archive and handed to each stage of the decoder. It does not discuss targets, losses,
+auxiliary heads, terrain or thermal data.
+
+\medskip\hrule\medskip
+
+\section{Why anything is needed}
+
+The decoder turns a $14\times14$ grid into a $112\times112$ map --- 196 values per channel
+becoming 12{,}544. Every one of those values must come from somewhere.
+
+In a conventional U-Net it comes from the skip connections: the encoder passed through
+$112\times112$ on the way down and saved a copy. TerraMind is a Vision Transformer. It cuts
+the image into $16\times16$-pixel patches once, at the start, and every subsequent layer
+operates on those 196 patches. It never visits $112\times112$, so there is no
+$112\times112$ copy to save --- \code{L3}, \code{L6}, \code{L9} and \code{L12} are
+\textbf{all} $14\times14$ (\code{model.py:530}).
+
+At \code{model.py:253-255} those skips are FiLM-modulated; at \code{model.py:257-264} they
+are interpolated up and concatenated. So every decoder stage receives 160\,m information
+relabelled as 80/40/20\,m. \textbf{Between 160\,m and 20\,m the decoder has no measurement
+at all}, and fills the gap from learned convolution weights. §23 measured what it fills it
+with: confident structure up to 0.19\,m³/m³, strongest at the \emph{flattest} site.
+
+Sentinel-1 is the only dense observation available that varies in \textbf{both} space and
+time. It sits on disk as a $224\times224$ raster of $\sigma^0$ in dB per acquisition,
+median 440 acquisitions per station.
+
+\begin{blk}
+   s1_asc   993 stations   median 212   p10  90   max 958
+   s1_desc  910 stations   median 238   p10   5   max 956
+   asc+desc                median 440   p10 144   only 9 stations below 50
+
+   /projects/prjs1968/satellite_zarr/{station}.zarr/s1_{asc,desc}/
+       data   (N, 2, 224, 224)  fp16, dB, bands [VV, VH]
+       dates  (N,)              b'YYYYMMDD'
+\end{blk}
+
+\section{Notation}
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+symbol & meaning \\
+\midrule
+$p$ & acquisition (pass) index, $p = 1 \dots n$ \\
+$k$ & cell index at a given grid level \\
+$\ell$ & decoder level, $\ell \in \{14,\,28,\,56,\,112\}$ \\
+$f_\ell$ & pixels per cell, $f_\ell = 224/\ell$ \\
+$B_k$ & the block of $f_\ell^2$ pixels belonging to cell $k$ \\
+$P$ & backscatter in \textbf{linear power} \\
+$T_\ell$ & backscatter in \textbf{dB} after multilooking to level $\ell$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The four levels correspond to the four decoder stages:
+\[
+\ell = 14 \to 160\,\mathrm{m}, \quad
+28 \to 80\,\mathrm{m}, \quad
+56 \to 40\,\mathrm{m}, \quad
+112 \to 20\,\mathrm{m}.
+\]
+
+\section{Multilooking, and why it must be done in linear power}
+
+Radar backscatter is multiplicative and is delivered as a logarithm. To average $N$ pixels
+correctly you must average the \emph{power}, then take the log:
+\[
+P(p,u,v) \;=\; 10^{\,\sigma_{dB}(p,u,v)/10}
+\]
+\[
+T_\ell(p,k) \;=\; 10\log_{10}\!\left(\frac{1}{|B_k|}\sum_{(u,v)\in B_k} P(p,u,v)\right),
+\qquad |B_k| = f_\ell^{\,2}.
+\]
+
+Averaging in dB instead computes $\overline{10\log_{10} P}$, the \textbf{geometric} mean of
+power, which is a different quantity:
+\[
+10\log_{10}\!\big(\overline{P}\big) \;\neq\; \overline{10\log_{10}(P)} .
+\]
+
+Measured on \code{AmeriFlux\_CA-Cbo}, the discrepancy between the two is a mean bias of
+\textbf{0.53\,dB}, a maximum of \textbf{7.5\,dB}, and $r = 0.952$. The error is largest in
+heterogeneous cells --- exactly where the signal lives.
+
+\begin{quoting}
+Each level must be computed from $P$ independently. A coarse level cannot be obtained by
+pooling a finer $T$, for the same reason.
+\end{quoting}
+
+\section{Grouping by relative orbit}
+
+Backscatter depends on the incidence angle, which is fixed per relative orbit. Mixing
+orbits injects viewing geometry into everything downstream. Sentinel-1's repeat cycle is
+exactly 12 days, so the relative orbit is constant modulo 12:
+\[
+g(p) \;=\; \operatorname{ord}(t_p) \bmod 12 .
+\]
+
+Two keys are \textbf{merged} only when their long-run means agree at the within-group
+reproducibility ceiling. That recovers Sentinel-1A and 1B flying the \emph{same} relative
+orbit six days apart, while keeping genuinely different orbits separate. Measured on
+\code{CA-Cbo}, where the mod-12 key gives $\{0{:}116,\ 1{:}107,\ 7{:}108\}$ passes:
+
+\begin{blk}
+   split-half r(c_k) WITHIN a group   (the ceiling)     0.9979  0.9981  0.9982
+
+   r(c_k) BETWEEN groups   0 vs 1   0.9632   different relative orbit -> keep apart
+                           0 vs 7   0.9552   different relative orbit -> keep apart
+                           1 vs 7   0.9952   AT the ceiling: S1A/S1B, same orbit -> MERGE
+\end{blk}
+
+Groups with fewer than 20 passes are discarded (see §\ref{sec:npasses}).
+
+\section{The decomposition}
+
+Within one station, one orbit group and one polarisation, form the $n \times \ell^2$ matrix
+$T_\ell$ and define three means:
+\[
+\mu \;=\; \frac{1}{n\,\ell^2}\sum_{p}\sum_{k} T_\ell(p,k),
+\qquad
+r_p \;=\; \frac{1}{\ell^2}\sum_{k} T_\ell(p,k),
+\qquad
+c_k \;=\; \frac{1}{n}\sum_{p} T_\ell(p,k),
+\]
+and the remainder
+\[
+\boxed{\; d(p,k) \;=\; T_\ell(p,k) \;-\; r_p \;-\; c_k \;+\; \mu \;}
+\]
+
+Equivalently, a double-centring projection:
+\[
+D \;=\; \left(I_n - \tfrac{1}{n}\mathbf{1}\mathbf{1}^{\!\top}\right) T_\ell
+        \left(I_{\ell^2} - \tfrac{1}{\ell^2}\mathbf{1}\mathbf{1}^{\!\top}\right),
+\]
+from which the defining properties are immediate:
+\[
+\sum_k d(p,k) = 0 \;\; \forall p,
+\qquad
+\sum_p d(p,k) = 0 \;\; \forall k .
+\]
+
+The three components are orthogonal, so the variance splits exactly:
+\[
+\operatorname{Var}(T) \;=\;
+\underbrace{\operatorname{Var}(r)}_{\text{season}} \;+\;
+\underbrace{\operatorname{Var}(c)}_{\text{static map}} \;+\;
+\underbrace{\operatorname{Var}(d)}_{\text{interaction}} .
+\]
+
+This is a check, not an assumption. Verified numerically to $2\times10^{-7}$\,dB²:
+
+\begin{blk}
+AmeriFlux_CA-Cbo        orbit 0    n=116
+  Var(T) total                        =  2.1386 dB^2
+  Var(r_p)  season                    =  0.4195    19.6 %
+  Var(c_k)  static map                =  1.3618    63.7 %
+  Var(d)    interaction               =  0.3573    16.7 %
+  sum of the three                    =  2.1386    |sum - Var(T)| = 2.4e-07
+
+ISMN_TxSON_CR1000-1     orbit 3    n=113     season 37.7 %  static 50.1 %  inter 12.2 %
+ISMN_SCAN_Abrams        orbit 4    n=104     season 40.7 %  static 21.7 %  inter 37.7 %
+\end{blk}
+
+\section{What each component means physically}
+
+\[
+\sigma^0(p,k) \;=\;
+\underbrace{c_k}_{\substack{\text{what this place \emph{is}}}} \;+\;
+\underbrace{(r_p-\mu)}_{\substack{\text{how wet the}\\ \text{whole tile is}}} \;+\;
+\underbrace{d(p,k)}_{\substack{\text{how wet \emph{this} spot is}\\ \text{versus its own norm}}}
+\]
+
+\begin{itemize}[leftmargin=1.2em,itemsep=2pt,topsep=3pt]
+\item $c_k$ --- \textbf{permanent texture}. A wood is always bright, a smooth field always
+dark. Roughness and structure, not water. It never changes.
+\item $r_p - \mu$ --- \textbf{catchment wetness state} on date $p$. When it rains the
+entire tile brightens together.
+\item $d(p,k)$ --- \textbf{differential wetting and drying}. What is left once season and
+permanent texture are removed.
+\end{itemize}
+
+A worked example on real \code{CA-Cbo} tokens (orbit 0, VV), three cells and two dates:
+
+\begin{blk}
+STEP 0  raw token sigma0 (dB)                     tile mean r_p
+  20171217    -17.42    -9.70    -6.24       -10.05
+  20200710     -6.85    -6.52    -3.47        -6.88
+  grand mean mu = -8.40 dB
+  per-location mean c_k =  -12.97    -8.15    -4.29
+
+STEP 1  subtract the TILE MEAN FOR THAT DATE
+  20171217     -7.37     0.35     3.81
+  20200710      0.02     0.36     3.41
+
+STEP 2  subtract the PER-LOCATION MEAN, add back mu       -> this is d
+  20171217     -2.80     0.10    -0.30
+  20200710      4.60     0.11    -0.70
+\end{blk}
+
+The left-hand cell swings 10.6\,dB in the raw data, but it is a permanently dark cell
+($c_k = -12.97$), so most of that is simply what it is. After both subtractions it goes
+$-2.80 \to +4.60$: drier than its own norm on one date, much wetter on the other. The
+centre cell meanwhile barely moves, $+0.10 \to +0.11$ --- it just tracks the tile.
+
+Note there is no separate ``seasonal mean'' to compute. $r_p$, the tile-wide mean
+\emph{on that date}, \textbf{is} the season. The two subtractions commute.
+
+\section{Why the decomposition rather than raw $\sigma^0$}
+
+The three components sum back to raw $\sigma^0$ up to a constant, so feeding all three is
+\textbf{lossless}: everything raw contains is present, merely factored.
+
+The reason to factor it is that \textbf{$c_k$ cannot be derived from a single sample}. It
+requires the multi-year archive. A network given raw $\sigma^0$ could only recover $c_k$ by
+memorising a per-pixel mean for each of 993 stations --- which is precisely the
+memorisation the design is trying to avoid, and which does not transfer to a station the
+model has never seen.
+
+Computing $c_k$ offline injects information the network cannot otherwise obtain, and it
+\emph{does} transfer, because at inference $c_k$ is computed from the new station's own
+archive.
+
+\begin{quoting}
+Worth testing raw $\sigma^0$ as an ablation, specifically on out-of-sample stations. The
+prediction is that raw matches on train and collapses out of sample, because that is where
+a memorised $c_k$ stops working.
+\end{quoting}
+
+\section{Normalisation}
+
+Each quantity is standardised within its station--orbit group, so that no station dominates:
+\[
+\tilde d = \frac{d}{\operatorname{sd}(d)},
+\qquad
+\tilde c = \frac{c - \bar c}{\operatorname{sd}(c)},
+\qquad
+w_p = \frac{r_p - \bar r}{\operatorname{sd}(r)} .
+\]
+
+$w_p$ is the catchment wetness state as a single standardised scalar per date.
+
+\begin{quoting}
+This is unrelated to the global z-score TerraMind applies at \code{precompute\_terramind.py:140},
+which uses one fixed constant (\code{S1RTC} mean $[-10.93, -17.329]$, sd $[4.391, 4.459]$)
+for every pixel of every image. A global affine map cannot remove a term that varies by
+date, nor one that varies by location. The two operations do not overlap.
+\end{quoting}
+
+\section{Missing cells}
+
+With a validity mask $m(p,k) \in \{0,1\}$ the single-pass centring is no longer exact.
+Alternate masked removals until both margins vanish:
+\[
+d^{(i+\frac12)} = d^{(i)} - \frac{\sum_k m\,d^{(i)}}{\sum_k m},
+\qquad
+d^{(i+1)} = d^{(i+\frac12)} - \frac{\sum_p m\,d^{(i+\frac12)}}{\sum_p m} .
+\]
+
+Terminate when $\max_p\big|\overline{d}(p,\cdot)\big| < 10^{-4}$ and
+$\max_k\big|\overline{d}(\cdot,k)\big| < 10^{-4}$. Typically 3--5 iterations. Measured
+missing-cell rates are small:
+
+\begin{blk}
+station                       N  cell invalid%  dates w/ any bad   orbits (n>=20)
+AmeriFlux_CA-Cbo            332       0.000%              0.0%       [0, 1, 7]
+ISMN_TxSON_CR1000-1         114       0.000%              0.0%             [3]
+ISMN_SCAN_Abrams            275       0.000%              0.0%         [4, 10]
+ISMN_SCAN_AdamsRanch#1      239       0.201%              0.4%          [0, 6]
+\end{blk}
+
+\section{How many passes $c_k$ needs}
+\label{sec:npasses}
+
+$c_k$ is a mean over $n$ passes, so it carries sampling error. Measured on \code{CA-Cbo}
+orbit 0, where the spread of $c_k$ across cells is 1.167\,dB:
+
+\begin{center}\small
+\begin{tabular}{rrrr}
+\toprule
+passes used & $r(c_{\text{sub}}, c_{\text{full}})$ & RMSE (dB) & as \% of the $c_k$ spread \\
+\midrule
+ 5 & 0.9791 & 0.351 & 30.1 \\
+10 & 0.9897 & 0.257 & 22.0 \\
+20 & 0.9954 & 0.169 & 14.5 \\
+30 & 0.9972 & 0.137 & 11.7 \\
+50 & 0.9988 & 0.089 &  7.6 \\
+80 & 0.9996 & 0.051 &  4.3 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$n \ge 50$ is comfortable; $n \ge 20$ is the floor. Medians are 212 (ascending) and 238
+(descending), so almost every station qualifies. The degrees of freedom consumed by fitting
+$r_p$ and $c_k$ are 5.5\,\% at $n=20$ and 1.5\,\% at $n=100$ --- negligible.
+
+\begin{quoting}
+$c_k$ should also be checked for seasonal balance. Pass counts are 22--28\,\% per season at
+every station examined, so the column mean is a genuine climatology rather than a
+summer-weighted one. A station with a lopsided record would give a $c_k$ that absorbs part
+of the interaction signal.
+\end{quoting}
+
+\section{Note on grid alignment}
+
+Within one tile, all cells share the same acquisition dates. One Sentinel-1 acquisition is a
+single $224\times224$ scene covering the whole tile: \code{data} is \code{(N,2,224,224)} and
+\code{dates} is \code{(N,)} --- one entry per \emph{image}, not per location. $T_\ell$ is
+therefore a complete $n \times \ell^2$ matrix and $c_k$ is a plain column mean over it. No
+temporal alignment step exists or is needed.
+
+Dates do differ across stations, and across orbit groups within a station. Both are
+harmless, because centring is always performed \emph{within} one station and one orbit
+group; $c_k$ is never compared across stations, and $\tilde d$ is standardised per group.
+
+\section{What is handed to each decoder stage}
+
+Per sample, using the most recent available pass $p^\star$:
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{llrX}
+\toprule
+stage & grid & cell & channels \\
+\midrule
+bottleneck & $14\times14$   & 160\,m & $\tilde c_{14},\ \tilde d_{14}(p^\star),\ w_{p^\star}$ \\
+\code{up1} & $28\times28$   &  80\,m & $\tilde c_{28},\ \tilde d_{28}(p^\star),\ w_{p^\star}$ \\
+\code{up2} & $56\times56$   &  40\,m & $\tilde c_{56},\ \tilde d_{56}(p^\star),\ w_{p^\star}$ \\
+\code{up3} & $112\times112$ &  20\,m & $\tilde c_{112},\ \tilde d_{112}(p^\star),\ w_{p^\star}$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+$w_{p^\star}$ is a scalar broadcast across the grid. Two housekeeping scalars accompany
+them: the age of $p^\star$ in days, and a validity flag which is zero when no usable pass
+exists --- in which case $\tilde d = 0$, the natural ``behaving like the tile average''
+value.
+
+Concatenation alongside the existing skip, at \code{model.py:257-264}:
+
+\begin{blk}
+x = self.bottle_proj(bottleneck)                                 # (B,512,14,14)
+x = torch.cat([x, c_14, d_14, w], 1)                             #  512 + 3
+
+x = self.up1(x)                                                  # 14 -> 28
+x = self.conv1(torch.cat([x, film9(skip_L9),  c_28,  d_28,  w], 1))   # 512+512+3 -> 256
+x = self.up2(x)                                                  # 28 -> 56
+x = self.conv2(torch.cat([x, film6(skip_L6),  c_56,  d_56,  w], 1))   # 256+256+3 -> 128
+x = self.up3(x)                                                  # 56 -> 112
+x = self.conv3(torch.cat([x, film3(skip_L3),  c_112, d_112, w], 1))   # 128+128+3 ->  64
+\end{blk}
+
+Each \code{in\_channels} grows by 3; \code{\_ConvBlock} (\code{model.py:171}) is otherwise
+untouched. Added parameters are $3 \times C_{\text{out}} \times 9$ per stage:
+$6912 + 3456 + 1728 \approx 12$\,k.
+
+The weights on the new channels are zero-initialised,
+\begin{blk}
+for c in (conv1, conv2, conv3):
+    c.block[0].weight[:, -3:] = 0
+\end{blk}
+so at initialisation they contribute exactly nothing, the forward pass is bit-identical to
+\code{best.pt}, and §26's provenance gate applies unchanged. Training moves them off zero.
+
+\section{Storage and build cost}
+
+Per station $\times$ orbit group $\times$ polarisation, with $n \approx 200$ passes:
+\[
+\big(14^2 + 28^2 + 56^2 + 112^2\big) \times n
+\;=\; 16{,}660 \times 200 \;\approx\; 3.3\times10^{6}\ \text{values},
+\]
+which at fp16 is 6.6\,MB, so roughly \textbf{13\,GB} across 993 stations. The $c_\ell$
+arrays are one per level and negligible.
+
+Build cost is dominated by reading the rasters: $993 \times 2 \times {\sim}66$\,MB
+$\approx 130$\,GB. One \code{sbatch} with \code{Pool(64)} and
+\code{--cpus-per-task=64}, approximately 30--60 minutes.
+
+\section{Summary}
+
+\begin{blk}
+   RAW           sigma0(p,k)  in dB, (N,2,224,224) per station per orbit direction
+      |
+      |  P = 10^(sigma/10)                       to LINEAR power
+      |  mean over each f x f block, back to dB  MULTILOOK to level l
+      v
+   T_l(p,k)      (n, l^2) in dB
+      |
+      |  group by  ord(t_p) mod 12               RELATIVE ORBIT
+      |  merge keys at the split-half ceiling
+      |  drop groups with n < 20
+      v
+   per group:  mu, r_p, c_k
+      |
+      |  d = T - r_p - c_k + mu                  DOUBLE-CENTRE
+      |  iterate if cells are missing
+      |  standardise
+      v
+   FED TO STAGE l:   c~_l   (permanent texture,      per cell)
+                     d~_l   (today's anomaly,        per cell)
+                     w_p    (catchment wetness state, scalar)
+\end{blk}
+
+\end{document}
