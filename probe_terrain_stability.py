@@ -37,6 +37,7 @@ Usage:
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -49,25 +50,35 @@ TERRAIN_ROOT = Path("/gpfs/work3/0/prjs1968/data/terrain")
 STATION_CSV  = Path(__file__).resolve().parent / "csvs" / "station_dem_region.csv"
 
 
-def derive(dem_raw, res, wd, crs, origin, stream_ha=T.STREAM_HA):
+def derive(dem_raw, res, wd, crs, origin, stream_ha=T.STREAM_HA, tag=""):
     """The full shipped derivation, so the perturbation is felt everywhere it would be."""
+    t0 = time.time()
     cond = T.condition_dem(dem_raw, res, wd, crs=crs, origin=origin)
+    print(f"      [{tag}] condition {time.time()-t0:.1f}s", flush=True); t0 = time.time()
     acc = T.flow_accum_mfd(cond, res, wd, crs=crs, origin=origin)
+    print(f"      [{tag}] acc_mfd   {time.time()-t0:.1f}s", flush=True); t0 = time.time()
     flw = T.d8_network(cond, res)
     beta = T.horn_slope(dem_raw, res)
     twi, _ = T.twi_from(acc, beta, res)
     streams = T.stream_mask(acc, res, stream_ha=stream_ha)
     hand = T.hand_from(flw, cond, streams)
     accd8 = flw.upstream_area(unit="cell").astype(np.float32)
+    print(f"      [{tag}] d8+hand   {time.time()-t0:.1f}s", flush=True)
     return {"twi": twi, "hand": hand, "acc_mfd": acc, "acc_d8": accd8}
 
 
-def agree(a, b, log=False):
+def agree(a, b, log=False, min_n=5):
+    """
+    min_n defaults to 5, not 100: the station-level and pair-level arrays are small
+    by nature (13 stations, 78 pairs in the largest region) and a raster-sized guard
+    silently returned {} for exactly the measurements the probe exists to make.
+    """
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
     m = np.isfinite(a) & np.isfinite(b)
     if log:
         m &= (a > 0) & (b > 0)
-        a, b = np.log(a), np.log(b)
-    if m.sum() < 100:
+        a, b = np.log(np.where(m, a, 1.0)), np.log(np.where(m, b, 1.0))
+    if m.sum() < min_n:
         return {}
     d = np.abs(a[m] - b[m])
     return {"r": float(np.corrcoef(a[m], b[m])[0, 1]),
@@ -76,8 +87,9 @@ def agree(a, b, log=False):
             "sd_ref": float(np.std(a[m]))}
 
 
-def probe(rid: int, sigmas: list[float], seed: int) -> dict:
-    p = TERRAIN_ROOT / f"region_{rid:04d}" / "dem_glo30_30m.tif"
+def probe(rid: int, sigmas: list[float], seed: int,
+          source: str = "glo30") -> dict:
+    p = TERRAIN_ROOT / f"region_{rid:04d}" / f"dem_{source}_30m.tif"
     with rasterio.open(p) as src:
         dem = src.read(1)
         tr, crs = src.transform, src.crs
@@ -94,15 +106,18 @@ def probe(rid: int, sigmas: list[float], seed: int) -> dict:
         if 0 <= row < h and 0 <= col < w:
             pts.append((s["station_id"], row, col))
 
-    out = {"region_id": rid, "n_stations": len(pts), "shape": [h, w]}
+    out = {"region_id": rid, "n_stations": len(pts), "shape": [h, w],
+           "source": source}
     wd = T.scratch_dir(f"stab_{rid:04d}_")
     try:
-        base = derive(dem, res, wd, crs, origin)
+        print(f"  region {rid}: {h}x{w}, {len(pts)} stations — baseline", flush=True)
+        base = derive(dem, res, wd, crs, origin, tag=f"r{rid} base")
         rng = np.random.default_rng(seed)
         for sig in sigmas:
+            print(f"  region {rid}: sigma {sig:g} m", flush=True)
             pert = (dem + rng.normal(0.0, sig, dem.shape)).astype(np.float32)
             pert[~np.isfinite(dem)] = np.nan
-            got = derive(pert, res, wd, crs, origin)
+            got = derive(pert, res, wd, crs, origin, tag=f"r{rid} s{sig:g}")
             key = f"sigma_{sig:g}m"
             out[key] = {
                 "twi":     agree(base["twi"], got["twi"]),
@@ -127,6 +142,10 @@ def probe(rid: int, sigmas: list[float], seed: int) -> dict:
                 out[key]["delta_twi_pairs"] = agree(dt_b, dt_g)
                 out[key]["delta_hand_pairs"] = agree(dh_b, dh_g)
                 out[key]["n_pairs"] = len(dt_b)
+                # keep the raw deltas so pairs can be POOLED across regions: the
+                # gate's n is the pair count over all stations, not per region
+                out[key]["_dtwi"] = [dt_b.tolist(), dt_g.tolist()]
+                out[key]["_dhand"] = [dh_b.tolist(), dh_g.tolist()]
             # station-level values
             if pts:
                 bt = np.array([base["twi"][r, c] for _, r, c in pts])
@@ -145,11 +164,15 @@ def main() -> None:
     ap.add_argument("--region-id", type=int, action="append", required=True)
     ap.add_argument("--sigma", type=float, action="append", default=None)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", type=Path, default=Path("csvs/terrain_stability_probe.json"))
+    ap.add_argument("--source", choices=["glo30", "fabdem"], default="glo30")
+    ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     sigmas = args.sigma or [0.05, 0.2, 1.0]
+    if args.out is None:
+        args.out = Path(f"csvs/terrain_stability_probe_{args.source}.json")
+    print(f"DEM source: {args.source}", flush=True)
 
-    rows = [probe(rid, sigmas, args.seed) for rid in args.region_id]
+    rows = [probe(rid, sigmas, args.seed, args.source) for rid in args.region_id]
     for r in rows:
         print(json.dumps(r, indent=2, default=float), flush=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +197,38 @@ def main() -> None:
               f"{med('acc_mfd.r'):>7.3f} {med('acc_d8.r'):>7.3f} "
               f"{med('twi_at_stations.r'):>8.3f} {med('delta_twi_pairs.r'):>10.3f} "
               f"{med('delta_hand_pairs.r'):>11.3f}")
-    print(f"wrote {args.out}")
+
+    # ── THE DECISION: pooled between-station contrast, which is what §32.8's
+    #    sufficiency gate regresses dSM on. Pooled across regions because the
+    #    gate's n is the pair count over all stations, not per region.
+    print("\nPOOLED between-station contrast — the quantity the sufficiency gate uses")
+    print(f"{'sigma':>8} {'n_pairs':>8} {'r(dTWI)':>9} {'med|ddTWI|':>11} "
+          f"{'sd(dTWI)':>9} {'r(dHAND)':>10} {'med|ddHAND|':>12} {'sd(dHAND)':>10}")
+    for sig in sigmas:
+        k = f"sigma_{sig:g}m"
+        tb, tg, hb, hg = [], [], [], []
+        for r in rows:
+            d = r.get(k, {})
+            if "_dtwi" in d:
+                tb += d["_dtwi"][0]; tg += d["_dtwi"][1]
+                hb += d["_dhand"][0]; hg += d["_dhand"][1]
+        if len(tb) < 5:
+            print(f"{sig:>7g}m  (no pairs)")
+            continue
+        at, bt = np.array(tb), np.array(tg)
+        ah, bh = np.array(hb), np.array(hg)
+        mt = np.isfinite(at) & np.isfinite(bt)
+        mh = np.isfinite(ah) & np.isfinite(bh)
+        print(f"{sig:>7g}m {int(mt.sum()):>8d} "
+              f"{np.corrcoef(at[mt], bt[mt])[0,1]:>9.3f} "
+              f"{np.median(np.abs(at[mt]-bt[mt])):>11.3f} {np.std(at[mt]):>9.3f} "
+              f"{np.corrcoef(ah[mh], bh[mh])[0,1]:>10.3f} "
+              f"{np.median(np.abs(ah[mh]-bh[mh])):>12.3f} {np.std(ah[mh]):>10.3f}")
+    print("\nRead as: r(dTWI) is how much of the between-station TWI contrast survives")
+    print("a DEM perturbation. med|ddTWI| against sd(dTWI) is the noise-to-signal ratio")
+    print("in the regressor §32.8 would use. If the noise is comparable to the spread,")
+    print("the gate is regressing on noise and must be abandoned whatever the hydrology.")
+    print(f"\nwrote {args.out}")
 
 
 if __name__ == "__main__":

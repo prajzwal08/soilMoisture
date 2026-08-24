@@ -41,6 +41,7 @@ Usage:
 
 import argparse
 import logging
+import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -75,6 +76,25 @@ _MAX_RETRIES = 3
 _RETRY_BASE  = 2       # 2 s, 4 s before attempts 2 and 3
 
 S3_BASE = "https://copernicus-dem-30m.s3.amazonaws.com"
+FABDEM_BASE = "https://data.bris.ac.uk/datasets/s5hqmjcdj8yo2ibzi9b4ew3sn"
+
+# Which surface to route water over. The ENCODER's DEM channel stays GLO-30 regardless
+# (§32.2: TerraMind pretrained on Copernicus WorldDEM-30, so substituting there would be
+# a pretraining distribution shift for no gain). The wide DEM is an INTERMEDIATE —
+# nothing downstream sees these elevations, only TWI and HAND — so the derivation
+# surface is free to differ, and it should:
+#
+#   glo30   Copernicus GLO-30. A DSM: TanDEM-X X-band scatters near canopy top, so a
+#           tree line across a valley is a 20 m dam. Longitude is decimated poleward
+#           (3600 px wide at the equator, 1200 at N70) and nodata is None.
+#   fabdem  FABDEM V1-2. A DTM: canopy and buildings removed from GLO-30 by ML.
+#           Measured 2026-08-24: 3600x3600 at EVERY latitude tested including 67 N —
+#           no poleward decimation — and nodata is an explicit -9999. Both of GLO-30's
+#           grid traps are simply absent.
+#
+# Canopy is the error that flips D8/MFD routing decisions, and routing instability is
+# what made dTWI unusable as a gate regressor (r=0.195 at 0.2 m of perturbation).
+SOURCE_DEFAULT = "glo30"
 
 # GLO-30 longitude-decimation boundaries (§32.3). A region spanning one mosaics
 # source grids of different pixel width, so a 1-px bilinear seam can appear on
@@ -93,26 +113,59 @@ def setup_logging() -> None:
     )
 
 
-def tile_url(tile: str) -> str:
-    """tile is e.g. 'N52E006'; COG names embed the SW corner twice."""
-    name = f"Copernicus_DSM_COG_10_{tile[:3]}_00_{tile[3:]}_00_DEM"
-    return f"{S3_BASE}/{name}/{name}.tif"
+def _tile_latlon(tile: str) -> tuple[int, int]:
+    """'N52E006' / 'S34W067' -> (52, 6) / (-34, -67), the SW corner."""
+    lat = int(tile[1:3]) * (1 if tile[0] == "N" else -1)
+    lon = int(tile[4:7]) * (1 if tile[3] == "E" else -1)
+    return lat, lon
 
 
-def open_tile(tile: str, log: logging.Logger):
+def tile_url(tile: str, source: str = SOURCE_DEFAULT) -> str:
+    """
+    URL for one 1-degree tile. Both products tile 1x1 degree named by the SW corner,
+    so dem_regions.csv's tile list serves either without change.
+    """
+    if source == "glo30":
+        name = f"Copernicus_DSM_COG_10_{tile[:3]}_00_{tile[3:]}_00_DEM"
+        return f"{S3_BASE}/{name}/{name}.tif"
+
+    if source == "fabdem":
+        # FABDEM ships 1-degree tifs inside 10x10 degree zips, read in place over HTTP
+        # range requests via GDAL's /vsizip: no 39 GB download, 0.2 s to open a tile.
+        lat, lon = _tile_latlon(tile)
+        la0 = int(math.floor(lat / 10.0) * 10)
+        lo0 = int(math.floor(lon / 10.0) * 10)
+        ns = lambda v: f"{'N' if v >= 0 else 'S'}{abs(v):02d}"
+        ew = lambda v: f"{'E' if v >= 0 else 'W'}{abs(v):03d}"
+        zname = f"{ns(la0)}{ew(lo0)}-{ns(la0+10)}{ew(lo0+10)}_FABDEM_V1-2.zip"
+        return f"zip+{FABDEM_BASE}/{zname}!{tile}_FABDEM_V1-2.tif"
+
+    raise ValueError(f"unknown DEM source {source!r}")
+
+
+def out_name(source: str) -> str:
+    return f"dem_{source}_30m.tif"
+
+
+def open_tile(tile: str, log: logging.Logger, source: str = SOURCE_DEFAULT):
     """
     Open a GLO-30 COG, retrying transient failures. Returns the dataset, or None
     if the tile does not exist (404 = ocean, which is not an error) or if it stays
     unreachable. A 404 is distinguished from a transient failure so that missing
     ocean does not burn three retries each.
     """
-    url = tile_url(tile)
+    url = tile_url(tile, source)
     last = None
+    # An absent tile means ocean, and each product says so differently: GLO-30 404s the
+    # whole object, while FABDEM's zip exists and simply lacks the member, which GDAL
+    # reports as a missing file rather than an HTTP error. Both are "no land here", and
+    # both must be told apart from a transient failure so ocean does not burn 3 retries.
+    _ABSENT = ("404", "No such file or directory", "does not exist", "not recognized")
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
             return rasterio.open(url)
         except rasterio.errors.RasterioIOError as exc:
-            if "404" in str(exc):
+            if any(p in str(exc) for p in _ABSENT):
                 return None                      # ocean / outside the land mask
             last = exc
             if attempt < _MAX_RETRIES:
@@ -125,13 +178,14 @@ def open_tile(tile: str, log: logging.Logger):
     return "FAILED"
 
 
-def process_region(row: pd.Series, overwrite: bool) -> str:
+def process_region(row: pd.Series, overwrite: bool,
+                   source: str = SOURCE_DEFAULT) -> str:
     """Mosaic and warp one region's DEM. Returns a status string."""
     rid = int(row["region_id"])
     log = logging.getLogger(__name__)
 
     out_dir  = TERRAIN_ROOT / f"region_{rid:04d}"
-    out_path = out_dir / "dem_glo30_30m.tif"
+    out_path = out_dir / out_name(source)
     if out_path.exists() and not overwrite:
         return "skip"
 
@@ -155,7 +209,7 @@ def process_region(row: pd.Series, overwrite: bool) -> str:
     groups: dict[tuple, list] = {}
     try:
         for t in tiles:
-            ds = open_tile(t, log)
+            ds = open_tile(t, log, source)
             if ds is None:
                 missing.append(t)
                 continue
@@ -242,7 +296,9 @@ def process_region(row: pd.Series, overwrite: bool) -> str:
         ) as dstds:
             dstds.write(dst, 1)
             dstds.update_tags(
-                source="Copernicus GLO-30 DSM (AWS public COGs)",
+                source=("Copernicus GLO-30 DSM (AWS public COGs)" if source == "glo30"
+                        else "FABDEM V1-2 DTM (Bristol, read in place from zips)"),
+                dem_source_key=source,
                 laea_proj4=proj4,
                 res_m=f"{res:g}",
                 buffer_km=str(row["buffer_km"]),
@@ -252,7 +308,10 @@ def process_region(row: pd.Series, overwrite: bool) -> str:
                 tiles_missing=";".join(sorted(missing)),
                 nan_frac=f"{nan_frac:.6f}",
                 seam_lat_band=str(seam),
-                note="DSM: canopy is in the surface. Breach, do not fill (§32.4).",
+                note=("DSM: canopy is in the surface. Breach, do not fill (§32.4)."
+                      if source == "glo30" else
+                      "DTM: canopy and buildings removed. Routing surface only; the "
+                      "encoder's DEM channel stays GLO-30 (§32.2)."),
             )
         tmp.rename(out_path)
     except Exception:
@@ -278,6 +337,9 @@ def main() -> None:
                     help="Pilot mode: smallest set of regions covering N stations.")
     ap.add_argument("--workers", type=int, default=N_WORKERS)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--source", choices=["glo30", "fabdem"], default=SOURCE_DEFAULT,
+                    help="Surface to fetch. fabdem is a DTM (canopy removed) and is "
+                         "the routing surface; glo30 is the DSM the encoder uses.")
     args = ap.parse_args()
 
     if args.terrain_root is not None:
@@ -298,14 +360,14 @@ def main() -> None:
     # largest first: the long pole starts immediately instead of last
     reg = reg.sort_values("n_cells", ascending=False).reset_index(drop=True)
 
-    log.info(f"terrain root {TERRAIN_ROOT}")
+    log.info(f"terrain root {TERRAIN_ROOT}  source {args.source} -> {out_name(args.source)}")
     log.info(f"{len(reg)} regions, {int(reg['n_stations'].sum())} stations, "
              f"{reg['n_cells'].sum()/1e9:.2f}e9 cells, {reg['dem_gb'].sum():.1f} GB, "
              f"workers={args.workers}")
 
     done = failed = skipped = 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futs = {pool.submit(process_region, row, args.overwrite): row
+        futs = {pool.submit(process_region, row, args.overwrite, args.source): row
                 for _, row in reg.iterrows()}
         for i, fut in enumerate(as_completed(futs), 1):
             row = futs[fut]

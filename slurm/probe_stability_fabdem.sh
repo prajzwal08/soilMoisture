@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=probe_stab
+#SBATCH --job-name=stab_fab
 #SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=03:00:00
-#SBATCH --output=logs/probe_stability_%j.out
+#SBATCH --output=logs/probe_stability_fabdem_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
@@ -29,6 +29,6 @@ date
 conda run -n terramind --no-capture-output python -u probe_terrain_stability.py \
     --region-id 10 --region-id 31 --region-id 38 \
     --region-id 37 --region-id 29 \
-    --sigma 0.05 --sigma 0.2 --sigma 1.0
+    --sigma 0.05 --sigma 0.2 --sigma 1.0 --source fabdem
 
 date

@@ -7447,3 +7447,90 @@ confirming in the pilot rather than assuming. A water mask from MERIT's `wat` ba
 
 **Still never computed: the sub-token variance fraction of TWI/HAND** (§32.7 step 5). It decides
 whether these channels belong in Block 4 at all, and nothing measured so far speaks to it.
+
+## §32.10 The sufficiency gate RAN, and TERRAIN FAILS IT (2026-08-24)
+
+§32.7 step 8 executed. No GPU. `gate_sm_vs_terrain.py`, SLURM 25999866, 93 s.
+
+### 32.10.1 The result
+
+**890 stations** carry both derived terrain and ≥180 observed days. **75 colocated pairs
+across 84 stations** — reproducing §32.9's recomputation exactly (15 / 6 / 25 / 29 at
+0–50 / 50–160 / 160–500 / 500–1120 m) and confirming §31.8's 62 was the same set under a
+further filter. **§32.7 step 7 is discharged**: `csvs/colocated_pairs.csv` is written, and
+the 75-vs-62 discrepancy is resolved — §26 additionally required overlapping observation
+periods. Enforcing ≥120 common observed days leaves **49 usable pairs**.
+
+| test | r | p | n |
+|---|---|---|---|
+| ΔSM(0–10) ~ ΔHAND | **−0.102** | 0.480 | 49 |
+| ΔSM(0–10) ~ ΔTWI | +0.049 | 0.737 | 49 |
+| ΔSM(wet third) ~ ΔHAND | −0.104 | 0.472 | 49 |
+| ΔSM(dry third) ~ ΔHAND | −0.101 | 0.487 | 49 |
+| Köppen C (temperate) | −0.112 | 0.512 | 36 |
+| Köppen D (continental) | −0.137 | 0.696 | 10 |
+
+95% CI on the headline r: **[−0.373, +0.184]**. At n = 49 the detectable effect is
+\|r\| > 0.28, so a *strong* terrain control is excluded; a weak one is not.
+
+### 32.10.2 Why this is a fail and not an underpowered null
+
+**The single most diagnostic prediction is absent.** Saturation excess is a wet-state
+mechanism — §31.5 built the wet/dry split precisely to test it. Measured: wet −0.104,
+dry −0.101. **No contrast whatsoever.** Whatever weak negative slope exists is not
+behaving like saturation excess.
+
+**It does not survive a power-matched restriction — it gets weaker.** Median \|ΔHAND\|
+over usable pairs is only 3.91 m, so the obvious objection is that most pairs have no
+terrain contrast. Restricting to the pairs that do:
+
+| restriction | r | p | n |
+|---|---|---|---|
+| all | −0.102 | 0.480 | 49 |
+| \|ΔHAND\| ≥ 2 m | −0.103 | 0.584 | 30 |
+| \|ΔHAND\| ≥ 5 m | −0.065 | 0.764 | 23 |
+| \|ΔHAND\| ≥ 10 m | **+0.002** | 0.995 | 11 |
+
+A real effect strengthens when restricted to high-contrast pairs. This one vanishes.
+
+**The response is not the problem.** Paired stations differ by a median
+**\|ΔSM\| = 0.047 m³/m³**, and that difference holds the same sign on **95.8% of days**
+(median across pairs). ΔSM is large and highly reproducible. The regressor has range,
+the response is clean, and they are unrelated.
+
+**HOBE did not generalise.** The 5-station HOBE look gave r = −0.637 with the right sign,
+stronger when wet and stronger at 10–30 cm. In the full pairwise analysis Köppen D — which
+contains HOBE — gives −0.137 over 10 pairs. The HOBE result was n = 5.
+
+**Depth is the one question left genuinely open.** Only 4 pairs have 10–30 cm at both
+stations and 3 have 30–100 cm, so the strongest HOBE signal (−0.776 at 10–30) could not be
+tested globally. If terrain reaches soil moisture at all, it is below the surface layer,
+and our labels are overwhelmingly 0–10 cm.
+
+### 32.10.3 What this prunes, and what it does not
+
+Exactly what §31.10 and §32.8 pre-committed to: **a terrain failure prunes ONE INPUT, not
+the architecture.** Ablation row 2 — Block 3 on, terrain off — isolates them, because the
+per-location S2/S1 history columns do not depend on terrain. Steps 1–7 of §32.7 all
+succeeded and their products stand: 353 regions of 30 m terrain, MERIT for 993 stations,
+the region design validated by 0/990 truncated catchments.
+
+**The positive finding matters more than the negative one.** Stations ~400 m apart differ
+by 0.047 m³/m³ with 95.8% day-to-day sign consistency. That is a large, reproducible,
+per-location signal — precisely what §31's diagnosis said the FiLM context vector cannot
+represent, and precisely what Block 3 exists to capture. It is simply not terrain.
+
+**§32.7 step 9 proceeds with terrain OFF.** `build_fine_stack.py` drops `terrain_lo` /
+`terrain_hi`; Block 1's zero-init terrain path (§31.3) is not built. The §32.6 MERIT gate
+becomes unnecessary for the model and is demoted to a validation artefact, since nothing
+downstream now consumes accumulation.
+
+### 32.10.4 Caveats recorded against this verdict
+
+- The **§32.6 MERIT gate never ran**, so no station's accumulation was validated. HAND is
+  far less exposed to that than TWI, and HAND is what failed, so this does not rescue it.
+- **TWI was independently disqualified** on stability (§32.9.4) before it was tested here,
+  so its +0.049 is doubly uninformative.
+- **49 pairs is a small n.** The verdict is "no strong terrain control on 0–10 cm soil
+  moisture", not "terrain is irrelevant to hydrology".
+- The **depth question is untested** for want of deep labels at paired stations.

@@ -38,6 +38,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -79,7 +80,7 @@ def wbt():
     return _wbt
 
 
-def run_wbt(tool: str, out_path: Path, timeout_s: float = 3600.0,
+def run_wbt(tool: str, out_path: Path, timeout_s: float = 900.0,
             attempts: int = 3, **kw) -> None:
     """
     Run a WhiteboxTools tool by invoking its binary directly, and insist it succeeded.
@@ -112,8 +113,21 @@ def run_wbt(tool: str, out_path: Path, timeout_s: float = 3600.0,
     last = ""
     for attempt in range(1, attempts + 1):
         out_path.unlink(missing_ok=True)
-        proc = subprocess.run(args, cwd=str(w.exe_path), capture_output=True,
-                              text=True, timeout=timeout_s)
+        t0 = time.time()
+        try:
+            proc = subprocess.run(args, cwd=str(w.exe_path), capture_output=True,
+                                  text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            # Observed once: BreachDepressionsLeastCost hung for the full timeout on
+            # a region that had conditioned in 1.1 s hours earlier, with the process
+            # holding only 228 MB — hung, not working. Retry rather than lose the run.
+            last = f"TIMED OUT after {timeout_s:g}s"
+            logging.getLogger(__name__).warning(
+                f"  WhiteboxTools {tool} timed out on attempt {attempt}/{attempts}")
+            continue
+        dt = time.time() - t0
+        if dt > 120:
+            logging.getLogger(__name__).info(f"  WhiteboxTools {tool} took {dt:.0f}s")
         if proc.returncode == 0 and out_path.exists():
             try:
                 with rasterio.open(out_path) as src:
