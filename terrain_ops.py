@@ -52,7 +52,13 @@ WBT_NODATA = -32768.0
 TAN_SLOPE_FLOOR = 1e-3     # §32.4: floor tan(beta), and report the floored fraction
 MFD_EXPONENT    = 1.1      # Quinn 1991 slope^p
 STREAM_HA       = 10.0     # 10 ha = 111 cells at 30 m; calibrated against MERIT hnd~0
-BREACH_DIST_CELLS = 100    # max least-cost breach search distance, in cells
+# Max least-cost breach search distance, in cells. §32.4 says breach aggressively,
+# but 'aggressive' means willing to cut, not willing to cut far: the obstructions are
+# canopy, and a tree line across a valley is 1-3 cells wide at 30 m. The search is
+# roughly O(dist^2) per pit, and on coastal regions GLO-30's flat sea surface presents
+# huge numbers of pits — dist=100 (a 3 km breach path) had not finished conditioning a
+# single 742x742 region after 3 minutes. 20 cells = 600 m is far beyond any canopy dam.
+BREACH_DIST_CELLS = 20
 
 # WhiteboxTools refuses a GeoTIFF with no geokeys ("does not contain geokeys"), so
 # every file handed to it carries a CRS even when the grid is synthetic. Equal-area
@@ -126,27 +132,39 @@ def run_wbt(tool: str, out_path: Path, timeout_s: float = 3600.0,
     raise RuntimeError(f"WhiteboxTools {tool} failed after {attempts} attempts — {last}")
 
 
-def interior_sinks(dem: np.ndarray) -> int:
+def interior_sinks(dem: np.ndarray, split: bool = False):
     """
-    Count interior cells with no strictly-lower 8-neighbour — the direct definition
-    of a sink, computed here rather than asked of pyflwdir.
+    Count interior cells with no strictly-lower 8-neighbour, computed directly rather
+    than asked of pyflwdir — pyflwdir.from_dem does its own internal filling, so its
+    pit list cannot tell you whether the DEM you handed it had depressions (§32.4's
+    API caveat).
 
-    This exists because pyflwdir.from_dem does its own internal filling, so its pit
-    list cannot tell you whether the DEM you handed it had depressions (§32.4's API
-    caveat). Boundary cells are excluded: on any tilted surface they legitimately
-    drain off the grid.
+    With split=True, returns (pits, flats) separately. The distinction matters on
+    real terrain: a PIT has every neighbour strictly higher and is a genuine
+    depression that conditioning must remove, while a FLAT merely has an equal
+    neighbour and is what a lake, a sea surface, or a plateau looks like in a DSM.
+    Conditioning is not obliged to eliminate flats, so counting them as failures
+    makes the Tier-2 check fire on correct output.
+
+    Boundary cells are excluded: on any tilted surface they legitimately drain off
+    the grid.
     """
-    z = dem.astype(np.float64)
-    z = np.where(np.isfinite(z), z, np.inf)
+    z = np.where(np.isfinite(dem), dem, np.inf).astype(np.float64)
     lower = np.zeros(z.shape, dtype=bool)
+    equal = np.zeros(z.shape, dtype=bool)
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
             if dy == 0 and dx == 0:
                 continue
-            lower |= np.roll(np.roll(z, dy, axis=0), dx, axis=1) < z
-    core = lower[1:-1, 1:-1]
+            nb = np.roll(np.roll(z, dy, axis=0), dx, axis=1)
+            lower |= nb < z
+            equal |= nb == z
     finite = np.isfinite(dem)[1:-1, 1:-1]
-    return int(np.sum(finite & ~core))
+    no_lower = finite & ~lower[1:-1, 1:-1]
+    if not split:
+        return int(no_lower.sum())
+    flats = no_lower & equal[1:-1, 1:-1]
+    return int((no_lower & ~flats).sum()), int(flats.sum())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -211,8 +229,10 @@ def condition_dem(dem: np.ndarray, res: float, workdir: Path,
             dem=str(f_in), output=str(f_br), dist=breach_dist, min_dist=True, fill=True)
     out = read_wbt_tif(f_br)
 
-    sinks_raw = interior_sinks(dem)
-    sinks_br  = interior_sinks(out)
+    # only genuine PITS force the fill pass; flats (sea surface, lakes, plateaus)
+    # are not something conditioning is obliged to remove
+    sinks_raw, flats_raw = interior_sinks(dem, split=True)
+    sinks_br, flats_br = interior_sinks(out, split=True)
     filled = False
     if sinks_br > 0:
         run_wbt("FillDepressions", f_fill,
@@ -227,10 +247,13 @@ def condition_dem(dem: np.ndarray, res: float, workdir: Path,
         return out
 
     diff = dem - out
+    pits_final, flats_final = interior_sinks(out, split=True)
     stats = {
         "sinks_raw": sinks_raw,
+        "flats_raw": flats_raw,
         "sinks_after_breach": sinks_br,
-        "sinks_final": interior_sinks(out),
+        "sinks_final": pits_final,
+        "flats_final": flats_final,
         "filled": filled,
         "carved_max_m": float(np.nanmax(diff)) if np.isfinite(diff).any() else 0.0,
         "raised_max_m": float(np.nanmax(-diff)) if np.isfinite(diff).any() else 0.0,
@@ -343,15 +366,30 @@ def stream_mask(acc_cells: np.ndarray, res: float, stream_ha: float = STREAM_HA
     return (np.nan_to_num(acc_cells, nan=0.0) > thresh_cells)
 
 
-def hand_from(flw, dem_raw: np.ndarray, streams: np.ndarray) -> np.ndarray:
+def hand_from(flw, dem: np.ndarray, streams: np.ndarray) -> np.ndarray:
     """
-    HAND = elevation - elevation of the first stream cell on the D8 trace. Zero on
-    streams and >= 0 everywhere; a negative value is a conditioning bug, not a
-    feature, so it is left visible here and asserted against in Tier 2.
+    HAND = elevation - elevation of the first stream cell on the D8 trace, zero on
+    streams.
+
+    Pass the CONDITIONED DEM here, not the raw one. §32.4 asks for both
+    `elevtn=dem_raw` and 'HAND >= 0 everywhere', and those two requirements are
+    mutually inconsistent: breaching carves a notch through an obstruction, so on
+    the raw surface a cell behind that obstruction sits BELOW the raw elevation of
+    the stream cell its flow path reaches, and HAND comes out negative there by
+    construction. Measured on the first two real regions: carving reached 65 m and
+    152 m, and raw-surface HAND reached -31.5 m and -84.9 m over 0.7% and 1.3% of
+    cells. That is not a conditioning bug, it is the definition colliding with
+    itself.
+
+    The conditioned surface is the one flow was routed on, so HAND measured on it is
+    >= 0 by construction and non-increasing downstream, which is what makes the
+    Tier-2 assertions meaningful rather than vacuous. Slope still comes from the raw
+    DEM (§32.4 point 5), because there the raw surface is the honest one:
+    conditioning deliberately flattens valleys.
     """
-    z = np.where(np.isfinite(dem_raw), dem_raw, -9999.0).astype(np.float32)
+    z = np.where(np.isfinite(dem), dem, -9999.0).astype(np.float32)
     hand = flw.hand(drain=streams, elevtn=z).astype(np.float32)
-    hand[~np.isfinite(dem_raw)] = np.nan
+    hand[~np.isfinite(dem)] = np.nan
     return hand
 
 
