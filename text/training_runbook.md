@@ -7534,3 +7534,79 @@ downstream now consumes accumulation.
 - **49 pairs is a small n.** The verdict is "no strong terrain control on 0–10 cm soil
   moisture", not "terrain is irrelevant to hydrology".
 - The **depth question is untested** for want of deep labels at paired stations.
+
+## §32.11 The dynamics hypothesis, tested and closed (2026-08-24)
+
+§32.10 rejected terrain on the LEVEL. One alternative remained: that HAND controls the
+soil moisture DYNAMICS rather than its mean — a low-HAND site need not sit wetter, but
+might drain more slowly. It is now tested and rejected, and the sequence is worth
+recording because the first look said the opposite of the last one.
+
+### 32.11.1 What the small sample said
+
+`probe_drydown_dynamics.py` over the same 49 colocated pairs, on common dates:
+
+| Δmetric vs ΔHAND | all 49 | ≥2 m | ≥5 m |
+|---|---|---|---|
+| Δ drydown τ | −0.173 | −0.255 | **−0.398, p = 0.046** (n=23) |
+| Δ lag-1 memory | −0.234 (p = 0.10) | | |
+| Δ recession floor | −0.016 | | |
+| Δ wetting response | +0.080 | | |
+| Δ mean level (§32.10) | −0.102 | −0.103 | −0.065 → +0.002 at ≥10 m |
+
+The τ column **strengthened** monotonically with terrain contrast where the level column
+**evaporated** — the exact diagnostic used to dismiss the level result, pointing the
+other way. Both τ and memory carried the predicted negative sign.
+
+### 32.11.2 Pre-registered checking, criteria fixed before running
+
+**Split-half replication: PASS.** Splitting each pair's record in two by date gave
+r = −0.388 (h1) and −0.378 (h2) at \|ΔHAND\| ≥ 5 m. And τ is a real station property, not
+a fitting artefact: **τ(first half) vs τ(second half) correlates at r = +0.663, p < 0.001,
+n = 97 station-halves.** This retired the worry that τ's narrow IQR (3.2 d, 2.9–3.6)
+meant it was measuring sensor noise.
+
+**Permutation over the whole search: FAIL.** Shuffling ΔHAND 10,000 times and rebuilding
+the entire 6 × 3 grid: observed best \|r\| = 0.426 against a null median of 0.324 and 95th
+percentile of **0.527**. **Corrected p = 0.196.** Searching 18 cells with 49 pairs
+produces correlations of that size routinely.
+
+So the limitation was power, not artefact — which justified exactly one more test.
+
+### 32.11.3 THE decisive test
+
+Pairing was bought to control climate, protocol and sensor type. **Network fixed effects
+buy the same control over 890 stations instead of 49 pairs.** One pre-specified
+regression, no thresholds, no strata, no metric selection:
+
+> **τ(0–10 cm) ~ HAND, within-network demeaned. PASS = r < 0 and p < 0.05.**
+
+**Result: r = +0.0881, p = 0.0099, n = 877 across 25 networks. FAIL.**
+
+Statistically significant and **the wrong sign** — higher above drainage dries *more
+slowly*, the reverse of the prediction — at r² = 0.8%. The 49-pair estimate of −0.398
+reverses to +0.088 at n = 877, which is what a small-sample fluke looks like. Detectable
+\|r\| at this n was 0.067, so the test had ample power.
+
+Secondaries, all null and carrying no weight: memory −0.019, recession floor −0.003,
+mean level −0.047, temporal sd +0.009. Köppen D gives τ +0.144 (p = 0.005), also wrong
+signed.
+
+### 32.11.4 Verdict
+
+**Terrain is closed for this dataset at this depth.** Neither the level nor the dynamics
+of 0–10 cm soil moisture is controlled by HAND, and TWI was independently disqualified on
+stability (§32.9.4). §32.10's pruning stands without an asterisk.
+
+Still formally untested, and honestly so: **depth.** Only 4 of 49 pairs carry 10–30 cm
+labels and 3 carry 30–100 cm. If terrain reaches soil moisture it is below the surface
+layer, and the labels are overwhelmingly 0–10 cm. That is a data limitation, not a
+result, and it does not change what gets built now.
+
+**What was worth the two days:** §32.7 steps 1–7 all succeeded and their products stand —
+353 regions of validated 30 m terrain, MERIT for 993 stations, `colocated_pairs.csv`, and
+a region design vindicated by 0 of 990 truncated catchments. And the finding that outlives
+the terrain arm: **stations ~400 m apart differ by a median 0.047 m³/m³ with the same sign
+on 95.8% of days.** A large, reproducible, per-location signal that FiLM's uniform context
+vector provably cannot represent, and that Block 3 exists to capture. It is real. It is
+simply not terrain.
