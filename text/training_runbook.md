@@ -7343,3 +7343,107 @@ fixes it. Decision rule: if Tier 4's OSM overlay shows streams leaving mapped ch
 regions, switch **those regions' derivation** to FABDEM rather than tuning the breaching.
 Everything downstream is unaffected, because the wide DEM is an intermediate and the encoder's DEM
 channel stays GLO-30 regardless (§32.2).
+
+## §32.9 Build log — steps 0–4 executed (2026-08-24)
+
+Branch `feat/per-location-processor` off `main` @ `a64b1e9`. §32.7 steps 0–3 are complete and
+step 4 is running. No GPU spent; no training code touched.
+
+### 32.9.1 What ran, and what it cost
+
+| step | result | cost |
+|---|---|---|
+| 1. `pyflwdir` 0.5.12 + `whitebox` 2.3.6 into `terramind` | installed; WBT ships binary v2.4.0 | — |
+| 2. `download_merit_hydro_gee.py` | **993/993 stations, 0 failures** | ~5 min, 24 CPU |
+| 3. `build_dem_regions.py` → `download_wide_dem.py` | **353/353 regions, 0 failures**, 2.0 GB on disk | **2 min 10 s**, 10.9 GB peak RSS |
+| 4. `test_terrain_tier1.py` | **all checks pass** | 7 s |
+| 4. `build_twi_hand.py` | Tier 2 passes on 2 pilot regions; full run queued | 15 s and 42 s per 742² region |
+
+`build_dem_regions.py` reproduces §32.3's clustering exactly: **353 regions at 50 km**, largest
+420 × 562 km (§32.3 said 559). Cell count comes out 0.98e9 rather than 0.84e9 because the bbox
+now includes the station tile half-width and snaps outward to the 30 m grid; 3.9 GB uncompressed,
+2.0 GB deflated.
+
+### 32.9.2 Measurements that changed the recipe
+
+**`upa` is km², confirmed across all 993 stations, not just the four probes.** `upa/upg` against
+the analytic 3-arcsec cell area: median **0.99974**, range 0.99552–1.00424. The assertion is
+re-derived per station and written into every GeoTIFF's tags, so the 10⁶ factor cannot come back.
+
+**MERIT's grid is centre-registered, and snapping to 1/1200° is half a cell wrong.** The asset's
+`crs_transform` origin is `(-180.000416666667, 84.999583333333)`, i.e. cell *centres* sit on exact
+multiples of 1/1200 and the *edges* are offset by half a cell. Snapping a window to multiples of
+1/1200 — the obvious move, and what the first implementation did — put the GeoTIFF transform
+**46.6 m** out in latitude, a systematic bias on every footprint comparison in §32.6. Snapping to
+the asset's own edges instead: **0.34 m**, verified against `pixelLonLat` on 40 stations.
+
+**§32.5's cone row is wrong and would have failed correct code.** It asks for "a ≈ one cell
+everywhere; TWI low and near-uniform". On a cone the upslope area is πr² and the contour width is
+2πr, so **a = r/2 exactly** — measured median accumulation 18.3 cells, not ~1. Divergence bounds
+the contour-width *ratio*, not `a`. Replaced with the exact analytic value, which is a strictly
+stronger test.
+
+**§32.5's pit row cannot be posed through pyflwdir.** `from_dem` fills internally (§32.4's own API
+caveat), so the raw DEM reports zero pits before conditioning and the test passes vacuously. Now
+posed against a direct `interior_sinks()` count, with the caveat itself asserted as a test.
+
+**§32.4's HAND definition is internally inconsistent, and the conditioned surface wins.** It asks
+for both `elevtn=dem_raw` and "HAND ≥ 0 everywhere". Breaching carves a notch, so on the raw
+surface a cell behind the obstruction sits *below* the raw elevation of the stream its flow path
+reaches. Measured: carving reached **65 m and 152 m** on the two pilot regions, and raw-surface
+HAND reached **−31.5 m and −84.9 m** over 0.7% and 1.3% of cells. HAND is now measured on the
+conditioned surface — the one flow was actually routed on — which makes ≥ 0 and
+non-increasing-downstream true by construction rather than aspirational. The raw-surface version
+is still computed per region so the discrepancy stays measured. **Slope still comes from the raw
+DEM** (§32.4 point 5 stands): there the raw surface is the honest one.
+
+**`BREACH_DIST_CELLS` 100 → 20.** Least-cost breaching is ~O(dist²) per pit and GLO-30's flat sea
+surface gives coastal regions enormous pit counts (region 123: 153,233 raw pits). At dist=100 a
+single 742² region had not finished conditioning after 3 minutes; at dist=20 it takes 30 s. A
+canopy dam is 1–3 cells wide at 30 m, so "breach aggressively" means willing to *cut*, not willing
+to cut 3 km.
+
+**Pits and flats are different things.** A pit has every neighbour strictly higher and conditioning
+must remove it; a flat merely has an equal neighbour and is what a sea surface, lake or plateau
+looks like in a DSM. Counting flats as sinks made Tier 2 fire on correct output — both pilot
+regions reported exactly 5 "sinks", all of them flats.
+
+### 32.9.3 Tooling traps worth not rediscovering
+
+- **`earthengine authenticate --auth_mode=notebook`** — the default mode shells out to `gcloud`,
+  absent on the login node. (Recorded in §32.6; it held.)
+- **GLO-30 ocean tiles 404 rather than returning zeros**, and the COGs carry `nodata=None`, so
+  sea level 0.0 is indistinguishable from no data by value. Absent tiles become NaN and the valid
+  mask comes from tile coverage. Only 1 of 353 regions has a missing tile (1.6% NaN) and 1 crosses
+  a longitude-decimation band; neither produced a NaN stripe.
+- **WhiteboxTools' python wrapper cannot report failure.** `run_tool()` returns 0 unconditionally,
+  so a Rust panic reads as success; it discards the tool's stdout when `verbose=False`, which is
+  where the panic text goes; and it `chdir()`s the whole process for the duration of the call.
+  `terrain_ops.run_wbt()` invokes the binary directly instead.
+- **WhiteboxTools rejects a GeoTIFF with no geokeys** — synthetic grids need a CRS.
+- **`FillDepressions` panics intermittently on identical input** ("Error unwrapping output",
+  rc=101, ~1 call in 6). It is now conditional on a measured pit count — breaching with `fill=True`
+  already leaves zero pits — so the flaky tool is off the common path for all 353 regions. A
+  bounded retry sits underneath; it fired twice during the pilot and succeeded both times.
+- **`rasterio`'s `Window.round_lengths()` rounds to nearest, not up** (≥1.4), which can clip a
+  window's far edge by a cell and leave a one-pixel NaN stripe between two source groups — a fake
+  ditch through the flow field. `download_wide_dem.py` does the window arithmetic explicitly.
+
+### 32.9.4 Open, not fixed blind
+
+**Tier 3 agreement is lower than §32.5 expects.** pyflwdir vs WhiteboxTools D8 accumulation on the
+*identical* conditioned DEM: r(ln a) = **0.856** and **0.714**, and **0.69 on hillslopes**, with a
+median log ratio of exactly 0 — dispersion, not bias. §32.5 says "disagreement on ordinary
+hillslopes is a bug". The likely cause is that `pyflwdir.from_dem` resolves flats its own way, so
+the two are not in fact operating on the same surface; the worse of the two regions is the one
+where conditioning touched **32%** of cells against 2.5%. `--tier3` therefore runs on all 345 bulk
+regions, where the sample is large enough to settle it. **This must be resolved before the
+sufficiency gate**, because if D8 direction on hillslopes is unstable then so is HAND's trace.
+
+**Coastal regions churn.** Region 123 (Puerto Rico): conditioning touched 32% of cells and 26.4%
+of the region sits on the tan-slope floor — GLO-30's flat sea. Land stations should be unaffected,
+because ocean is downstream of everything and so never contributes upslope area, but this wants
+confirming in the pilot rather than assuming. A water mask from MERIT's `wat` band is the fallback.
+
+**Still never computed: the sub-token variance fraction of TWI/HAND** (§32.7 step 5). It decides
+whether these channels belong in Block 4 at all, and nothing measured so far speaks to it.
