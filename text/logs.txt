@@ -4686,3 +4686,178 @@ NEXT, IN ORDER
      No GPU.  Science go/no-go.
   6. Only if 8 passes: build_fine_stack.py -> dataset.py -> model.py -> smoke ->
      ~42 GPU-h.
+
+
+================================================================================
+2026-08-24  SESSION 29 — §32 BUILT (STEPS 0-8), AND THE TERRAIN ARM IS PRUNED.
+Branch feat/per-location-processor off main @ a64b1e9.  No GPU spent.
+No training code touched.  Six corrections to §32.4/§32.5 found by RUNNING it,
+then the sufficiency gate failed and terrain was cut.
+================================================================================
+
+HEADLINE
+  Everything §32 asked for got built and validated.  Then the science gate said the
+  input is not worth having, so it is pruned — which is exactly the outcome §31.10
+  and §32.8 pre-committed to handling.  The architecture is untouched: ablation row
+  2 (Block 3 on, terrain off) always isolated them.
+
+WHAT RAN
+  step 1  pyflwdir 0.5.12 + whitebox 2.3.6 into terramind (WBT binary v2.4.0)
+  step 2  download_merit_hydro_gee.py     993/993 stations, 0 failures, ~5 min
+  step 3  build_dem_regions.py            353 regions at 50 km, reproducing §32.3
+                                          exactly; largest 420x562 km; 0.98e9 cells
+          download_wide_dem.py            353/353 in 2 MIN 10 S, 0 failures, 2.0 GB
+          download_wide_dem.py --source fabdem
+                                          353/353 in 5 MIN 19 S, 0 failures
+  step 4  test_terrain_tier1.py           ALL TIER-1 CHECKS PASS
+          build_twi_hand.py               353/353 regions (17 min bulk + 54 min big)
+                                          TIER 2 CLEAN: 0 mass-conservation failures,
+                                          0 HAND<0, 0 a<res, 1 region with 175
+                                          residual pits out of 18.7e6 cells
+  step 7  csvs/colocated_pairs.csv        75 pairs / 84 stations (15/6/25/29)
+  step 8  gate_sm_vs_terrain.py           THE GATE — see below
+
+  THE RESULT THAT VINDICATES §32.3's REGION DESIGN:
+    0 of 990 stations have a catchment touching its region edge.  The 50 km linkage
+    plus 10 km buffer holds everywhere.
+
+SIX CORRECTIONS TO §32 AS WRITTEN (all in runbook §32.9)
+  1. MERIT's grid is CENTRE-registered.  crs_transform origin
+     (-180.000416666667, 84.999583333333), so snapping a window to multiples of
+     1/1200 deg — the obvious move — lands half a cell out.  46.6 m systematic
+     transform error; snapping to the asset's own edges gives 0.34 m.
+     upa in km2 confirmed across ALL 993 (median ratio 0.99974).
+  2. §32.5's CONE ROW IS WRONG and would have failed correct code.  On a cone
+     a = r/2 exactly (measured 18.3 cells), not "~1 cell".
+  3. §32.5's PIT ROW IS VACUOUS through pyflwdir — from_dem fills internally.
+  4. §32.4's HAND DEFINITION CONTRADICTS ITSELF: elevtn=dem_raw AND HAND>=0 cannot
+     both hold, because breaching carves (65 m and 152 m measured; raw HAND hit
+     -31.5 m and -84.9 m).  HAND now measured on the CONDITIONED surface.  Slope
+     still from the RAW DEM.
+  5. BREACH_DIST_CELLS 100 -> 20.  Cost ~O(dist^2) per pit.
+  6. §32.5's TIER 3 CANNOT PASS AS SPECIFIED — see below.
+
+TIER 3: TWO D8 IMPLEMENTATIONS DO NOT AGREE, AND THAT IS A PROPERTY OF D8
+  Over 343 regions, pyflwdir vs WhiteboxTools D8: r(ln a) 0.774 median, 0.652 on
+  hillslopes, and WORSE on channels (0.42; 0.16 above 100 ha) with stream networks
+  overlapping only 45%.  Three hypotheses tested and killed:
+    - conditioning flats — agreement IMPROVES with conditioning burden (r = +0.46),
+      the opposite of what I claimed earlier in the session
+    - orientation error — as-is 0.55, every flip/transpose ~0.000
+    - pointer mis-decoding — irrelevant to a raster-vs-raster comparison
+  Cause: D8 makes a discrete choice among 8 neighbours, so sub-metre elevation
+  differences flip directions and accumulated areas diverge downstream.  On a tilted
+  plane with 0.4 m roughness the two libraries correlate at 0.55 while their row
+  means agree to 1%.  Both are correct; the test asks D8 for something it does not
+  determine.
+
+TIER 3b — STABILITY, THE TEST THAT REPLACED IT
+  Perturb the DEM, redo the whole derivation, measure what moves.
+      sigma      TWI    HAND   a(MFD)   a(D8)   pooled r(dTWI)   pooled r(dHAND)
+      0.05 m   0.940   0.997    0.908   0.839            0.519             1.000
+      0.2  m   0.836   0.991    0.744   0.608            0.195             0.987
+      1.0  m   0.542   0.965    0.421   0.316            0.190             0.963
+  dTWI IS UNUSABLE AS A GATE REGRESSOR: at 0.2 m the perturbation noise is 82% of
+  the signal spread (1.53 vs 1.86), which attenuates any regression slope toward
+  zero and manufactures a false negative.  dHAND is 2.6% (0.63 vs 25 m).
+  Mechanism: `a` is a chaotic upslope INTEGRAL (near-tie routing decisions that
+  compound downstream, and genuine near-discontinuity in space); HAND is a LOCAL
+  elevation difference, so error enters once and stays bounded.  Then dTWI
+  subtracts two knife-edge values while the true difference shrinks for nearby
+  stations — noise up, signal down, simultaneously.
+
+  FABDEM DOES NOT FIX IT.  Fetched all 353 regions (5 min 19 s, uniform 3600x3600 at
+  every latitude, explicit nodata, no decimation seams — strictly better behaved than
+  GLO-30).  But dTWI goes 0.195 -> 0.221, i.e. no change, and D8 gets WORSE
+  (0.608 -> 0.382).  Reason: the instability is not canopy ERROR, it is the routing
+  decision being a NEAR-TIE on smooth hillslopes, and removing canopy makes the
+  surface smoother, so the choice is more marginal.  Canopy roughness was helping D8
+  break ties.  FABDEM is kept anyway — correct routing surface, no seams, and the
+  right basis for Tier 4's OSM check.
+
+  ENSEMBLING DOES FIX THE FIELD.  Averaging over DEM-error realisations (not over
+  space, so 30 m per-cell resolution is preserved) takes the TWI field from
+  r = 0.75-0.84 to 0.96-0.98 between independent ensembles, losing only ~11% of
+  spatial variance, and yields a free per-cell uncertainty map.  Not pursued further
+  once the gate failed.
+
+  NO GLOBAL 30 m TWI EXISTS OPEN-SOURCE — checked, not assumed: Geomorpho90m CTI
+  92.8 m, MERIT Hydro 92.8 m, HydroSHEDS 92.8 m, ALOS CHILI 90 m, mTPI 270 m.  And
+  90 m is already excluded by §32.1(c) since 21 of 75 pairs are under 160 m apart.
+  A third-party 30 m TWI would inherit the same instability anyway.
+
+§32.8 THE SUFFICIENCY GATE — TERRAIN FAILS  (runbook §32.10)
+  890 stations with terrain and >= 180 observed days.  49 of 75 pairs survive the
+  >= 120 common-observed-day rule — WHICH RECONCILES 75-vs-62: §26's extra filter was
+  overlapping observation periods.
+      dSM(0-10) ~ dHAND      r = -0.102  p = 0.480  n = 49   95% CI [-0.373, +0.184]
+      dSM(0-10) ~ dTWI       r = +0.049  p = 0.737
+      wet third ~ dHAND      r = -0.104      dry third ~ dHAND   r = -0.101
+      Koppen C -0.112 (n=36)          Koppen D -0.137 (n=10)
+  TWO THINGS MAKE IT A FAIL RATHER THAN AN UNDERPOWERED NULL:
+    - the most diagnostic prediction is ABSENT.  Saturation excess is a wet-state
+      mechanism and §31.5 built the wet/dry split to test exactly that.  Wet -0.104
+      vs dry -0.101: no contrast at all.
+    - it WEAKENS when restricted to pairs that have terrain contrast:
+      -0.102 (all) -> -0.103 (>=2 m) -> -0.065 (>=5 m) -> +0.002 (>=10 m).
+      A real effect strengthens under that restriction.
+  AND THE RESPONSE IS CLEAN: paired stations differ by a median |dSM| of
+  0.047 m3/m3, same sign on 95.8% of days.  Regressor has range, response is
+  well determined, they are unrelated.
+  HOBE did not generalise: its n=5 look gave -0.637 with the right sign, stronger
+  when wet and stronger at 10-30 cm; Koppen D over 10 pairs gives -0.137.
+
+§32.11 THE DYNAMICS HYPOTHESIS — TESTED AND CLOSED
+  Alternative: HAND controls DYNAMICS not level.  Over the same 49 pairs:
+      d tau vs dHAND    -0.173 (all) -> -0.255 (>=2 m) -> -0.398, p=0.046 (>=5 m)
+      d memory          -0.234, p = 0.10
+  STRENGTHENING with contrast where the level test evaporated, both with the
+  predicted sign.  Pre-registered checking, criteria fixed BEFORE running:
+    SPLIT-HALF PASS — halves give -0.388 and -0.378, and tau is a real station
+      property: tau(h1) vs tau(h2) r = +0.663, p < 0.001, n = 97 station-halves.
+      That retired the "tau is sensor noise" worry (its IQR is only 2.9-3.6 d).
+    PERMUTATION FAIL — best |r| 0.426 vs a null 95th percentile of 0.527 over the
+      same 6x3 grid, 10000 shuffles.  Corrected p = 0.196.
+  So the limit was POWER, and network fixed effects supply it — pairing was only
+  ever buying control of climate/protocol/sensor, which networks also buy, over 890
+  stations instead of 49 pairs.  ONE pre-specified regression, no grid:
+      tau(0-10) ~ HAND, within-network demeaned
+      r = +0.0881, p = 0.0099, n = 877, 25 networks.   FAIL — WRONG SIGN, r^2 = 0.8%
+  The 49-pair -0.398 reverses to +0.088 at n=877.  Textbook small-sample fluke; the
+  pre-registration is what caught it.  Secondaries all null.
+
+TOOLING TRAPS WORTH NOT REDISCOVERING (runbook §32.9.3)
+  - GLO-30 ocean tiles 404 rather than returning zeros, and carry nodata=None, so
+    sea level 0.0 is indistinguishable from no data BY VALUE.
+  - WHITEBOXTOOLS' PYTHON WRAPPER CANNOT REPORT FAILURE: run_tool() returns 0 even
+    on a Rust panic, discards stdout when verbose=False (where the panic text goes),
+    and chdir()s the whole process.  terrain_ops.run_wbt() calls the binary directly.
+  - FillDepressions panics intermittently (~1 call in 6) — now conditional on a
+    measured pit count, with a bounded retry underneath.
+  - WhiteboxTools rejects a GeoTIFF with no geokeys.
+  - rasterio's Window.round_lengths() rounds to NEAREST, not up.
+  - Killing a foreground python does NOT kill its whitebox subprocesses.
+  - A whitebox call hung for a full hour on one node (tcn1176) holding 228 MB, then
+    ran in 1.2 s on another.  Node flake; run_wbt now times out and retries.
+
+DECISION
+  Terrain is pruned.  §32.7 step 9 proceeds with terrain OFF: build_fine_stack.py
+  drops terrain_lo/terrain_hi, Block 1's zero-init terrain path is not built, and
+  the §32.6 MERIT gate is demoted to a validation artefact since nothing downstream
+  consumes accumulation.
+  STILL UNTESTED, honestly: DEPTH.  Only 4 of 49 pairs carry 10-30 cm and 3 carry
+  30-100 cm.  If terrain reaches soil moisture it is below the surface layer, and
+  our labels are overwhelmingly 0-10 cm.  Data limitation, not a result.
+
+THE FINDING THAT OUTLIVES THE TERRAIN ARM
+  Stations ~400 m apart differ by a median 0.047 m3/m3 with the same sign on 95.8%
+  of days.  A large, reproducible, per-location signal that FiLM's uniform context
+  vector provably cannot represent, and precisely what Block 3 exists to capture.
+  It is real.  It is simply not terrain.
+
+NEXT
+  1. §32.7 step 9 with terrain off: build_fine_stack.py -> dataset.py -> model.py
+     -> §31.8's regression gates -> smoke (20 stations, 3 epochs) -> ~42 GPU-h.
+  2. Ablation row 2 (Block 3 on, terrain off) is now the ONLY terrain row needed.
+  3. Latent, fix regardless: dataset.py:483-486 returns all-zero anchors with
+     orbit_id=0, indistinguishable from a real S2 anchor.
