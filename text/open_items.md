@@ -197,3 +197,144 @@ for is still real: `model.py:538` shows DEM, LULC, soil and the entire satellite
 `_cpu_pyramid_pool`'d to 4 tokens each, so **there is no per-patch time series anywhere** — a
 patch has appearance from exactly one anchor date and knows only the *tile's* history, not its
 own. §33 attacks the same gap from the decoder side instead.
+
+---
+
+## G. Agreed build plan — pure patchwise, no global transformer (2026-08-25)
+
+**Decision: there is no global transformer in this path.** One patchwise transformer, end to
+end. Everything tile-level enters each patch's own sequence. This supersedes §34's two-stage
+(patchwise → global) drawing; §34.3–34.4 otherwise stand.
+
+### G1. The model
+
+```
+per patch k, in parallel:
+
+  [ depth_CLS xN | dem_k | lulc_k | soil x4 | era5_summary x32 | SIF | TWSA | sat_hist_k x100 ]
+                                                                              ^ un-pooled,
+                                                                                patch k's own
+        N transformer layers, weights shared across patches
+        token head -> SM for patch k
+
+  196 patches -> 14 x 14 map @ 160 m
+```
+
+No patch sees any other patch. Spatial context came from TerraMind, within each acquisition.
+
+### G2. ERA5 must be compressed first, or inference is unaffordable
+
+ERA5's 365 daily tokens dominate the sequence, and a patchwise model pays for them **196
+times** instead of once:
+
+| E (ERA5 tokens) | per-patch seq | inference pairs (x196) | vs current global |
+|---|---|---|---|
+| 365 raw | 482 | 45 M | **47x** |
+| 64 | 181 | 6.4 M | 6.7x |
+| **32** | **149** | **4.4 M** | **4.5x** |
+| 16 | 133 | 3.5 M | 3.6x |
+
+**Chosen: 32.** Below ~16 the 100 history tokens become the floor and the gain flattens; above
+~64 cost grows quadratically for information ERA5 does not contain at 9 km. 32 also matches
+what SM dynamics need from a year of weather — roughly daily over the last ~2 weeks (drydown,
+individual events), weekly over ~2 months (antecedent wetness), monthly beyond (seasonal
+demand, deep storage): 14 + 8 + 10.
+
+Note training is *cheaper* than today (one patch, ~0.23 M pairs vs 0.96 M). Only inference
+multiplies by 196.
+
+### G3. How the ERA5 encoder works — Perceiver-style resampler
+
+Runs **once per sample**, output shared by all 196 patches. Its own cost is irrelevant
+(32 x 365 ~= 12 k pairs); only its *output count* matters, because that is what gets multiplied.
+
+```python
+self.queries = nn.Parameter(torch.randn(32, d))   # WEIGHTS, shared across samples and patches
+
+era5 = era5 + doy_emb + offset_emb                # (B, 365, d)
+Q = W_q(self.queries)                             # (32,  d)
+K, V = W_k(era5), W_v(era5)                       # (B, 365, d)
+A = softmax(Q @ K.T / sqrt(d), dim=-1)            # (B, 32, 365)   per-sample attention
+era5_summary = A @ V                              # (B, 32,   d)
+# + 1-2 self-attention layers among the 32
+```
+
+Each query is a fixed *question*; the attention row is the per-sample *answer* — which days this
+sample should read. A mean cannot express "find the most recent heavy rain"; attention can.
+
+Two details that are not optional:
+
+1. **Both encodings on the ERA5 tokens** — offset-from-target so "recent" is learnable, *and*
+   absolute DOY, because `model.py:592-593` records that ERA5 is the model's seasonal anchor
+   (satellite history deliberately carries only staleness). Without positional information the
+   queries degenerate to a weighted mean.
+2. **Mask missing days** in the cross-attention.
+
+Ablation worth keeping: fixed physical windows (14 daily / 8 weekly / 10 monthly) against the
+learned queries. If they match, that is a publishable statement about what the meteorology
+actually contributes.
+
+**Check SIF and TWSA token counts** — they sit in the same per-patch budget and multiply by 196
+exactly as ERA5 does. If either is more than a handful, resample it the same way.
+
+### G4. Training vs inference — the asymmetry that makes this cheap
+
+With no cross-patch mixing, patch k's output depends only on patch k:
+
+| | training | inference |
+|---|---|---|
+| step 1, no decoder | **1 patch** (k for multi-station tiles) | all 196 |
+| step 2, with decoder | **~7x7 = 49** (conv receptive field, ±2-3 tokens) | all 196 |
+
+Per-sample satellite input drops from `(100, 196, 768)` to `(100, 768)` — **196x smaller**.
+Batch size stops being limited by the patch stage; ERA5 becomes the binding constraint, which
+is a second reason to compress it.
+
+**Position leakage disappears entirely.** §28.5's worry is that the supervised token is always
+index 105, so the model learns "read (7,7)". A pure patchwise model with no spatial positional
+embedding **cannot know where the patch is** — the failure mode is unrepresentable, and the
+translation augmentation §28.5 requires is unnecessary. This is a real simplification, not a
+side effect.
+
+Price: no cross-patch attention. Contextformer accepts exactly that, because its vision backbone
+supplies spatial context; for us TerraMind does, within each acquisition.
+
+### G5. File by file
+
+**`dataset.py`**
+- Delete `_cpu_pyramid_pool` for satellite history and DEM/LULC.
+- Return patch k's slice `(T, 768)`, not `(T, 196, 768)`. **Slice in the worker.**
+- Emit `token_idx = (row//16)*14 + (col//16)`.
+- Stop loading `anchor_l3/l6/l9` — no decoder in step 1.
+- Multi-station tiles: run those k patches, nothing special needed.
+- **Check before assuming an I/O win:** if the consolidated bundles are whole-file `.pt` loads,
+  disk read does not shrink — only transfer and compute do. Zarr would slice; `.pt` will not.
+
+**`model.py`**
+- New `PatchwiseEncoder` behind `--arch patchwise`; keep the existing path under `--arch unet`.
+- Perceiver resampler for ERA5 (and SIF/TWSA if needed), run once per sample.
+- Reuse `rel_pos_emb` (`:584`), `hist_modality_emb` (`:588`), `token_mask` (`:465`) unchanged.
+- Depth CLS tokens prepend to *each patch's* sequence; §18.4's star residual survives intact.
+- Token head -> `(B, 196, n_depths)` at inference, `(B, k, n_depths)` in training.
+- **Unused in this path:** `_build_sequence`, the global 6 layers, `spatial_start`, the `context`
+  masked mean, all three skip FiLMs, `UNetDecoder`.
+
+**`train.py`** — loss reads `pred[:, :, token_idx]` instead of the hardcoded `(112,112)`. Batch
+size can rise substantially; **re-tune LR with it**.
+
+**`eval_predict.py`** — inference runs all 196; `PixelMap` gather switches from 224² to token
+indices, as §28.9 already specifies.
+
+### G6. This is a new architecture, not a modification
+
+`best.pt` cannot be resumed, §26's provenance gate does not apply, and there is **no zero-init
+trick that makes step 0 match the current model** — the global transformer is gone, so it trains
+from scratch. The fallback is the tag, not a runtime flag:
+
+```bash
+git tag baseline-unet-temporal        # current model.py, known-good
+git checkout -b feat/patchwise-temporal
+```
+
+Keeping `--arch unet | patchwise` in one file is still worth it for eval comparability, but it is
+not a rollback mechanism. The tag is.
