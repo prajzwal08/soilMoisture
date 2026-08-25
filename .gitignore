@@ -23,6 +23,7 @@ plots/
 latex/
 *.md
 !text/architecture.md
+!text/open_items.md
 wandb/
 
 # Derived analysis output — regenerable from the scripts that write them

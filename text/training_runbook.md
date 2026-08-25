@@ -7610,3 +7610,825 @@ the terrain arm: **stations ~400 m apart differ by a median 0.047 m³/m³ with t
 on 95.8% of days.** A large, reproducible, per-location signal that FiLM's uniform context
 vector provably cannot represent, and that Block 3 exists to capture. It is real. It is
 simply not terrain.
+
+## §33 Sentinel-1 in the decoder — a measured carrier at every scale (DESIGNED 2026-08-24, nothing built)
+
+§32 closed terrain and left the question it was asked to answer still open. This section
+answers it with a different carrier.
+
+### 33.1 What §32 leaves standing
+
+The positive finding survives intact and is the whole motivation here:
+
+> **Stations ~400 m apart differ by a median 0.047 m³/m³, with the same sign on 95.8% of
+> days.** (§32.10.2)
+
+Large, reproducible, per-location. The signal exists. §32.10 and §32.11 established only
+that **terrain is not what carries it** — HAND fails on level (r = −0.102, no wet/dry
+contrast, vanishing at high ΔHAND) and on dynamics (r = **+0.088**, wrong-signed,
+p = 0.0099, n = 877), and TWI was disqualified earlier on stability (§32.9.4).
+
+A note on that stability probe, because the two results are easy to conflate:
+`csvs/terrain_stability_probe.json` shows **HAND is the stable quantity** (r ≥ 0.96 under
+1 m of DEM noise; ΔHAND across pairs 0.97–1.0000) while **TWI is not** (ΔTWI goes
+0.339 → −0.163 → −0.106 under 0.05/0.2/1.0 m). It also shows **FABDEM is worse than
+GLO-30**, so §32's pre-committed FABDEM swap is not indicated. None of this rescues
+terrain: HAND is reproducible *and* irrelevant to 0–10 cm soil moisture. Stable ≠ useful.
+
+So: **what varies at 400 m, changes with weather, and is measured everywhere?**
+
+### 33.2 The diagnosis, restated in terms of what the decoder can see
+
+`spatial_ctx` is computed at `model.py:732` and the decoder is driven by `context`
+(`model.py:736-743`), the masked mean of every non-spatial token — one spatially constant
+vector. §16.1 localised the collapse to the decoder, not the encoder (rel_spatial_std
+1.164 → 1.106 through attention, then 0.089 / 0.095 / 0.034 → **0.0065** through the
+decoder).
+
+The mechanism is simpler than a modelling failure. **TerraMind is a ViT: it patches once
+and never downsamples**, so `L3`, `L6`, `L9`, `L12` are all 14×14 (`model.py:530`). At
+`model.py:257-264` those skips are interpolated up. **Between 160 m and 20 m the decoder
+holds no measurement at all**, and §23 measured what fills the vacuum: confident structure
+up to 0.19 m³/m³, strongest at the *flattest* site.
+
+### 33.3 Only Sentinel-1 can carry it
+
+| source | varies in SPACE | varies in TIME |
+|---|---|---|
+| ERA5 / SIF / TWSA | no (9 km) | yes |
+| DEM / soil / texture | yes | no |
+| LST | yes | no — +0.967 month-to-month (§29.15) |
+| S2 | yes | yes, but clouds, and it sees the canopy |
+| **S1 σ⁰** | **yes** | **yes** |
+
+Per-station S1 counts, listed as NEVER MEASURED in earlier planning, are now measured:
+
+```
+   s1_asc   993 stations   median 212   p10  90   max 958
+   s1_desc  910 stations   median 238   p10   5   max 956
+   asc+desc                median 440   p10 144   only 9 stations below 50
+   /projects/prjs1968/satellite_zarr/{station}.zarr/s1_{asc,desc}/
+       data (N,2,224,224) fp16 dB [VV,VH]   dates (N,) b'YYYYMMDD'
+```
+
+§30.3a already flagged the same thing from the other direction: **S1 VV sub-token variance
+fraction 0.76 — the only time-varying tier-1 channel** in the entire fine stack.
+
+### 33.4 The decomposition
+
+Raw backscatter is a sum of three things the network cannot separate on its own:
+
+```
+   sigma0(p,k)  =   c_k      +   (r_p - mu)   +   d(p,k)
+                    permanent    how wet the      how wet THIS spot is
+                    texture      whole tile is    versus its own norm
+```
+
+Computed per station × relative-orbit group × polarisation, at each decoder level ℓ:
+
+```
+   P        = 10^(sigma_dB/10)                        LINEAR power
+   T_l(p,k) = 10*log10( mean of P over the f x f block ),  f = 224/l
+   mu  = mean over all (p,k)      r_p = mean over k      c_k = mean over p
+   d(p,k) = T_l(p,k) - r_p - c_k + mu
+```
+
+which is the double-centring projection
+`D = (I - 11'/n) T (I - 11'/l²)`, giving `Σ_k d = 0 ∀p` and `Σ_p d = 0 ∀k`, and an exact
+variance split `Var(T) = Var(r) + Var(c) + Var(d)` — verified numerically to 2e-07 dB².
+
+**Why feed the decomposition and not raw σ⁰.** The three components sum back to raw σ⁰, so
+nothing is lost. But `c_k` **cannot be derived from a single sample** — it needs the
+multi-year archive. A network given raw σ⁰ could only recover it by memorising a per-pixel
+mean for each of 993 stations, which is the memorisation this design exists to avoid and
+which does not transfer out of sample. Computing `c_k` offline injects information the
+model cannot otherwise obtain, and it *does* transfer, because at inference it is computed
+from the new station's own archive.
+
+Full derivation, equations and worked example: **`text/s1_decoder_input.pdf`**.
+
+### 33.5 The four things that were measured before committing
+
+**(a) Multilook in LINEAR power, never in dB.** Averaging dB gives the geometric mean of
+power. Measured on CA-Cbo: mean bias **0.53 dB**, max **7.5 dB**, r = 0.952, worst in
+heterogeneous cells — exactly where the signal is.
+
+**(b) Group by relative orbit, `ord(date) mod 12`.** Mixing orbits injects viewing
+geometry. The grouping validates itself:
+
+```
+   split-half r(c_k) WITHIN a group  (the ceiling)   0.9979  0.9981  0.9982
+   BETWEEN groups   0 vs 1  0.9632   different orbit -> keep apart
+                    0 vs 7  0.9552   different orbit -> keep apart
+                    1 vs 7  0.9952   AT ceiling: S1A/S1B same orbit -> MERGE
+```
+
+Mixing orbits inflates the interaction term from ~17% to 18.3%. Drop groups with n < 20.
+
+**(c) The interaction term is real and is not speckle.**
+
+```
+station                  n   season%  static%  INTER%   ac1     ac1(shuffled)
+AmeriFlux_CA-Cbo       116    19.6     63.7     16.7    +0.240    -0.006
+ISMN_TxSON_CR1000-1    113    37.7     50.1     12.2    +0.371    -0.011
+ISMN_SCAN_Abrams       104    40.7     21.7     37.7    +0.478    -0.002
+```
+
+**The variance share is NOT the evidence.** Double-centring pure noise leaves 94–99% in
+the interaction term. The evidence is that the pattern *repeats between passes* (+0.24 to
++0.48) while shuffled controls do not (−0.01). Report the autocorrelation against a
+location-shuffled control everywhere this quantity is discussed; never the share alone.
+
+**(d) Vegetation is present but is not what makes it coherent.** The cross-ratio
+`CR = VH − VV` is the standard C-band vegetation descriptor (Vreugdenhil et al. 2018;
+Copernicus SSM). Measured: `r(d_VV, d_CR)` = −0.40 to −0.58, so vegetation accounts for
+16–34%. But three things say the coherent part is not phenology:
+
+- the ACF decays to zero by ~6 passes (~72 d, e-folding 24–36 d) — a soil-moisture
+  timescale, not a canopy one;
+- a per-location annual harmonic explains only **9.8–22.3%** of `d_VV`, so 78–90% is
+  episodic;
+- **removing vegetation makes the signal stronger, not weaker** — lag-1 ACF rises
+  0.240→0.328, 0.371→0.428, 0.478→0.546.
+
+So the build carries `d* = d_VV − β·d_CR`, with β accepted **only if the residual's
+autocorrelation increases**; otherwise shrink β to zero. Log both per group.
+
+### 33.6 What is fed to each decoder stage
+
+Three channels per stage, from the **most recent available pass** `p*`:
+
+| stage | grid | cell | channels |
+|---|---|---|---|
+| bottleneck | 14×14 | 160 m | `c_14`, `d_14(p*)`, `w_p*` |
+| `up1` | 28×28 | 80 m | `c_28`, `d_28(p*)`, `w_p*` |
+| `up2` | 56×56 | 40 m | `c_56`, `d_56(p*)`, `w_p*` |
+| `up3` | 112×112 | 20 m | `c_112`, `d_112(p*)`, `w_p*` |
+
+`w_p = (r_p − r̄)/sd(r)` is the **catchment wetness state** — one standardised scalar per
+date, broadcast across the grid. It must be fed back explicitly: double-centring deletes it
+from `d` by construction, and it is what lets a conv express *response × wetness* rather
+than a flat offset. Plus two housekeeping scalars: the age of `p*` in days, and a validity
+flag (zero ⇒ `d = 0`, the natural "behaving like the tile average" value).
+
+```python
+x = self.bottle_proj(bottleneck)
+x = torch.cat([x, c_14, d_14, w], 1)                                    #  512+3
+x = self.up1(x); x = self.conv1(torch.cat([x, film9(skip_L9), c_28,  d_28,  w],1))
+x = self.up2(x); x = self.conv2(torch.cat([x, film6(skip_L6), c_56,  d_56,  w],1))
+x = self.up3(x); x = self.conv3(torch.cat([x, film3(skip_L3), c_112, d_112, w],1))
+```
+
+Each `in_channels` grows by 3 (≈12 k parameters). **Zero-init the new weight slices**
+(`conv.block[0].weight[:, -3:] = 0`) so the forward pass is bit-identical to `best.pt` at
+initialisation and §26's provenance gate applies unchanged.
+
+**Output grid 112×112 @ 20 m**, not 224×224 @ 10 m. `2240/20 = 112` and `112/14 = 8`
+exactly, and 20 m is where S1 actually resolves (IW is 5 × 20 m native; the RTC product is
+*gridded* at 10 m but multilooked coarser). The `up4` stage is dropped — it is the most
+expensive conv in the decoder and the only stage with no measured input. Claiming 10 m
+would be claiming the grid rather than the resolution, which is precisely the flaw in
+arXiv:2505.00265 (`RMSE 0.06–0.08`, validated only at points, no spatial validation at
+all, final product resolution never stated).
+
+### 33.7 LST as the target, at 100 m
+
+The two sensors take **disjoint roles**: S1 is input only, LST is target only. Nothing
+appears on both sides, so no leakage discipline is needed anywhere.
+
+Grid: `2240/22 = 101.8 m`, a 22×22 array — the finest grid that divides the tile exactly
+and stays coarser than TIRS's ~100 m, so every cell holds at least one independent thermal
+sample and nothing is oversampled.
+
+```python
+p = self.head_lst(up1_feat)                        # Conv2d(256,1,1) -> (B,1,28,28)
+p = F.interpolate(p, size=(22,22), mode='area')    # 80 m -> 101.8 m, AGGREGATION only
+L_lst = huber(p[m], d_LST[m])
+```
+
+Both sides of the comparison are aggregations — the target goes 30 m → 101.8 m by
+averaging, the prediction 80 m → 101.8 m — so nothing is invented on either side. Target
+built by the same double-centring, **grouped by WRS-2 path/row** (different paths image at
+different local times, hence different thermal states). Masked for cloud *and* the
+no-retrieval region.
+
+**Why it earns its place despite being coarser than three of the four S1 levels:** not
+resolution — **cross-sensor disambiguation**. The open question on `d` is whether it tracks
+soil moisture or differential surface roughness after rain; radar cannot separate those and
+thermal can, because roughness does not cool a surface and evaporation does. A model handed
+radar and required to produce a thermal field must learn the moisture mechanism; the
+roughness explanation cannot pass that test.
+
+**Prerequisite:** a global Landsat ST pull. §29.12 clocked the TxSON job at under a minute
+for 246 scenes with a 7.7 MB per-station window, so 993 stations is ≈7.6 GB and 30–60 min
+with `Pool(64)` — a scoped job, not a project. Caveat to report: clear-sky days are
+measurably drier (§29: 0.1837 vs 0.1913, KS p = 0.049), so LST supervision lands
+preferentially on dry days; report LST-head skill split by wetness tercile.
+
+### 33.8 What is deliberately NOT in this design
+
+- **No S1 target.** S1 is an input. The hidden-pass masking machinery of earlier drafts
+  exists only when a quantity is on both sides; it is not needed here.
+- **No colocated-pair loss.** 19 train pairs is too few to supervise with, and keeping
+  pairs entirely out of the objective makes them an *uncontaminated* metric — any rise in
+  between-station SD is then attributable to S1 alone, with no second term to argue about.
+- **No terrain.** §32.10 and §32.11, closed.
+- **No physics.** No θ_r, AWC, pedotransfer, transmissivity or TOPMODEL storage. The
+  water-balance design in `text/architecture_state_model.tex` was considered and rejected:
+  too many physical parameters, and its own §10.2/§10.5 concede equifinality and the
+  wrong-physics failure mode.
+- **No second transformer.** More parameters means more data, and the spatial dimension is
+  where the data is thin.
+- **No coordinates.** No latitude, longitude or elevation scalar is fed, and none is to be
+  added. Verified 2026-08-25: the batch carries no coordinate of any kind — `era5` is 19 pure
+  meteorological channels, and nothing else encodes position. Splits are **by station**, so
+  coordinates would let the model interpolate a spatial climatology between training stations,
+  inflating val and collapsing on the 219 oos stations in unseen regions.
+
+  This is **not** the same as claiming the model cannot identify a station. `dem_pyr` (4,768),
+  `lulc_pyr` (4,768) and especially `soil_patch` (21,74,74) are per-station constants and
+  across 993 stations are almost certainly a unique fingerprint. §33.4's memorisation argument
+  does not depend on the absence of an identifier: it is that recovering `c_k` by memorisation
+  costs a 993-entry table of per-pixel means, and — decisively — **cannot transfer**, because a
+  new station's fingerprint was never seen. Computing `c_k` offline is the right move whether
+  or not an identifier exists.
+
+### 33.9 Gates before any GPU
+
+1. **`d`-vs-SM probe (CPU, an afternoon).** Regress observed SM anomaly on `d` at the
+   station's own cell, **with station fixed effects** — §29 died on exactly that
+   distinction. Include a persistence control (`d(t)` from `d(t−1)`) and a **land-cover and
+   season split**: if `d` tracks SM only on cropland in the growing season it is phenology.
+   This is the only gate that can kill the design. Reuse `station_mean_probe.py`'s ladder
+   (`fit_block`, GroupKFold on `location_group_id`, RidgeCV, HGBR).
+2. **Multilook assertion** — the build never averages dB directly.
+3. **Same-orbit assertion** — no centring statistic or `d` value mixes ASC/DESC or
+   relative orbits; validate the mod-12 grouping per station against its own split-half
+   ceiling.
+4. **Centring identities** — `max|mean_k d|` and `max|mean_p d|` < 1e-4 for every station.
+5. **`c_k` sample size** — n ≥ 20 floor, n ≥ 50 comfortable (measured: RMSE falls to 14.5%
+   of the `c_k` spread at n = 20, 7.6% at n = 50). Also check seasonal balance; a lopsided
+   record gives a `c_k` that absorbs part of the interaction.
+
+### 33.10 Open risks, stated before building
+
+- **`d` may be real but not soil moisture.** 12–38% of σ⁰ variance being dynamic and
+  spatial does not make it wetness. Differential surface roughness after rain would look
+  the same to radar. Gate 1 and the LST target both attack this; neither is guaranteed.
+- **Nothing forces the decoder to use the new channels.** With the ISMN probe as the only
+  soil-moisture target, the conv may learn to ignore `c` and `d`. **Ablation: zero them at
+  test time.** If the metrics barely move, the channels are inert — and that is precisely
+  when a dense `d` target earns its place as a follow-up.
+- **Sub-token validation is thin.** Of the 21 pairs inside one 160 m token, **15 are closer
+  than one 20 m output cell** and cannot test sub-token skill at all. Only 6 remain
+  (2 train, 4 oos, **0 val**). Those 15 do measure something useful — the irreducible
+  representativeness floor, the disagreement between two probes in one output cell — but
+  the honest claim chain is: `d`↔SM validated at points, `d` predicted at 20 m on held-out
+  stations, SM pattern at 20 m **inferred, not verified**.
+- **Inference needs an archive.** `c_k` requires ~20–50 prior passes, i.e. 8–20 months of
+  S1 at any new tile. This is standard — the TU Wien change-detection method behind the
+  Copernicus SSM product needs multi-year dry/wet references per pixel for the same reason
+  — but it must be stated as a scope condition.
+- **Staleness mismatch.** Training must randomise the age of `p*` and pass that age as a
+  feature, or the model sees a distribution at inference it never trained on. Drop `p*`
+  entirely on a fraction of samples so the S1-absent fallback is learned, following the
+  existing SIF/TWSA convention (`dataset.py:1064-1072`).
+
+### 33.11 Files
+
+**Modified.** `model.py` — three extra input channels per decoder stage at `:257-264`,
+zero-initialised; `up4` dropped; SM head at 112×112; `masked_huber_loss` (`:751`) takes a
+per-sample cell index in place of the hardcoded `(112,112)` at `:779`; LST head on `up1`.
+`train.py` — `_compute_loss` (`:376-400`) gains `L_lst`; per-epoch between-station-SD and
+`r(pred level, obs level)` reporting in `evaluate` (`:642`). `dataset.py` — `__getitem__`
+returns `c`, `d`, `w`, age and validity at four levels, plus the LST target when a clear
+scene falls within ±1 day; add a second sample stream keyed on clear-scene dates that
+carries `L_lst` only.
+
+**New.** `build_s1_interaction.py` (offline, `Pool(64)`, one sbatch, ~130 GB read, ~13 GB
+written, 30–60 min), `probe_s1_dvs_sm.py`, `download_landsat_st_global.py`,
+`slurm/s1_interaction.sh`.
+
+**Reused unchanged.** `station_mean_probe.py`, `eval_predict.py:112-189`
+(`PixelMap`, `run_split_pixels`), `csvs/colocated_pairs.csv` (§32.7 step 7, discharged),
+the frozen TerraMind tokens and the zarr loader.
+
+### 33.12 Amendments (2026-08-25)
+
+Design session on the S1 decomposition and the LST target. **Nothing built.** §33.9 gate 1 is
+still unrun and is still the only thing that can kill the design; everything below is wiring for
+a design that is not yet validated.
+
+Full derivation, worked examples and the flowchart: **`text/s1processing.md`**.
+
+**(a) Seven channels per stage, not three. β is removed from the build.**
+
+§33.6's channel table and §33.5(d)'s `d* = d_VV − β·d_CR` are superseded. β is a coefficient
+fitted per station × group × polarisation — roughly 993 × 4 offline numbers, the same class of
+object the water-balance design was rejected for (§33.8). Instead both terms are fed and the
+conv's own weights do the combining: one shared trained weight instead of thousands of fitted
+ones, covered by the existing training story.
+
+| channel | spatial? | source |
+|---|---|---|
+| `c_VV` | ℓ×ℓ | archive |
+| `d_VV` | ℓ×ℓ | pass `p*` |
+| `d_CR` | ℓ×ℓ | `d_VH − d_VV`, free |
+| `w_VV` | scalar, broadcast | pass `p*` |
+| `w_CR` | scalar, broadcast | pass `p*` |
+| `age` | scalar, broadcast | days since `p*` |
+| `valid` | scalar, broadcast | 0 ⇒ the four above are 0; `c_VV` stays |
+
+Three maps and four broadcast scalars. §33.6's prose already named `age` and `valid` but its code
+snippet and parameter count did not carry them; they are now explicitly wired at every stage.
+Broadcasting a scalar costs nothing, and a conv that sees `d` and `age` in one tensor can
+downweight stale `d` locally, which it cannot do from a global vector.
+
+β survives as the **diagnostic that earned the design** — `r(d_VV, d_CR)` = −0.40…−0.58, the
+9.8–22.3% annual-harmonic share, and the ACF rise 0.240→0.328 / 0.371→0.428 / 0.478→0.546 — not
+as code.
+
+`c_VH` and `μ_VH` are still computed and stored: they are needed to build `d_VH`, hence `d_CR`.
+`c_VH` is **not** fed — it is a static land-cover map, redundant with LULC and `c_VV`, and `d_CR`
+is already referenced by construction so `c_CR` adds nothing to interpreting it. Judgement call,
+cheap to revisit.
+
+Two identities, both verified numerically at all four levels:
+
+- `d_CR = d_VH − d_VV` **exactly**, because double-centring is linear:
+  `H_N (T_VH − T_VV) H_M = H_N T_VH H_M − H_N T_VV H_M`.
+- `w_CR ≠ w_VH − w_VV`. Standardisation is affine with channel-specific constants, so difference
+  the raw ρ first and standardise second.
+
+Zero-init widens from `conv.block[0].weight[:, -3:] = 0` to `[:, -7:]`. Getting that slice width
+wrong silently breaks §26's provenance gate.
+
+**(b) `w` is built from the full-tile linear mean, not the row mean of `T_ℓ`.**
+
+`r^(ℓ)` averages logs of block means, so it drifts with ℓ (Jensen), yet §33.6 broadcasts a single
+`w` to four stages. Keep `r^(ℓ)` inside the centring — it is what makes the variance split exact
+— and define `w` from the level-independent
+
+```
+   rho_q(p) = 10*log10( mean of P_q(p) over the full 224 x 224 )
+   w_VV     = (rho_VV - rho_bar_VV) / s_VV
+   w_CR     = (rho_VH - rho_VV - rho_bar_CR) / s_CR
+```
+
+**(c) Correction: the §33.5 `season%` column is not a vegetation fraction.**
+
+The three columns are a variance partition and sum to 100 — `Var(r)`, `Var(c)`, `Var(d)` as
+shares of `Var(T)`. CA-Cbo 19.6+63.7+16.7, TxSON 37.7+50.1+12.2, Abrams 40.7+21.7+37.7. They say
+how much of the tile variance the pass-level term carries, **not** how much of that term is
+canopy. So vegetation contamination of `w` is plausible but **unmeasured**, unlike `d` where
+16–34% is measured directly against `d_CR`. `w_CR` therefore rests on an argument, not a number.
+State it that way.
+
+**(d) The LST aggregation was ragged. Fixed by moving the head to `up3`.**
+
+§33.7's `F.interpolate(28→22, mode='area')` is adaptive pooling with a non-integer ratio
+(28/22 = 1.27). Measured: output cells span **2 or 3** source cells and **20 of 28** source cells
+feed more than one output. It is an overlapping blur, not a partition, so "nothing is invented on
+either side" does not hold and the 484 residuals are correlated — the LST term's effective weight
+against the SM term is not what is set.
+
+Replace with an exact partition:
+
+```python
+p = self.head_lst(up3_feat)                     # (B,1,112,112) @ 20 m
+p = p[..., 1:111, 1:111]                        # 110x110 @ 20 m = 2200 m
+p = F.avg_pool2d(p, kernel_size=5, stride=5)    # 22x22 @ EXACTLY 100.0 m, disjoint
+```
+
+`110 = 5 × 22`. Every output cell is the mean of 25 disjoint 20 m cells — a true 100.0 m box,
+uniform support, no overlap. Cost is a 20 m ring at the tile edge (2240 → 2200 m), irrelevant
+with the station at centre. Bonus: 100.0 m rather than 101.8 m, landing on TIRS nominal.
+
+Target side must partition too. Landsat ST arrives at 30 m (TIRS acquires at 100 m; USGS
+Collection 2 L2 delivers it resampled to 30 m — there is no 100 m download). Warp to the same
+2200 m / 22×22 / 100 m grid with **`Resampling.average`** (exact area-weighted aggregation), not
+`nearest` and not `bilinear`. Mask a cell whose valid contributing fraction falls below
+threshold, before the double-centring by WRS-2 path/row.
+
+Accepted trade-off: predicting at 20 m and pooling to 100 m leaves 20 m sub-structure
+unsupervised by the LST loss, where `up1` left an 80→100 m gap. Taken anyway, because that
+sub-structure is unsupervised regardless — only the centre SM pixel constrains it — and §33.10
+already states the claim correctly. The alternative that keeps the head on `up1` is 14×14 @ 160 m
+(pool 2, exact), but 160 m is the token scale and tests no sub-token skill at all.
+
+**(e) LST loss wiring.**
+
+```python
+sm  = self.head_sm(up3_feat)                    # (B, n_depths, 112, 112)
+lst = self.head_lst(up3_feat)                   # (B, 1, 112, 112)
+
+L_sm  = huber(sm[:, :, 56, 56][m_sm], y_sm[m_sm])
+
+p     = F.avg_pool2d(lst[..., 1:111, 1:111], 5, 5)
+p     = p - p[m_lst].mean()                     # centre over VALID cells, per sample
+L_lst = huber(p[m_lst], d_lst_norm[m_lst])
+
+L = L_sm + lam * L_lst
+```
+
+- **Normalise `d_LST` by division only.** It is already double-centred, so its mean is exactly
+  zero; subtracting again is a no-op at best and breaks §33.9 gate 4's identities at worst.
+  Divide by **one global σ**, pooled over the **train split only**. Not per-station: dividing by
+  each station's own σ amplifies retrieval noise at stations with weak thermal contrast.
+- **Centre the prediction over the valid cells.** The target is zero-sum by construction, so the
+  loss should be invariant to a per-sample offset. Cloud masking means the surviving target cells
+  do not sum to exactly zero, hence centring both sides over the same subset.
+- **Zero-init the LST head's final 1×1 conv.** With `W = 0` the gradient into the trunk is
+  `Wᵀg = 0`, so the head calibrates before it starts steering the decoder.
+- **Pick λ by matching gradient norms into `up3`, not loss values.** SM residuals are ~0.03 in
+  m³/m³ so `L_sm ≈ 5e-4` against `L_lst ≈ 0.5` at unit variance — value-matching would give
+  λ ≈ 1e-3 and silently disable the term. Measure `g_sm / g_lst` on a warm batch, then sweep ×3
+  and ÷3, logging the ratio per epoch.
+- **Guard `m_lst.sum() == 0`** and average over samples that have any valid cell. Landsat 8+9
+  gives ~8-day revisit and roughly half is lost to cloud, so **~6% of samples carry an LST
+  gradient**; without the guard the effective λ fluctuates with batch composition. Log the count
+  per epoch.
+- **112 is even, so there is no centre cell.** The station falls between 55 and 56 — a 10 m
+  offset. The current loss inherits the same problem at `(112,112)` in a 224 grid. Choose one
+  cell or average 55:57 deliberately.
+
+The division of labour: **LST supervises the pattern** (dense, 100 m, zero-sum, relative);
+**SM supervises the level** (one point, 20 m, absolute). They do not compete for the same degree
+of freedom, which is why the dual objective is coherent rather than two losses bolted together.
+
+**Ablation that decides whether it earned its place:** train λ = 0 versus λ > 0 and compare **SM**
+skill. Pair with §33.10's existing test (zero the S1 channels at test time) so "the channels are
+inert" can be told apart from "the auxiliary loss did not help".
+
+**(f) New gate — `d_LST` must pass the same coherence test as `d`.**
+
+§33.5(c) established that double-centring pure noise leaves 94–99% in the interaction term. That
+applies to the **target** as much as the input. Landsat ST retrieval noise runs ~1–2 K, and after
+removing the static map and the pass offset `d_LST` may not be much larger. If it is mostly noise
+the decoder is being trained to fit 484 noise cells per sample — actively harmful, not merely
+useless.
+
+**Run the lag-1 ACF of `d_LST` between consecutive passes against a location-shuffled control,
+before using it as a target.** Same protocol as §33.5(c), applied to the label side. Add as
+§33.9 gate 6.
+
+**(g) Reference and leakage discipline.**
+
+1. **Global constants from the train split only.** `SIGMA_LST`, and audit
+   `csvs/era5_stats.json` — if it was built over all 993 stations that contamination is already
+   in the baseline.
+2. **Per-station references stay per-station.** True by construction (splits are by station,
+   references are per station, so nothing crosses the boundary) — assert it in code so it cannot
+   drift.
+3. **Freeze and version the references.** If a new pass is appended to the archive, `d` for a
+   given date depends on when the job ran and reported numbers stop being reproducible. Recompute
+   on a schedule, version the output.
+4. **Log `n` per group.** Self-inclusion bias is 1/N and is worst exactly at the `n ≥ 20` floor,
+   where `c_k` is already least trustworthy (RMSE 14.5% of the `c_k` spread at n = 20, 7.6% at
+   n = 50, §33.9 gate 5).
+5. **Chronological split-half of `c_k`, as a new diagnostic.** The random split-half already
+   computed for the ±6 orbit merge gives the noise ceiling (0.998). Recompute it splitting the
+   record at its **midpoint** instead. If `ρ_chrono ≈ ρ_random` the scene is temporally stable
+   and the full-archive `c_k` is correct. If it falls materially below, that station's scene
+   changed: **flag and exclude from the spatial claims, do not auto-detect change points** across
+   993 × 4 groups.
+6. **Balance the averaging set rather than shortening it.** Merged S1A/S1B groups are ~2× denser
+   before Dec 2021, so `c_k` is implicitly weighted toward the pre-2021 scene. Weight to equalise
+   per-year contribution — negligible variance cost, removes a known bias. Log the pre/post-2021
+   pass ratio per merged group. Seasonal balance is already gated (§33.9 #5); this is the
+   temporal counterpart. A trailing rolling window is **rejected**: it would absorb genuine
+   multi-year drying into the reference and delete it from `d`.
+
+**(h) OPEN, to resolve before any reported number — `c_k` and temporal look-ahead.**
+
+`c_k` for an evaluation station is computed from that station's S1 archive, which spans years the
+model never trained on. Raised at the end of the session and **not resolved**.
+
+Where it stands:
+
+- It is **not label leakage**. `c_k` is built from S1; the label is an in-situ SM probe. No path
+  from label to reference. Splits are by station and references are per station, so nothing
+  crosses the split.
+- It **is** temporal look-ahead *within* a station: the input at time `t` depends on acquisitions
+  after `t`. Arguments that it is mild — `c_k` estimates a time-invariant quantity, carries no
+  information about the target date specifically, and the self-inclusion effect is 1/N — are
+  arguments, not measurements.
+- The **chronological split-half in (g)(5) settles it empirically**: if `c_k` is temporally
+  stable, causal and full-archive `c_k` must agree, and the convention stops mattering. Run both
+  and report the gap rather than arguing the case.
+- Provisional position: full-archive `c_k` is defensible for a held-out-station evaluation
+  provided the convention is stated; anything operational or forecast-shaped needs an
+  expanding-window causal `c_k`. **Revisit before publishing any number.**
+
+**(i) Housekeeping.**
+
+- `nanmean` at the block step, with a valid-fraction floor per cell. A partly masked block biases
+  `c_k` with no visible symptom.
+- **Measure the magnitudes of `c` and `d` before deciding whether to standardise them** for
+  concatenation. §33.5 reports variance *shares*, not absolute dB. If they are comparable, skip
+  the standardisation; if not, standardise per station-group or the zero-init is undone by
+  whatever the conv learns first.
+- Nothing to change on the download side. MPC `sentinel-1-rtc` is derived from IW GRDH and is
+  already multilooked 5×1 (ENL ≈ 4.4, ~20 m resolution on a 10 m grid). At TerraMind's 16×16
+  patch that is ENL ≈ 280, residual speckle ≈ 0.26 dB. dB-on-disk costs ≈ −0.5 dB of bias which
+  is static per station-orbit and therefore absorbed. **Do not re-download, do not pre-average.**
+  §33.5(a)'s rule stands: never average dB.
+
+**Supersedes in §33.11:** "three extra input channels per decoder stage" → **seven**; "LST head
+on `up1`" → **`up3`**.
+
+### 33.13 `MAX_AGE` — measured, not chosen (SPECIFIED 2026-08-25, unrun)
+
+`valid` is defined entirely by one constant that no document gives a value to. `s1processing.md`
+§9.9: *"if no pass in the group falls within the maximum age, set `d = w = 0`, `valid = 0`"* — and
+`MAX_AGE` appears nowhere else. It is not a free parameter to be picked by taste: it decides when
+feeding `d` is worse than feeding zero, and it sets the age distribution that §33.10's staleness
+randomisation has to span. Measure it, on the CPU, as **a second axis on gate 1** — the same
+regression, the same samples, one extra loop.
+
+**Do not use naturally-varying lag.** Binning samples by whatever `Δ = t − date(p*)` happens to be
+and comparing skill across bins is confounded. Long `Δ` arises when passes are missing, and
+missingness is not random in time: the merged groups run ~6-day revisit before Dec 2021 and ~12-day
+after (§33.12(g)(6)), so `Δ` correlates with era, and era correlates with scene state. The estimated
+decay would be part staleness and part 2021.
+
+**Construct the lag instead.** A label date does not have one prior pass, it has a ladder of them
+at the group's revisit spacing:
+
+```
+for each (station, label date t) with >= K prior passes in group g,  K = 4:
+    for k = 1..K:
+        d_k   = d built from the k-th most recent pass at or before t
+        age_k = t - date(pass_k)
+    regress SM_anomaly(t) ~ d_k at the station's own cell
+        station fixed effects + persistence control, as gate 1
+    -> partial skill as a function of age, on IDENTICAL samples
+```
+
+Every sample contributes at every `k`, so stations, seasons, land cover and revisit era are held
+constant across the curve by construction. What varies is age and nothing else.
+
+**Decision rule.** `MAX_AGE` = the age at which the partial contribution of `d_k` over the
+persistence control stops being distinguishable from zero. Fit on **train stations only** and freeze
+before val/test is touched — sweeping the cutoff and then reporting the skill it maximises is
+selection on the evaluation set.
+
+**Prior bound already in hand.** §33.12 measured `d`'s lag-1 ACF across consecutive passes in the
+group at **0.240 / 0.371 / 0.478** (0.328 / 0.428 / 0.546 after the vegetation correction). If `d`
+retains only a quarter to a half of itself across one revisit, a two-revisit-old `d` carries little.
+That points at one to two revisits, not a month. It is a bound, not the answer: the ACF measures how
+fast `d` changes, the lag curve measures how fast its *relevance to SM* decays, and those need not
+coincide.
+
+**Two readings, and the second is the useful one.**
+
+- **Decays fast** → short cutoff, as the ACF suggests. Note that because `age` is fed as a channel
+  (§33.12(a)) the conv can discount stale `d` on its own, so a smooth long-tailed decay argues for a
+  *generous* cutoff plus the `age` channel rather than a tight threshold.
+- **Does not decay at all** → this is a **failure signal, not a licence for a long cutoff**. If
+  skill at `k = 1` is indistinguishable from `k = 4`, `d` is acting as a quasi-static map — residual
+  texture that survived the double-centring — rather than a dynamic anomaly. That is the §29 LST
+  failure mode exactly: a real spatial pattern that does not track soil moisture (+0.967
+  month-to-month, pooled +0.167 by Simpson's paradox, within-station −0.077). Gate 1 must treat a
+  flat lag curve as disqualifying.
+
+**What the result also settles.** The invalid-case value of `age` (§33.12's table leaves it
+undefined), the training age-randomisation range in §33.10, and whether the tile-level
+valid-fraction floor on `p*` needs to be strict — a pass that is mostly masked and a pass that is
+stale are the same kind of degradation and should be scored on the same curve.
+
+**Where it lives:** `probe_s1_dvs_sm.py`, alongside gate 1. No new job, no GPU.
+
+---
+
+## §34 Patchwise temporal transformer — give every patch its own history (SPECIFIED 2026-08-25, nothing built)
+
+§33 attacks the vacuum *below* 160 m by feeding measured S1 into the decoder. §34 attacks a
+different and larger defect: the model has almost no per-patch information *at* 160 m either,
+because the satellite history is spatially pooled before the transformer ever sees it.
+
+Built in three steps, each with its own gate. **Step 1 has no decoder at all.**
+
+### 34.1 The defect, measured
+
+`_cpu_pyramid_pool` runs in the dataset worker and collapses the patch axis:
+
+```
+S2:   L12 (60, 196, 768)  ->  (60, 4, 768)
+S1:   L12 (40, 196, 768)  ->  (40, 4, 768)
+DEM:      (196, 768)      ->  (4, 768)
+LULC:     (196, 768)      ->  (4, 768)
+```
+
+§27a.2 measured what survives: **1.5% of within-tile variance for DEM, 2.6% for LULC, 2-3% for
+satellite history.** That is not compression, it is destruction. §28.1 already lists it as the first
+of two independent defects, with the fix stated as "feed their 196-token grids".
+
+The consequence is stark. After pooling, the **only** per-patch information anywhere in the model is
+the anchor - `anchor_l12`, a single acquisition (`model.py:497`). A patch knows what it looked like
+on one date, and knows the *tile's* history. It does not know its own.
+
+The cost is already being paid: the worker loads the full `(60, 196, 768)` tensor and *then* pools
+it away. Un-pooling adds no disk I/O.
+
+### 34.2 Why pooling was there, and what removes the need for it
+
+Sequence length. 196 patches x 100 acquisitions = **19,600 tokens** in one global sequence, against
+~990 today. Attention is quadratic, so ~380x. Infeasible, and pooling was the obvious escape.
+
+**Running the temporal transformer patchwise removes the constraint entirely.** Each patch is an
+independent sequence over time; the patch axis moves into the batch dimension:
+
+```
+(B, 196, T, 768)  ->  (B*196, T, 768)  ->  attention over T only  ->  (B, 196, 768)
+```
+
+Cost is `196 x 100^2 ~= 2.0 M` attention pairs, and the global stage *shrinks* (196 summaries
+replace 196 anchor tokens plus 400 pooled history tokens, ~990 -> ~580 ~= 0.35 M). Total ~= **2.4x**
+the current attention, not 380x.
+
+This is the factorisation Contextformer uses (Benson et al., CVPR 2024), and its justification
+transfers verbatim: *"for ecosystem processes, spatial context is crucial but does not change
+dynamically. Therefore, separating spatial and temporal processing enhances efficiency."* They
+report a 16x memory reduction from the same move; their temporal encoder follows Presto's.
+
+Two differences worth recording. Contextformer runs its **vision backbone first**, then the temporal
+stage - for us that backbone is TerraMind, frozen and precomputed per acquisition, so the spatial
+step is already done and we begin where their temporal stage begins. And they keep a **4 x 4 px
+local context** inside the temporal encoder purely to absorb Sentinel-2 sub-pixel geolocation drift.
+Our patches are 16 x 16 px = 160 m, far coarser than that error, so per-token is defensible - but
+check `csvs/register_across_modalities.csv` before assuming. If registration is loose, the fix is
+theirs: a 3 x 3 token neighbourhood in the temporal stage.
+
+### 34.3 The patchwise temporal transformer
+
+Per patch `k`, its own sequence and nothing else:
+
+```
+[ static_k | L12 date_1 | L12 date_2 | ... | L12 date_100 ]
+  ^ W_dem . dem_tok[k] + W_lulc . lulc_tok[k]
+                each + rel_pos_emb (staleness) + hist_modality_emb (S2 / S1asc / S1desc)
+
+N layers of self-attention over T only, weights SHARED across patches, pad + cloud masked
+-> learned CLS per patch -> (B, 196, 768)
+```
+
+- **No patch sees any other patch.** Spatial context came from TerraMind, within each acquisition.
+- **Statics go in as a prefix, not appended to the summary.** As a prefix the temporal attention can
+  condition drydown on land cover and terrain - *"this patch dries fast because it is sandy"*. Added
+  after the summary, that interaction is unexpressible. Soil stays tile-level: SoilGrids is 250 m
+  native (~9 x 9 real cells per tile) and is itself predicted from covariates including DEM and land
+  cover, so per-patch soil is largely redundant with what the prefix already carries.
+- **The masks already exist.** `token_mask` (`model.py:465`) tracks per-patch validity per
+  acquisition, `rel_pos_emb` (`:584`) gives staleness, `hist_modality_emb` (`:588`) separates S2
+  from S1.
+- **Residual formulation, so the baseline is preserved:**
+
+```python
+spatial_tokens = anchor_l12 + delta      # delta = stage-1 CLS, output projection zero-init
+```
+
+With the projection zero-initialised, **step 0 is bit-identical to the current model** and §26's
+provenance gate holds unchanged. Zeroing `delta` at test time is a clean ablation of exactly this
+stage. Same trick as Contextformer's "predict deviations from the last cloud-free observation" - our
+anchor *is* that observation.
+
+Output is `(B, 196, 768)`, the same shape `spatial_tokens` has today (`model.py:573`), so
+`spatial_start` stays 12 and nothing downstream changes signature.
+
+### 34.4 STEP 1 - token head at 160 m, no decoder. This is the gate.
+
+Attach §28's shared per-token head directly to the 196 outputs and supervise at the station's token.
+Output: a **14 x 14 map at 160 m**. `2240 / 14 = 160`. One SM value per patch, 196 per tile.
+
+**This is a regression, and saying so is the point.** One shared function maps
+*(patch history, patch statics) -> SM*, applied independently at all 196 positions. Weight sharing
+is the entire mechanism: supervising one token teaches the mapping at every token, which removes
+§28's 50,175-unconstrained-pixels problem. No upsampling, nothing invented, output resolution equals
+input resolution.
+
+It is also the honest resolution. §23 measured **64-83% of the current 224^2 map's variance already
+sitting on the 14 x 14 grid**, with the verdict *"do not present this model as producing 10 m
+soil-moisture maps"*.
+
+**And it is validatable.** §32.10.2's colocated stations are 405-936 m apart - **2.5 to 6 cells** -
+so a 160 m map resolves them. Contrast §33.10: 15 of 21 sub-token pairs are closer than one 20 m
+output cell, leaving 6 usable and **zero in val**. Step 1 predicts at exactly the scale the evidence
+can check.
+
+**What it answers:** does per-patch history carry within-tile SM information at all? Every later
+step assumes it does. §27b.8 measured own-token within-network skill at **0-4.2%** with the *pooled*
+history - this is the first test of whether un-pooling changes that.
+
+**Numbers to beat** (§28.8, TxSON, same checkpointed comparison as §26.11):
+
+| metric | current | target |
+|---|---|---|
+| own-centre ubRMSE (0-10) | 0.0301 | <= |
+| off-centre ubRMSE | 0.0345 | materially closer to own-centre |
+| between-station spread as % of observed | 15-19% | **> 35%** |
+| r(pred level, obs level), CR200-18 | -0.175 | > 0 |
+
+**Position leakage, unchanged from §28.5 and mandatory here.** Patches are station-centred, so the
+supervised token is always index 105 and the model can learn *"read (7,7)"* rather than a
+position-general mapping - exactly the off-centre degradation §26.11 measures (0.0110 -> 0.0500).
+Needs translation augmentation in token space (a slice of an array already in memory, no
+re-tokenisation) plus multi-station supervision; `csvs/txson_readouts.csv` already holds 96
+readouts, 56 of them off-centre.
+
+### 34.5 STEP 2 - add the decoder, 160 m -> 20 m
+
+Only if step 1 passes **and** §33.9 gate 1 has passed.
+
+```
+(B, 196, 768) -> (B, 768, 14, 14) = bottleneck
+
+x = cat[ bottle_proj(bottleneck), s12,  S1_7ch@14  ]    14x14   @ 160 m
+x = up1 -> conv1( cat[x, s9^,           S1_7ch@28  ] )  28x28   @  80 m
+x = up2 -> conv2( cat[x, s6^,           S1_7ch@56  ] )  56x56   @  40 m
+x = up3 -> conv3( cat[x, s3^,           S1_7ch@112 ] )  112x112 @  20 m
+no up4
+
+  ^ = bilinear upsample of a 14x14 skip
+  7 ch = c_VV, d_VV, d_CR (maps) + w_VV, w_CR, age, valid (broadcast), §33.12(a)
+  zero-init conv.block[0].weight[:, -7:]
+```
+
+`s12` is new - `anchor_l12` as a fourth skip, 1x1 proj + FiLM, zero-init. It gives the decoder the
+raw L12 alongside `bottleneck`, which is L12 *after* the transformer: a residual path around the
+transformer, cheap.
+
+`up4` is dropped. Without raw S2 10 m bands (user decision, `open_items.md` §E) there is no measured
+time-varying input at 10 m - WorldCover is static and S1 at l=224 is one look per cell (ENL ~= 4.4,
+~2.7 dB speckle). That is §33.6's original reason for dropping it, re-derived from the other
+direction.
+
+**The division of labour is now clean, and it makes the ablation sharp.** Above 160 m everything is
+settled by the patchwise stage - each cell knows its own history, terrain and cover. Below 160 m the
+skips give nothing, since all four TerraMind layers are 14 x 14 stretched. So the **only**
+information available for the 160 m -> 20 m step is the seven S1 channels. Zero them and everything
+below 160 m is invention, by construction.
+
+**Honesty condition on step 2.** At 160 m the prediction is checkable; at 20 m it is not. The claim
+chain stays exactly as §33.10 states it: `d` <-> SM validated at points, `d` predicted at 20 m on
+held-out stations, **SM pattern at 20 m inferred, not verified**. Publishable, provided it is said
+that way.
+
+### 34.6 STEP 3 - thermal supervision
+
+Per §33.7 as amended, and only after §33.9 gate 6 and the static-map sufficiency gate
+(`open_items.md` C1-C2):
+
+```
+head_sm    -> (B, n_depths, 112, 112) @ 20 m     the product
+head_therm -> (B, 2, 112, 112) day / night       auxiliary, deleted at inference
+                avg_pool2d(7,7) -> 16x16 @ EXACTLY 140 m    112 = 7 x 16, no crop
+                ECOSTRESS 70 m -> 2x2 average -> 140 m      exact both sides
+
+L = L_sm + lam_day.L_day + lam_night.L_night + lam_dtr.L_dtr
+    lam by matching GRADIENT norms into up3, not loss values
+```
+
+Two channels rather than one DTR channel, so unpaired passes still supervise
+(`open_items.md` D7). ISMN supervises the **level** at one pixel, absolute; thermal supervises the
+**pattern**, dense and zero-sum. They do not compete for the same degree of freedom. At inference
+only `head_sm` runs - no Landsat, no ECOSTRESS needed.
+
+### 34.7 Cost
+
+| | now | §34 |
+|---|---|---|
+| attention pairs | ~0.96 M | ~2.3 M (~2.4x) |
+| global sequence | ~990 | ~580 |
+| disk I/O | - | **unchanged** - the worker already reads `(60,196,768)` and pools it away |
+| host->device | - | grows on the history tensors |
+| decoder params | - | +12 k per stage from the 7 channels (step 2 only) |
+
+Peak memory must be measured on a smoke run before any allocation: `B x 196 x 100 x 768` fp16 is
+~30 MB per sample for the input alone, and at batch 8 the attention sees 1,568 sequences of length
+100.
+
+### 34.8 Open decisions before code
+
+1. **Where ERA5 sits.** As drawn it stays in the global sequence, shared by all patches. Presto -
+   and therefore Contextformer's temporal encoder - puts the meteorological series *inside* the
+   per-patch temporal stage. That is the difference between every patch getting the same weather and
+   every patch integrating the same weather differently, which is the *response x wetness* mechanism
+   §33.6 currently hopes a conv approximates from a broadcast `w`. Strong argument for moving it;
+   costs sequence length in the per-patch stage.
+2. **Station cell at 112 x 112** (step 2 only). Even grid, no centre - the station falls between 55
+   and 56. Choose one or average deliberately (`open_items.md` A3).
+3. **`MAX_AGE` and the invalid-`age` value** (`open_items.md` B2-B4), from §33.13.
+4. **Per-patch registration** - check `csvs/register_across_modalities.csv` before assuming
+   per-token is safe; 3 x 3 neighbourhood if not.
+5. **Crop-train / full-infer** for the decoder, available as a pure optimisation once step 2 exists:
+   train on a token neighbourhood around the station, infer on the full tile. Provably identical
+   weights, ~8-20x less decoder compute. Requires a margin for the bilinear skip interpolation, and
+   an assertion that the cropped forward pass reproduces the full-tile one at the station pixel.
+
+### 34.9 What §34 does not do
+
+It recovers the full information available **at 160 m**. It does not create sub-token information:
+every TerraMind layer is 14 x 14, so `skip_L3` at `up3` is a 16x interpolation carrying nothing it
+did not carry at 160 m. §33's S1 decomposition remains the only route below 160 m, and §33.9 gate 1
+remains the only thing that can kill it.
