@@ -222,60 +222,84 @@ per patch k, in parallel:
 
 No patch sees any other patch. Spatial context came from TerraMind, within each acquisition.
 
-### G2. ERA5 must be compressed first, or inference is unaffordable
+### G2. The tile-level drivers must be compressed first, or inference is unaffordable
 
-ERA5's 365 daily tokens dominate the sequence, and a patchwise model pays for them **196
-times** instead of once:
+**All THREE tile-level time series go through one resampler, not just ERA5.** Measured counts
+(`dataset.py:590-591`, and ERA5 is 365 daily):
 
-| E (ERA5 tokens) | per-patch seq | inference pairs (x196) | vs current global |
+```
+ERA5  365   +   SIF  50 (MAX_SIF)   +   TWSA  12 (MAX_TWSA)   =  427 tokens
+```
+
+A patchwise model pays for all 427 **196 times** instead of once. SIF+TWSA alone are 62
+tokens — not the handful first assumed, and enough to matter.
+
+Per-patch sequence = `depth_CLS 3 + dem 1 + lulc 1 + soil 4 + D + sat_hist 100 = 109 + D`,
+where `D` is the compressed driver count:
+
+| D (drivers) | per-patch seq | inference pairs (x196) | vs current global |
 |---|---|---|---|
-| 365 raw | 482 | 45 M | **47x** |
-| 64 | 181 | 6.4 M | 6.7x |
-| **32** | **149** | **4.4 M** | **4.5x** |
-| 16 | 133 | 3.5 M | 3.6x |
+| 427 raw | 536 | 56 M | **59x** |
+| ERA5→32 only, SIF/TWSA raw | 203 | 8.1 M | 8.4x |
+| 64 | 173 | 5.9 M | 6.1x |
+| **32** | **141** | **3.9 M** | **4.1x** |
+| 16 | 125 | 3.1 M | 3.2x |
 
-**Chosen: 32.** Below ~16 the 100 history tokens become the floor and the gain flattens; above
-~64 cost grows quadratically for information ERA5 does not contain at 9 km. 32 also matches
-what SM dynamics need from a year of weather — roughly daily over the last ~2 weeks (drydown,
-individual events), weekly over ~2 months (antecedent wetness), monthly beyond (seasonal
-demand, deep storage): 14 + 8 + 10.
+**Chosen: 32 latents for all three drivers combined.** Below ~16 the 100 history tokens become
+the floor and the gain flattens; above ~64 cost grows quadratically for information these
+drivers do not contain at 9 km. 32 also matches what SM dynamics need from a year of weather —
+roughly daily over the last ~2 weeks (drydown, individual events), weekly over ~2 months
+(antecedent wetness), monthly beyond (seasonal demand, deep storage): 14 + 8 + 10.
 
-Note training is *cheaper* than today (one patch, ~0.23 M pairs vs 0.96 M). Only inference
+**Why one resampler rather than three.** All three are tile-level time series read the same
+way, and the cross-modal interaction is exactly what should be captured — SIF falling as the
+soil dries is a soil-moisture signal, and separate resamplers cannot represent it. One module,
+one query set, one masking scheme.
+
+Note training is *cheaper* than today (one patch, ~0.2 M pairs vs 0.96 M). Only inference
 multiplies by 196.
 
-### G3. How the ERA5 encoder works — Perceiver-style resampler
+### G3. How the driver encoder works — Perceiver-style resampler
 
 Runs **once per sample**, output shared by all 196 patches. Its own cost is irrelevant
-(32 x 365 ~= 12 k pairs); only its *output count* matters, because that is what gets multiplied.
+(32 x 427 ~= 14 k pairs); only its *output count* matters, because that is what gets multiplied.
 
 ```python
 self.queries = nn.Parameter(torch.randn(32, d))   # WEIGHTS, shared across samples and patches
 
-era5 = era5 + doy_emb + offset_emb                # (B, 365, d)
-Q = W_q(self.queries)                             # (32,  d)
-K, V = W_k(era5), W_v(era5)                       # (B, 365, d)
-A = softmax(Q @ K.T / sqrt(d), dim=-1)            # (B, 32, 365)   per-sample attention
-era5_summary = A @ V                              # (B, 32,   d)
+drv = cat([era5, sif, twsa])          # (B, 427, d)
+drv = drv + doy_emb + offset_emb + driver_modality_emb
+Q = W_q(self.queries)                 # (32,  d)
+K, V = W_k(drv), W_v(drv)             # (B, 427, d)
+A = softmax(Q @ K.T / sqrt(d), dim=-1)  # (B, 32, 427)   per-sample attention
+drv_summary = A @ V                     # (B, 32,   d)
 # + 1-2 self-attention layers among the 32
 ```
 
 Each query is a fixed *question*; the attention row is the per-sample *answer* — which days this
 sample should read. A mean cannot express "find the most recent heavy rain"; attention can.
 
-Two details that are not optional:
+Four details that are not optional:
 
-1. **Both encodings on the ERA5 tokens** — offset-from-target so "recent" is learnable, *and*
-   absolute DOY, because `model.py:592-593` records that ERA5 is the model's seasonal anchor
-   (satellite history deliberately carries only staleness). Without positional information the
-   queries degenerate to a weighted mean.
-2. **Mask missing days** in the cross-attention.
+1. **Both temporal encodings on the driver tokens** — offset-from-target so "recent" is
+   learnable, *and* absolute DOY, because `model.py:592-593` records that ERA5 is the model's
+   seasonal anchor (satellite history deliberately carries only staleness). Without positional
+   information the queries degenerate to a weighted mean.
+2. **A `driver_modality_emb`** so the latents can tell ERA5 from SIF from TWSA. Same additive
+   pattern as `hist_modality_emb` (`model.py:588`). Without it the three series are
+   indistinguishable inside one resampler.
+3. **Mask missing entries** in the cross-attention — `sif_valid` / `twsa_valid` already exist,
+   and the training-time dropout at `dataset.py:1064,1071` (`random.random() < 0.5` blanks each
+   modality) must reach the mask, or the S-absent case stops being learned.
+4. **Guard the domination risk.** ERA5 brings 365 of the 427 input tokens. If SIF and TWSA turn
+   out to be ignored, either reserve query groups per modality (e.g. 24 / 6 / 2) or keep them
+   in separate resamplers. Do not guess — the attention matrix `A` is `(32, 427)` and says
+   directly whether any latent ever attends to SIF or TWSA. **That is a free diagnostic and it
+   answers a question worth having: do SIF and TWSA contribute anything at all?**
 
 Ablation worth keeping: fixed physical windows (14 daily / 8 weekly / 10 monthly) against the
 learned queries. If they match, that is a publishable statement about what the meteorology
 actually contributes.
-
-**Check SIF and TWSA token counts** — they sit in the same per-patch budget and multiply by 196
-exactly as ERA5 does. If either is more than a handful, resample it the same way.
 
 ### G4. Training vs inference — the asymmetry that makes this cheap
 
