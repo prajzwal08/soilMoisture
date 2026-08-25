@@ -245,61 +245,94 @@ where `D` is the compressed driver count:
 | **32** | **141** | **3.9 M** | **4.1x** |
 | 16 | 125 | 3.1 M | 3.2x |
 
-**Chosen: 32 latents for all three drivers combined.** Below ~16 the 100 history tokens become
-the floor and the gain flattens; above ~64 cost grows quadratically for information these
-drivers do not contain at 9 km. 32 also matches what SM dynamics need from a year of weather —
-roughly daily over the last ~2 weeks (drydown, individual events), weekly over ~2 months
-(antecedent wetness), monthly beyond (seasonal demand, deep storage): 14 + 8 + 10.
+**Chosen: 32 latents total.** Below ~16 the 100 history tokens become the floor and the gain
+flattens; above ~64 cost grows quadratically for information these drivers do not contain at
+9 km. 32 also matches what SM dynamics need from a year of weather — roughly daily over the last
+~2 weeks (drydown, individual events), weekly over ~2 months (antecedent wetness), monthly beyond
+(seasonal demand, deep storage): 14 + 8 + 10.
 
-**Why one resampler rather than three.** All three are tile-level time series read the same
-way, and the cross-modal interaction is exactly what should be captured — SIF falling as the
-soil dries is a soil-moisture signal, and separate resamplers cannot represent it. One module,
-one query set, one masking scheme.
+**DECIDED: three SEPARATE resamplers, not one shared.** Budget split so the per-patch cost is
+identical:
+
+```
+ERA5 365 -> 24 latents
+SIF   50 ->  6
+TWSA  12 ->  2
+              total 32 driver tokens in the patch sequence
+```
+
+Reason: **clean ablation.** Zeroing one modality's token block removes exactly that modality. A
+shared resampler mixes all three into every latent, so no modality can be cleanly removed and
+attribution is impossible.
+
+The objection to separating — that cross-modal interaction is lost, e.g. SIF falling as the soil
+dries — **does not hold.** The patch sequence carries all three token blocks, so the patchwise
+transformer relates them one stage later. Separating the resamplers moves the interaction
+downstream; it does not remove it. Clean ablation, same expressiveness.
 
 Note training is *cheaper* than today (one patch, ~0.2 M pairs vs 0.96 M). Only inference
 multiplies by 196.
 
 ### G3. How the driver encoder works — Perceiver-style resampler
 
-Runs **once per sample**, output shared by all 196 patches. Its own cost is irrelevant
-(32 x 427 ~= 14 k pairs); only its *output count* matters, because that is what gets multiplied.
+One resampler **per modality**, each run **once per sample**, outputs shared by all 196 patches.
+Their own cost is irrelevant (24x365 + 6x50 + 2x12 ~= 9 k pairs); only the *output count*
+matters, because that is what gets multiplied by 196.
 
 ```python
-self.queries = nn.Parameter(torch.randn(32, d))   # WEIGHTS, shared across samples and patches
+# one instance per modality: n_latents = 24 (ERA5), 6 (SIF), 2 (TWSA)
+self.queries = nn.Parameter(torch.randn(n_latents, d))   # WEIGHTS, not data
 
-drv = cat([era5, sif, twsa])          # (B, 427, d)
-drv = drv + doy_emb + offset_emb + driver_modality_emb
-Q = W_q(self.queries)                 # (32,  d)
-K, V = W_k(drv), W_v(drv)             # (B, 427, d)
-A = softmax(Q @ K.T / sqrt(d), dim=-1)  # (B, 32, 427)   per-sample attention
-drv_summary = A @ V                     # (B, 32,   d)
-# + 1-2 self-attention layers among the 32
+x = vals + doy_emb + offset_emb                # (B, N, d)   N = 365 / 50 / 12
+K = cat([W_k(x), self.null_k.expand(B,1,d)], 1)   # (B, N+1, d)   null ALWAYS valid
+V = cat([W_v(x), self.null_v.expand(B,1,d)], 1)
+m = cat([valid, valid.new_ones(B,1)], 1)          # (B, N+1)
+
+logits = W_q(self.queries) @ K.transpose(-2,-1) / sqrt(d)   # (B, n_latents, N+1)
+logits = logits.masked_fill(~m[:, None, :], NEG)            # NEG = -1e4, NOT -inf
+summary = logits.softmax(-1) @ V                            # (B, n_latents, d)
+# + 1-2 self-attention layers among the latents
 ```
 
 Each query is a fixed *question*; the attention row is the per-sample *answer* — which days this
 sample should read. A mean cannot express "find the most recent heavy rain"; attention can.
 
-Four details that are not optional:
+Five details that are not optional:
 
-1. **Both temporal encodings on the driver tokens** — offset-from-target so "recent" is
-   learnable, *and* absolute DOY, because `model.py:592-593` records that ERA5 is the model's
-   seasonal anchor (satellite history deliberately carries only staleness). Without positional
-   information the queries degenerate to a weighted mean.
-2. **A `driver_modality_emb`** so the latents can tell ERA5 from SIF from TWSA. Same additive
-   pattern as `hist_modality_emb` (`model.py:588`). Without it the three series are
-   indistinguishable inside one resampler.
-3. **Mask missing entries** in the cross-attention — `sif_valid` / `twsa_valid` already exist,
-   and the training-time dropout at `dataset.py:1064,1071` (`random.random() < 0.5` blanks each
-   modality) must reach the mask, or the S-absent case stops being learned.
-4. **Guard the domination risk.** ERA5 brings 365 of the 427 input tokens. If SIF and TWSA turn
-   out to be ignored, either reserve query groups per modality (e.g. 24 / 6 / 2) or keep them
-   in separate resamplers. Do not guess — the attention matrix `A` is `(32, 427)` and says
-   directly whether any latent ever attends to SIF or TWSA. **That is a free diagnostic and it
-   answers a question worth having: do SIF and TWSA contribute anything at all?**
+1. **Both temporal encodings** — offset-from-target so "recent" is learnable, *and* absolute
+   DOY, because `model.py:592-593` records that ERA5 is the model's seasonal anchor (satellite
+   history deliberately carries only staleness). Without positional information the queries
+   degenerate to a weighted mean.
+2. **Encode from the ACTUAL dates, not the slot index.** SIF and TWSA are sparse: slot 3 might be
+   40 days ago or 200. `sif_doys` / `sif_rel_pos` / `twsa_doys` / `twsa_rel_pos` already store
+   this per slot — use them.
+3. **A learned null token in the key/value set, always unmasked.** Without it, a fully-masked
+   sample gives softmax over all `-inf` -> **NaN**. And this is not an edge case:
+   `dataset.py:1064,1071` blanks SIF and TWSA on **~50% of training samples by design**, so the
+   all-invalid path fires on half the data. With the null token, a fully-masked sample attends
+   entirely to it and the output is a *learned* "absent" representation. Partially-valid samples
+   mix it in proportionally, which is also correct.
+   GRACE's real gap (~mid-2017 to mid-2018) means TWSA can be genuinely all-empty too.
+4. **Use a large finite negative, not `-inf`.** Tokens are fp16; `-inf` under autocast overflows
+   and produces NaNs that only appear at scale. `-1e4`, or run the attention in fp32.
+5. **Pass a per-modality `present` scalar to the patchwise transformer.** The null token tells
+   the resampler what to emit, but after compression "SIF was flat" and "SIF was absent" can look
+   alike. The flag makes them distinguishable.
 
-Ablation worth keeping: fixed physical windows (14 daily / 8 weekly / 10 monthly) against the
-learned queries. If they match, that is a publishable statement about what the meteorology
-actually contributes.
+Two ablations this structure buys, both cheap:
+
+- **Zero a modality's token block** — exact attribution, which is the reason for separating.
+- **Fixed physical windows** (14 daily / 8 weekly / 10 monthly) against the learned queries. If
+  they match, that is a publishable statement about what the meteorology actually contributes.
+
+**Open, and already flagged in `training_runbook.md:3298-3304`:** TWSA's 50% dropout may be too
+aggressive — it is the only input about water *storage* rather than flux. Separate resamplers
+make lowering it a clean one-line experiment.
+
+**Prior, stated honestly.** TWSA is ~300 km, monthly, and dominated by groundwater and deep
+storage — a weak prior for 0-10 cm SM. SIF is more defensible (vegetation stress is a genuine
+drought signal) but it is ~7 x 3.5 km and lagged through plant response. Both are tile-constant,
+so neither can contribute to within-tile pattern — only to tile-level dynamics.
 
 ### G4. Training vs inference — the asymmetry that makes this cheap
 
@@ -362,3 +395,55 @@ git checkout -b feat/patchwise-temporal
 
 Keeping `--arch unet | patchwise` in one file is still worth it for eval comparability, but it is
 not a rollback mechanism. The tag is.
+
+### G7. Masked pretraining — CONSIDERED AND DROPPED, with a trigger
+
+Raised 2026-08-25: pretrain the patchwise encoder Presto-style — mask acquisitions in a patch's
+history, reconstruct them, no labels needed — then fine-tune on ISMN. It would use all 196
+patches instead of one, turning the patch axis from a 196x inference cost into a 196x training
+data multiplier.
+
+**Dropped. Do not build it for step 1.** Three reasons, in order of weight:
+
+1. **It cannot recover what the frozen tokens do not contain.** TerraMind pretrained the *spatial*
+   encoder — "what does this 160 m patch look like in one image" — on generic multimodal
+   reconstruction. §27b measured own-token within-network SM skill at **0-4.2%** and §27a found
+   the UMAP organises by **Koppen class, not soil moisture**: the embeddings encode landscape
+   *identity*, not *state*. Masked reconstruction downstream teaches a better way of combining
+   tokens that already lack the signal. The only way past that ceiling is unfreezing TerraMind,
+   which the entire precomputed-token pipeline exists to avoid.
+2. **The label scarcity is spatial, not numerical.** 993 stations x ~2000 days is **~2 M
+   supervised samples** — ample for a modest temporal encoder. "One supervised pixel per tile"
+   sounds worse than it is.
+3. **It is a whole extra job** with its own failure mode: the reconstruction target would be
+   TerraMind embeddings, and §27a's massive-activation registers (`csvs/static_token_outliers.json`)
+   would dominate an MSE loss. A run could reach a low loss having learned nothing. Avoidable, but
+   only by knowing to avoid it.
+
+**THE TRIGGER — the one argument that survives is covariate shift.** Weight sharing applies the
+function learned at station patches to all 196, but stations are sited in accessible, flat, often
+agricultural places. Forest, water, steep and urban patches are never supervised and are not in
+the training distribution. Pretraining on all 196 is the direct fix, because it exposes the
+encoder to the full patch distribution with no labels.
+
+So: **run §34 step 1 supervised, then read the off-centre diagnostic.** §26.11 already measures it
+— median dubRMSE +0.0025 with 74% of stations worse, and train-station memorisation not travelling
+off the supervised pixel (0.0110 -> 0.0500). §28.8 makes off-centre ubRMSE one of the four numbers
+step 1 must beat.
+
+- **Off-centre holds up** -> skip pretraining entirely. You would be paying for a problem you do
+  not have.
+- **Good at station patches, systematically worse off-centre** -> that is covariate shift, and
+  *that* is when pretraining on all 196 earns its cost.
+
+If it is ever built, notes worth keeping: reconstruct **physical band statistics** (mean VV, VH,
+S2 band means over the patch's 16x16 block) rather than the 768-d embedding — low-dimensional,
+interpretable, immune to the register problem, and sigma-0 is exactly the quantity §33's
+decomposition operates on. Mask **contiguous time blocks** and whole modalities, not uniform
+random timesteps; hiding one date among 100 is trivial interpolation and teaches averaging rather
+than dynamics. Subsample ~16 patches per step rather than all 196 — neighbouring 160 m cells are
+highly correlated, so effective sample size is far below 196 and coverage across an epoch is
+unaffected.
+
+This is the same discipline as the rest of the project: measure the defect before building the
+fix.
