@@ -561,6 +561,13 @@ def main():
             "std":  [_std(soil_acc[c], f"soil[{c}]") for c in range(N_SOIL_CHANNELS)],
         },
         "label_mean": {depth: label_acc[d][1] for d, depth in enumerate(SM_DEPTHS)},
+        # Per-depth qc==0 observation counts over the same sample set. train.py turns these
+        # into the FIXED inverse-frequency `depth_weights` that masked_huber_loss(per_depth=)
+        # needs. Without them train.py falls back to freezing epoch 1's own counts, which
+        # means epoch 1 trains under uniform weights — i.e. under a different objective from
+        # every epoch after it. Emitting them here removes that wrinkle entirely: the
+        # objective is fixed before the first gradient step and cannot change on requeue.
+        "label_count": {depth: int(label_acc[d][0]) for d, depth in enumerate(SM_DEPTHS)},
         "years": [TRAIN_YEARS[0], TRAIN_YEARS[-1]],
         "split": "train",
         "n_stations": n_ok,

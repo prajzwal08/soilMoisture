@@ -268,15 +268,21 @@ an orbit switch is indistinguishable from a wetting event (§35.24).
 ### 2.3 Tile-level driver tokens `m` — these carry NO index k
 
 ```
-m                            (M, d) = (431, 768)
+m                            (M, d) = (431, 768)      rows IN THIS ORDER
 
-  era5   (365, 768)    era5_mlp:    (365, 19)    -> (365, 768)     one token per day, 365-day window
-  sif    (50,  768)    sif_mlp:     (50,  1)     -> (50,  768)     MAX_SIF  = 50
-  twsa   (12,  768)    twsa_mlp:    (12,  1)     -> (12,  768)     MAX_TWSA = 12
-  soil   (4,   768)    SoilEncoder: (21, 74, 74) -> (4,   768)
+  soil   (4,   768)    SoilEncoder: (21, 74, 74) -> (4,   768)     rows [  0,   4)
+  era5   (365, 768)    era5_mlp:    (365, 19)    -> (365, 768)     rows [  4, 369)
+  sif    (50,  768)    sif_mlp:     (50,  1)     -> (50,  768)     rows [369, 419)   MAX_SIF  = 50
+  twsa   (12,  768)    twsa_mlp:    (12,  1)     -> (12,  768)     rows [419, 431)   MAX_TWSA = 12
                        ---------
                        M = 431
 ```
+
+**Soil is first, not last.** Earlier drafts of this list, and `model.py`'s own docstring, put
+ERA5 first; `_build_driver_tokens` appends soil first. Nothing crashes, because `mem_pad` is
+built in the same order as `toks` — but a §35.9 ablation arm that masks "the ERA5 block" as
+`m[:, 0:365]` would silently hit the four soil tokens plus `era5[0:361]`, ablate the wrong
+thing, and report a number. Use the row offsets above.
 
 Each also receives `circular_doy_pe(absolute DOY)` — the seasonal clock — and
 `rel_pos_emb(staleness)` — the recency clock. **Every** modality's `rel_pos` comes from the real

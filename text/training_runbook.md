@@ -10101,3 +10101,123 @@ simply absent from the output table rather than flagged**. And the register-stri
 the one the verdict turns on — was promised in the script's docstring and never implemented. Both
 fixed before the reported run. A third, louder failure (an invented `station` column in
 `station_splits.csv`) killed run 0 in 19 s, which is the failure mode one wants.
+
+---
+
+## §35.26 One scale cannot serve two streams — splitting the staleness tables, and taking the input LayerNorm back out (Session 33, 2026-08-26)
+
+This **supersedes part of §35.24**. That section set all seven `nn.Embedding` tables to
+`trunc_normal_(0.02)` and called it a fix. It was half a fix, and the other half caused the
+next two problems.
+
+### The measurement that was missing when §35.24 was written
+
+`measure_token_scale.py` gained a temporal axis after §35.25 was committed, so §35.25's table
+carries only the spatial columns. The full result:
+
+```
+modality  per-elem std  (no reg)      L2  tag share  reg share  agree  tile mag  mag-noreg  TIME mag   noreg
+s2               4.644     3.171   131.4      0.43%      77.1% 100.0%     29.4%       2.7%      9.6%    9.3%
+s1_asc           4.218     2.772   118.1      0.47%      53.2% 100.0%      1.2%       2.6%      0.9%    2.5%
+s1_desc          4.245     2.807   118.8      0.47%      55.7% 100.0%      1.4%       2.8%      0.9%    2.4%
+dem              4.417     3.165   123.4      0.45%      83.4% 100.0%     56.6%       2.9%       n/a     n/a
+lulc             3.998     3.600   111.7      0.50%      67.7% 100.0%     34.0%       2.4%       n/a     n/a
+```
+
+`tile mag` is the share of variance ACROSS THE 196 PATCHES carried by token magnitude;
+`TIME mag` is the share across ACQUISITIONS at the station token. `noreg` is the same with the
+six register coordinates zeroed.
+
+**The asymmetry is the whole argument.** Spatially, magnitude collapses to ~2.7% once the
+registers are stripped — so what an input LayerNorm deletes there is sink, and deleting it is
+a gain. Temporally it does **not** collapse: 9.6% -> 9.3%. That is real content, on the axis
+where wetness would live (wet soil is darker in SWIR). An input LayerNorm deletes it.
+
+### The actual bug §35.24 half-fixed
+
+```
+                      content std   annotation std   annotation share
+drivers (era5_mlp)          0.22             1.0             ~450%   <- genuinely broken
+history (TerraMind L12)     4.65             1.0              ~21%   <- entirely fine
+```
+
+`rel_pos_emb` is a **single shared table**: the same 365x768 tensor annotates ERA5/SIF/TWSA
+days *and* satellite acquisitions, whose content differs in magnitude by ~21x. One std cannot
+serve both. §35.24 set it to 0.02 — correct for the drivers, and it dropped history staleness
+from a healthy 21% to 0.43%. The input LayerNorms were then added to bring history back to
+2%, and a `log|token|` feature after that to hand back the magnitude the LayerNorm had just
+deleted. Three changes, two of them undoing the first.
+
+**Fix the cause.** Two tables, two scales:
+
+```
+rel_pos_emb        drivers   EMB_INIT_STD      = 0.02      era5, sif, twsa
+rel_pos_emb_hist   history   HIST_EMB_INIT_STD = 1.0       s2, s1
+static_modality_emb, hist_modality_emb -> history scale
+soil/era5/sif/twsa_modality_emb        -> driver scale
+```
+
+Cost: one extra 365x768 table, 280 K parameters, ~0.4% of the model. In exchange the input
+LayerNorm becomes unnecessary, the scale feature disappears entirely, and parity with the
+frozen pooled baseline (`model_unet.py`, which normalises nothing) is restored.
+
+`use_input_norm` survives as a flag, **default off**, `nn.Identity` when off so no parameter
+can leave the DDP graph. Revisit it when a decoder exists: a decoder broadcasts a token over
+a 16x16 block, which is precisely where the 97%-register spatial magnitude becomes visible
+artefacts. Today there is no decoder and it buys nothing.
+
+### driver_norm now applies in both modes
+
+§35.24 made `driver_enc` **and** `driver_norm` memory-only in one conditional. `driver_enc`
+memory-only is right — §4.3's argument holds, concat already has the 431x431 block inside its
+joint stack and running T1 there would give it that block twice. But tying the norm to the
+same conditional meant the two `--driver-mode` arms differed in **contextualisation** (the
+hypothesis) *and* in **normalisation** (an accident of the code), so a difference in result
+could not be attributed to either. The norm is now unconditional.
+
+Worth recording what does NOT bite: the softmax budget is safe either way, because
+`norm_self` is per-token and normalises all 536 tokens independently before Q/K/V. The
+asymmetry lived in the residual stream, not in the attention.
+
+### label_count — epoch 1 no longer trains under a different objective
+
+`train.py` prefers `driver_stats.json["label_count"]` for the fixed inverse-frequency
+`depth_weights`, and otherwise freezes epoch 1's own counts — which means epoch 1 runs under
+uniform weights, i.e. a different objective from every epoch after it.
+`compute_driver_stats.py` now emits per-depth qc==0 counts over the same sample set it uses
+for `label_mean`, so the objective is fixed before the first gradient step and cannot change
+on requeue.
+
+### The driver row order was documented wrong, and §35.9 was about to walk into it
+
+`_build_driver_tokens` appends **soil first**:
+
+```
+soil  [  0,   4)
+era5  [  4, 369)
+sif   [369, 419)
+twsa  [419, 431)
+```
+
+Both `model.py`'s docstring and this runbook's §2.3 listing said "era5 365 + sif 50 + twsa 12
++ soil 4". Nothing crashes — `mem_pad` is built in the same order as `toks` — but §35.9's
+ablation arms are the next thing to be built, and an arm masking "the ERA5 block" as
+`m[:, 0:365]` would silently ablate the four soil tokens plus `era5[0:361]`, and report a
+number. Corrected in `model.py` and in `text/patchwise_math.md` §2.3, with the offsets.
+
+### Verification
+
+`slurm/run_tests.sh`: 117 passed / 1 skipped (the skipped one needs the real zarr store and
+`csvs/driver_stats.json`, which does not exist until `slurm/driver_stats.sh` has run). Four
+new tests pin this section: the per-stream table split, `use_input_norm` off by default with
+magnitude surviving, `use_input_norm=True` restoring exact scale-invariance, and `driver_norm`
+present in both driver modes.
+
+One test failure in the first run was the right kind — `test_concat_does_not_build_T1`
+asserted `driver_norm` is `nn.Identity` in concat mode, which is exactly the behaviour this
+section reverses. The assertion was updated, not the code.
+
+**Still unverified.** The suite is synthetic tensors only. `dataset.py`'s fail-closed paths,
+the day-granular ERA5 guard, the `/dev/shm` preload, DDP, warmup-on-resume and every §35.24
+diagnostic have never run against real data. Order stands: `run_tests.sh` ->
+`driver_stats.sh` -> a short `train.sh --max-stations` smoke run -> anything long.

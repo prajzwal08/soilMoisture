@@ -5382,3 +5382,81 @@ SESSION 33 addendum — §35.25 token scale MEASURED (2026-08-26)
 
   Says nothing about register standardisation (§35.20) — still deferred, still
   the entropy detector's job.
+
+--------------------------------------------------------------------------------
+SESSION 33 addendum — §35.26 one scale cannot serve two streams (2026-08-26)
+--------------------------------------------------------------------------------
+  SUPERSEDES PART OF §35.24.  That section set all seven nn.Embedding tables to
+  trunc_normal_(0.02).  Half right, and the wrong half caused everything after it.
+
+  THE BUG §35.24 HALF-FIXED
+                        content std   annotation std   share
+    drivers (era5_mlp)         0.22             1.0    ~450%  <- genuinely broken
+    history (TerraMind)        4.65             1.0     ~21%  <- entirely fine
+
+  rel_pos_emb is ONE SHARED TABLE annotating both streams, whose content differs
+  in magnitude by ~21x.  One std cannot serve both.  Setting it to 0.02 fixed the
+  drivers and dropped history staleness 21% -> 0.43%.  The input LayerNorms were
+  then added to get history back to 2%, and a log|token| feature after that to
+  hand back the magnitude the LayerNorm deleted.  Three changes, two undoing the
+  first.
+
+  FIX THE CAUSE: two tables.
+    rel_pos_emb       drivers   EMB_INIT_STD      = 0.02   era5, sif, twsa
+    rel_pos_emb_hist  history   HIST_EMB_INIT_STD = 1.0    s2, s1
+    static/hist_modality_emb -> history scale; the rest -> driver scale
+  280 K params, ~0.4%.  Input LayerNorm then unnecessary, scale feature gone,
+  parity with the frozen pooled baseline restored.
+
+  THE MEASUREMENT THAT DECIDED IT (added to measure_token_scale.py AFTER §35.25
+  was committed, so it is recorded here and nowhere else):
+
+    modality   tile mag  mag-noreg   TIME mag   noreg
+    s2            29.4%       2.7%       9.6%    9.3%
+    s1_asc         1.2%       2.6%       0.9%    2.5%
+    s1_desc        1.4%       2.8%       0.9%    2.4%
+    dem           56.6%       2.9%        n/a     n/a
+    lulc          34.0%       2.4%        n/a     n/a
+
+  SPATIALLY magnitude collapses to 2.7% once the 6 register dims are stripped —
+  LayerNorm would delete sink, a gain.  TEMPORALLY it does NOT collapse
+  (9.6 -> 9.3%).  That is real content on the axis where wetness lives.  So the
+  norm comes out: use_input_norm flag, DEFAULT OFF, nn.Identity when off.
+  Revisit when a decoder exists — a decoder broadcasts a token over a 16x16
+  block, which is where the 97%-register spatial magnitude becomes artefacts.
+
+  driver_norm NOW UNCONDITIONAL.  §35.24 tied it to the same conditional as
+  driver_enc, so the two --driver-mode arms differed in contextualisation (the
+  hypothesis) AND normalisation (an accident).  driver_enc stays memory-only
+  (§4.3 holds).  Note what does NOT bite: the softmax budget is safe either way,
+  because norm_self is per-token and normalises all 536 before Q/K/V.  The
+  asymmetry was in the residual stream, not the attention.
+
+  label_count now emitted by compute_driver_stats.py, so depth_weights is fixed
+  before the first gradient step — epoch 1 no longer trains under uniform
+  weights, i.e. under a different objective from every epoch after it.
+
+  DRIVER ROW ORDER WAS DOCUMENTED WRONG.  Code appends soil FIRST:
+      soil [0,4)  era5 [4,369)  sif [369,419)  twsa [419,431)
+  Both model.py and patchwise_math.md §2.3 said era5-first.  Nothing crashes
+  (mem_pad is built in the same order), but §35.9's ablation arms are next, and
+  an arm masking "the ERA5 block" as m[:, 0:365] would ablate soil + era5[0:361]
+  and report a number.  Fixed in both places, with offsets.
+
+  TESTS: 117 passed / 1 skipped.  The one first-run failure was the right kind —
+  test_concat_does_not_build_T1 asserted driver_norm is nn.Identity in concat,
+  which is exactly what this section reverses; assertion updated, not the code.
+
+  STILL UNVERIFIED — synthetic tensors only.  dataset.py's fail-closed paths, the
+  day-granular ERA5 guard, /dev/shm preload, DDP, warmup-on-resume and every
+  §35.24 diagnostic have NEVER run against real data.
+      run_tests.sh -> driver_stats.sh -> train.sh --max-stations -> anything long
+
+  DECLINED, with reasons (external critique):
+    - Moran's I companion to patch_map_sd: user's call, spatial structure is
+      taken to live in the TerraMind embedding.
+    - soil_ch_valid emission: dead channels land on the corpus MEAN after
+      z-scoring (imputation, not fabrication), >2 dead drops the station, and
+      the DEM/LULC treatment would discard ~19 healthy channels to flag 1-2.
+    - satellite-history dropout: 0.0 is deliberate at K=1, and cloud masking
+      already leaves a median ~36 of 60 S2 slots valid.

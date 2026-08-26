@@ -133,6 +133,20 @@ def _tile_stats(T: np.ndarray) -> dict:
     }
 
 
+def _temporal_stats(series: np.ndarray) -> dict:
+    """Magnitude-vs-direction split ACROSS TIME for one fixed patch.
+
+    `_tile_stats` answers "do patches differ in size within one tile-day" — the §34
+    spatial question. It says nothing about the axis that matters most for soil
+    moisture: does ONE patch's token change size between a wet day and a dry one?
+    Wet soil is darker in SWIR, so token magnitude is a plausible carrier of wetness,
+    and an input LayerNorm deletes it. Same decomposition, time as the axis.
+
+    series : (T, 768) — one patch, every acquisition.
+    """
+    return _tile_stats(series)          # identical algebra; the axis is the caller's choice
+
+
 def _scan_station(args) -> dict | None:
     category, station = args
     path = ZARR_ROOT / category / station
@@ -153,6 +167,7 @@ def _scan_station(args) -> dict | None:
         if key not in zg:
             continue
         arr = zg[key]
+        series = None
         try:
             if arr.ndim == 3:                                   # (N, 196, 768) temporal
                 N = arr.shape[0]
@@ -160,6 +175,9 @@ def _scan_station(args) -> dict | None:
                     continue
                 idx = rng.choice(N, size=min(N_ACQ_PER_STA, N), replace=False)
                 tiles = [np.asarray(arr[int(i)]) for i in sorted(idx)]
+                # The station token's WHOLE time series — the axis _tile_stats cannot see.
+                if N >= 8:
+                    series = np.asarray(arr[:, STATION_TOKEN, :])
             elif arr.ndim == 2:                                 # (196, 768) static
                 tiles = [np.asarray(arr[:])]
             else:
@@ -212,6 +230,13 @@ def _scan_station(args) -> dict | None:
             # deleting it is a gain, not a loss.
             "tiles":       [_tile_stats(t) for t in tiles],
             "tiles_noreg": [_tile_stats(_strip(t)) for t in tiles],
+            # ACROSS TIME, station token only. If magnitude carries a large share here,
+            # the input LayerNorm is deleting a plausible wetness carrier (wet soil is
+            # darker in SWIR) and must not be on by default — the spatial result says
+            # nothing about this axis.
+            "temporal":       _temporal_stats(series) if series is not None else {},
+            "temporal_noreg": (_temporal_stats(_strip(series))
+                               if series is not None else {}),
         }
         out[mod] = rec
 
@@ -227,6 +252,7 @@ def _agg(records: list[dict]) -> dict:
         sumsq = np.zeros(768, dtype=np.float64)
         ntok  = 0
         tiles, tiles_nr = [], []
+        temporal, temporal_nr = [], []
         dim_votes: dict[int, int] = {}
         for r in records:
             m = r["mods"].get(mod)
@@ -241,6 +267,10 @@ def _agg(records: list[dict]) -> dict:
             ntok  += m["n_tokens"]
             tiles    += [t for t in m["tiles"] if t]
             tiles_nr += [t for t in m["tiles_noreg"] if t]
+            if m.get("temporal"):
+                temporal.append(m["temporal"])
+            if m.get("temporal_noreg"):
+                temporal_nr.append(m["temporal_noreg"])
             for d in m["reg_dims"]:
                 dim_votes[int(d)] = dim_votes.get(int(d), 0) + 1
         if not per_elem:
@@ -287,7 +317,16 @@ def _agg(records: list[dict]) -> dict:
             "within_tile_frac_direction_noreg": float(np.median([t["frac_dir"]
                                                                  for t in tiles_nr]))
                                                 if tiles_nr else None,
-            "n_tiles_scored":             len(tiles),
+            # ACROSS TIME at the station token — the axis the spatial split cannot see
+            "temporal_frac_magnitude": float(np.median([t["frac_mag"] for t in temporal]))
+                                       if temporal else None,
+            "temporal_frac_magnitude_noreg": float(np.median([t["frac_mag"]
+                                                              for t in temporal_nr]))
+                                             if temporal_nr else None,
+            "temporal_norm_cv":        float(np.median([t["norm_cv"] for t in temporal]))
+                                       if temporal else None,
+            "n_series_scored":         len(temporal),
+            "n_tiles_scored":          len(tiles),
         }
     return result
 
@@ -354,7 +393,7 @@ def main() -> int:
     print("=" * 100)
     hdr = (f"{'modality':<9} {'per-elem std':>12} {'(no reg)':>9} {'L2':>7} "
            f"{'tag share':>10} {'reg share':>10} {'agree':>6} "
-           f"{'tile mag':>9} {'mag-noreg':>10}")
+           f"{'tile mag':>9} {'mag-noreg':>10} {'TIME mag':>9} {'noreg':>7}")
     print(hdr)
     print("-" * len(hdr))
     def _pct(v, width):
@@ -367,7 +406,9 @@ def main() -> int:
               f"{_pct(s['register_share_of_sumsq'], 10)} "
               f"{_pct(s['register_top1_station_agreement'], 6)} "
               f"{_pct(s['within_tile_frac_magnitude'], 9)} "
-              f"{_pct(s['within_tile_frac_magnitude_noreg'], 10)}")
+              f"{_pct(s['within_tile_frac_magnitude_noreg'], 10)} "
+              f"{_pct(s['temporal_frac_magnitude'], 9)} "
+              f"{_pct(s['temporal_frac_magnitude_noreg'], 7)}")
     print()
     print("HOW TO READ THIS")
     print("  tag share      what a 0.02 positional/modality code is worth against the raw")
@@ -383,6 +424,14 @@ def main() -> int:
     print("                 LayerNorm deletes is register variation, not content — and")
     print("                 deleting it is a gain.  If both are large, it is deleting real")
     print("                 within-tile content and must not be on by default.")
+    print("  TIME mag       share of variance ACROSS ACQUISITIONS at the station token")
+    print("                 carried by magnitude, and the same with registers stripped.")
+    print("                 This is the axis the within-tile split CANNOT see, and the one")
+    print("                 that matters for soil moisture: wet soil is darker in SWIR, so")
+    print("                 if wetness rides on token magnitude it shows up HERE. Large")
+    print("                 noreg value -> input LayerNorm is deleting a wetness carrier,")
+    print("                 and the fix is to keep the norm but pass log|token| in as an")
+    print("                 explicit feature, not to drop the norm.")
     print("  reg share      share of summed square in the top-6 dims (§27a registers).")
     print("  agree          fraction of stations whose own top-6 contains the global top-1")
     print("                 dim — near 100% means one shared register direction.")

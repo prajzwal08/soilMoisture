@@ -8,7 +8,7 @@ dataset_unet.py / train_unet.py / ckpt_utils_unet.py); tag `baseline-unet-tempor
 Nothing here branches on it.
 
   T1  DriverMemoryEncoder      431 tokens, driver_layers deep, runs ONCE per sample
-        era5 365 + sif 50 + twsa 12 + soil 4, each + circular_doy_pe + rel_pos_emb + a
+        soil 4 + era5 365 + sif 50 + twsa 12 (that order), each + circular_doy_pe + rel_pos_emb + a
         modality tag; then self-attention so the driver days can see each other.
         Tile-level, so it carries NO patch index — which is what makes the cache exact.
         -> m (B, 431, 768), then Kc_l = m.Wk_c(l), Vc_l = m.Wv_c(l) for each T2 layer.
@@ -80,13 +80,21 @@ class DropPathTransformerLayer(nn.Module):
 # comfortably inside Nyquist, and is where the seasonal signal actually lives.
 DOY_MAX_HARMONIC = 26
 
-# Every positional / modality embedding is initialised at this scale. nn.Embedding defaults
-# to normal_(0, 1), which put rel_pos_emb, the modality tags and the DOY code into the
-# residual stream at sigma ~1.0 against an era5_mlp output of sigma ~0.22 — i.e. the driver
-# token entering T1 was ~98% calendar and ~2% weather, and driver_norm then normalised that
-# mixture. 0.02 is the ViT/BERT convention (and is already what depth_tokens uses), which
-# puts content back in charge at initialisation.
-EMB_INIT_STD = 0.02
+# Initialisation scale for the positional / modality annotations.
+#
+# TWO scales, not one, because the annotations serve two streams whose content differs in
+# magnitude by ~21x (§35.25, measured):
+#
+#     driver content   era5_mlp / sif_mlp / twsa_mlp output      std 0.22
+#     history content  raw frozen TerraMind L12 token            std 4.65
+#
+# A single shared table cannot suit both. At std 1.0 the annotation was ~450% of a driver
+# token (the real §35.24 bug — the driver token was mostly calendar) and a sensible ~21% of
+# a history token. Setting everything to 0.02 fixed the drivers and broke the history,
+# dropping staleness to 0.43% there — which is what the input LayerNorm was then added to
+# paper over. Splitting the tables fixes the cause instead of the symptom.
+EMB_INIT_STD      = 0.02    # annotations on DRIVER tokens (era5, sif, twsa, soil)
+HIST_EMB_INIT_STD = 1.0     # annotations on FROZEN TerraMind tokens (s2, s1, dem, lulc)
 
 
 def circular_doy_pe(doys: torch.Tensor, dim: int = 768,
@@ -359,6 +367,10 @@ class SoilMoistureModel(nn.Module):
                         stack; T1 is not built at all in that mode).
         head_bias_init: per-depth initial head bias in m3/m3, SM_DEPTHS order. train.py
                         passes the train-set means from csvs/driver_stats.json.
+        use_input_norm: LayerNorm the frozen TerraMind features on the way in. OFF by
+                        default (§35.26) — it deletes token magnitude, 9.3% of S2's
+                        temporal variance rides there, and the frozen baseline does not
+                        do it. --input-norm turns it on as a deliberate ablation.
     """
 
     def __init__(
@@ -372,6 +384,7 @@ class SoilMoistureModel(nn.Module):
         driver_mode:    str   = "memory",
         driver_layers:  int   = 2,
         head_bias_init: list[float] | None = None,
+        use_input_norm: bool = False,
     ):
         super().__init__()
         if driver_mode not in ("memory", "concat"):
@@ -415,19 +428,25 @@ class SoilMoistureModel(nn.Module):
         self.sif_modality_emb  = nn.Embedding(1, d_model)
         self.twsa_modality_emb = nn.Embedding(1, d_model)
 
-        # Learned relative position embedding: staleness within the 365-day window.
-        # Indexed by the dataset's `*_rel_pos` (364 = the target day), NEVER by slot index —
-        # see the note in _build_driver_tokens.
-        self.rel_pos_emb = nn.Embedding(365, d_model)
+        # Learned staleness embedding, SPLIT BY STREAM. Both are indexed by the dataset's
+        # `*_rel_pos` (364 = the target day), never by slot index — see _build_driver_tokens.
+        #
+        # Two tables rather than one shared table because the streams they annotate differ in
+        # magnitude by ~21x; see the EMB_INIT_STD comment. The extra table is 365 x 768 =
+        # 280 K parameters, ~0.4% of the model, and it removes the need for any normalisation
+        # of the frozen features.
+        self.rel_pos_emb      = nn.Embedding(365, d_model)   # DRIVERS: era5, sif, twsa
+        self.rel_pos_emb_hist = nn.Embedding(365, d_model)   # HISTORY: s2, s1
 
-        # Every one of the seven tables above is a learned *input*, not a weight matrix, and
-        # they are summed into content that leaves its MLP at sigma ~0.22. nn.Embedding's
-        # default normal_(0, 1) therefore made the token ~98% annotation and ~2% content.
-        # trunc_normal_(0.02) is the ViT/BERT convention and what depth_tokens already used.
-        for emb in (self.soil_modality_emb, self.static_modality_emb, self.hist_modality_emb,
-                    self.era5_modality_emb, self.sif_modality_emb, self.twsa_modality_emb,
-                    self.rel_pos_emb):
+        # Driver-side annotations: small, because driver content is small.
+        for emb in (self.soil_modality_emb, self.era5_modality_emb,
+                    self.sif_modality_emb, self.twsa_modality_emb, self.rel_pos_emb):
             nn.init.trunc_normal_(emb.weight, std=EMB_INIT_STD)
+        # History-side annotations: full scale, because frozen TerraMind tokens are large.
+        # This is what nn.Embedding's default gave before §35.24, and for THIS stream the
+        # default was already right — a ~21% annotation share against std-4.65 content.
+        for emb in (self.static_modality_emb, self.hist_modality_emb, self.rel_pos_emb_hist):
+            nn.init.trunc_normal_(emb.weight, std=HIST_EMB_INIT_STD)
 
         # Day-of-year code, precomputed. It is a pure function of one integer in [0, 366], so
         # recomputing (B·365, 768) sin/cos every forward was tens of MB of allocation and a
@@ -450,10 +469,35 @@ class SoilMoistureModel(nn.Module):
         # positional code at std 0.02 against an unnormalised frozen feature is invisible,
         # which would trade the driver-token problem for the same problem on the history.
         # One LayerNorm per stream, not one shared, so each sensor keeps its own gain.
-        self.s2_norm   = nn.LayerNorm(d_model)
-        self.s1_norm   = nn.LayerNorm(d_model)
-        self.dem_norm  = nn.LayerNorm(d_model)
-        self.lulc_norm = nn.LayerNorm(d_model)
+        # OFF BY DEFAULT (§35.26). These normalise the frozen TerraMind features on the way
+        # in. They were added in §35.24 to make a 0.02 staleness code visible against a
+        # std-4.65 token — but that only became necessary because §35.24 had just shrunk the
+        # history annotations to 0.02 in the first place. With rel_pos_emb_hist back at full
+        # scale the problem does not exist, and normalising costs two measured things:
+        #
+        #   - 9.3% of S2's TEMPORAL variance rides on token magnitude and does NOT collapse
+        #     when the registers are stripped (§35.25). LayerNorm deletes it. Wet soil is
+        #     darker in SWIR, so this is a plausible wetness carrier.
+        #   - parity with the frozen pooled baseline (model_unet.py), which does not do this.
+        #
+        # What it buys, and what is therefore given up by leaving it off: within-tile
+        # magnitude variation is 97% register sink (29.4% -> 2.7% stripped), so LayerNorm
+        # would clean that up. That is a SPATIAL nuisance, and step 1 has no decoder to
+        # render it. Revisit when one exists — a decoder broadcasts a token over a 16x16
+        # block, which is exactly where sink magnitude becomes visible artefacts.
+        #
+        # nn.Identity when off, not a skipped call, so no parameter can leave the autograd
+        # graph — train.py builds DDP without find_unused_parameters.
+        self.use_input_norm = use_input_norm
+        _mk_norm = (lambda: nn.LayerNorm(d_model)) if use_input_norm else (lambda: nn.Identity())
+        self.s2_norm   = _mk_norm()
+        self.s1_norm   = _mk_norm()
+        self.dem_norm  = _mk_norm()
+        self.lulc_norm = _mk_norm()
+
+        # (§35.25's log|token| scale feature lived here. It existed only to hand back the
+        # magnitude the input LayerNorm had just deleted; with that norm off by default the
+        # magnitude is simply present in the token and there is nothing to re-inject.)
 
         # Stochastic-depth schedule, shared by T1 and T2.
         dpr = [drop_path_rate * i / max(n_layers - 1, 1) for i in range(n_layers)]
@@ -507,7 +551,14 @@ class SoilMoistureModel(nn.Module):
             )
             for i in range(driver_layers)
         ]) if driver_mode == "memory" else nn.ModuleList()
-        self.driver_norm = nn.LayerNorm(d_model) if driver_mode == "memory" else nn.Identity()
+
+        # UNCONDITIONAL, unlike driver_enc (§35.26). Making the norm memory-only tied a
+        # scale decision to an architecture decision: the two arms then differed both in
+        # whether the drivers were contextualised — the actual hypothesis — and in whether
+        # they were normalised, so a difference in result could not be attributed. T1 stays
+        # memory-only because §4.3's argument holds (concat already has the 431x431 block
+        # inside its joint stack, and running T1 there would give it that block twice).
+        self.driver_norm = nn.LayerNorm(d_model)
 
         # T2 — the patch decoder. hist_start = n_depths depth-CLS rows + dem + lulc.
         self.hist_start = n_depths + 2
@@ -551,11 +602,22 @@ class SoilMoistureModel(nn.Module):
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
+
     def _build_driver_tokens(self, batch: dict):
         """
         TRANSFORMER 1's input: the 431 tile-level driver tokens.
 
-            era5 365 + sif 50 + twsa 12 + soil 4 = 431
+            soil 4 + era5 365 + sif 50 + twsa 12 = 431          <- THE ACTUAL ORDER
+
+        Row order matters and this docstring used to state it wrong (era5 first). Nothing
+        crashes, because `mem_pad` is built in the same order as `toks` — but a §35.9
+        ablation arm that masks "the ERA5 block" as m[:, 0:365] would silently hit the four
+        soil tokens plus era5[0:361]. Slice by these offsets, not by the modality list order:
+
+            soil  [  0,   4)
+            era5  [  4, 369)
+            sif   [369, 419)
+            twsa  [419, 431)
 
         Built the way the pooled baseline's `_build_sequence` did (it lives in model_unet.py
         now, tag `baseline-unet-temporal`) — same MLPs, same DOY code, same rel_pos_emb, same
@@ -649,7 +711,7 @@ class SoilMoistureModel(nn.Module):
         # Frozen TerraMind features are LayerNorm'd on the way in — see the tm-norm comment
         # in __init__. Without it the raw register-dominated magnitude flows through the
         # residual stream to the FFN and the readout, and swamps the positional codes.
-        dem    = self.dem_norm(batch["dem_tok"].to(device).float())        # (B, K, 768)
+        dem    = self.dem_norm(batch["dem_tok"].to(device).float())       # (B, K, 768)
         B, K   = dem.shape[:2]
 
         blocks, pads = [], []
@@ -679,9 +741,13 @@ class SoilMoistureModel(nn.Module):
         for hist_idx, (key, tok_norm) in enumerate((("s2", self.s2_norm),
                                                     ("s1", self.s1_norm))):
             h = batch[f"{key}_hist"].to(device).float()                     # (B, T, K, 768)
-            h = tok_norm(h)                                                 # frozen-feature LN
+            # tok_norm is nn.Identity by default (§35.26): the frozen token keeps its own
+            # magnitude, which carries 9.3% of S2's temporal variance.
+            h = tok_norm(h)
             h = h.permute(0, 2, 1, 3)                                       # (B, K, T, 768)
-            rel = self.rel_pos_emb(
+            # HISTORY staleness table, initialised at full scale against std-4.65 content —
+            # not the driver table, which is 50x smaller for a stream 21x smaller.
+            rel = self.rel_pos_emb_hist(
                 batch[f"{key}_rel_pos"].to(device).reshape(-1).clamp(0, 364)
             ).reshape(B, 1, -1, d)                                          # (B, 1, T, d)
             if key == "s2":

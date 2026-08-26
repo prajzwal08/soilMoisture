@@ -784,7 +784,10 @@ def _split_param_groups(model, raw_model):
         being distinguishable from the padded slots.
 
     Selection is by module type via _NO_DECAY_TYPES, matched by id(), so it stays correct
-    for any embedding added later without anyone remembering to update a name list.
+    for any embedding added later without anyone remembering to update a name list — which
+    is exactly what happened in §35.26, when rel_pos_emb was split into a driver table and a
+    full-scale rel_pos_emb_hist for the frozen TerraMind stream. Both are covered here with
+    no edit, because the rule is the type and not the name.
     """
     no_decay_ids = {id(p) for mod in raw_model.modules() if isinstance(mod, _NO_DECAY_TYPES)
                     for p in mod.parameters(recurse=False)}
@@ -1470,6 +1473,12 @@ def main():
                              "ubrmse (default) = depth-mean of station-mean ubRMSE, the "
                              "quantity §35.10 is stated in. huber_pooled = the pooled "
                              "training loss. Both are always logged")
+    parser.add_argument("--input-norm", action="store_true",
+                        help="LayerNorm the frozen TerraMind features on the way in. OFF by "
+                             "default (§35.26): it deletes token magnitude, 9.3%% of S2's "
+                             "TEMPORAL variance rides there even with the registers stripped, "
+                             "and the frozen pooled baseline does not do it. Pass this to run "
+                             "it as a deliberate ablation.")
     parser.add_argument("--no-patch-map-diag", action="store_true",
                         help="Disable the once-per-epoch K=196 patch-map diagnostic "
                              "(across-patch SD of the emitted map + per-patch vs "
@@ -1751,6 +1760,7 @@ def main():
         driver_mode    = CONFIG.get("driver_mode", "memory"),
         driver_layers  = CONFIG.get("driver_layers", 2),
         head_bias_init = head_bias_init,
+        use_input_norm = args.input_norm,
     ).to(device)
 
     if is_ddp:

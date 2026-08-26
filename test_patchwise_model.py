@@ -45,6 +45,7 @@ from dataset import MAX_S1, MAX_S2, MAX_SIF, MAX_TWSA, SM_DEPTHS   # noqa: E402
 from model import (                                                # noqa: E402
     DOY_MAX_HARMONIC,
     EMB_INIT_STD,
+    HIST_EMB_INIT_STD,
     SoilMoistureModel,
     _row_entropy,
     circular_doy_pe,
@@ -741,14 +742,22 @@ def test_bad_driver_mode_is_refused():
 def test_concat_does_not_build_T1():
     """T1's justification is that it restores the 431x431 'weather reads weather' block, which
     concat already has inside its joint stack. Running it in concat mode gave that arm the
-    block twice and fed it a LayerNorm'd memory against raw patch tokens."""
+    block twice.
+
+    §35.26 separated the two decisions that used to ride on one conditional. `driver_enc` is
+    still memory-only — that is the architecture question the arm exists to answer. But
+    `driver_norm` is now built in BOTH modes: making the norm memory-only meant the arms
+    differed in contextualisation AND in normalisation, so a difference in result could not be
+    attributed to either. See test_driver_norm_applies_in_both_modes."""
     mem = build(driver_mode="memory")
     cat = build(driver_mode="concat")
 
     assert len(mem.driver_enc) == 2 and isinstance(mem.driver_norm, nn.LayerNorm)
     assert isinstance(cat.driver_enc, nn.ModuleList) and len(cat.driver_enc) == 0
-    assert isinstance(cat.driver_norm, nn.Identity)
-    assert not any(True for _ in cat.driver_norm.parameters())
+    assert isinstance(cat.driver_norm, nn.LayerNorm), (
+        "driver_norm must exist in concat mode too (§35.26) — otherwise the two "
+        "--driver-mode arms differ in normalisation as well as contextualisation"
+    )
 
     n_mem = sum(p.numel() for p in mem.parameters())
     n_cat = sum(p.numel() for p in cat.parameters())
@@ -772,8 +781,13 @@ def test_head_bias_init_sets_the_biases():
             f"depth_heads[{i}].bias = {net.depth_heads[i].bias.item()}, expected {v} "
             f"({SM_DEPTHS[i]})"
         )
-    # and the untouched default is nowhere near the data mean
-    assert abs(build().depth_heads[0].bias.item()) < 0.05
+    # and the untouched default is nowhere near the data mean. PyTorch inits Linear bias to
+    # U(+-1/sqrt(fan_in)), so the bound is d_model-dependent — at the production d_model=768
+    # that is +-0.036, but this tiny model has d_model=64 and so +-0.125. Hard-coding 0.05
+    # made the test fail on the model it actually builds, roughly 60% of the time.
+    default_bias = abs(build().depth_heads[0].bias.item())
+    assert default_bias <= 1.0 / math.sqrt(D_MODEL) + 1e-6
+    assert default_bias < 0.20                       # nowhere near a mean SM of ~0.25
 
     with pytest.raises(ValueError):
         build(head_bias_init=[0.2, 0.3])
@@ -792,27 +806,78 @@ def test_doy_pe_buffer_is_not_in_the_state_dict():
     assert (net2.doy_pe - net.doy_pe).abs().max() == 0
 
 
-def test_frozen_feature_layernorms_exist_and_are_applied():
-    """s2/s1/dem/lulc arrive at whatever scale TerraMind produced, dominated by a handful of
-    register dimensions. They are LayerNorm'd BEFORE the positional and modality codes are
-    added — without which an EMB_INIT_STD=0.02 code is invisible against them.
+def _scale_frozen(b, factor=64.0):
+    """Multiply every frozen TerraMind feature by an exact power of two (no fp16 rounding)."""
+    b2 = dict(b)
+    for k in ("s2_hist", "s1_hist", "dem_tok", "lulc_tok"):
+        b2[k] = b[k] * factor
+    return b2
 
-    LayerNorm is scale-invariant, so multiplying every frozen feature by an exact power of two
-    must not move the output. Remove any of the four norms and it moves a lot."""
+
+def test_input_norm_is_off_by_default_and_magnitude_survives():
+    """§35.26. The input LayerNorms are OFF by default, so a frozen token keeps its own
+    magnitude — 9.3% of S2's TEMPORAL variance rides there and does not collapse when the
+    register dims are stripped (§35.25), and the frozen pooled baseline does not normalise
+    either. If someone flips the default back on, this fails."""
     net = build().eval()
+    for name in ("s2_norm", "s1_norm", "dem_norm", "lulc_norm"):
+        assert isinstance(getattr(net, name), nn.Identity), (
+            f"{name} is not nn.Identity — the input norm defaulted back on"
+        )
+
+    b    = fake_batch(2, 2, seed=170)
+    base = fwd(net, b)
+    d    = (base - fwd(net, _scale_frozen(b))).abs().max().item()
+    assert d > 1e-3, (
+        f"scaling the frozen features by 64 moved the output only {d:.3e} — magnitude is "
+        f"being discarded somewhere even with the input norms off"
+    )
+
+
+def test_input_norm_when_enabled_makes_the_model_scale_invariant():
+    """The flag's other state. LayerNorm is scale-invariant, so with it on, multiplying every
+    frozen feature by 64 must not move the output at all — which is exactly the property
+    §35.26 decided to give up by default."""
+    net = build(use_input_norm=True).eval()
     for name in ("s2_norm", "s1_norm", "dem_norm", "lulc_norm"):
         assert isinstance(getattr(net, name), nn.LayerNorm), f"{name} missing"
 
-    b = fake_batch(2, 2, seed=170)
+    b    = fake_batch(2, 2, seed=170)
     base = fwd(net, b)
-    b2 = dict(b)
-    for k in ("s2_hist", "s1_hist", "dem_tok", "lulc_tok"):
-        b2[k] = b[k] * 64.0                          # exact in fp16, no rounding introduced
-    d = (base - fwd(net, b2)).abs().max().item()
+    d    = (base - fwd(net, _scale_frozen(b))).abs().max().item()
     assert d < 1e-4, (
-        f"scaling the frozen TerraMind features by 64 moved the output by {d:.3e} — one of "
-        f"s2_norm / s1_norm / dem_norm / lulc_norm is not being applied"
+        f"with --input-norm, scaling the frozen features by 64 moved the output by {d:.3e} "
+        f"— one of the four norms is not being applied"
     )
+
+
+def test_staleness_tables_are_split_by_stream():
+    """§35.26's actual fix. One shared rel_pos table had to serve driver content at std 0.22
+    and frozen-token content at std 4.65 — a 21x spread no single init can suit. Two tables,
+    two scales: small for drivers, full-scale for history."""
+    net = build()
+    assert net.rel_pos_emb.weight.shape == net.rel_pos_emb_hist.weight.shape
+    drv  = net.rel_pos_emb.weight.std().item()
+    hist = net.rel_pos_emb_hist.weight.std().item()
+    assert drv < 0.05, f"driver staleness table init {drv:.4f}, expected ~{EMB_INIT_STD}"
+    assert hist > 0.5, f"history staleness table init {hist:.4f}, expected ~{HIST_EMB_INIT_STD}"
+    assert hist > 10 * drv, (
+        "the two staleness tables collapsed back to a common scale — that is the bug "
+        "§35.26 split them to fix"
+    )
+
+
+def test_driver_norm_applies_in_both_modes():
+    """§35.26. driver_enc stays memory-only (§4.3: concat already has the 431x431 block in
+    its joint stack), but the NORM must not be, or the two --driver-mode arms differ both in
+    contextualisation and in normalisation and a difference in result cannot be attributed."""
+    for mode in ("memory", "concat"):
+        net = build(driver_mode=mode)
+        assert isinstance(net.driver_norm, nn.LayerNorm), (
+            f"driver_norm is {type(net.driver_norm).__name__} in {mode} mode"
+        )
+    assert len(build(driver_mode="concat").driver_enc) == 0
+    assert len(build(driver_mode="memory").driver_enc) == 2
 
 
 def test_every_parameter_receives_a_gradient():
@@ -952,17 +1017,37 @@ def test_doy_pe_lands_at_the_embedding_init_scale():
     )
 
 
-def test_positional_and_modality_tables_are_initialised_small():
+def test_annotation_tables_are_initialised_per_stream():
+    """§35.26. TWO scales, because the annotations serve two streams whose content differs in
+    magnitude by ~21x (measured, §35.25):
+
+        driver content   era5_mlp / sif_mlp / twsa_mlp output      std 0.22
+        history content  raw frozen TerraMind L12 token            std 4.65
+
+    §35.24 set all seven tables to 0.02. That fixed the drivers — nn.Embedding's default
+    normal_(0, 1) had made a driver token ~450% annotation — and BROKE the history, dropping
+    staleness there to 0.43% from a perfectly healthy ~21%. The input LayerNorm was then added
+    to paper over the damage. Splitting the tables is the fix; this test is what stops them
+    silently collapsing back to one scale."""
     net = build()
-    for name in ("soil_modality_emb", "static_modality_emb", "hist_modality_emb",
-                 "era5_modality_emb", "sif_modality_emb", "twsa_modality_emb",
-                 "rel_pos_emb"):
-        w = getattr(net, name).weight.detach()
-        assert float(w.std()) < 5 * EMB_INIT_STD, (
-            f"{name} initialised at std {float(w.std()):.3f}; nn.Embedding's default "
-            f"normal_(0, 1) makes the token ~98% annotation and ~2% content"
+
+    for name in ("soil_modality_emb", "era5_modality_emb", "sif_modality_emb",
+                 "twsa_modality_emb", "rel_pos_emb"):
+        s = float(getattr(net, name).weight.detach().std())
+        assert s < 5 * EMB_INIT_STD, (
+            f"DRIVER table {name} initialised at std {s:.3f}; against std-0.22 content that "
+            f"makes the token mostly calendar and ~nothing weather"
         )
+
+    for name in ("static_modality_emb", "hist_modality_emb", "rel_pos_emb_hist"):
+        s = float(getattr(net, name).weight.detach().std())
+        assert s > 0.3 * HIST_EMB_INIT_STD, (
+            f"HISTORY table {name} initialised at std {s:.3f}; against std-4.65 frozen "
+            f"TerraMind content a 0.02 annotation is 0.43% and staleness is invisible"
+        )
+
     assert net.rel_pos_emb.num_embeddings == 365
+    assert net.rel_pos_emb_hist.num_embeddings == 365
 
 
 # ═════════════════════════════════════════════════════════════════════════════
