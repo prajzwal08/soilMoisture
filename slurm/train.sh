@@ -35,6 +35,28 @@ echo "Cleaning stale SHM caches..."
 rm -rf /dev/shm/sm_l12_* 2>/dev/null || true
 echo "SHM clean."
 
+# ---------------------------------------------------------------------------
+# STORE-INTEGRITY PRE-FLIGHT (§35.6, added 2026-08-26)
+#
+# The 2026-08-26 scratch purge deleted .zarray headers and, for the small
+# arrays, their chunks -- while .zmetadata survived. zarr.open_consolidated
+# then returns fill_value with NO exception, so `soil` read as all zeros and
+# nothing complained. Soil is §20.14's strongest tabular block, so a run in
+# that state produces a plausible-looking number from zeroed input.
+#
+# Scratch is purged BY AGE, not quota (usage is 8.8% of an 8 TiB allowance),
+# so this recurs. ~1 min against a 17-32 min preload and a multi-hour run.
+echo "=== store-integrity pre-flight ==="
+if ! conda run -n terramind --no-capture-output \
+       python verify_zarr_store.py --root /gpfs/scratch1/shared/pkhanal/zarr \
+              --out "csvs/verify_preflight_${SLURM_JOB_ID}.csv" --workers 64; then
+  echo "STORE VERIFICATION FAILED -- refusing to train against a damaged store."
+  echo "Restore with: sbatch slurm/restore_zarr.sh"
+  exit 1
+fi
+echo "=== pre-flight passed ==="
+echo
+
 # --use-memmap is always correct on GPFS: the zarr l3/l6/l9 arrays are chunked [32,196,768]
 # with blosc, so reading ONE anchor index pulls a 7.8 MB compressed chunk and decompresses
 # 9.6 MB to use 294 KB — 32x read amplification, x3 layers. The flat .npy memmaps on scratch
