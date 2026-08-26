@@ -10742,3 +10742,126 @@ endpoint 2 scores this run against a pooled baseline trained at 128 — changing
 comparison on a run whose gate is explicitly pre-registered as un-revisable once started.
 
 Recorded as a deliberate follow-up experiment with lr rescaled, not as a knob to turn mid-flight.
+
+---
+
+## §35.32 The capacity test — L6 stopped, L3 launched (Session 34b, 2026-08-27)
+
+### What was stopped, and what that cost
+
+`pw_stage2a` (job 26082396) was stopped at **epoch 12 of 100**, by request, before the §35.30
+gate could read out. Recorded as a cost, not a result:
+
+* **no scored endpoint at a converged best epoch** — the pre-registered primary endpoint
+  (within-station anomaly ubRMSE, CIs bootstrapped over stations) was never computed
+* **`diag/grad_ratio` and `diag/patch_map_sd_mean` were written to W&B only, never read** — two
+  of §35.30's three interpretability conditions are therefore unverified for this run. Only
+  `collapse_ratio` printed to stdout (0.767 → 0.552, comfortably passing)
+* re-runnable in ~7 h at the measured 13 min startup + 3.4 min/epoch
+
+```
+best = epoch 9   select=0.047712   0-10 ubRMSE=0.0547  r=0.737
+tag              pw_stage2a-ep9
+archive          checkpoints_archive/pw_stage2a_ep9_20260826/
+                 best.pt + val_station_metrics.csv + full log
+                 DISTINCT inode verified, md5 504bf831c81a6b77f3b1f44d8f23e510
+```
+
+The archive is a real second copy but on the SAME filesystem (`wstor_work3`). It protects
+against overwrite and accidental deletion, **not** against storage loss. §35.13's checkpoint
+backup gap is unchanged.
+
+### Why it was stopped
+
+The train/val loss gap reached **17x by epoch 11** (≈4x on error, since Huber ≈ ½r² below
+delta) while val moved 8%. Working the implied number through:
+
+```
+val ubRMSE @ 0-10        0.0559
+implied train ubRMSE     ~0.014      (val / √17)
+measured 160 m floor F   0.043       (§35.30, same-patch sensor pairs)
+```
+
+The model fits its training stations roughly **three times better than two real sensors inside
+one 160 m patch agree with each other**. Suggestive of memorisation — but NOT proof, and the
+runbook should not later be read as if it were. Train and val are different *stations*, so pure
+distribution shift predicts the same shape with zero memorisation. And F bounds predicting
+station B from station A's patch; it does not bound predicting station A's own series when the
+model is allowed to key on station A.
+
+### The test: `pw_stage2a_L3` (job 26083217, gcn117)
+
+`--n-layers 3 --lr-patience 5`, everything else held identical so the comparison is clean.
+
+```
+params        72,262,976 → 43,907,648   (-39%)
+epoch         205 s → 149 s             (-27%)
+peak VRAM     11.8 GB → 8.5 GB
+```
+
+**The ~51M estimate in the planning discussion was wrong.** It costed a patchwise layer as
+`4·d_model²` (attention) + `2·d_model·4·d_model` (MLP) ≈ 7.1M. The real figure is ~9.5M: the
+cross-attention to the driver memory carries its own `k_proj`/`v_proj`/`o_proj` **on top of**
+self-attention, which the estimate omitted.
+
+### Result at 5 epochs — the two signals separate
+
+```
+ep   L3 select   L6 select  |  L3 gap  L6 gap  |  L3 0-10  L6 0-10
+1    0.049516    0.049476   |   1.0x    1.1x   |  0.0574   0.0577
+2    0.048987    0.049282   |   3.4x    4.0x   |  0.0567   0.0568    <- L3 best
+3    0.049910    0.048790   |   4.9x    6.0x   |  0.0586   0.0568
+4    0.049828    0.048938   |   6.4x    7.6x   |  0.0585   0.0561
+5    0.050595    0.049909   |   7.6x    8.9x   |  0.0589   0.0570
+```
+
+**THE GAP IS NARROWER ON L3 AT EVERY EPOCH. VAL DOES NOT IMPROVE.**
+
+That combination is the informative part. The over-parameterisation hypothesis says capacity
+spent on lookup tables is capacity not spent on physics — so removing 28M parameters should
+free the model toward the generalisable solution and val should move. It memorised less,
+exactly as predicted, and val did not move. **Memorisation therefore looks like a side-effect,
+not the cause; the val ceiling is set elsewhere.**
+
+Two supporting facts:
+
+* L3 reaches nearly L6's train loss (0.000477 vs 0.000395 at ep3) with 39% fewer parameters.
+  The extra 28M bought almost nothing — not even better memorisation.
+* That same fact rules out underfitting as the reason L3's val is flat.
+
+**PROVISIONAL — five epochs.** L6 did not step down until epoch 7, and L3 beat it once at
+epoch 2. Read the full table fresh before trusting this. L3's first LR halving fires at
+patience 5, so the overnight schedule may change the picture on its own.
+
+### The leading alternative: the statics are a station ID
+
+`soil`, `dem` and `lulc` are constant per station and jointly near-unique across 563 stations.
+A model of any size can use them as a lookup key — *this signature → that station's mean soil
+moisture*. That is an **input-level** shortcut, so shrinking the transformer cannot remove it,
+which is exactly why the gap narrowed a little and val did not move at all.
+
+Consistent with `R2_station_mean = -17.5` at 30-100: the model ranks val stations against each
+other far worse than predicting the global mean would, while `r_within = 0.688` says it tracks
+each station's dynamics well. Dynamics right, levels wrong — a memorised table handed unseen
+keys.
+
+**And ubRMSE cannot see this.** It de-means per station by construction, so station-identity
+memorisation is invisible to the model-selection metric. It surfaces only in the R² and bias
+numbers, which is where it is surfacing.
+
+### Next session, in order
+
+1. **Statics ablation on the archived `best.pt`.** Eval only, no training. Zero soil/dem/lulc:
+   val barely moves → they were identity; val collapses → they were information and this whole
+   hypothesis is wrong. `ablation.py` / `eval_predict.py --ablate` exist, and §35.24 fixed the
+   stale-key bug that made `--ablate` a silent no-op on the patchwise arm.
+2. **Tile-pair sign test.** §35.30's **top-ranked** success criterion — above the endpoint — and
+   it still does not exist as code. The 26 pairs are already flagged in `station_splits.csv`
+   (`tile_pair_eval`, 44 rows). Predict station A's tile at K=196, read the patch containing B,
+   compare `sign(pred_B − pred_A)` to `sign(obs_B − obs_A)`.
+3. **Year-holdout, folded into the next run's split.** Nothing else separates "cannot predict
+   new days" from "cannot predict new places", and every capacity decision depends on which it
+   is. Free if the split is designed for it; a whole run if it is not.
+
+Not on the list, deliberately: more hyperparameter variants. Two capacity points now say the
+gap is not the lever, and a third would not add much.
