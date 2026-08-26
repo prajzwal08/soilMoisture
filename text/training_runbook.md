@@ -10221,3 +10221,102 @@ section reverses. The assertion was updated, not the code.
 the day-granular ERA5 guard, the `/dev/shm` preload, DDP, warmup-on-resume and every §35.24
 diagnostic have never run against real data. Order stands: `run_tests.sh` ->
 `driver_stats.sh` -> a short `train.sh --max-stations` smoke run -> anything long.
+
+---
+
+## §35.27 The audit fix that cost 62% of the training split, and the stats that came out of fixing it (Session 33, 2026-08-26)
+
+### What happened
+
+`slurm/driver_stats.sh` ran for the first time and reported:
+
+```
+stations contributing : 219 / 587
+362  labels-qc-length-mismatch
+```
+
+That was §35.24 audit item 9. The old `_load_zarr_labels` realigned a length-mismatched
+`labels/qc` by taking its trailing `n` columns; the audit called that an unverifiable guess —
+if the truncation were at the back instead, every QC flag would be offset and the loader would
+train gap-filled days as observed — and made it fatal under `strict`. The audit note asserted
+the path was "dead for current stores". It was not dead. It fired for 62% of the train split.
+
+### The trailing slice was correct, and it is verifiable
+
+```
+station                        labels/sm  labels/qc  labels/dates   diff
+ISMN_AMMA-CATCH_Banizoumbou         1095       1825          1095    730
+ISMN_COSMOS-UK_Sheepdrove           2557       3287          2557    730
+ISMN_HOBE_1.07                      1144       1612          1144    468
+```
+
+`dates` matches `sm` everywhere; only `qc` is long. `station_splits.csv` closes it exactly for
+Banizoumbou: `actual_start_date` 2014-01-01, `start_date` 2016-01-01, `end_date` 2018-12-30 —
+1825 days untrimmed, 1095 trimmed, difference 730. `trim_pre2016.py` trims `labels/sm` and
+`labels/dates` from the FRONT and leaves `labels/qc` at its original length.
+
+So the two directions are different problems and must not share a branch:
+
+```
+qc LONGER  than sm   front-trim.  Recoverable, and now VERIFIED by requiring `labels/dates`
+                     to be a gapless daily span — that is what makes "same end date, earlier
+                     start" imply the trailing n columns align.
+qc SHORTER than sm   no alignment exists.  Always fatal, strict or not.
+```
+
+`strict` now governs only a genuinely unverifiable case (a non-contiguous date index), which
+no current store exhibits.
+
+### Two lessons, both about this session's own method
+
+The audit finding was right in principle and wrong in calibration: an unverified trailing slice
+IS a guess, and the code did assert something false about `trim_pre2016.py`. But converting
+"unverified" straight to "fatal" without measuring how often it fires is the same error as
+arguing from initialisation scales nobody had measured (§35.25, §35.26). Verify first, then
+choose the severity.
+
+The reason it surfaced in 30 seconds rather than inside a training run is the OTHER audit fix.
+§35.24 required every fail-closed path to be **counted and printed**. The per-reason skip tally
+is what turned a silent 62% data loss into a one-line diagnosis. The audit caught its own
+regression.
+
+### The stats, finally
+
+```
+                       before fix      after fix
+ERA5 stations          225 / 587       587 / 587
+driver stations        219 / 587       577 / 587
+station-days             365,956       1,183,871
+label n (0-10)           302,020       1,049,213
+```
+
+The 10 stations still out are `no-sample-producing-year-in-2016-2022` — SNOTEL high-altitude
+sites and Berlin urban plots with no valid year in the training window. A real filter.
+
+```
+SIF     n=  503,270  (572 stations)  mean= 0.477111  std= 0.605864
+TWSA    n=   26,229  (507 stations)  mean=-10.536151  std=43.760724
+soil    21 channels, 3,159,652 px/channel   (ch03 mean 331.9 std 285.2 in the first run)
+
+LABEL MEAN (m3/m3, qc==0 only — initialises the per-depth head bias)
+   0-10     n=1,049,213  mean=0.172005  std=0.115675
+   10-30    n=  855,965  mean=0.192178  std=0.114307
+   30-100   n=  691,531  mean=0.186037  std=0.119728
+```
+
+Two things worth noting. The label means barely moved when the missing 362 stations came back
+(0-10: 0.1727 -> 0.1720), so the constants are robust to the sample — but the COUNTS tripled,
+and those drive the inverse-frequency `depth_weights`, so the objective would have been wrong.
+And the means are ~0.17-0.19, not the ~0.25 assumed throughout §35.24's head-bias reasoning;
+the bias init is now measured rather than guessed.
+
+TWSA at -10.5 +/- 43.8 and soil channels in the hundreds, against ERA5 tokens at exactly
+N(0,1), is the §35.24 item-7 argument in numbers.
+
+### Open: nothing binds a checkpoint to its stats
+
+`csvs/era5_stats.json` was overwritten in this session (whole-record -> train-years-only, the
+OOT-leak fix). Any checkpoint trained against the old file is now silently mismatched: the
+normalisation constants are part of the model contract and `train.py` stamps only `git_sha`.
+Regenerating the stats after a run degrades `eval_predict.py` with no error. Stamp a hash of
+both stats files into the checkpoint and verify it at eval before the first reported run.

@@ -5460,3 +5460,60 @@ SESSION 33 addendum — §35.26 one scale cannot serve two streams (2026-08-26)
       the DEM/LULC treatment would discard ~19 healthy channels to flag 1-2.
     - satellite-history dropout: 0.0 is deliberate at K=1, and cloud masking
       already leaves a median ~36 of 60 S2 slots valid.
+
+--------------------------------------------------------------------------------
+SESSION 33 addendum — §35.27 the audit fix that cost 62% of the split (2026-08-26)
+--------------------------------------------------------------------------------
+  Ran slurm/driver_stats.sh for the first time.  219 / 587 stations contributing;
+  362 dropped on `labels-qc-length-mismatch` — §35.24 audit item 9, which made a
+  qc/sm length mismatch FATAL on the grounds that the old trailing-slice
+  realignment was an unverifiable guess.  The audit note said the path was dead
+  for current stores.  It fired for 62% of the train split.
+
+  THE TRAILING SLICE WAS CORRECT, AND IT IS VERIFIABLE.
+    station                     sm    qc  dates  diff
+    Banizoumbou               1095  1825   1095   730
+    COSMOS-UK_Sheepdrove      2557  3287   2557   730
+    HOBE_1.07                 1144  1612   1144   468
+  dates matches sm everywhere; only qc is long.  station_splits.csv closes it:
+  Banizoumbou actual_start 2014-01-01, start 2016-01-01, end 2018-12-30 = 1825
+  untrimmed / 1095 trimmed, diff 730.  trim_pre2016.py trims sm+dates from the
+  FRONT and leaves qc alone.
+
+  FIX: split the two directions.
+    qc LONGER  -> front-trim, recoverable, now VERIFIED by requiring labels/dates
+                  to be a gapless daily span (that is what makes "same end, earlier
+                  start" imply trailing alignment).
+    qc SHORTER -> no alignment exists, always fatal.
+
+  LESSON, about this session's own method: converting "unverified" straight to
+  "fatal" without measuring how often it fires is the same error as arguing from
+  unmeasured init scales (§35.25, §35.26).  Verify first, then set severity.
+  It surfaced in 30 s only because §35.24 also required every fail-closed path to
+  be COUNTED AND PRINTED.  The audit caught its own regression.
+
+  STATS, after the fix:
+                        before      after
+    ERA5 stations      225/587    587/587
+    driver stations    219/587    577/587
+    station-days       365,956  1,183,871
+    label n (0-10)     302,020  1,049,213
+  Remaining 10 = no-sample-producing-year-in-2016-2022 (SNOTEL alpine, Berlin
+  urban plots).  Real filter.
+
+    SIF   n= 503,270 (572 sta)  mean  0.477111  std  0.605864
+    TWSA  n=  26,229 (507 sta)  mean -10.536151  std 43.760724
+    LABEL 0-10   n=1,049,213  mean=0.172005
+          10-30  n=  855,965  mean=0.192178
+          30-100 n=  691,531  mean=0.186037
+
+  Means barely moved when the 362 came back (0-10: 0.1727 -> 0.1720) — robust to
+  sample — but COUNTS TRIPLED, and those drive the inverse-frequency
+  depth_weights, so the objective would have been wrong.  Means are ~0.17-0.19,
+  not the ~0.25 assumed throughout §35.24's head-bias reasoning.
+
+  OPEN: nothing binds a checkpoint to its stats.  era5_stats.json was overwritten
+  this session (whole-record -> train-years-only).  Normalisation constants are
+  part of the model contract; train.py stamps only git_sha.  Regenerating stats
+  after a run degrades eval_predict.py with NO error.  Stamp a hash of both stats
+  files into the checkpoint and verify at eval before the first reported run.

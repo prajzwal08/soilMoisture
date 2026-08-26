@@ -227,16 +227,29 @@ def _load_zarr_labels(zg: zarr.Group, strict: bool = False):
     """Load labels from zarr → (sm_np, depths, times, qc_np).
     qc_np: 0=observed, 1=gap-filled, 2=still missing, 255=no QC source. None if not present.
 
-    strict (§35.24 audit item 9): `labels/dates` is written from the same clip mask as
-    `labels/sm`, so len(dates) == sm.shape[1] always holds and a shorter/longer `labels/qc`
-    means the two arrays were written by different passes (trim_pre2016.py used to trim
-    sm/dates without trimming qc). The old code GUESSED a front-trim and took the trailing
-    n columns. That guess is unverifiable — if the truncation was at the back instead, every
-    QC flag is offset by the difference and the loader silently trains on gap-filled days
-    while believing they are observed. Under `strict` we refuse to guess and raise; the
-    dataset catches that and drops the station with a counted reason. The permissive default
-    is kept because the analysis scripts (combine_network.py, station_mean_probe.py,
-    plot_token_pca.py) documented a reliance on the realignment.
+    §35.24 audit item 9 made a length mismatch fatal under `strict`, on the grounds that the
+    old code's trailing-slice realignment was an unverifiable guess. That was half right and
+    cost 62% of the training split: `slurm/driver_stats.sh` dropped 362 of 587 train stations
+    on `labels-qc-length-mismatch` before anyone noticed the path was not dead.
+
+    §35.27: it IS verifiable, and the trailing slice is correct. trim_pre2016.py trims
+    `labels/sm` and `labels/dates` from the FRONT and leaves `labels/qc` at its original
+    length, so qc is longer by exactly the pre-2016 span and its last n columns are the ones
+    that align. Measured on ISMN_AMMA-CATCH_Banizoumbou: sm/dates 1095, qc 1825, difference
+    730 — and station_splits.csv gives actual_start_date 2014-01-01, start_date 2016-01-01,
+    end_date 2018-12-30, i.e. 1825 days untrimmed and 1095 trimmed. Exact.
+
+    So the two directions are not the same problem and must not share a branch:
+
+      qc LONGER  than sm  ->  front-trim.  Recoverable, and verified here by requiring the
+                              date index to be contiguous daily: if `dates` covers a gapless
+                              daily span ending at the record's end, then qc — the same
+                              station's record over a longer span with the same end — aligns
+                              on its trailing n columns by construction.
+      qc SHORTER than sm  ->  no alignment exists.  Always fatal, `strict` or not.
+
+    `strict` now governs only the case that stays genuinely unverifiable (a non-contiguous
+    date index), which no current store exhibits.
     """
     if "labels/sm" not in zg:
         return None
@@ -253,15 +266,33 @@ def _load_zarr_labels(zg: zarr.Group, strict: bool = False):
             f"internally inconsistent, no alignment can be recovered."
         )
     if qc_np is not None and qc_np.shape[1] != sm_np.shape[1]:
-        if strict:
+        n_sm, n_qc = sm_np.shape[1], qc_np.shape[1]
+        where = getattr(zg.store, 'path', '<zarr>')
+
+        if n_qc < n_sm:
+            # No front-trim can make a SHORTER qc align with sm; there is nothing to recover.
             raise ValueError(
-                f"labels/qc has {qc_np.shape[1]} columns against {sm_np.shape[1]} in "
-                f"labels/sm and labels/dates ({getattr(zg.store, 'path', '<zarr>')}). "
-                f"The two were written by different passes and the offset is unknown; "
-                f"re-run trim_pre2016.py so labels/qc is trimmed with labels/sm."
+                f"labels/qc has {n_qc} columns against {n_sm} in labels/sm ({where}). "
+                f"qc is SHORTER than sm, so no trim can align them — the label block is "
+                f"corrupt. Re-run create_token_zarr.py for this station."
             )
-        # legacy permissive path — assume a front-trim, take the trailing n days
-        qc_np = qc_np[:, -sm_np.shape[1]:]
+
+        # qc is longer: the trim_pre2016.py front-trim. Verify before relying on it — the
+        # trailing slice is correct only if `dates` is a gapless daily span, which is what
+        # makes "same end date, longer start" imply trailing alignment.
+        contiguous = (len(times) >= 2
+                      and (times[-1] - times[0]).days + 1 == len(times)
+                      and bool((np.diff(times.values.astype("datetime64[D]")).astype(int) == 1).all()))
+        if not contiguous:
+            msg = (f"labels/qc has {n_qc} columns against {n_sm} in labels/sm ({where}) and "
+                   f"labels/dates is NOT a contiguous daily span, so the front-trim that "
+                   f"normally explains the difference cannot be verified. Refusing to guess "
+                   f"the offset — a wrong guess trains gap-filled days as observed.")
+            if strict:
+                raise ValueError(msg)
+            print(f"  [labels] WARNING: {msg}")
+
+        qc_np = qc_np[:, -n_sm:]
     return sm_np, depths, times, qc_np
 
 
