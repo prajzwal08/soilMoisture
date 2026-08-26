@@ -10618,6 +10618,7 @@ Both changes measured against the killed job's numbers, same node (gcn91):
 ```
                       26076503 (before)   26082396 (after)
 preload wall-clock            2733.5 s            55.5 s     49x
+  (cold node, job 26083217)                              47.4 s     58x
 /dev/shm                      153.6 GB           758 MiB     1/196
 bins written                      1892              1892     none lost
   s2 / s1_asc / s1_desc                    647 / 645 / 600
@@ -10625,9 +10626,27 @@ narrowed=true                        0              1892
 patch-axis widths seen             196                 1
 ```
 
-CAVEAT ON THE 49x: 26082396 landed on gcn91, the SAME node 26076503 had read these files from
-90 minutes earlier, so GPFS pagepool was warm. The speedup is a best case and a cold node will
-be slower. The 758 MiB is not cache-dependent and holds everywhere.
+CAVEAT WITHDRAWN, AND THE NUMBER IS BIGGER (2026-08-27). This section originally warned
+that the 49x was a warm-pagepool best case, because 26082396 landed on gcn91 -- the same node
+26076503 had read these files from 90 minutes earlier. That was a guess, and it was wrong.
+Job 26083217 (`pw_stage2a_L3`) landed on **gcn117, a node that had never touched this store**,
+and preloaded in **47.4 s** -- FASTER than the warm run's 55.5 s, with the per-100-station
+ladder matching within a second at every point:
+
+```
+        gcn117 (cold)   gcn91 (warm)
+100/647      8.7 s          9.4 s
+200/647     15.1 s         14.8 s
+300/647     23.2 s         23.4 s
+400/647     29.4 s         31.4 s
+647/647     47.3 s         55.4 s
+```
+
+So the speedup is **58x**, it comes entirely from the 64-way fan-out, and caching was never
+part of it. This was already implied by the serial run's 10.6% CPU: the read was blocked on
+PER-FILE LATENCY, which parallelism removes outright and which a warm cache would only partly
+mask. The lesson worth keeping is that the caveat was reasoning, not measurement, and it
+survived into a commit message and the session log before a free experiment refuted it.
 
 The width-refusal check fired in production exactly as designed: `[diag] patch-map loader
 ready: 1532 samples, token_sel=all`. That dataset inherits training's `shm_dir`, found K=1

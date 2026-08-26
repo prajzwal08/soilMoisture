@@ -5737,3 +5737,16 @@ SESSION 34 — §35.31 the preload read 196 patches to use 1 (2026-08-26)
   §35.31c batch size: 11.8/100 GB VRAM means lots of headroom, but lr=2e-4 and
   warmup=1000 were tuned for 128 and §35.30 endpoint 2 compares against a baseline
   trained at 128.  Deliberate follow-up with lr rescaled, NOT a mid-flight knob.
+
+  CAVEAT WITHDRAWN (2026-08-27, job 26083217).  The "49x is warm-cache best case"
+  note above was REASONING, not measurement, and it was wrong.  pw_stage2a_L3
+  landed on gcn117 -- a node that had never read this store -- and preloaded in
+  47.4 s, FASTER than gcn91's warm 55.5 s, ladder matching within a second:
+        gcn117 cold    gcn91 warm
+    100      8.7 s        9.4 s
+    400     29.4 s       31.4 s
+    647     47.3 s       55.4 s
+  So it is 58x, entirely from the 64-way fan-out.  The serial run's 10.6% CPU had
+  already said this: blocked on PER-FILE LATENCY, which parallelism removes and a
+  warm cache would only partly mask.  The caveat reached a commit message and this
+  log before a free experiment refuted it.
