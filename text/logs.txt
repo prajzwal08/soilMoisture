@@ -5258,3 +5258,93 @@ NEXT
      while translation augmentation is undecided); per-patch soil (460 KB -> 16 KB);
      multi-station supervision via location_group_id, which station_splits.csv has
      (906 groups) and dataset.py has never read.
+
+================================================================================
+SESSION 33 — 2026-08-26 — Two-round audit of dataset.py / model.py / train.py
+================================================================================
+Branch feat/patchwise-temporal.  Rollback tag: pre-s33-audit-fixes.
+Runbook section: §35.24.  Maths doc revised in place (now derived at L=105).
+
+WHAT HAPPENED
+  Audited the three files against text/patchwise_math.md — four agents (one per
+  file plus interfaces), then a second external review.  ~30 defects found and
+  fixed.  NOT ONE OF THEM WOULD HAVE CRASHED.  The design survived intact;
+  the implementation did not.
+
+THE THREE CLASSES
+  1. Fail-open data paths.  Missing cloud mask -> all 60 S2 acquisitions "clear".
+     Missing S1 token_mask -> border/shadow patches valid.  Missing QC variable ->
+     gap-filled climatology trained as observed truth.  Missing DEM nodata mask ->
+     an all-zero token read as terrain.  All-NaN soil channel -> NaN through
+     SoilEncoder into Kc/Vc and the whole cross-attention.  All now fail closed
+     AND counted and printed — the counting is the point, after §32.
+  2. Diagnostics that could not see what they were built for.  The §35.20 entropy
+     detector head-averaged before computing entropy, spanned the 5 prefix
+     columns, compared against a fixed log(100) although the median station-year
+     has ~36 of 60 S2 slots (so a COLLAPSED row scored 4.0 and passed), and was
+     overwritten every forward — one batch, rank 0.  The depth-collapse metric had
+     been reading a getattr default since the U-Net strip and logged NOTHING.
+     Both rebuilt as epoch-accumulated all_reduce(SUM) with a per-sample
+     log(n_valid) reference: 1.0 now means collapsed.  SUPERSEDES the "log 100 =
+     4.605" instruction at the end of §35.23.
+  3. Scale.  nn.Embedding defaults to normal_(0,1) against an era5_mlp output of
+     sigma 0.22 — the driver token was ~98% calendar, 2% weather.  All seven
+     tables -> trunc_normal_(0.02), which only works alongside input LayerNorms on
+     the frozen TerraMind features (otherwise the same problem moves to history).
+
+HARDEST TO FIND
+  ERA5 was the only modality taking staleness from its SLOT INDEX rather than its
+  real date, in a window that load_era5_rolling COMPACTS.  Plus a year-granular
+  admission guard: a station whose ERA5 ended 2023-03-15 still admitted an August
+  target and put the March row at slot 364 as "today's weather".  circular_doy_pe
+  carried the true DOY all along, so the two clocks disagreed and nothing said so.
+
+ARCHITECTURE — THE FINDING THAT MATTERS
+  Training K=1, inference K=196, and the 431 driver tokens are tile-constant by
+  construction.  So the loss is fully minimised by a function that IGNORES
+  dem_k/lulc_k/hist_k, and at K=196 that emits 196 identical values.
+  §35.9's arms were always the test.  What was missing: TWO ORTHOGONAL COLLAPSE
+  MODES, one detector.
+      temporal collapse   -> entropy ratio -> 1.0
+      spatial invariance  -> map SD -> 0
+  §35.20 says map SD does not catch attention collapse — true, and the converse is
+  equally true and was never written down.  Neither substitutes for the other.
+  Both now run once per val epoch, plus a per-patch-vs-driver gradient-norm ratio.
+  Also: the K=196 path had NEVER been executed end to end, and at inference the
+  model is fed patches out of its training distribution (water, urban, swath edge).
+
+TESTS
+  The old suite set every validity tensor all-True and era5_doys never 0, so no
+  test batch contained a single padded token: deleting a ~ anywhere in the masking
+  chain passed everything, and so did permuting depth_heads.  Both chains were in
+  fact correct; nothing defended them.  Rewritten as pytest, ~85 functions.
+
+BLOCKING DISCOVERY
+  /gpfs/work3/0/prjs1968/data/{cat}/{station}/ERA5Land NO LONGER EXISTS — 0 of 842
+  sm_only station dirs have it, and /projects/prjs1968/data is the same inode.
+  compute_era5_stats.py would have silently skipped every station.  Both stats
+  scripts now read era5/values from the token zarr, which also fixes the old
+  nc_files[0] partial read at the root.
+
+STATE
+  NOTHING WAS EXECUTED — every fix made by reading, per the no-login-node rule.
+  All five modules parse.  "Carefully reviewed, unverified."
+
+NEXT, IN THIS ORDER (driver_stats.json is now a hard fail-closed dependency)
+  1. sbatch slurm/run_tests.sh        # must be green first
+  2. sbatch slurm/driver_stats.sh     # writes csvs/era5_stats.json + driver_stats.json
+  3. sbatch slurm/train.sh --driver-mode memory --driver-layers 2 --n-layers 6 \
+       --run-name patchwise_2a
+  4. Review the diff by eye at the two places a mistake is silent: model.py
+     _forward_patchwise's kv/(D,P) view, and dataset.py _read_patch_tokens.
+  5. Still deferred: back up cls_depth_star_reg (604 MB, exists once); per-patch
+     soil (460 KB -> 16 KB); multi-station supervision via location_group_id.
+
+OPEN DECISIONS LEFT TO THE USER
+  - CM_MAX_BAD_FRAC = 0.01 over a 16x16 block admits at most TWO bad pixels
+    (3 px = 1.17% and fails).  Left as zero-tolerance, now documented.
+  - era5_require_full_window defaults False: the trailing-edge test is
+    unconditional (that was the bug), but requiring full coverage would delete the
+    first year of every station.  Count prints either way.
+  - CLAUDE.md is untracked (.gitignore line 24 is *.md) — needs git add -f to be
+    versioned or rolled back.

@@ -31,9 +31,13 @@ FAIL=0
 step () { echo; echo "=================== $* ==================="; }
 
 step "1. unit tests"
-for t in test_patchwise_model.py test_patchwise_dataset.py; do
-    conda run -n terramind --no-capture-output python "$t" || { echo "FAILED: $t"; FAIL=1; }
-done
+# `python test_patchwise_model.py` was a NO-OP that always passed: §35.24 rewrote both files
+# as pytest modules, and running a pytest module as a script just imports it and exits 0
+# without executing a single test. It has to go through the pytest runner.
+conda run -n terramind --no-capture-output \
+    python -m pytest test_patchwise_model.py test_patchwise_dataset.py \
+    -v -ra --tb=short -m "not gpu" \
+    || { echo "FAILED: patchwise unit tests"; FAIL=1; }
 
 step "2. FROZEN SNAPSHOT — the only route back to the baseline"
 # §35.21: cls_depth_star_reg's 604 MB of weights exist exactly once, no backup. If this set

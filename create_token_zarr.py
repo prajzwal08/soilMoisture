@@ -13,6 +13,7 @@ Output: /gpfs/scratch1/shared/pkhanal/zarr/{category}/{station}/
   sif/values  (N,),   date_ints (N,) int32, doys (N,) int32
   twsa/lwe (N,), lwe_uncertainty (N,), date_ints (N,) int32, doys (N,) int32
   labels/sm (n_depths,n_days), qc (n_depths,n_days), depths (n_depths,), dates (n_days,)
+                        qc: 0=observed, 1=gap-filled, 2=missing, 255=no QC source in the NetCDF
   .zmetadata  ← consolidated metadata for fast zarr.open_consolidated()
   .complete   ← sentinel written last; station skipped if already present
 
@@ -52,6 +53,17 @@ ERA5_VARS = [
 
 COMPRESSOR = numcodecs.Blosc(cname="zstd", clevel=3, shuffle=numcodecs.Blosc.SHUFFLE)
 LAYERS     = ["l12", "l9", "l6", "l3"]
+
+# labels/qc encoding, matching preprocessing_ISMN_soilMoisture.py:
+#   0 = directly observed, 1 = gap-filled from the month-day climatology, 2 = still missing.
+# 255 is NEW (§35.24 audit item 4): "the source NetCDF carried no QC variable at all".
+# write_labels used to default the whole array to ZEROS in that case, i.e. it asserted every
+# day was a direct observation. The preprocessing pipeline gap-fills with a climatological
+# mean, so those zeros told dataset.py to train on climatology as if it were ground truth —
+# which is a station-mean predictor with a ground-truth badge, and no downstream check could
+# tell the difference. The sentinel makes the absence explicit and dataset.py drops the
+# station rather than trusting it.
+QC_NO_SOURCE = 255
 
 # Temporal chunk sizes tuned for GPFS (10-100 MB uncompressed per chunk):
 #   T_TOKENS = 32  →  32 × 196 × 768 × 2 B fp16 = 9.6 MB  (rolling-window of 60 = 2 reads)
@@ -255,7 +267,10 @@ def write_labels(root: zarr.Group, dir_name: str, category: str,
         sm_da = sm_da.transpose("depth", time_coord)
     sm     = sm_da.values.astype(np.float32)[:, mask]
     depths = np.array([str(d) for d in ds["depth"].values], dtype="U20")
-    qc     = np.zeros_like(sm, dtype=np.uint8)
+    # Fail closed: the sentinel, NOT zeros. See the QC_NO_SOURCE note at the top of the file —
+    # defaulting to 0 ("observed") is the difference between training on measurements and
+    # training on a month-day climatology while believing it is measurements.
+    qc     = np.full(sm.shape, QC_NO_SOURCE, dtype=np.uint8)
     for qc_var in ("soil_moisture_qc", "quality_flag"):
         if qc_var in ds:
             qc_da = ds[qc_var]

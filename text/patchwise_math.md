@@ -1,9 +1,16 @@
 # The patchwise processor — the maths from first principles
 
 **Status:** written 2026-08-26, session 32, branch `feat/patchwise-temporal`.
+**Revised 2026-08-26, session 33** — re-derived at `L = 105` after §35.22 removed the patch CLS,
+and re-audited against the code (§35.24). Every arithmetic below is now the arithmetic the
+implementation actually performs.
 **Purpose:** to make the §35.14–§35.17 decision checkable rather than assertable. Everything here is
 elementary; nothing is skipped. The build plan that follows from it is §35.18 of
 `text/training_runbook.md`.
+
+**A note on citations.** This document used to cite `file.py:NNN`. Every one of those had drifted
+by session 33 and the drift is what made the audit trail unverifiable, so references are now to
+**symbol names** (`dataset.py STATION_TOKEN`, `model.py _build_patch_seq`) which survive edits.
 
 The question this document answers:
 
@@ -165,13 +172,14 @@ cleanly by which side they touch:
 
 ```
 Wk_c, Wv_c     act on m    (M = 431 rows, no k)   ->  CACHED, computed once per tile-day
-Wq_c, Wo_c     act on x_k  (L = 106 rows, has k)  ->  run per patch, 196 times
+Wq_c, Wo_c     act on x_k  (L = 105 rows, has k)  ->  run per patch, 196 times
 ```
 
-That split is exactly the `2 · 106 · 768²` per patch versus `2 · 431 · 768²` once, in §6.
+That split is exactly the `2 · 105 · 768²` per patch versus `2 · 431 · 768²` once, in §6.
 
 In PyTorch: `Wq, Wk, Wv` are stored packed as `in_proj_weight` (shape `(3d, d)`) and `Wo` is
-`out_proj`. That packing is why `train.py:463` matches `endswith("bias")` rather than `".bias"`.
+`out_proj`. That packing is why `train.py`'s `split_decay_params` matches `endswith("bias")`
+rather than `".bias"` — `in_proj_bias` has no dot before `bias`.
 
 ### 1.4 The complete layer
 
@@ -185,8 +193,8 @@ FFN(Z) = GELU(Z · W1) · W2         (n, d)
 X2 = X1 + FFN(LN(X1))              (n, d)     feed-forward sub-block, residual
 ```
 
-This repo uses `norm_first=True` (`model.py:411-416`), i.e. exactly the pre-norm form above, with
-`N = 6` layers.
+This repo uses `norm_first=True` (T1's `nn.TransformerEncoderLayer`, and `PatchwiseBlock.forward`
+by construction), i.e. exactly the pre-norm form above, with `N = 6` layers.
 
 ### 1.5 Cost of one layer — and the fact everything hinges on
 
@@ -200,11 +208,11 @@ LINEAR total                           12 · n · d²      grows LINEARLY   in n
 ATTENTION         Q·Kᵀ and A·V     =    2 · n² · d       grows QUADRATICALLY in n
 ```
 
-At `n = 537`, `d = 768`:
+At `n = 536`, `d = 768`:
 
 ```
-linear      12 · 537 · 768²  =  3.80e9      ~90%
-attention    2 · 537² · 768  =  0.44e9      ~10%
+linear      12 · 536 · 768²  =  3.79e9      ~90%
+attention    2 · 536² · 768  =  0.44e9      ~10%
 ```
 
 **The linear term dominates.** This is why §34.7 and `open_items.md` §G2 reached wrong conclusions —
@@ -221,29 +229,41 @@ argument in this project that quotes an attention-pair ratio should be re-derive
 tile                 2240 m x 2240 m           224 x 224 pixels at 10 m
 TerraMind patch      16 x 16 px = 160 m
 token grid           14 x 14 = 196 patches     P = 196
-station token        index 105 = (112//16)·14 + (112//16) = 7·14 + 7      dataset.py:74
+station token        index 105 = (112//16)·14 + (112//16) = 7·14 + 7   dataset.py STATION_TOKEN
 ```
 
 Note 105 is a *token* index; 112 is a *pixel* coordinate. Both appear in the codebase and they are
-not the same thing.
+not the same thing. One caveat worth stating: the 224-pixel crop's true centre is pixel 111.5, so
+112 is the **first** pixel of patch (7,7), not its centre — the station can sit up to 80 m off the
+centre of the patch that supervises it.
 
 ### 2.2 Patch-specific tokens `x_k` — these carry the index k
 
 ```
-x_k                          (L, d) = (106, 768)
+x_k                          (L, d) = (105, 768)
 
-  depth_CLS      (3,   768)   three learned tokens, one per SM depth (0-10, 10-30, 30-100 cm)
+  depth_CLS      (3,   768)   three learned tokens, one per SM depth (0-10, 10-30, 30-100 cm).
+                              These ARE the readouts — each attends with its own query and its
+                              output row is that depth's prediction.
   dem_k          (1,   768)   TerraMind L12 token for patch k of the DEM
   lulc_k         (1,   768)   TerraMind L12 token for patch k of the land cover map
   hist_k         (100, 768)   60 S2 + 40 S1 acquisitions; patch k's OWN token from each
-                              (MAX_S2 = 60, MAX_S1 = 40, dataset.py:75-76)
-  CLS            (1,   768)   learned readout token — its final state IS patch k's prediction
+                              (dataset.py MAX_S2 = 60, MAX_S1 = 40)
                               ------
-                              L = 106
+                              L = 105
 ```
 
-Each history token additionally receives `rel_pos_emb(staleness)` and `hist_modality_emb(S2 or S1)`,
-exactly as the current model does (`model.py:577-601`).
+**There is no separate patch CLS.** §35.22 removed it: each depth CLS is already a full readout
+over all 105 tokens with its own learned query, so a shared CLS split three ways was strictly
+redundant with them. Earlier drafts of this document specified `L = 106` with a trailing `CLS`
+row, and every number downstream — the §6 cost table, the §8 97%-vs-19% figures — was computed on
+that length. They are re-derived at 105 below.
+
+Each history token additionally receives `rel_pos_emb(staleness)` and a modality tag. The tag is
+**three-valued**, not two (`model.py hist_modality_emb`): S2, S1-ascending, S1-descending. The
+dataset merges the two S1 orbits into one date-sorted list, and RTC backscatter differs
+systematically between them by an amount comparable to the moisture signal, so without the split
+an orbit switch is indistinguishable from a wetting event (§35.24).
 
 ### 2.3 Tile-level driver tokens `m` — these carry NO index k
 
@@ -259,10 +279,34 @@ m                            (M, d) = (431, 768)
 ```
 
 Each also receives `circular_doy_pe(absolute DOY)` — the seasonal clock — and
-`rel_pos_emb(staleness)` — the recency clock. SIF and TWSA are sparse, so their `rel_pos` comes from
-the real observation date per slot, not the slot index.
+`rel_pos_emb(staleness)` — the recency clock. **Every** modality's `rel_pos` comes from the real
+observation date per slot, never from the slot index. ERA5 used to be the exception: the dataset
+right-aligns a *compacted* window, so the model's `arange(365)` was only correct when the window
+had no interior missing day, and a year-granular admission guard could place a months-old row at
+slot 364 and label it "today's weather". The dataset now emits `era5_rel_pos` (§35.24).
 
-Concatenated: `T = L + M = 106 + 431 = 537`.
+**Normalisation is part of the specification, not an implementation detail.** All four driver
+streams are z-scored against train-split statistics before they reach their MLPs — ERA5 from
+`csvs/era5_stats.json`, and SIF / TWSA / soil from `csvs/driver_stats.json`. Until §35.24 only
+ERA5 was normalised, so TWSA (± tens of cm of water) and the soil channels (bulk density ~1300,
+pH×10, clay %) entered a residual stream whose ERA5 tokens were exactly N(0,1): the driver
+memory's modality mixture was set by units rather than by information.
+
+Concatenated: `T = L + M = 105 + 431 = 536`.
+
+### 2.3.1 Scale of the annotations
+
+The three additive terms — content, DOY code, staleness code — must enter at comparable
+magnitude. `nn.Embedding` defaults to `normal_(0, 1)` while `era5_mlp`'s output sits at
+`sigma ≈ 0.22`, which made the driver token ~98% calendar and ~2% weather at initialisation, with
+`driver_norm` then normalising that mixture. All positional and modality tables, and the DOY code,
+are now initialised at `std = 0.02` (`model.py EMB_INIT_STD`), the ViT/BERT convention.
+
+`circular_doy_pe` also had an aliasing defect: harmonics ran `k = 1 … 384` against a daily-sampling
+Nyquist limit of `k = 182`, so more than half the channels were reflected copies of harmonics
+already present (and `k` and `k + 365` are near-degenerate, so `k = 366 … 384` duplicated
+`k = 1 … 19`). Harmonics are now geometrically spaced integers capped at
+`DOY_MAX_HARMONIC = 26` — ~2-week resolution, exactly periodic at 365.25 days, nothing aliased.
 
 ### 2.4 Why `m` has no `k` — this is a fact about the data, not a modelling choice
 
@@ -293,19 +337,22 @@ set the tile's *level* and its *dynamics*; they cannot set its *pattern*. That i
 ### 3.1 The sequence
 
 ```
-X_k = [ x_k ; m ]                (T, d) = (537, 768)     one sequence PER PATCH
+X_k = [ x_k ; m ]                (T, d) = (536, 768)     one sequence PER PATCH
 ```
 
-All 537 tokens go into one self-attention stack, `N = 6` layers.
+All 536 tokens go into one self-attention stack, `N = 6` layers. **Concat does not build T1 at
+all** — the 431x431 block it would provide is already inside the joint stack (§4.3), so running
+the driver encoder in both modes gave concat that block twice and fed it a LayerNorm'd memory
+against raw patch tokens, biasing the very softmax-budget comparison §7/§8 exists to make.
 
 ### 3.2 Block structure of the projections
 
 ```
-Q_k = X_k · Wq       (537, 768)      rows   0..105  =  x_k · Wq     (106, 768)   has k
-                                     rows 106..536  =  m   · Wq     (431, 768)   NO k
+Q_k = X_k · Wq       (536, 768)      rows   0..104  =  x_k · Wq     (105, 768)   has k
+                                     rows 105..535  =  m   · Wq     (431, 768)   NO k
 
-K_k = X_k · Wk       (537, 768)      bottom 431 rows = m · Wk                    NO k
-V_k = X_k · Wv       (537, 768)      bottom 431 rows = m · Wv                    NO k
+K_k = X_k · Wk       (536, 768)      bottom 431 rows = m · Wk                    NO k
+V_k = X_k · Wv       (536, 768)      bottom 431 rows = m · Wv                    NO k
 ```
 
 **There is the duplication, stated exactly:** `m·Wk` and `m·Wv` are computed once per patch and
@@ -318,10 +365,10 @@ wasted multiply-adds per layer  =  2 · 431 · 768² · 196  =  1.0e11
 ### 3.3 Block structure of the attention
 
 ```
-S_k  (537, 537)
+S_k  (536, 536)
 
-     |  (106, 106)   patch reads patch      |  (106, 431)   patch reads weather   |
-     |  (431, 106)   WEATHER READS PATCH    |  (431, 431)   weather reads weather |
+     |  (105, 105)   patch reads patch      |  (105, 431)   patch reads weather   |
+     |  (431, 105)   WEATHER READS PATCH    |  (431, 431)   weather reads weather |
 ```
 
 The top-right block is the one we want: a patch reading the weather. The bottom-left block is the
@@ -332,16 +379,16 @@ one that causes all the trouble.
 Split the attention output by row:
 
 ```
-A_k · V_k                    (537, 768)
-   rows   0..105   ->  updated patch tokens      (106, 768)
-   rows 106..536   ->  updated weather tokens    (431, 768)   call this m_k
+A_k · V_k                    (536, 768)
+   rows   0..105   ->  updated patch tokens      (105, 768)
+   rows 105..535   ->  updated weather tokens    (431, 768)   call this m_k
 ```
 
 and written out:
 
 ```
 m_k = softmax( [ m·Wq·(x_k·Wk)ᵀ ,  m·Wq·(m·Wk)ᵀ ] ) · [ x_k·Wv ; m·Wv ] · Wo
-                 (431, 106)          (431, 431)          (106, 768)  (431, 768)
+                 (431, 105)          (431, 431)          (105, 768)  (431, 768)
 ```
 
 `m_k` depends on `k` through `x_k`. **A concrete demonstration**, `d = 2`, `Wq = Wk = Wv = Wo = I`,
@@ -390,26 +437,26 @@ means retraining from scratch.
 
 ## 4. Design B — read-only memory
 
-### 4.1 Delete the (431, 106) block
+### 4.1 Delete the (431, 105) block
 
 ```
-x_k'   = x_k   + SelfAttn ( LN(x_k) )              (106, 768)     over the 106 only
-x_k''  = x_k'  + CrossAttn( LN(x_k'), m )          (106, 768)     patch READS weather
-x_k''' = x_k'' + FFN      ( LN(x_k'') )            (106, 768)
+x_k'   = x_k   + SelfAttn ( LN(x_k) )              (105, 768)     over the 105 only
+x_k''  = x_k'  + CrossAttn( LN(x_k'), m )          (105, 768)     patch READS weather
+x_k''' = x_k'' + FFN      ( LN(x_k'') )            (105, 768)
 m      = m                                          (431, 768)     NEVER UPDATED
 ```
 
 ### 4.2 The cross-attention, dimensioned
 
 ```
-Q  = LN(x_k') · Wq_c        (106, 768)     queries come from the PATCH      -- has k
+Q  = LN(x_k') · Wq_c        (105, 768)     queries come from the PATCH      -- has k
 Kc = m · Wk_c               (431, 768)     keys   come from the WEATHER     -- NO k
 Vc = m · Wv_c               (431, 768)     values come from the WEATHER     -- NO k
 
-S  = Q · Kcᵀ / sqrt(64)     (106, 431)     each patch token scores all 431 driver tokens
-A  = softmax(S, dim=-1)     (106, 431)     rows sum to 1
-Y  = A · Vc                 (106, 768)
-out = Y · Wo_c              (106, 768)
+S  = Q · Kcᵀ / sqrt(64)     (105, 431)     each patch token scores all 431 driver tokens
+A  = softmax(S, dim=-1)     (105, 431)     rows sum to 1
+Y  = A · Vc                 (105, 768)
+out = Y · Wo_c              (105, 768)
 ```
 
 `Kc` and `Vc` carry no `k`. Therefore compute them **once per tile-day, per layer**, and reuse:
@@ -428,9 +475,9 @@ The clean way to see this is against the four blocks of §3.3. The memory design
 one** of them:
 
 ```
-106 x 106   patch <-> patch        KEEP   -> self-attention over the 106
-106 x 431   patch reads weather    KEEP   -> cross-attention into the cache
-431 x 106   weather reads patch    DELETE <- the entire design decision
+105 x 105   patch <-> patch        KEEP   -> self-attention over the 105
+105 x 431   patch reads weather    KEEP   -> cross-attention into the cache
+431 x 105   weather reads patch    DELETE <- the entire design decision
 431 x 431   weather <-> weather    KEEP   -> ??? nothing does this yet
 ```
 
@@ -478,17 +525,17 @@ lifted out of the per-patch loop.
 The design is the classic **encoder--decoder** shape (Vaswani et al.): one transformer reads the
 source once, a second transformer cross-attends into its frozen output at every layer. Swap "source
 sentence" for "the tile's weather" and "target sentence" for "this patch" and it is the same
-machine. Two differences from a translation model: **no causal mask** (a patch's 106 tokens are a
-set, not generated left-to-right), and the output is a **regression** (one CLS row -> 3 numbers),
+machine. Two differences from a translation model: **no causal mask** (a patch's 105 tokens are a
+set, not generated left-to-right), and the output is a **regression** (three depth-CLS rows -> 3 numbers),
 not a vocabulary distribution.
 
 ```
 TRANSFORMER 1   "weather encoder"    431 tokens    2 layers    runs   1x per tile-day
-TRANSFORMER 2   "patch decoder"      106 tokens    6 layers    runs 196x (batched)
+TRANSFORMER 2   "patch decoder"      105 tokens    6 layers    runs 196x (batched)
                 reads transformer 1's final output as a fixed memory
 
-concat  =  ONE transformer over 537 tokens, run 196 times
-memory  =  TWO transformers -- 431 run once, 106 run 196 times
+concat  =  ONE transformer over 536 tokens, run 196 times
+memory  =  TWO transformers -- 431 run once, 105 run 196 times
 ```
 
 ```mermaid
@@ -526,27 +573,27 @@ flowchart TD
         LU["lulc_k (1, 768)"] --> XK
         H["hist_k (100, 768)<br/>60 S2 + 40 S1, patch k's OWN token<br/>+ rel_pos + hist_modality"] --> XK
         CL["CLS (1, 768)"] --> XK
-        XK["x_k (106, 768)"]
+        XK["x_k (105, 768)"]
     end
 
     subgraph T2["TRANSFORMER 2 -- patch decoder -- RUNS 196x, batched, ONE instance"]
         direction TB
-        P1["layer 1<br/>SelfAttn over 106<br/>CrossAttn -> Kc_1,Vc_1<br/>FFN"]
+        P1["layer 1<br/>SelfAttn over 105<br/>CrossAttn -> Kc_1,Vc_1<br/>FFN"]
         P1 --> PDOTS["... layers 2..5 ..."]
-        PDOTS --> P6["layer 6<br/>SelfAttn over 106<br/>CrossAttn -> Kc_6,Vc_6<br/>FFN"]
-        P6 --> XOUT["x_out (106, 768)"]
+        PDOTS --> P6["layer 6<br/>SelfAttn over 105<br/>CrossAttn -> Kc_6,Vc_6<br/>FFN"]
+        P6 --> XOUT["x_out (105, 768)"]
     end
 
     subgraph AFTER["AFTER -- readout"]
         direction TB
-        HK["take the CLS row<br/>h_k (768,)"] --> HEAD["head : Linear 768 -> 3"]
+        HK["take the 3 depth-CLS rows<br/>h_k,d (768,) each"] --> HEAD["head_d : Linear 768 -> 1<br/>one per depth"]
         HEAD --> PRED["pred (3,)<br/>one value per depth"]
     end
 
     CAT --> L1
     MFINAL --> KVL
     XK --> P1
-    KVL -.->|"READ-ONLY, same m at every layer<br/>431x106 block DELETED"| P1
+    KVL -.->|"READ-ONLY, same m at every layer<br/>431x105 block DELETED"| P1
     KVL -.-> P6
     XOUT --> HK
     PRED --> MAP["196 patches -> (196,3) -> (14,14,3)<br/>soil-moisture map @ 160 m<br/>training K=1 (token 105) | inference K=196, same checkpoint"]
@@ -571,15 +618,15 @@ Same thing in ASCII, for viewers without mermaid:
                     |                                 + rel_pos + modality tags
                     v                                       |
             m_raw  (431,768)                                v
-                                                     x_k  (106,768)
+                                                     x_k  (105,768)
 
 ===================  INSIDE : two transformers, not one  =======================
 
   TRANSFORMER 1 -- weather encoder            TRANSFORMER 2 -- patch decoder
   runs ONCE per tile-day                      runs 196x (batch dim), ONE instance
 
-    m_raw (431,768)                             x_k (106,768)
-      layer 1  SelfAttn(431) + FFN                layer 1  SelfAttn(106)
+    m_raw (431,768)                             x_k (105,768)
+      layer 1  SelfAttn(431) + FFN                layer 1  SelfAttn(105)
       ...                                                  CrossAttn -> Kc_1,Vc_1  --,
       layer N  SelfAttn(431) + FFN                         FFN                       |
           |                                       layer 2  ... -> Kc_2,Vc_2  --------|
@@ -589,11 +636,11 @@ Same thing in ASCII, for viewers without mermaid:
           |  six projections of the SAME m                 v                         |
           +--> Kc_1,Vc_1  Kc_2,Vc_2 ... Kc_6,Vc_6  >>> read-only, never written back -+
                         THE CACHE, 7.9 MB fp16                       |
-                                                            x_out (106,768)
+                                                            x_out (105,768)
 
 =========================  AFTER : vector -> numbers  ==========================
 
-    x_out (106,768) --take the CLS row--> h_k (768,) --head--> pred (3,)  per depth
+    x_out (105,768) --take the 3 depth-CLS rows--> h_k,d (768,) --head_d--> pred (3,)  per depth
                                                                    |
                       196 patches -> (196,3) -> reshape -> (14,14,3) map @ 160 m
                       training  K=1  (token 105, one label, Huber loss)
@@ -616,9 +663,9 @@ it. That is why the cache holds six entries rather than one.
 Read the diagram against the four blocks of §3.3:
 
 ```
-106x106   patch <-> patch        KEPT     -> transformer 2, self-attention
-106x431   patch reads weather    KEPT     -> transformer 2, cross-attention
-431x106   weather reads patch    DELETED  <- the entire design decision
+105x105   patch <-> patch        KEPT     -> transformer 2, self-attention
+105x431   patch reads weather    KEPT     -> transformer 2, cross-attention
+431x105   weather reads patch    DELETED  <- the entire design decision
 431x431   weather <-> weather    KEPT     -> transformer 1
 ```
 
@@ -633,13 +680,13 @@ one convolution per location.
 
 ```
 Kc     (D, 431, 768)     ->  heads  (D, 12, 431, 64)        one cache per DAY
-Q      (D, P, 106, 768)  ->  heads  (D, P, 12, 106, 64)     one query set per (day, patch)
+Q      (D, P, 105, 768)  ->  heads  (D, P, 12, 105, 64)     one query set per (day, patch)
 
-S = einsum('dphlx,dhmx->dphlm', Q, Kc)      (D, P, 12, 106, 431)
-A = softmax(S / sqrt(64), dim=-1)           (D, P, 12, 106, 431)
-Y = einsum('dphlm,dhmx->dphlx', A, Vc)      (D, P, 12, 106, 64)
-    reshape                                 (D, P, 106, 768)
-out = Y · Wo_c                              (D, P, 106, 768)
+S = einsum('dphlx,dhmx->dphlm', Q, Kc)      (D, P, 12, 105, 431)
+A = softmax(S / sqrt(64), dim=-1)           (D, P, 12, 105, 431)
+Y = einsum('dphlm,dhmx->dphlx', A, Vc)      (D, P, 12, 105, 64)
+    reshape                                 (D, P, 105, 768)
+out = Y · Wo_c                              (D, P, 105, 768)
 ```
 
 Read the index letters: `d` (day) appears on **both** `Q` and `Kc`; `p` (patch) appears on **`Q`
@@ -653,10 +700,18 @@ asserted in `test_patchwise_model.py`.
 Readout:
 
 ```
-x_final[:, :, -1, :]      (D, P, 768)       the per-patch CLS row
-head:  Linear(768 -> n_depths)
+x_final[:, :, :3, :]      (D, P, 3, 768)    the three depth-CLS rows — the PREFIX, not the
+                                            last row: §35.22 removed the trailing patch CLS
+head_d:  Linear(768 -> 1), one per depth, reading its OWN row
 pred                      (D, P, 3)         P = 196 -> reshape (D, 14, 14, 3) @ 160 m
 ```
+
+Each `head_d`'s bias is initialised to that depth's train-set mean soil moisture
+(`csvs/driver_stats.json`), not to PyTorch's default `U(±0.036)`. Labels are raw m3/m3 at ~0.25,
+and Huber's `delta = 0.05` puts a 0.2 residual deep in the **linear** regime, where the gradient is
+a constant `±delta` carrying no information about the size of the error — so a default-initialised
+head spends its first epochs walking three scalars to the data mean while every diagnostic reports
+on an attention pattern that has not begun to train.
 
 **Training is the same code with P = 1** (`token_sel="station"`, patch index 105). Inference is the
 same code with P = 196 and the *same checkpoint*. That is forced by weight sharing, and it is the
@@ -703,46 +758,46 @@ Per layer, `d = 768`, multiply-adds.
 
 ```
 CONCAT, per patch:
-  Wq, Wk, Wv, Wo     4 · 537 · 768²            =  1.267e9
-  FFN W1, W2         8 · 537 · 768²            =  2.534e9
-  Q·Kᵀ , A·V         2 · 537² · 768            =  0.443e9
+  Wq, Wk, Wv, Wo     4 · 536 · 768²            =  1.265e9
+  FFN W1, W2         8 · 536 · 768²            =  2.529e9
+  Q·Kᵀ , A·V         2 · 536² · 768            =  0.441e9
                                                   -------
-                                                  4.244e9    x 196 patches = 8.32e11
+                                                  4.235e9    x 196 patches = 8.30e11
 
 MEMORY, once per tile-day:
   Kc, Vc             2 · 431 · 768²            =  0.508e9
 
 MEMORY, per patch:
-  self Wq..Wo        4 · 106 · 768²            =  0.250e9
-  self Q·Kᵀ, A·V     2 · 106² · 768            =  0.017e9
-  cross Wq, Wo       2 · 106 · 768²            =  0.125e9      (Q and O only — K,V are cached)
-  cross Q·Kcᵀ, A·Vc  2 · 106 · 431 · 768       =  0.070e9
-  FFN W1, W2         8 · 106 · 768²            =  0.500e9
+  self Wq..Wo        4 · 105 · 768²            =  0.248e9
+  self Q·Kᵀ, A·V     2 · 105² · 768            =  0.017e9
+  cross Wq, Wo       2 · 105 · 768²            =  0.124e9      (Q and O only — K,V are cached)
+  cross Q·Kcᵀ, A·Vc  2 · 105 · 431 · 768       =  0.070e9
+  FFN W1, W2         8 · 105 · 768²            =  0.495e9
                                                   -------
-                                                  0.963e9    x 196 patches = 1.888e11
-                                                             + cache        = 1.89e11
+                                                  0.954e9    x 196 patches = 1.869e11
+                                                             + cache        = 1.874e11
 
                                           ratio  =  4.4x
 ```
 
 **Where the saving actually comes from: the FFN.** Under concat the feed-forward network runs on all
-537 tokens for every one of the 196 patches — `8 · 537 · d²`. Under memory it runs on 106 —
-`8 · 106 · d²`. The attention terms are the small ones. Anyone re-deriving this by counting
+536 tokens for every one of the 196 patches — `8 · 536 · d²`. Under memory it runs on 105 —
+`8 · 105 · d²`. The attention terms are the small ones. Anyone re-deriving this by counting
 attention pairs will get the wrong answer.
 
 Whole tile-day, 6 layers:
 
 ```
-concat   4.99e12 MAC  =  1.00e13 FLOP
-memory   1.13e12 MAC  +  6.7e9 (driver encoder)  =  2.28e12 FLOP
+concat   4.98e12 MAC  =  9.96e12 FLOP
+memory   1.12e12 MAC  +  6.7e9 (driver encoder)  =  2.25e12 FLOP
 
 at ~99 TFLOP/s (H100 bf16, a conservative 10% of peak):
                           0.10 s        vs        0.023 s     per tile-day
-40 TxSON tiles x 365 days:  24 min       vs         5.6 min
+40 TxSON tiles x 365 days:  24 min       vs         5.5 min
 
 activation memory, per layer:
-  concat   196 · 537 · 768 · 2 B  =  161.6 MB
-  memory   196 · 106 · 768 · 2 B  =   31.9 MB   + 7.9 MB cache
+  concat   196 · 536 · 768 · 2 B  =  161.4 MB
+  memory   196 · 105 · 768 · 2 B  =   31.6 MB   + 7.9 MB cache
 ```
 
 **Note a correction.** §35.15 quotes "12 min vs 3 min". That treated multiply-adds as FLOPs;
@@ -764,13 +819,13 @@ pred_k = f( x_k , m )
 `f` can be — and **neither design contains the other**:
 
 ```
-concat has, memory does not:   the (431,106) block — weather reshaped by patch content
+concat has, memory does not:   the (431,105) block — weather reshaped by patch content
 memory has, concat does not:   independent normalisation, and separate projections
 ```
 
-The second half is easy to miss. Concat runs **one softmax over all 537 keys**, so a patch's own
+The second half is easy to miss. Concat runs **one softmax over all 536 keys**, so a patch's own
 history and the weather compete for a single probability budget — attend 90% to weather and only 10%
-is left for the history. The split runs **two softmaxes**, over 106 and over 431, and sums the
+is left for the history. The split runs **two softmaxes**, over 105 and over 431, and sums the
 results, so each is normalised independently. It also has separate `Wq/Wk/Wv` for the two, asking a
 different question of history than of weather, which doubles attention parameters (4.72M vs 2.36M
 per layer).
@@ -778,21 +833,21 @@ per layer).
 ```
 CONCAT, patch rows:
   out = softmax([ x·Wq·(x·Wk)ᵀ | x·Wq·(m·Wk)ᵀ ]) · [ x·Wv ; m·Wv ] · Wo
-                  <-- 106 -->    <-- 431 -->        ONE budget, split between them
+                  <-- 105 -->    <-- 431 -->        ONE budget, split between them
 
 SPLIT:
-  x = x + softmax( x·Wq_s·(x·Wk_s)ᵀ ) · (x·Wv_s) · Wo_s        softmax over 106
+  x = x + softmax( x·Wq_s·(x·Wk_s)ᵀ ) · (x·Wv_s) · Wo_s        softmax over 105
   x = x + softmax( x·Wq_c·(m·Wk_c)ᵀ ) · (m·Wv_c) · Wo_c        softmax over 431
                                                                TWO budgets, summed
 ```
 
-**A third design exists and should be on the table.** Keep one joint softmax over 537 with shared
+**A third design exists and should be on the table.** Keep one joint softmax over 536 with shared
 weights, but simply do not update `m`'s rows — "frozen-m". That *is* strictly
-concat-minus-the-(431,106)-block, so the subset argument holds exactly; `Kc, Vc` remain cacheable;
+concat-minus-the-(431,105)-block, so the subset argument holds exactly; `Kc, Vc` remain cacheable;
 and it is cheaper still (0.837e9 vs 0.963e9 per patch per layer, a **5.1x** saving over concat
 rather than 4.4x), needing no new module, just a masked update. **But it does not fix dilution** —
-the readout still runs one softmax over 537 keys of which 431 are constant across patches. The
-separate softmax in the split form is precisely what delivers the 96%-vs-19% property in §8. The two
+the readout still runs one softmax over 536 keys of which 431 are constant across patches. The
+separate softmax in the split form is precisely what delivers the 97%-vs-19% property in §8. The two
 trade off directly against each other.
 
 An earlier draft of this section asserted "memory-form is a strict subset of concat-form". That is
@@ -812,19 +867,19 @@ Two distinct ways a model can fail:
 - **Expressiveness** — *can* it represent the right function at all?
 - **Optimisation** — will gradient descent actually *find* it, with the data and epochs available?
 
-**On expressiveness, neither dominates** (§7): concat has the `(431,106)` block, memory has
+**On expressiveness, neither dominates** (§7): concat has the `(431,105)` block, memory has
 independent normalisation and separate projections. Concat's advantage is the one that matters for
 this comparison — it can do something with the data that memory structurally cannot.
 
-**On optimisation, it reverses.** At initialisation attention is roughly uniform. The per-patch CLS
-reads 537 tokens, of which 431 are byte-identical across every patch on the tile:
+**On optimisation, it reverses.** At initialisation attention is roughly uniform. Each depth CLS
+row reads 536 tokens, of which 431 are byte-identical across every patch on the tile:
 
 ```
-concat:   patch-specific share of what the CLS attends over  =  102 / 537  =  19%
-memory:   patch-specific share of the self-attention          =  102 / 106  =  96%
+concat:   patch-specific share of what a readout attends over  =  102 / 536  =  19%
+memory:   patch-specific share of the self-attention           =  102 / 105  =  97%
 ```
 
-So under concat, ~80% of what the readout initially sees carries **zero information about which
+So under concat, ~81% of what the readout initially sees carries **zero information about which
 patch this is**, and the optimiser must dig the distinguishing 19% out from under it. It probably
 can, given enough data and epochs. The memory form simply never asks — the architecture hands over
 the separation for free.
@@ -858,11 +913,11 @@ only the attention wiring differs, so the second mode is ~30 lines. That convert
 
 ```
 memory (default)
-  self:   [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 | CLS ]     106      per patch
+  self:   [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 ]           105      per patch
   cross:  [ era5 365 | sif 50 | twsa 12 | soil 4 ]                  431      K/V once per tile-day
 
 concat
-          all 537 in one self-attention stack
+          all 536 in one self-attention stack
 ```
 
 **What is NOT in either design**, and will not be revisited (§35.14): the Perceiver-style resampler.
@@ -880,16 +935,16 @@ deferring it to a later stage would have forced a full retrain.
 | | concat | memory |
 |---|---|---|
 | driver tokens kept whole | yes, 431 | yes, 431 |
-| per-patch sequence | 537, one self-attention stack | 106 self + cross into 431 |
+| per-patch sequence | 536, one self-attention stack | 105 self + cross into 431 |
 | weather recomputed per patch | yes, every layer | no, cached per tile-day |
 | driver K/V cacheable | only at layer 1, useless | yes, all 6 layers, exact |
 | cache size | - | 7.9 MB fp16 |
-| cost per layer, K=196 | 8.32e11 MAC | 1.89e11 MAC (4.4x less) |
-| activation memory per layer | 161.6 MB | 31.9 MB |
-| full-year inference, 40 tiles | ~24 min | ~5.6 min |
-| patch-specific share of readout | 19% | 96% |
-| has the (431,106) block | yes | no — deleted on purpose |
-| independent softmax budgets | no — one budget over 537 | yes — 106 and 431 normalised separately |
+| cost per layer, K=196 | 8.30e11 MAC | 1.874e11 MAC (4.4x less) |
+| activation memory per layer | 161.4 MB | 31.6 MB |
+| full-year inference, 40 tiles | ~24 min | ~5.5 min |
+| patch-specific share of readout | 19% | 97% |
+| has the (431,105) block | yes | no — deleted on purpose |
+| independent softmax budgets | no — one budget over 536 | yes — 105 and 431 normalised separately |
 | attention params per layer | 2.36 M | 4.72 M |
 | new modules needed | none | cross-attention block + driver self-encoder |
 | retrofittable later | - | no — decide before training |
@@ -901,7 +956,7 @@ deferring it to a later stage would have forced a full retrain.
 **Depth is not a law.** `N = 6` comes from Vaswani et al. 2017, chosen empirically for WMT at their
 compute budget (their Table 3 ablates N = 2, 4, 6, 8). It propagated by inheritance, not derivation.
 Real models vary: BERT-base 12, BERT-large 24, ViT-Base 12 (TerraMind's own backbone — which is why
-we extract L3/L6/L9/L12), T5-base 12+12, GPT-3 96. This project's `n_layers = 6` (`train.py:206`) is
+we extract L3/L6/L9/L12), T5-base 12+12, GPT-3 96. This project's `n_layers = 6` (`train.py --n-layers`) is
 itself undeirved: the width (768, 12 heads) was copied from ViT-Base and the depth halved. Depth is
 set by data scale, by how many sequential reasoning steps the task needs, and by optimisation
 stability — not by convention.
@@ -915,7 +970,7 @@ Note the two parities are mutually exclusive: the baseline layer is `self + FFN`
 
 ```
 T1 weather encoder    every ERA5 day attends to every other day
-T2 self-attention     all 106 tokens attend to all 106
+T2 self-attention     all 105 tokens attend to all 105
 cross-attention       every patch token reads all 431 driver tokens
 ```
 
@@ -923,9 +978,63 @@ Correct here because we are not generating a sequence — we regress one value f
 A causal mask would only make sense if we predicted every day in the window.
 
 **And it does not leak, because the window itself is strictly backward-looking.**
-`rel_pos = 364 - (target_date - acq_date).days` (`dataset.py:89-96`), so every token in the sequence
+`rel_pos = 364 - (target_date - acq_date).days` (`dataset.py _rel_pos`), so every token in the sequence
 predates the target. Attention running "forwards" inside that window still only ever sees the past.
 
 One recorded exception, still open: §33.12's `c_k` temporal look-ahead — the S1 climatology may be
 computed over the full record rather than backward-only, which *would* leak. It is a §33 decoder
 issue and does not touch stage 2a, but it is not closed.
+
+---
+
+## 12. What the audit changed, and what now guards it (§35.24)
+
+Session 33 audited `dataset.py`, `model.py` and `train.py` against this document. The design
+survived — memory-vs-concat, the read-only cache, the two-transformer shape and the cost argument
+are all as derived. What did not survive was a set of implementation defects, none of which would
+have crashed, and several of which would have produced exactly the uninterpretable null §8 says
+the whole architecture choice exists to avoid.
+
+**The class of bug this project keeps producing is fail-open.** Four separate paths defaulted a
+missing input to "everything is valid":
+
+```
+missing cloud mask       ->  all 60 S2 acquisitions marked cloud-free
+missing S1 token mask    ->  border/shadow/layover patches marked valid
+missing QC variable      ->  gap-filled climatology trained as observed truth
+missing DEM nodata mask  ->  an all-zero token read as a real elevation embedding
+```
+
+Each is now fail-closed and, more importantly, **counted and printed**. A silent degradation that
+reports nothing is indistinguishable from a healthy run; that is the lesson §32's corrupt-store
+incident already taught once.
+
+**The second class is a diagnostic that cannot see what it was built to see.** §35.20 makes
+attention entropy the sole evidence separating "un-pooling does not help" from "attention
+collapsed", and stakes the deferral of register standardisation on it. As written it head-averaged
+before computing entropy (twelve sharply-peaked heads average to something indistinguishable from
+uniform), spanned the five non-history prefix columns, was compared against a fixed `log(100)`
+although the median station-year carries ~36 of 60 S2 slots, and was overwritten every forward so
+that what reached W&B was one batch on one rank. The companion depth-collapse metric had been
+reading a `getattr` default since the U-Net strip and had logged nothing at all. Both are rebuilt
+as epoch-accumulated, `all_reduce`d sums with a per-sample `log(n_valid)` reference, so the
+collapse ratio is scale-free and `1.0` means collapsed.
+
+**Two things this document had asserted that the code did not do.** ERA5 was the only modality
+whose staleness came from its slot index rather than its real date, in a window that is compacted
+rather than calendar-aligned (§2.3); and `--driver-mode concat` was running the driver encoder
+too, making it a different architecture from the one §3 derives (§3.1).
+
+**What §5's warning asked for, now delivered.** §5 says of the `(D, P)` cache view: *"This is where
+a silent bug will live... It must be asserted in `test_patchwise_model.py`."* That assertion
+existed. What did not exist was any test that exercised a **mask**: every test batch set every
+validity tensor all-True and `era5_doys` never 0, so no test batch contained a single padded token
+and deleting a `~` anywhere in the masking chain passed the whole suite. The polarity chain was in
+fact correct; nothing defended it. Same for depth ordering — permuting `depth_heads` passed every
+test. Both are now covered.
+
+**Still open, deliberately.** Register standardisation remains deferred (§35.20) — but that
+deferral was only ever defensible if the detector worked, so it is now contingent on the rebuilt
+one rather than on the broken one. And the `soil_patch` IPC payload (~72% of the per-sample
+transfer, for a tensor that is constant per station) is a known efficiency target, not a
+correctness bug.

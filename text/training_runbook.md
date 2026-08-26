@@ -9861,3 +9861,176 @@ augmentation stays undecided); per-patch soil (460 KB -> 16 KB, and it removes t
 defect §35.3 names); multi-station supervision via `location_group_id`, which
 `csvs/station_splits.csv` has had all along (906 groups for 993 stations) and `dataset.py` has
 never read — §35.19 argues it is the only direct supervision of the spatial mapping that exists.
+
+---
+
+## §35.24 Two-round audit of dataset.py / model.py / train.py — 30 defects fixed, none of which crashed (Session 33, 2026-08-26)
+
+**Nothing in this section has been executed.** Every fix was made by reading, per the
+no-login-node rule. The state is "carefully reviewed, unverified"; the first real check is
+`sbatch slurm/run_tests.sh`. Rollback tag: `pre-s33-audit-fixes`.
+
+Two independent audits were run against `text/patchwise_math.md`: four agents over the three
+files plus their interfaces, and a second external review. The **design survived** — memory vs
+concat, the read-only K/V cache, the two-transformer shape and the §6 cost argument are all as
+derived. What did not survive was the implementation. Not one of the 30 defects would have
+raised an exception.
+
+### The three classes
+
+**1. Fail-open data paths.** Four separate inputs defaulted a missing value to "everything is
+valid", and the effect of each was to fabricate ground truth:
+
+```
+missing cloud-mask group  ->  all 60 S2 acquisitions marked cloud-free
+missing S1 token_mask     ->  border / shadow / layover patches marked valid
+missing QC variable       ->  gap-filled climatology trained as observed truth
+missing DEM nodata mask   ->  an all-zero token read as a real elevation embedding
+all-NaN soil channel      ->  NaN through SoilEncoder -> Kc/Vc -> the whole cross-attention
+```
+
+All are now fail-closed **and counted and printed**. That second half is the point: after §32's
+corrupt-store incident, a run that silently trains on a degraded subset is indistinguishable
+from a healthy one. `create_token_zarr.py` now writes `QC_NO_SOURCE = 255` instead of defaulting
+QC to zeros, and the dataset drops stations whose QC is entirely sentinel.
+
+**2. Diagnostics that could not see what they were built to see.** §35.20 makes attention
+entropy the *sole* evidence separating "un-pooling does not help" from "attention collapsed",
+and stakes the deferral of register standardisation on it. As written it:
+
+- head-averaged before computing entropy — twelve sharply-peaked heads average to something
+  numerically indistinguishable from uniform;
+- spanned the five non-history prefix columns as well as the history;
+- was compared against a fixed `log(100) = 4.605` although the median station-year carries ~36
+  of 60 S2 slots, so a **fully collapsed** row over ~50 valid keys scored ~4.0 and passed;
+- was overwritten every forward, so what reached W&B was one batch on rank 0.
+
+The companion depth-collapse metric (`_last_depth_ctx`) had been reading a `getattr` default
+since the U-Net strip in `fe0dc2c` and had logged **nothing at all** — while the surviving
+fallback measured the input cosine, which the code's own comment says is the insufficient one,
+and which is weight-decay-protected so it will look healthy indefinitely.
+
+Both are rebuilt as epoch-accumulated, `all_reduce(SUM)`-ed sums with a per-sample
+`log(n_valid)` reference. **This supersedes the "log 100 = 4.605 nats" instruction at the end of
+§35.23**: the reported quantity is now a scale-free ratio where **1.0 means collapsed**,
+whatever that sample's valid-slot count. The history slice is bounded at `hist_end` so concat
+mode does not fold its 431 driver columns into the history entropy — without that the two
+`--driver-mode` arms' numbers are not comparable, which is the one comparison the arms exist for.
+
+**3. Scale and initialisation.** `nn.Embedding` defaults to `normal_(0, 1)` while `era5_mlp`
+emits sigma ~0.22, so the driver token entering T1 was ~98% calendar and ~2% weather, with
+`driver_norm` then normalising that mixture. All seven tables are now `trunc_normal_(0.02)` —
+the ViT/BERT convention, and what `depth_tokens` already used. That fix is only coherent
+alongside input LayerNorms on the frozen TerraMind features (`s2_norm`, `s1_norm`, `dem_norm`,
+`lulc_norm`): a positional code at std 0.02 against an unnormalised, register-dominated frozen
+feature is invisible, which would have traded the driver-token problem for the same problem on
+the history.
+
+### The one that would have been hardest to find
+
+ERA5 was the only modality whose staleness came from its **slot index** rather than its real
+date, in a window that `load_era5_rolling` *compacts* rather than calendar-aligns. Any interior
+missing day shifted every earlier slot's recency code; and because the admission guard was
+year-granular, a station whose ERA5 ended 2023-03-15 still admitted an August 2023 target and
+placed the March row at slot 364, embedded as "today's weather". `circular_doy_pe` carried the
+true DOY throughout, so the two clocks actively disagreed and nothing said so. The dataset now
+emits `era5_rel_pos` from real dates and the guard is day-granular.
+
+### Per-file summary
+
+| file | what changed |
+|---|---|
+| `model.py` | embedding init; DOY code geometric + capped at 26 harmonics (was aliasing above Nyquist k=182) and precomputed as a buffer; input LayerNorms on frozen features; residual + cross-attention dropout in T2; DropPath per-branch rate deflated so effective per-layer drop matches the schedule; T1's dpr scaled against T2's depth; `era5_rel_pos`; 3-way `hist_modality_emb` (S2 / S1-ASC / S1-DESC); `dem_valid`/`lulc_valid` in the static pad; T1 no longer built in concat mode; `head_bias_init`; fp32 readout; device from parameters, not from the batch; `per_depth` loss switched to fixed `depth_weights` |
+| `dataset.py` | the five fail-closed paths above, each counted; `era5_rel_pos`; `s1_orbit`; SIF/TWSA/soil z-scored from `driver_stats.json`; narrow L12 preload; per-key shm/zarr merge; ERA5 train mask no longer removes tokens from the sequence; S2 history compacts like S1; per-reason skip tally; five dead keys removed; `CM_BAD_CLASSES` documented |
+| `train.py` | selection and LR schedule off the mean-of-batch-means, default `--select-metric ubrmse`; linear warmup, resume-correct on `global_step`; every `nn.Embedding` excluded from weight decay; `head_bias_init` + `depth_weights` wired; both collapse diagnostics rebuilt and reduced; shm preload gated on LOCAL_RANK and skip-check moved above the 120 GB read; `atexit` shm cleanup; preempt flag `all_reduce(MAX)`; RNG state checkpointed; per-station r / R2 / anomaly-RMSE; val shard de-duplicated; `ReduceOp.AVG` -> SUM-then-divide |
+| `compute_driver_stats.py` (new), `compute_era5_stats.py` | train-split, train-years-only statistics; **the ERA5 NetCDF source no longer exists** (0 of 842 `sm_only` station dirs still have `ERA5Land/`), so both now read `era5/values` from the token zarr — which also fixes the old `nc_files[0]` partial read at the root |
+
+### Architecture — the finding that matters most
+
+Training runs K=1; inference runs K=196. The 431 driver tokens are tile-constant by
+construction — that is what makes the cache exact — so **the loss is fully minimised by a
+function that ignores `dem_k`, `lulc_k` and `hist_k` entirely**, and at K=196 that function
+emits 196 identical values. Nothing in the loss, the data, or the diagnostics constrained it.
+
+§35.9's five arms and the §35.10 gate were always the test for this. What was missing is that
+**there are two orthogonal collapse modes and only one had a detector**:
+
+```
+temporal collapse   attention spreads uniformly over the history   -> entropy ratio -> 1.0
+spatial invariance  the per-patch pathway is ignored altogether    -> map SD -> 0
+```
+
+§35.20 correctly says map SD does not catch attention collapse. The converse is equally true
+and had not been written down: a model that ignores per-patch inputs can have perfectly sharp,
+low-entropy attention — it simply attends sharply to the weather. Neither detector substitutes
+for the other. Both now run once per val epoch, alongside a third: the ratio of gradient norm
+w.r.t. the per-patch inputs against the tile-constant ones.
+
+Two further points, neither previously recorded. The **K=196 path had never been executed end
+to end** — `masked_huber_loss` raises on K != 1 and `evaluate` hardcodes `mu[:, 0, :]`, so
+"same checkpoint works at both" was true of the weights and untested of the code. And at K=1 the
+model only ever sees patch 105 in training, so at inference it is fed patches whose statics and
+history are **out of distribution** — open water, urban, swath edge. That covariate shift sits
+on top of the invariance risk, and it is why the `dem_valid`/`lulc_valid` masks matter far more
+at inference than at training.
+
+### Tests
+
+The old suite asserted shapes and no-crash. Every test batch set every validity tensor all-True
+and `era5_doys` never 0, so **no test batch contained a single padded token**: deleting a `~`
+anywhere in the masking chain passed the entire suite, and so did permuting `depth_heads`. Both
+chains were in fact correct; nothing defended them. The new tests are written to fail on the
+specific defect — randomised values in masked slots must not change the output; a `[x, nan,
+nan]` label must give gradient to `depth_heads[0]` only; the K/V cache must be per day, not per
+patch; the entropy ratio must be invariant to valid-slot count.
+
+### New hard dependency
+
+`csvs/driver_stats.json` does not exist yet. **Both `dataset.py` and `train.py` raise without
+it**, by design — fail closed rather than silently fall back to identity normalisation and a
+zero head bias. Run order is therefore:
+
+```
+sbatch slurm/run_tests.sh        # must be green first
+sbatch slurm/driver_stats.sh     # writes csvs/era5_stats.json + csvs/driver_stats.json
+sbatch slurm/train.sh --driver-mode memory --driver-layers 2 --n-layers 6 --run-name patchwise_2a
+```
+
+### Open, deliberately
+
+`CM_MAX_BAD_FRAC = 0.01` over a 16x16 block admits at most **two** bad pixels (3 px = 1.17% and
+fails), i.e. it is zero-tolerance rather than the 1% it reads as. Left unchanged and now
+documented as deliberate. `era5_require_full_window` defaults False: the trailing-edge date test
+is unconditional (that was the bug), but requiring full 365-day coverage would delete the first
+year of every station for something that is no longer a correctness issue once `era5_rel_pos`
+carries real staleness. The would-be-dropped count prints either way.
+
+Register standardisation stays deferred (§35.20) — but that deferral was only ever defensible
+if the detector worked, so it is now contingent on the rebuilt one rather than on the broken
+one. `CLAUDE.md` is untracked and matched by `.gitignore`'s `*.md`; it cannot be rolled back.
+
+### Three things writing the tests exposed
+
+Written last, and each is a defect the tests could not have caught by running — they were found
+by trying to write an assertion for a contract and discovering there was nothing to assert
+against.
+
+1. **`_load_driver_stats` validated three blocks of four.** It checked `sif`, `twsa` and `soil`
+   but not `label_mean`, so a `driver_stats.json` carrying the normalisation blocks and nothing
+   else would pass the fail-closed gate and then leave `head_bias_init=None` — silently
+   reinstating the default-bias-in-Huber's-linear-regime failure the field was added to prevent.
+   Now validated in the same place, per depth.
+
+2. **`_last_attn_entropy` was `(n_armed, 3)`, not `(n_layers, 3)`.** `ent` collects only blocks
+   with `collect_entropy` set, so arming a subset returned a shorter tensor whose rows train.py
+   would have logged under the wrong layer index. `_forward_patchwise` now refuses a partial arm.
+
+3. **`slurm/verify_patchwise_refactor.sh` step 1 had become a no-op that always passed.** It ran
+   `python test_patchwise_model.py`; against a pytest module that imports and exits 0 without
+   executing a test. Worse, the *old* file would have failed against the current model anyway —
+   it asserted `ent.numel() == len(patch_blocks)` and `ent.max() <= log(105)`, both stale against
+   the sums contract. Now routed through `python -m pytest`.
+
+`pytest` is not in the built `terramind` env. `slurm/run_tests.sh` pip-installs it on the compute
+node and exits 2 with a clear message if that fails; `environment-terramind.yml` now pins it so
+the fallback stops being load-bearing.
