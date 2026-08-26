@@ -5694,3 +5694,46 @@ SESSION 34 — §35.31 the preload read 196 patches to use 1 (2026-08-26)
   spirit of §35.28.  It would serve TRAINING ONLY — token_sel="all" still needs
   196 for patch_map_diag and the tile-pair sign test, so both stores coexist and
   "which store produced this number" has to be answerable.
+
+  VERIFIED — job 26082396 (pw_stage2a), same node gcn91:
+                          before      after
+    preload             2733.5 s     55.5 s    49x
+    /dev/shm            153.6 GB    758 MiB    1/196
+    bins                    1892       1892    none lost (s2 647/s1_asc 645/s1_desc 600)
+    narrowed=true              0       1892    only patch-axis width present is 1
+  CAVEAT: same node had read these files 90 min earlier, so pagepool was WARM.
+  49x is a best case; a cold node will be slower.  The 758 MiB is not cache-dependent.
+
+  WIDTH CHECK FIRED IN PRODUCTION exactly as designed:
+    [diag] patch-map loader ready: 1532 samples, token_sel=all
+  It inherits training's shm_dir, found K=1 memmaps, REFUSED them, fell back to
+  zarr at K=196 and built.  Without it numpy clips silently and the §35.30 gate
+  condition diag/patch_map_sd_mean is computed over one patch.
+  Zero fallbacks elsewhere: 0/158886 S2 and 0/290517 S1 acquisitions dropped, no
+  "L12 cache: /dev/shm was partial" line.
+
+  Epoch 001  train_loss=0.002224  val_loss=0.002500
+             data=3s  compute=205s  gpu_util=98%  peak_vram=11.8GB/100GB
+      0-10   ubRMSE=0.0577  r=0.690
+     10-30   ubRMSE=0.0530  r=0.726
+     30-100  ubRMSE=0.0560  r=0.673
+     SELECT  val_ubrmse_depth_mean=0.049476 -> best.pt
+     [diag] attn entropy 3.070 nats, collapse_ratio mean=0.7667 max=0.9023
+            (§35.30 threshold is >0.98 = collapsed, so this PASSES at epoch 1 —
+             but the gate is scored at the BEST epoch, not the first)
+
+  data=3s vs compute=205s: the input pipeline is no longer a factor at all
+  (§35.23 measured 93-95% util; this is 98%).  Startup 13 min end to end:
+  ~1 min pre-flight + 55 s preload + ~10 min dataset build + warm-up.
+
+  §35.31b REPRIORITISED as a result.  Sharing the per-station statics/drivers
+  instead of copying them per rank is the right end state and is the SAME work as
+  the K=1 store — but memory is not the constraint (65.7/811 GB node, 758 MiB of
+  a 378 GB tmpfs, 11.8/100 GB VRAM; a fully shared store would be ~2.6 GB), and
+  with data=3s the steady-state loop gains nothing.  It is a ~10 min one-time cost
+  on multi-day runs.  Worth doing when the store is rebuilt anyway, or if the
+  workflow becomes many short runs; not on its own.
+
+  §35.31c batch size: 11.8/100 GB VRAM means lots of headroom, but lr=2e-4 and
+  warmup=1000 were tuned for 128 and §35.30 endpoint 2 compares against a baseline
+  trained at 128.  Deliberate follow-up with lr rescaled, NOT a mid-flight knob.

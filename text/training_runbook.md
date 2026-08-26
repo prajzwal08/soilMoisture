@@ -10609,3 +10609,117 @@ Note that the narrowed store would serve **training only**: `token_sel="all"` st
 196 for the patch-map diagnostic and for §35.30's tile-pair sign test. Both stores would
 coexist, and "which store did this number come from" becomes a question someone has to be able
 to answer — which is precisely why it gets a provenance stamp rather than a quick script.
+
+
+### §35.31a Verified on job 26082396 (`pw_stage2a`, 2026-08-26)
+
+Both changes measured against the killed job's numbers, same node (gcn91):
+
+```
+                      26076503 (before)   26082396 (after)
+preload wall-clock            2733.5 s            55.5 s     49x
+/dev/shm                      153.6 GB           758 MiB     1/196
+bins written                      1892              1892     none lost
+  s2 / s1_asc / s1_desc                    647 / 645 / 600
+narrowed=true                        0              1892
+patch-axis widths seen             196                 1
+```
+
+CAVEAT ON THE 49x: 26082396 landed on gcn91, the SAME node 26076503 had read these files from
+90 minutes earlier, so GPFS pagepool was warm. The speedup is a best case and a cold node will
+be slower. The 758 MiB is not cache-dependent and holds everywhere.
+
+The width-refusal check fired in production exactly as designed: `[diag] patch-map loader
+ready: 1532 samples, token_sel=all`. That dataset inherits training's `shm_dir`, found K=1
+memmaps, refused them, fell back to zarr at K=196 and built. Without the check numpy would have
+clipped the slice silently and `diag/patch_map_sd_mean` would have been computed over one patch.
+
+Zero fallbacks anywhere else: 0 stations with no cm/masks group, 0/158886 S2 acquisitions
+dropped, 0/290517 S1, 0 missing DEM/LULC, no `L12 cache: /dev/shm was partial` line.
+
+Epoch 1, and the number that matters for §35.31b:
+
+```
+Epoch 001  train_loss=0.002224  val_loss=0.002500
+           data=3s  compute=205s  gpu_util=98%  peak_vram=11.8 GB / 100 GB
+```
+
+**data=3s against compute=205s.** The input pipeline is no longer a factor at all (§35.23
+measured 93-95% util; this is 98%). That retires the "is the loader starving the GPUs" question
+for the patchwise arm, and it changes the case for §35.31b — see below.
+
+Startup accounting for the record: ~1 min pre-flight + 55 s preload + ~10 min dataset build
++ first-batch warm-up, ~13 min from job start to steady-state training.
+
+### §35.31b Follow-ups — the same pattern, one layer up (open, and now lower priority)
+
+**1. Dataset init repeats the preload's pathology, per rank.** Each rank independently walks all
+647 stations and eagerly loads, per station: `open_consolidated` (`.zmetadata`), the full ERA5
+driver series, SIF, TWSA, `dem`, `lulc`, both token masks, `soil` (plus NaN-fill), the cloud
+masks and the date arrays — ~10 arrays per station, each one or more small GPFS files. Roughly
+`647 x 10 x 4 ranks` small latency-bound reads, serially, with the rank processes measured at
+~10% CPU: the same IO-wait signature the serial preload had.
+
+**Measured on 26082396: ~10 minutes.** That is the number this item was missing. It is real but
+it is a ONE-TIME startup cost, and it is now the largest remaining term in a 13-minute startup.
+
+**2. `dem` and `lulc` are still read at full 196-patch width.** `zg["dem"][:]` and
+`zg["lulc"][:]` are `(196,768)` fp16 = 301 KB each, loaded whole, when training reads patch 105
+alone — the identical defect §35.31 fixed for L12. Three orders of magnitude smaller
+(602 KB/station, ~390 MB/rank, ~1.6 GB total against L12's 153.6 GB). But note it is COPIED per
+rank, not shared, so narrowing it would take ~1.6 GB to ~8 MB.
+
+**3. Share everything instead of copying it — which is the same work as the K=1 store.**
+
+The tokens are `np.memmap(mode="r")` against tmpfs: all four ranks map the SAME physical pages,
+one 758 MB copy on the node. Everything else the build loads — ERA5, SIF, TWSA, dem, lulc, token
+masks, soil, cloud masks, dates — goes into each rank's own heap. Four private copies, measured
+at ~1.8 GB RSS per rank.
+
+Extending the shm treatment to those is the natural next step, and it converges with §35.31's
+deferred K=1 store: "share, don't copy" and "materialise a pre-narrowed derived store" are one
+design, not two. Build it once with `Pool(64)` on local rank 0, mmap it from every rank, and
+item 1's four redundant serial GPFS walks collapse into one parallel one.
+
+**Memory is NOT the constraint, and this is worth stating plainly.** Measured at epoch 1:
+
+```
+node RAM        65.7 GB / 811 GB   (8%)
+/dev/shm        758 MiB / 378 GB   (<1%)
+per-rank RSS    ~1.8 GB
+VRAM            11.8 GB / 100 GB per H100
+```
+
+A fully shared per-station store would be ~2.6 GB — ~1.8 GB of statics and drivers plus 0.76 GB
+of tokens — against a 378 GB tmpfs cap. Sharing everything saves ~5.5 GB of duplication, which
+is noise. The only argument for doing it is BUILD TIME. The one thing that was ever
+memory-bound was the 153.6 GB of full-width tokens, and §35.31 deleted it.
+
+**Where this gets harder than the tokens did**, and why it is not a patch:
+
+  * The tokens were easy because each is one flat fixed-shape fp16 array. ERA5/SIF/TWSA are
+    variable-length series paired with date arrays, soil carries a validity mask, cloud masks
+    are keyed per date. Heterogeneous Python structures, not single buffers — each needs
+    serialising into a flat array plus an index.
+  * SIF and TWSA are z-scored during the build, so a shared copy stores the NORMALISED form and
+    is thereby bound to the normalisation constants. That is §35.28's provenance problem on a
+    second artifact, and it is the reason this needs a stamp and a pre-flight rather than a
+    script.
+  * `torch.from_numpy` on a read-only memmap warns (see the note at `dataset.py:47`).
+
+**Priority, honestly: lower than it looked an hour ago.** With `data=3s / compute=205s` the
+steady-state loop has nothing to gain here — this is a ~10 min one-time startup cost on runs
+that last days. Worth doing when the store is rebuilt for another reason; not worth doing on its
+own. What WOULD justify it is a workflow of many short runs (sweeps, ablations), where a 13-min
+startup is paid over and over.
+
+### §35.31c Batch size — the headroom is real but it is not free
+
+`peak_vram=11.8 GB of 100 GB` per H100 at `batch_size=128` (per rank, 512 global). VRAM is not
+the constraint and batch size could rise a long way.
+
+Do NOT raise it on this run. `lr=2e-4` and `warmup_steps=1000` were tuned for 128, and §35.30's
+endpoint 2 scores this run against a pooled baseline trained at 128 — changing it confounds the
+comparison on a run whose gate is explicitly pre-registered as un-revisable once started.
+
+Recorded as a deliberate follow-up experiment with lr rescaled, not as a knob to turn mid-flight.
