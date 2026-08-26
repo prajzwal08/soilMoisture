@@ -10034,3 +10034,70 @@ against.
 `pytest` is not in the built `terramind` env. `slurm/run_tests.sh` pip-installs it on the compute
 node and exits 2 with a clear message if that fails; `environment-terramind.yml` now pins it so
 the fallback stops being load-bearing.
+
+---
+
+## §35.25 How big are the frozen tokens? — the input LayerNorm, measured rather than assumed (Session 33, 2026-08-26)
+
+§35.24 added an input LayerNorm on the frozen TerraMind L12 features (`model.py` s2_norm /
+s1_norm / dem_norm / lulc_norm) on an argument that was never checked: that a positional code at
+`EMB_INIT_STD = 0.02` would be invisible against a raw token. `measure_token_scale.py` +
+`slurm/token_scale.sh` measure it. 120 stations, 4 acquisitions each, ~25 s.
+Result: `csvs/token_scale.json`.
+
+```
+modality  per-elem std  (no reg)      L2  tag share  reg share  agree  tile mag  mag-noreg
+s2               4.652     3.172   131.8      0.43%      79.0% 100.0%     33.7%       2.7%
+s1_asc           4.210     2.765   117.9      0.48%      55.7% 100.0%      1.2%       2.6%
+s1_desc          4.250     2.808   119.0      0.47%      52.8% 100.0%      1.3%       2.7%
+dem              4.417     3.165   123.4      0.45%      83.4% 100.0%     56.6%       2.9%
+lulc             3.998     3.600   111.7      0.50%      67.7% 100.0%     34.0%       2.4%
+```
+
+`per-elem std` is the spread across the 768 features inside one token — exactly what LayerNorm
+divides by. `tag share` = 0.02 / that, i.e. what an annotation is worth against the token today;
+after LayerNorm it is 2.00% by construction. `tile mag` is the share of WITHIN-TILE variance
+across the 196 patches carried by token magnitude, which LayerNorm deletes; `mag-noreg` is the
+same with the six register coordinates zeroed.
+
+### VERDICT: keep the LayerNorms
+
+The risk that motivated the measurement was that LayerNorm deletes token magnitude, and magnitude
+looked like it carried a third of S2's within-tile variance — the very signal §34 exists to find.
+**Stripping the registers takes S2 from 33.7% to 2.7% and DEM from 56.6% to 2.9%.** The
+across-patch magnitude variation was almost entirely register variation. LayerNorm is deleting
+the sink, not the signal: it costs ~2.7% of within-tile content and gains ~4.6x on annotation
+visibility. No code change; `model.py` already does this.
+
+### Three things to carry forward
+
+**The justification was right, the numbers were not.** §35.24 asserted the tag would be worth
+~0.04% against a raw token. It is 0.43% — ten times better. Quiet, not invisible. The LayerNorm
+survives on a thinner margin than was claimed for it, which is worth remembering the next time an
+architecture change is argued from an unmeasured order of magnitude.
+
+**One shared register direction, corpus-wide.** `agree = 100%` in every modality: all 120
+stations have the same top-1 register coordinate. §35.3 inferred a shared direction; this
+measures it on the current tokens. Register share of summed square: DEM 83.4%, S2 79.0%,
+LULC 67.7%, S1 ~53-56% — DEM highest, consistent with §27a.3's 13x norm ratio.
+
+**§27a.4's compression question is closed for this architecture.** That analysis worried
+LayerNorm would divide informative coordinates by a sink-inflated sigma and crush the content —
+but it was reasoning about the POOLED U-Net path, where a pooled vector inherits
+`sink_value / n_tokens`. Patchwise does not pool. Measured inflation is
+`4.652 / 3.172 = 1.47x`, which is mild. The concern was real for the architecture that has since
+been deleted, and is not for this one.
+
+This does not settle register standardisation (§35.20), which stays deferred — it characterises
+the registers better and shows that per-token LayerNorm already neutralises their effect on
+within-tile magnitude. It says nothing about whether they still flatten q.k, which remains the
+rebuilt entropy detector's job.
+
+### Two defects in the measurement script itself, both fail-quiet
+
+Worth recording because they are the same pattern §35.24 spent the day removing. Run 1 looked for
+`dem/l12` and `lulc/l12`; the statics are top-level `(196, 768)` arrays, so **DEM and LULC were
+simply absent from the output table rather than flagged**. And the register-stripped statistic —
+the one the verdict turns on — was promised in the script's docstring and never implemented. Both
+fixed before the reported run. A third, louder failure (an invented `station` column in
+`station_splits.csv`) killed run 0 in 19 s, which is the failure mode one wants.

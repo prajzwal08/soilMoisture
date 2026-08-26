@@ -5348,3 +5348,37 @@ OPEN DECISIONS LEFT TO THE USER
     first year of every station.  Count prints either way.
   - CLAUDE.md is untracked (.gitignore line 24 is *.md) — needs git add -f to be
     versioned or rolled back.
+
+--------------------------------------------------------------------------------
+SESSION 33 addendum — §35.25 token scale MEASURED (2026-08-26)
+--------------------------------------------------------------------------------
+  §35.24 added input LayerNorms on the frozen L12 features on an UNMEASURED
+  argument.  Measured it (measure_token_scale.py, slurm/token_scale.sh, 120
+  stations, ~25 s).  csvs/token_scale.json.
+
+  modality  per-elem std  (no reg)   tag share  reg share  tile mag  mag-noreg
+  s2               4.652     3.172       0.43%      79.0%     33.7%       2.7%
+  s1_asc           4.210     2.765       0.48%      55.7%      1.2%       2.6%
+  s1_desc          4.250     2.808       0.47%      52.8%      1.3%       2.7%
+  dem              4.417     3.165       0.45%      83.4%     56.6%       2.9%
+  lulc             3.998     3.600       0.50%      67.7%     34.0%       2.4%
+
+  VERDICT: KEEP the LayerNorms.  The worry was that LN deletes token magnitude,
+  which looked like a third of S2's within-tile variance.  Stripping the six
+  register dims takes S2 33.7% -> 2.7% and DEM 56.6% -> 2.9%.  That magnitude
+  variation was register, not content.  LN costs ~2.7% of within-tile content
+  and gains ~4.6x on annotation visibility (0.43% -> 2.00%).  No code change.
+
+  BUT: §35.24 claimed the tag would be worth 0.04%.  It is 0.43% — ten times
+  better.  Quiet, not invisible.  The LayerNorm survives on a thinner margin
+  than was argued for it.
+
+  agree = 100% in every modality: all 120 stations share the same top-1 register
+  coordinate.  §35.3 inferred this; now measured on current tokens.
+
+  §27a.4's LayerNorm-compression worry is CLOSED for patchwise: it was about the
+  POOLED path (pooled vector inherits sink/n_tokens).  Patchwise does not pool.
+  Measured sigma inflation is only 1.47x.
+
+  Says nothing about register standardisation (§35.20) — still deferred, still
+  the entropy detector's job.
