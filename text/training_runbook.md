@@ -10408,3 +10408,92 @@ driver_stats  0eb7ade028686033  ->  34ade6b95d913b52
 
 Any checkpoint trained before this — `smoke`, `smoke2` — now correctly reports a mismatch at
 load. That is the intended behaviour, not a fault.
+
+---
+
+## §35.30 The §35.10 gate, PRE-REGISTERED — with the 160 m noise floor measured first (Session 33, 2026-08-26)
+
+Written BEFORE stage 2a is launched. §28.8 is the cautionary tale: a gate whose threshold was
+chosen with the answer already in view. Nothing below may be revised after the run starts; if
+it turns out to be the wrong gate, that is recorded as a failure of this section, not fixed
+retroactively.
+
+### First, the floor — because thresholds must be anchored, not chosen
+
+Session 33 picked unmeasured numbers three times (§35.25's "0.04% invisible", §35.26's
+residual-stream argument, §35.27's fatal-QC severity) and measuring changed the answer every
+time. So the gate is anchored to a measurement: `measure_noise_floor.py` over §35.29's
+same-patch pairs — two sensors inside ONE TerraMind token, which a patchwise model cannot
+distinguish by construction. Their disagreement bounds what any 160 m model can achieve.
+
+```
+depth      pairs    days     RMSD   anomRMSD          <- anomRMSD is the §35.10-comparable one
+0-10          15   18916   0.0530     0.0429
+10-30          1    1188   0.0240     0.0186
+30-100        --      --       --         --          no pair reports this depth
+```
+
+**F(0-10) = 0.043 m3/m3.** Three things about it matter more than the number:
+
+**1. Separation does not predict disagreement.** `SOD071`/`SOD073` at **9.0 m** disagree by
+0.058; `Lucky-Hills-1503`/`1506` at **119 m** by 0.021; `TonziRanch`/`US-Ton` at 78 m by
+0.0075. The floor is therefore NOT spatial structure — it is sensor and installation
+variability, and at 160 m it dominates genuine spatial variability. The label the model is
+asked to hit is itself uncertain by roughly this much.
+
+**2. The floor is heterogeneous** (0.0075 to 0.070). A single median F is a simplification, used
+here because the alternative is a per-station floor that 15 pairs cannot support.
+
+**3. Only the surface is measured.** One pair at 10-30 cm, none at 30-100 cm. Any gate applied
+to the deeper layers is unanchored, and must be reported as such.
+
+Raw RMSD is dominated by constant offsets (`Lamont-CF2`/`US-ARM` bias -0.117, and even the 6 m
+`VairaRanch`/`US-Var` duplicate carries +0.032), which is exactly why the de-meaned form is the
+one the gate uses.
+
+### The three interpretability conditions
+
+A run failing ANY of these is **uninterpretable, not negative**. It says nothing about whether
+un-pooling helps, and must not be reported as a null result.
+
+```
+diag/attn_entropy_ratio_mean  > 0.98 at the best epoch   -> temporal collapse
+diag/grad_ratio               < 0.01 at the best epoch   -> per-patch pathway inert
+diag/patch_map_sd_mean        < 0.004  (0.1 x F)         -> map is constant
+```
+
+**The map-SD condition is weak on purpose.** The smoke run scored `patch_map_sd = 0.044` — equal
+to F — from a model trained for two epochs. Random per-patch inputs propagate that much, so
+map SD above zero is evidence of nothing. It can only catch the degenerate constant-map case,
+and it must never be cited as evidence that the map is *correct*.
+
+### Primary endpoint
+
+**Within-station anomaly ubRMSE**: de-mean prediction and observation per station, score the
+residuals, CIs bootstrapped over **stations** (n=76 val) not samples. Consecutive days at one
+station share 364/365 of their driver window, so a sample-level CI is meaningless.
+
+Report against F, not against zero. A surface anomaly ubRMSE at or below 0.043 is **at the
+resolution limit**, and is not evidence of skill beyond it. The band between a barely-trained
+model (smoke: 0.065) and F is roughly 34% — that is the whole space any claim occupies.
+
+### Secondary, and the only DIRECT test of §34
+
+**The tile-pair sign test.** §35.29's 26 pairs are 160-1120 m apart: different 160 m patches,
+same tile. Predict station A's tile at K=196, read the patch containing station B, and ask
+whether `sign(pred_B - pred_A)` matches `sign(obs_B - obs_A)` more often than chance.
+
+This is the only thing in the data that tests whether the map is RIGHT rather than merely
+non-constant. Pre-registered as a **qualitative sign test**: 26 pairs, concentrated in TxSON
+(19) and FMI (6), is low power and network-specific. It must not be reported as a precise
+metric, and a null from it is not evidence of absence.
+
+### What would make this run a success
+
+In descending order of what it would actually establish:
+
+1. tile-pair sign agreement clearly above chance — the map is spatially correct
+2. within-station anomaly ubRMSE below the pooled baseline, with the three conditions passed
+3. all three interpretability conditions passed and the endpoint flat — a genuine, reportable
+   null on un-pooling
+4. any condition failed — uninterpretable, diagnose and re-run
