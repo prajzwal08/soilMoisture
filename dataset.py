@@ -194,86 +194,67 @@ def _load_zarr_labels(zg: zarr.Group):
     return sm_np, depths, times, qc_np
 
 
-def _cpu_pyramid_pool(l12: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
+def _token_slice(token_sel):
+    """A basic slice when the selection is contiguous, else None.
+
+    Contiguity matters: `arr[i, slice, :]` on a numpy memmap faults in only the pages the
+    slice touches, whereas fancy indexing materialises through a temporary. Both live
+    selections are contiguous -- [STATION_TOKEN] and arange(196).
     """
-    Masked spatial pyramid pooling on CPU inside dataset workers.
+    sel = np.asarray(token_sel)
+    if sel.size == 1 or np.all(np.diff(sel) == 1):
+        return slice(int(sel[0]), int(sel[-1]) + 1)
+    return None
 
-    Compresses history L12 tokens from (M, 196, 768) → (M, 4, 768) before the
-    IPC barrier, cutting per-sample payload from ~30 MB to ~2 MB and eliminating
-    the ~437 GB DataLoader IPC queue that caused epoch-boundary OOM kills.
 
-    Uses the same 4-scale nested-window logic as model.spatial_pyramid_pool()
-    but with static masked-mean pooling (no learned attention weights) so it
-    can run on CPU without model access.
+def _read_patch_tokens(src, i: int, tsl, sel):
+    """Acquisition i, patches `sel` only -> (K, 768).
 
-    l12:        (M, 196, 768) fp16 — zero-padded for empty slots
-    token_mask: (M, 14, 14)   bool — True = valid/clear patch
-    returns:    (M, 4, 768)   fp32
+    THE point of the patchwise loader. The old code did `src[i]` -- a full (196,768) fp16
+    slab, 294 KB spanning ~72 memmap pages -- and then threw 195/196 of it away. l12 is
+    C-contiguous, so patch k is a contiguous 768-float run: 1.5 KB, one page.
     """
-    M, N_tok, D = l12.shape
-    G    = int(N_tok ** 0.5)                        # 14 for 196 tokens
-    g    = l12.float().reshape(M, G, G, D)          # (M, 14, 14, 768)
-    v    = token_mask.float().unsqueeze(-1)          # (M, 14, 14, 1)
-
-    half   = G // 2
-    widths = [max(1, G * (i + 1) // 8) for i in range(4)]
-
-    def _pool(w):
-        rs, re = half - w, half + w
-        rg = g[:, rs:re, rs:re, :]                  # (M, 2w, 2w, 768)
-        rv = v[:, rs:re, rs:re, :]                  # (M, 2w, 2w, 1)
-        return (rg * rv).sum(dim=(1, 2)) / rv.sum(dim=(1, 2)).clamp(min=1)  # (M, 768)
-
-    return torch.stack([_pool(w) for w in widths], dim=1)   # (M, 4, 768)
+    if tsl is not None:
+        return np.asarray(src[i, tsl, :])
+    return np.asarray(src[i])[sel]
 
 
 def _finalise_history(l12, token_mask, doys, rel_pos, training,
-                      token_sel=None, dropout_p: float = 0.5):
-    """Turn the (T,196,768) buffer into what the model wants.
+                      token_sel, dropout_p: float = 0.0):
+    """Turn the (T,K,768) buffer into what the model wants.
 
-    token_sel=None  -> pyramid-pool to (T,4,768) fp32   [--arch unet, unchanged]
-    token_sel=idx   -> slice to (T,K,768) fp16          [--arch patchwise, §35.8]
-
-    Returns (feat, doys, valid_acq, rel_pos, hist_valid); hist_valid is None on
-    the pooled path.
+    Returns (feat (T,K,768) fp16, doys, valid_acq, rel_pos, hist_valid (T,K)).
 
     Two correctness points that bit the first draft (§35.11):
-      * `token_mask` is (T,14,14), NOT (T,196) -- indexing it directly with
-        token indices silently selects ROWS and returns (T,K,14).
-      * `token_mask` is initialised to ones and written only for slots that were
-        actually filled AND matched a cloud-mask date. Padded slots (median 36
-        S2 acquisitions/station-year against MAX_S2=60), NaN acquisitions, and
-        dates with no cloud-mask entry therefore read back VALID. Harmless while
-        pooling (acquisition-level `doys > 0` masked them downstream); poisonous
-        as a per-patch key mask. Hence the explicit `& valid_acq`.
+      * `token_mask` is (T,14,14), NOT (T,196) -- indexing it directly with token indices
+        silently selects ROWS and returns (T,K,14). Hence the explicit reshape.
+      * `token_mask` is initialised to ones and written only for slots that were actually
+        filled AND matched a cloud-mask date. Padded slots (median 36 S2 acquisitions per
+        station-year against MAX_S2=60), NaN acquisitions, and dates with no cloud-mask
+        entry therefore read back VALID. Poisonous as a per-patch key mask -- hence the
+        explicit `& valid_acq`.
     """
     valid_acq = doys > 0                                    # (T,)
     if training and dropout_p > 0:
         keep = torch.rand(token_mask.shape, dtype=torch.float32) >= dropout_p
         token_mask = token_mask & keep
 
-    if token_sel is None:
-        return _cpu_pyramid_pool(l12, token_mask), doys, valid_acq, rel_pos, None
-
-    T = l12.shape[0]
-    tm = token_mask.reshape(T, 196)[:, token_sel]           # (T,K)
+    T  = token_mask.shape[0]
+    tm = token_mask.reshape(T, N_TOKENS)[:, token_sel]      # (T,K)
     tm = tm & valid_acq[:, None]                            # padded/NaN -> invalid
-    return l12[:, token_sel, :].contiguous(), doys, valid_acq, rel_pos, tm
+    return l12, doys, valid_acq, rel_pos, tm
 
 
-def _empty_history(max_acq: int, token_sel=None):
+def _empty_history(max_acq: int, token_sel):
     """Zero return for a station with no acquisition in window.
 
-    Must match the shape of the normal path or default_collate raises
-    "stack expects each tensor to be equal size" on any batch mixing a station
-    that has S2/S1 in window with one that does not (§35.11).
+    Must match the shape of the normal path or default_collate raises "stack expects each
+    tensor to be equal size" on any batch mixing a station that has S2/S1 in window with one
+    that does not (§35.11).
     """
-    doys = torch.zeros(max_acq, dtype=torch.long)
+    doys    = torch.zeros(max_acq, dtype=torch.long)
     rel_pos = torch.zeros(max_acq, dtype=torch.long)
-    if token_sel is None:
-        return (torch.zeros(max_acq, 4, 768, dtype=torch.float32),
-                doys, doys > 0, rel_pos, None)
-    K = len(token_sel)
+    K       = len(token_sel)
     return (torch.zeros(max_acq, K, 768, dtype=torch.float16),
             doys, doys > 0, rel_pos, torch.zeros(max_acq, K, dtype=torch.bool))
 
@@ -299,8 +280,13 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
     Returns (pyr, doys, valid, rel_pos) where pyr is (max_acq, 4, 768) fp32 — already
     pyramid-pooled on CPU so the full 196×768 tensors never cross the IPC barrier.
     """
-    l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
+    sel        = np.asarray(token_sel)
+    tsl        = _token_slice(sel)
+    K          = len(sel)
+    l12        = torch.zeros(max_acq, K, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
+    # (14,14) of bools is 196 BYTES against 294 KB of tokens, so it stays full and is
+    # indexed down in _finalise_history. It was never the reason for the wide read.
     token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)
     rel_pos    = torch.zeros(max_acq, dtype=torch.long)
 
@@ -344,7 +330,11 @@ def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
             acq_doy  = dt.timetuple().tm_yday
             acq_year = dt.year
 
-        tok = torch.from_numpy(tokens_z[src_i])
+        # Narrowed read: patch k only. BEHAVIOUR CHANGE, recorded in §35.22 -- the NaN test
+        # now sees only this patch, where it used to see the whole tile and drop the whole
+        # acquisition if any of the 196 patches was NaN. Discarding an acquisition because a
+        # far corner of the tile is bad is not defensible for a per-patch model.
+        tok = torch.from_numpy(_read_patch_tokens(tokens_z, src_i, tsl, sel))
         if torch.isnan(tok).any():
             continue
         l12[out_i]     = tok
@@ -382,7 +372,10 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
     training:            if True, applies 50% random spatial token dropout before pooling.
     Returns (pyr, doys, valid, rel_pos) 4-tuple matching S2's signature.
     """
-    l12        = torch.zeros(max_acq, 196, 768, dtype=torch.float16)
+    sel        = np.asarray(token_sel)
+    tsl        = _token_slice(sel)
+    K          = len(sel)
+    l12        = torch.zeros(max_acq, K, 768, dtype=torch.float16)
     doys       = torch.zeros(max_acq, dtype=torch.long)
     token_mask = torch.ones(max_acq, 14, 14, dtype=torch.bool)
     rel_pos    = torch.zeros(max_acq, dtype=torch.long)
@@ -434,7 +427,7 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
 
     out_i = 0
     for date_str, tokens_z, src_i, orbit_key, cached_doy, cached_year in entries:
-        tok = torch.from_numpy(np.asarray(tokens_z[src_i]))
+        tok = torch.from_numpy(_read_patch_tokens(tokens_z, src_i, tsl, sel))
         if torch.isnan(tok).any():
             continue
         if cached_doy is not None:
@@ -453,141 +446,6 @@ def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
 
     return _finalise_history(l12, token_mask, doys, rel_pos, training,
                              token_sel, patch_token_dropout)
-
-
-def select_anchor_zarr(zg: zarr.Group, year: int, target_doy: int,
-                        l12_cache: dict | None = None,
-                        l369_cache: dict | None = None,
-                        date_cache: dict | None = None,
-                        cm_token_mask: np.ndarray | None = None,
-                        s1_token_mask_cache: dict | None = None,
-                        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor,
-                                   torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Select the best anchor acquisition for the U-Net skip connections and
-    target spatial tokens.
-
-    date_cache:          precomputed per-orbit date info (eliminates zarr date reads)
-    cm_token_mask:       precomputed (N_cm, 14, 14) bool from _cm_token_mask_cache
-    s1_token_mask_cache: precomputed {orbit: (N,14,14) bool} from _s1_token_mask_cache
-
-    Priority:
-      1. Most recent acquisition with ALL 196 patches valid (fully clear/no-NaN).
-      2. If none fully clear, fall back to most recent acquisition regardless.
-    All zero if no in-window acquisition found.
-    """
-    zeros  = torch.zeros(196, 768, dtype=torch.float16)
-    start_int, end_int = _window_ints(year, target_doy)
-    ws, td = _window_datetimes(year, target_doy)
-
-    # CM date→index lookup
-    if date_cache is not None and "cm" in date_cache:
-        cm_d2i = date_cache["cm"].get("date_to_idx", {})
-    elif "cm/masks" in zg and "cm/dates" in zg:
-        cm_d2i = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
-    else:
-        cm_d2i = {}
-    cm_z = None if cm_token_mask is not None else (zg["cm/masks"] if "cm/masks" in zg else None)
-
-    # S1 token masks — precomputed or zarr fallback
-    tm_np: dict[str, np.ndarray | None] = {}
-    for ok in ("s1_asc", "s1_desc"):
-        if s1_token_mask_cache is not None:
-            tm_np[ok] = s1_token_mask_cache.get(ok)
-        else:
-            mk = f"{ok}/token_mask"
-            tm_np[ok] = np.asarray(zg[mk][:]) if mk in zg else None
-
-    # ── Collect all in-window candidates ─────────────────────────────────
-    candidates: list[tuple[str, str, int, int]] = []
-
-    for orbit in ("s2", "s1_asc", "s1_desc"):
-        dates_key = f"{orbit}/dates"
-        if dates_key not in zg or f"{orbit}/l12" not in zg:
-            continue
-        # Date filtering — precomputed cache or zarr read
-        if date_cache is not None and orbit in date_cache:
-            dc          = date_cache[orbit]
-            orbit_dates = dc["dates"]
-            idx_arr     = np.where((dc["date_ints"] >= start_int) &
-                                   (dc["date_ints"] <= end_int))[0]
-            in_window_pairs = [(orbit_dates[i], int(i)) for i in idx_arr]
-        else:
-            orbit_dates = [str(d) for d in zg[dates_key][:]]
-            in_window_pairs = [(d, i) for i, d in enumerate(orbit_dates)
-                               if _in_window(d, ws, td)]
-
-        for d, i in in_window_pairs:
-            if orbit == "s2":
-                if d in cm_d2i:
-                    cm_idx = cm_d2i[d]
-                    if cm_token_mask is not None:
-                        n_valid = int(cm_token_mask[cm_idx].sum())
-                    elif cm_z is not None:
-                        cm    = cm_z[cm_idx]
-                        cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-                        bad   = np.isin(cm_4d, [3, 4, 5, 255]).mean(axis=(1, 3))
-                        n_valid = int((bad <= 0.01).sum())
-                    else:
-                        n_valid = 196
-                else:
-                    n_valid = 196
-            else:
-                n_valid = int(tm_np[orbit][i].sum()) if tm_np[orbit] is not None else 196
-            candidates.append((d, orbit, i, n_valid))
-
-    if not candidates:
-        return (zeros, zeros.clone(), zeros.clone(), zeros.clone(),
-                torch.tensor(0, dtype=torch.long),
-                torch.tensor(0, dtype=torch.long))   # default orbit: S2=0
-
-    # ── Select anchor ─────────────────────────────────────────────────────
-    # Priority 1: most recent fully-clear (n_valid == 196)
-    fully_clear = [c for c in candidates if c[3] == 196]
-    best = max(fully_clear, key=lambda c: c[0]) if fully_clear \
-           else max(candidates, key=lambda c: c[0])   # fallback: most recent
-
-    best_date, best_orbit, best_idx, _ = best
-    if date_cache is not None and best_orbit in date_cache:
-        dc_o     = date_cache[best_orbit]
-        acq_doy  = int(dc_o["doys"][best_idx])
-        acq_year = int(dc_o["years"][best_idx])
-    else:
-        dt       = datetime.strptime(best_date[:8], "%Y%m%d")
-        acq_doy  = dt.timetuple().tm_yday
-        acq_year = dt.year
-    rp      = _rel_pos(acq_doy, acq_year, target_doy, year)
-    orbit_id = {"s2": 0, "s1_asc": 1, "s1_desc": 2}[best_orbit]
-
-    # ── Load L3 / L6 / L9 / L12 for chosen anchor ────────────────────────
-    def _load_layer(layer: str) -> torch.Tensor:
-        # L3/L6/L9: prefer .npy memmap (flat binary, no decompression).
-        # On OS page-cache hit (epoch 2+) this is a pure RAM read.
-        if layer in ("l3", "l6", "l9") and l369_cache:
-            arr = l369_cache.get(f"{best_orbit}_{layer}")
-            if arr is not None and best_idx < len(arr):
-                return torch.from_numpy(np.asarray(arr[best_idx]))
-        # Fallback: zarr (compressed GPFS read)
-        key = f"{best_orbit}/{layer}"
-        if key not in zg or best_idx >= zg[key].shape[0]:
-            return zeros.clone()
-        return torch.from_numpy(np.asarray(zg[key][best_idx]))
-
-    # Use preloaded L12 RAM cache (zero disk I/O) when available
-    l12_np_for_orbit = (l12_cache or {}).get(best_orbit)
-    if l12_np_for_orbit is not None and best_idx < len(l12_np_for_orbit):
-        anchor_l12 = torch.from_numpy(np.asarray(l12_np_for_orbit[best_idx]))
-    else:
-        anchor_l12 = _load_layer("l12")
-
-    return (
-        _load_layer("l3"),
-        _load_layer("l6"),
-        _load_layer("l9"),
-        anchor_l12,
-        torch.tensor(rp,       dtype=torch.long),
-        torch.tensor(orbit_id, dtype=torch.long),  # 0=S2, 1=S1_asc, 2=S1_desc
-    )
 
 
 # ── Soil patch helpers ───────────────────────────────────────────────────────
@@ -810,32 +668,27 @@ class SoilMoistureDataset(Dataset):
         training:        bool        = True,
         max_stations:    int | None  = None,
         shm_dir:         Path | None = None,
-        use_mmap:        bool        = False,
-        token_sel:       str | None  = None,
+        token_sel:       str         = "station",
         patch_token_dropout: float   = 0.0,
     ):
         self.training   = training
-        self._use_mmap  = use_mmap
 
-        # --- patchwise (§35.8) -------------------------------------------------
-        # token_sel=None    -> pyramid-pool, the historical --arch unet contract
-        # token_sel="station" -> patch 105 only, the supervised token (training)
-        # token_sel="all"     -> all 196, for 14x14 map figures. NOTE this restores
-        #   the ~30 MB/sample IPC payload that _cpu_pyramid_pool was introduced to
-        #   avoid (see its docstring: "~437 GB DataLoader IPC queue that caused
-        #   epoch-boundary OOM kills"), so cap the eval batch size when using it.
-        if token_sel is None:
-            self._token_sel = None
-        elif token_sel == "station":
+        # Which patches to read. This is the ONLY place the store is narrowed, and everything
+        # downstream inherits it: the loaders allocate (T,K,768) and read K rows per
+        # acquisition rather than all 196 (§35.22).
+        #   "station" -> patch 105 only, the supervised token. Training uses this.
+        #   "all"     -> all 196, for 14x14 map figures. INFERENCE ONLY: it restores a
+        #                ~30 MB/sample IPC payload, so cap the eval batch size.
+        if token_sel == "station":
             self._token_sel = np.array([STATION_TOKEN], dtype=np.int64)
         elif token_sel == "all":
             self._token_sel = np.arange(N_TOKENS, dtype=np.int64)
         else:
-            raise ValueError(f"token_sel must be None|'station'|'all', got {token_sel!r}")
-        # The 50% spatial dropout degrades a POOLED mean today; patchwise it would
-        # delete half of patch k's acquisitions outright, so it defaults off.
-        self._patch_token_dropout = (0.5 if self._token_sel is None
-                                     else patch_token_dropout)
+            raise ValueError(f"token_sel must be 'station' or 'all', got {token_sel!r}")
+        # The old 50% spatial token dropout degraded a POOLED mean, which is a mild
+        # augmentation. Here it would delete half of patch k's acquisitions outright, so it
+        # defaults OFF and has to be asked for.
+        self._patch_token_dropout = patch_token_dropout
         self.years     = years or list(range(2016, 2024))
 
         # ERA5 normalisation stats
@@ -883,10 +736,6 @@ class SoilMoistureDataset(Dataset):
         self._cm_token_mask_cache : dict[Path, np.ndarray | None] = {}
         self._s1_token_mask_cache : dict[Path, dict]               = {}
         self._zarr_date_cache     : dict[Path, dict]               = {}
-        # L3/L6/L9 memmap cache: sat_dir → {"s2_l3": memmap(N,196,768), ...}
-        # Populated when use_mmap=True; workers inherit via CoW fork (read-only, no duplication).
-        # OS page cache backs the memmaps — after epoch-1 warmup, reads serve from free RAM.
-        self._l369_cache          : dict[Path, dict[str, np.ndarray]] = {}
 
         for _, r in splits.iterrows():
             has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
@@ -925,24 +774,6 @@ class SoilMoistureDataset(Dataset):
                             for k in ("s2", "s1_asc", "s1_desc")
                             if f"{k}/l12" in zg
                         }
-                    # L3/L6/L9 memmap — opened lazily; OS page cache warms on epoch-1 access.
-                    # Files live at sat_dir/{orbit}_{layer}.npy (same tree as zarr, flat binary).
-                    if self._use_mmap:
-                        l369: dict[str, np.ndarray] = {}
-                        for _orbit in ("s2", "s1_asc", "s1_desc"):
-                            for _layer in ("l3", "l6", "l9"):
-                                _p  = sat_dir / f"{_orbit}_{_layer}.npy"
-                                _jp = sat_dir / f"{_orbit}_{_layer}.json"
-                                if _p.exists() and _jp.exists():
-                                    import json as _json
-                                    _shape = tuple(_json.loads(_jp.read_text())["shape"])
-                                    l369[f"{_orbit}_{_layer}"] = np.memmap(
-                                        str(_p), dtype="float16", mode="r", shape=_shape
-                                    )
-                        if not l369:
-                            print(f"[WARN] use_mmap=True but no .npy files found for {sat_dir} "
-                                  f"— falling back to zarr (run convert_l369_to_npy.py first)")
-                        self._l369_cache[sat_dir] = l369
                     _dem_l12  = (torch.from_numpy(zg["dem"][:])
                                  if "dem" in zg
                                  else torch.zeros(196, 768, dtype=torch.float16))
@@ -960,8 +791,6 @@ class SoilMoistureDataset(Dataset):
                         "lulc":           _lulc_l12,
                         "dem_token_mask": _dem_tm,
                         "lulc_token_mask":_lulc_tm,
-                        "dem_pyr":  _cpu_pyramid_pool(_dem_l12.unsqueeze(0),  _dem_tm.unsqueeze(0)).squeeze(0),
-                        "lulc_pyr": _cpu_pyramid_pool(_lulc_l12.unsqueeze(0), _lulc_tm.unsqueeze(0)).squeeze(0),
                         "soil":           (torch.from_numpy(fill_soil_nans(zg["soil"][:]))
                                            if "soil" in zg
                                            else torch.zeros(21, 74, 74, dtype=torch.float32)),
@@ -1056,9 +885,6 @@ class SoilMoistureDataset(Dataset):
 
         print(f"Dataset: {len(self.samples)} samples from "
               f"{len(set(s['station_key'] for s in self.samples))} stations")
-        if self._use_mmap:
-            n_mmap = sum(len(v) for v in self._l369_cache.values())
-            print(f"L369 memmap cache: {n_mmap} arrays opened (OS page cache; zero process heap cost)")
 
     def __len__(self):
         return len(self.samples)
@@ -1080,7 +906,7 @@ class SoilMoistureDataset(Dataset):
             _cm_tm   = self._cm_token_mask_cache.get(sat_dir)
             _s1_tm   = self._s1_token_mask_cache.get(sat_dir, {})
 
-            s2_pyr, s2_doys, s2_valid, s2_rel_pos, s2_hist_valid = \
+            s2_hist, s2_doys, s2_valid, s2_rel_pos, s2_hist_valid = \
                 load_s2_rolling_zarr(zg, year, doy,
                                      l12_np=_l12.get("s2"),
                                      date_cache=_dc,
@@ -1089,7 +915,7 @@ class SoilMoistureDataset(Dataset):
                                      token_sel=self._token_sel,
                                      patch_token_dropout=self._patch_token_dropout)
 
-            s1_pyr, s1_doys, s1_valid, s1_rel_pos, s1_hist_valid = \
+            s1_hist, s1_doys, s1_valid, s1_rel_pos, s1_hist_valid = \
                 load_s1_rolling_zarr(zg, year, doy,
                                      l12_asc_np=_l12.get("s1_asc"),
                                      l12_desc_np=_l12.get("s1_desc"),
@@ -1099,34 +925,14 @@ class SoilMoistureDataset(Dataset):
                                      token_sel=self._token_sel,
                                      patch_token_dropout=self._patch_token_dropout)
 
+            # DEM/LULC enter patch k's sequence DIRECTLY, not as four nested-window means.
+            # §27a.2 measured that pooling retains 1.5% (DEM) / 2.6% (LULC) of within-tile
+            # variance -- that destruction is the defect this whole build exists to remove.
             _static  = self._static_cache.get(sat_dir, {})
-            dem_pyr  = _static.get("dem_pyr",  _cpu_pyramid_pool(
-                           _static.get("dem",  torch.zeros(196, 768, dtype=torch.float16)).unsqueeze(0),
-                           _static.get("dem_token_mask", torch.ones(14, 14, dtype=torch.bool)).unsqueeze(0)
-                       ).squeeze(0))   # (4, 768) — pre-computed at init, fallback for missing cache
-            lulc_pyr = _static.get("lulc_pyr", _cpu_pyramid_pool(
-                           _static.get("lulc", torch.zeros(196, 768, dtype=torch.float16)).unsqueeze(0),
-                           _static.get("lulc_token_mask", torch.ones(14, 14, dtype=torch.bool)).unsqueeze(0)
-                       ).squeeze(0))   # (4, 768)
+            _sel     = self._token_sel
+            dem_tok  = _static.get("dem",  torch.zeros(N_TOKENS, 768, dtype=torch.float16))[_sel]
+            lulc_tok = _static.get("lulc", torch.zeros(N_TOKENS, 768, dtype=torch.float16))[_sel]
 
-            # Patchwise: DEM/LULC enter patch k's sequence directly, not as four
-            # nested-window means. §27a.2 measured that pooling retains 1.5% (DEM)
-            # / 2.6% (LULC) of within-tile variance -- that destruction is the
-            # defect this build exists to remove.
-            if self._token_sel is not None:
-                _sel = self._token_sel
-                dem_tok = _static.get("dem",  torch.zeros(N_TOKENS, 768, dtype=torch.float16))[_sel]
-                lulc_tok = _static.get("lulc", torch.zeros(N_TOKENS, 768, dtype=torch.float16))[_sel]
-            else:
-                dem_tok = lulc_tok = None
-
-            anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit = \
-                select_anchor_zarr(zg, year, doy,
-                                   l12_cache=_l12,
-                                   l369_cache=self._l369_cache.get(sat_dir),
-                                   date_cache=_dc,
-                                   cm_token_mask=_cm_tm,
-                                   s1_token_mask_cache=_s1_tm)
 
         # ── Soil patch (static, from cache) ──────────────────────────
         soil_patch = self._static_cache.get(sat_dir, {}).get(
@@ -1173,84 +979,44 @@ class SoilMoistureDataset(Dataset):
                 if qc_np is None or qc_np[d_idx, s["time_idx"]] == 0:
                     label[i] = float(sm_np[d_idx, s["time_idx"]])
 
-        out = {}
-        if self._token_sel is not None:
-            # --- patchwise (§35.8) -------------------------------------------
-            # DISTINCT KEYS, deliberately. Reusing "s2_pyr" with a (T,K,768)
-            # shape instead of (T,4,768) would fail silently downstream; a
-            # missing key raises loudly instead.
-            out.update({
-                "s2_hist"       : s2_pyr,          # (MAX_S2, K, 768) fp16
-                "s2_hist_valid" : s2_hist_valid,   # (MAX_S2, K) bool
-                "s1_hist"       : s1_pyr,          # (MAX_S1, K, 768) fp16
-                "s1_hist_valid" : s1_hist_valid,   # (MAX_S1, K) bool
-                "dem_tok"       : dem_tok,         # (K, 768) fp16
-                "lulc_tok"      : lulc_tok,        # (K, 768) fp16
-                "token_idx"     : torch.from_numpy(self._token_sel),   # (K,) long
-                "token_valid"   : torch.ones(len(self._token_sel), dtype=torch.bool),
-            })
-
-        _d = {
-            **out,
-            # S2 — pyramid-pooled on CPU (30 MB → ~2 MB per sample across IPC)
-            "s2_pyr"        : s2_pyr,            # (MAX_S2, 4, 768) fp32
+        return {
+            # ── Per-patch satellite history — the point of the whole architecture ──
+            # (T, K, 768) fp16, K=1 in training (patch 105). Only these K patches were ever
+            # read from the store; the other 195 never enter the process (§35.22).
+            "s2_hist"       : s2_hist,           # (MAX_S2, K, 768) fp16
+            "s2_hist_valid" : s2_hist_valid,     # (MAX_S2, K) bool  — cloud mask AND doy>0
             "s2_doys"       : s2_doys,           # (MAX_S2,) long
-            "s2_valid"      : s2_valid,          # (MAX_S2,) bool
-            "s2_rel_pos"    : s2_rel_pos,        # (MAX_S2,) long
+            "s2_valid"      : s2_valid,          # (MAX_S2,) bool    — acquisition-level
+            "s2_rel_pos"    : s2_rel_pos,        # (MAX_S2,) long    — staleness, 364 = today
 
-            # S1 — pyramid-pooled on CPU
-            "s1_pyr"        : s1_pyr,            # (MAX_S1, 4, 768) fp32
+            "s1_hist"       : s1_hist,           # (MAX_S1, K, 768) fp16
+            "s1_hist_valid" : s1_hist_valid,     # (MAX_S1, K) bool
             "s1_doys"       : s1_doys,           # (MAX_S1,) long
             "s1_valid"      : s1_valid,          # (MAX_S1,) bool
             "s1_rel_pos"    : s1_rel_pos,        # (MAX_S1,) long
 
-            # Static — pyramid-pooled on CPU (consistent with S2/S1)
-            "dem_pyr"       : dem_pyr,           # (4, 768) fp32
-            "lulc_pyr"      : lulc_pyr,          # (4, 768) fp32
+            # ── Per-patch statics ─────────────────────────────────────────
+            "dem_tok"       : dem_tok,           # (K, 768) fp16
+            "lulc_tok"      : lulc_tok,          # (K, 768) fp16
+            "token_idx"     : torch.from_numpy(self._token_sel),   # (K,) long
+            "token_valid"   : torch.ones(len(self._token_sel), dtype=torch.bool),
 
-            # Anchor (best clear + recent acquisition) — used for U-Net skip + spatial target
-            "anchor_l3"       : anchor_l3,         # (196, 768) fp16
-            "anchor_l6"       : anchor_l6,         # (196, 768) fp16
-            "anchor_l9"       : anchor_l9,         # (196, 768) fp16
-            "anchor_l12"      : anchor_l12,        # (196, 768) fp16
-            "anchor_rel_pos"  : anchor_rel_pos,    # () long
-            "anchor_orbit"    : anchor_orbit,      # () long  0=S2, 1=S1_asc, 2=S1_desc
-
-            # Soil (static)
+            # ── Tile-level drivers: identical for every patch, hence cacheable ──
             "soil_patch"    : soil_patch,        # (21, 74, 74) fp32 — NaN-free
-
-            # ERA5 (z-scored)
-            "era5"          : era5,              # (365, 19) fp32
+            "era5"          : era5,              # (365, 19) fp32 — z-scored
             "era5_doys"     : era5_doys,         # (365,) long
-
-            # SIF (optional, sparse)
             "sif"           : sif_vals,          # (MAX_SIF, 1) fp32
             "sif_doys"      : sif_doys,          # (MAX_SIF,) long
             "sif_rel_pos"   : sif_rel_pos,       # (MAX_SIF,) long
             "sif_valid"     : sif_valid,         # (MAX_SIF,) bool
-
-            # TWSA (optional, sparse)
             "twsa"          : twsa_vals,         # (MAX_TWSA, 1) fp32
             "twsa_doys"     : twsa_doys,         # (MAX_TWSA,) long
             "twsa_rel_pos"  : twsa_rel_pos,      # (MAX_TWSA,) long
             "twsa_valid"    : twsa_valid,        # (MAX_TWSA,) bool
 
-            # Labels
-            "label"         : label,             # (3,) — NaN where depth absent
-
-            # Debug identifiers (non-tensor; for NaN tracing)
+            # ── Labels and identity ───────────────────────────────────────
+            "label"         : label,             # (3,) — NaN where the depth has no obs
             "station_key"   : s["station_key"],
             "year"          : s["year"],
             "doy"           : s["doy"],
         }
-
-        if self._token_sel is not None:
-            # Drop the pooled keys entirely on the patchwise path. `s2_pyr` and
-            # friends now hold (T,K,768), not (T,4,768) -- leaving them in place
-            # under the old names is precisely the silent shape mismatch the
-            # distinct keys above exist to avoid. A consumer that still wants
-            # them gets a loud KeyError.
-            for _k in ("s2_pyr", "s1_pyr", "dem_pyr", "lulc_pyr"):
-                _d.pop(_k, None)
-
-        return _d

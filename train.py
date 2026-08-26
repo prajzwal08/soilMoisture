@@ -40,8 +40,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import torch.multiprocessing
 
-from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss, total_variation_loss
+from dataset import SoilMoistureDataset, SM_DEPTHS, MAX_S2, MAX_S1
+from model import SoilMoistureModel, masked_huber_loss
 
 # ── Preemption handling ───────────────────────────────────────────────────────
 _preempted = False
@@ -206,13 +206,21 @@ CONFIG = {
     "drop_path_rate": 0.1,
     "use_cls_depth" : False,    # if True: per-depth CLS tokens in transformer
 
+    # Architecture (§35.18 / text/patchwise_math.md). "unet" is the pooled baseline and must
+    # stay byte-identical; "patchwise" is the two-transformer model — T1 encodes the 431
+    # tile-level driver tokens ONCE per sample, T2 runs each patch's 106-token sequence and
+    # cross-attends into T1's cached K/V. STEP 1 has no decoder: the head predicts at 160 m.
+    "driver_mode"   : "memory",  # memory | concat — how the drivers enter each patch sequence
+    "driver_layers" : 2,         # T1 depth. NOT a repeat count: T1 runs once whatever its depth
+    "token_sel"     : "station",  # "station" = K=1 (token 105), the only supervised setting;
+                                  # "all" = K=196, inference only (~30 MB/sample IPC)
+    "patch_token_dropout": 0.0,
+
     # Loss
     "loss_fn"   : "huber",
     "per_depth_loss" : True,    # equal-weight Huber per depth (default since 2026-08-02;
                                 # pooled let the obs-rich 0-10 layer dominate the gradient —
                                 # 30-100 barely moved across epochs 1-2 of baseline_huber_notv)
-    "lambda_tv"       : 0.0,    # TV regularization weight (0 = disabled; disabled — TV smooths the 224² map, see Tier-1 verdict)
-    "lambda_boundary" : 0.1,    # penalty for SM outside [0, 1]
 
     # W&B
     "wandb_project": "soil-moisture-phd",
@@ -240,26 +248,6 @@ def worker_init_fn(worker_id: int):
     seed = (torch.initial_seed() + worker_id) % (2 ** 32)
     np.random.seed(seed)
     random.seed(seed)
-
-
-def _advise_l369_willneed(*datasets) -> None:
-    # Non-blocking: ask the kernel to async-prefetch all L369 memmap pages back into the
-    # OS page cache.  Called at every epoch start so pages evicted by competing Snellius
-    # jobs between epochs are re-warmed before DataLoader workers start consuming them.
-    # NOTE: posix_fadvise is silently ignored by GPFS; madvise(MADV_WILLNEED) on the
-    # existing mmap region goes through the Linux VM layer and IS honoured on most GPFS
-    # versions — verify empirically if jitter persists.
-    # ValueError covers the closed-mmap edge case; OSError covers EINVAL from some GPFS
-    # striping configurations.
-    import mmap as _mmap
-    for ds in datasets:
-        for arr_dict in ds._l369_cache.values():
-            for arr in arr_dict.values():
-                if hasattr(arr, '_mmap') and arr._mmap is not None:
-                    try:
-                        arr._mmap.madvise(_mmap.MADV_WILLNEED)
-                    except (OSError, ValueError):
-                        pass
 
 
 def _fsync_save(obj, path):
@@ -373,31 +361,24 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
 
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def _compute_loss(pred, label, lambda_tv=0.0, lambda_boundary=0.0, per_depth=False,
-                  return_breakdown=False):
-    """Returns (loss, tv) — or (loss, tv, depth_sum, depth_cnt) if return_breakdown.
+def _compute_loss(pred, label, per_depth=False, return_breakdown=False):
+    """Huber on the supervised patch. Returns (loss, tv) or (loss, tv, depth_sum, depth_cnt).
 
-    depth_sum/depth_cnt are raw per-depth SUMS over this batch (see
-    masked_huber_loss docstring). They describe the Huber term only — the TV and
-    boundary terms are not attributed to any depth.
+    `tv` is retained as a always-zero second element purely so the epoch bookkeeping and the
+    W&B panels keep their shape. There is no TV term and no boundary term any more: both were
+    defined on the 224x224 decoder map, which this architecture does not produce. The boundary
+    penalty in particular was LIVE at 0.1 and its `.mean()` would have renormalised by
+    ~50,176x (50,176 px x 3 depths against K=1 x 3) -- §35.22.
+
+    depth_sum/depth_cnt are raw per-depth SUMS over this batch (see masked_huber_loss); the
+    caller accumulates them over the epoch and all_reduce(SUM)s across ranks, which is only
+    correct on sums.
     """
-    import torch.nn.functional as F
     if return_breakdown:
         loss, depth_sum, depth_cnt = masked_huber_loss(
             pred, label, per_depth=per_depth, return_breakdown=True)
-    else:
-        loss = masked_huber_loss(pred, label, per_depth=per_depth)
-    if lambda_tv > 0.0:
-        tv = total_variation_loss(pred)
-        loss = loss + lambda_tv * tv
-    else:
-        tv = pred.new_zeros(1)
-    if lambda_boundary > 0.0:
-        boundary = F.relu(-pred).mean() + F.relu(pred - 1.0).mean()
-        loss = loss + lambda_boundary * boundary
-    if return_breakdown:
-        return loss, tv.detach(), depth_sum, depth_cnt
-    return loss, tv.detach()
+        return loss, pred.new_zeros(1), depth_sum, depth_cnt
+    return masked_huber_loss(pred, label, per_depth=per_depth), pred.new_zeros(1)
 
 
 def _per_depth_mean(depth_sum, depth_cnt) -> dict:
@@ -413,8 +394,8 @@ def _loss_aggregates(depth_sum, depth_cnt):
     """Two flag-independent aggregates of the per-depth Huber sums -> (pooled, depth_mean).
 
     pooled     = Σsum / Σcnt — one Huber mean over every valid (sample, depth) pair.
-                 Its definition does NOT depend on per_depth_loss, lambda_tv or
-                 lambda_boundary, so it is comparable across every run, including
+                 Its definition does NOT depend on per_depth_loss, so it is
+                 comparable across every run, including
                  finished ones.  `val_loss` is not: it means pooled-Huber when
                  per_depth_loss=False and mean-of-depth-means when True, which is why
                  the runbook forbids comparing val_loss across runs (§19.3).
@@ -542,8 +523,8 @@ def make_resume_loader(full_loader, skip_batches, epoch):
     )
 
 
-def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
-                     lambda_boundary=0.0, per_depth=False, max_batches=None,
+def train_one_epoch(model, loader, optimizer, device, grad_clip,
+                     per_depth=False, max_batches=None,
                      debug_nan=False, skip_batches=0, mid_ckpt_every=500,
                      mid_ckpt_fn=None):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
@@ -591,8 +572,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip, lambda_tv=0.0,
                     _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
             loss, tv, d_sum, d_cnt = _compute_loss(
-                mu, batch["label"], lambda_tv, lambda_boundary, per_depth,
-                return_breakdown=True)
+                mu, batch["label"], per_depth, return_breakdown=True)
 
         depth_sum_acc += d_sum
         depth_cnt_acc += d_cnt
@@ -653,8 +633,6 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     all_targets = []
     all_station_keys = []
 
-    SROW = SoilMoistureModel.STATION_ROW
-    SCOL = SoilMoistureModel.STATION_COL
 
     n_depths      = len(SM_DEPTHS)
     depth_sum_acc = torch.zeros(n_depths, device=device)
@@ -673,7 +651,9 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         total_loss += loss.item()
         n_batches  += 1
 
-        all_preds.append(mu[:, :, SROW, SCOL].float().cpu().numpy())
+        # mu is (B, K, n_depths); the value IS the prediction and the dataset already
+        # selected patch 105. No map, nothing to index.
+        all_preds.append(mu[:, 0, :].float().cpu().numpy())
         all_targets.append(batch["label"].cpu().numpy())
         all_station_keys.extend(batch["station_key"])
 
@@ -727,10 +707,6 @@ def main():
     parser.add_argument("--batch-size",   type=int,   default=None)
     parser.add_argument("--n-layers",     type=int,   default=None)
     parser.add_argument("--run-name",     type=str,   default=None)
-    parser.add_argument("--lambda-tv",       type=float, default=None,
-                        help="TV regularization weight (default 0.001; 0 to disable)")
-    parser.add_argument("--lambda-boundary", type=float, default=None,
-                        help="Boundary penalty weight for SM ∈ [0,1] (default 0.1; 0 to disable)")
     parser.add_argument("--max-stations", type=int,   default=None,
                         help="Limit dataset to N stations (smoke-test mode)")
     parser.add_argument("--max-epochs",   type=int,   default=None,
@@ -745,13 +721,21 @@ def main():
                         help="Limit batches during validation (trial/debug mode)")
     parser.add_argument("--debug-nan", action="store_true",
                         help="Scan inputs/outputs/grads/params for NaN/Inf each batch (slow)")
-    parser.add_argument("--use-memmap", action="store_true",
-                        help="Load anchor L3/L6/L9 from .npy memmaps instead of zarr "
-                             "(eliminates zstd decompress; OS page cache warms after epoch 1)")
     parser.add_argument("--per-depth-loss", action="store_true",
                         help="Equal-weight Huber per depth (vs. pooled baseline)")
     parser.add_argument("--use-cls-depth", action="store_true",
                         help="Add per-depth CLS tokens to transformer for depth-specific representations")
+    # ── Architecture (§35.18) ───────────────────────────────────────────────
+    parser.add_argument("--driver-mode", choices=["memory", "concat"], default=None,
+                        help="memory: drivers are a read-only cross-attended memory, K/V cached "
+                             "once per sample. concat: all 537 tokens in one self-attention stack")
+    parser.add_argument("--driver-layers", type=int, default=None,
+                        help="Depth of the driver (weather) encoder T1; default 2")
+    parser.add_argument("--token-sel", choices=["station", "all"], default=None,
+                        help="Which patches the dataset emits. station = K=1 (token 105), the "
+                             "only supervised setting; all = K=196, inference only")
+    parser.add_argument("--patch-token-dropout", type=float, default=None,
+                        help="Per-patch token dropout during training (patchwise only)")
     # Regularisation overrides — CONFIG keeps the baseline values so comparison runs
     # stay clean; pass these on the sbatch line to make a run self-documenting.
     parser.add_argument("--weight-decay", type=float, default=None,
@@ -771,10 +755,27 @@ def main():
     if args.num_workers     is not None: CONFIG["num_workers"]     = args.num_workers
     if args.prefetch_factor is not None: CONFIG["prefetch_factor"] = args.prefetch_factor
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
-    if args.lambda_tv       is not None: CONFIG["lambda_tv"]       = args.lambda_tv
-    if args.lambda_boundary is not None: CONFIG["lambda_boundary"] = args.lambda_boundary
     if args.per_depth_loss: CONFIG["per_depth_loss"] = True
-    if args.use_cls_depth:  CONFIG["use_cls_depth"]  = True
+    if args.driver_mode   is not None: CONFIG["driver_mode"]   = args.driver_mode
+    if args.driver_layers is not None: CONFIG["driver_layers"] = args.driver_layers
+    if args.token_sel     is not None: CONFIG["token_sel"]     = args.token_sel
+    if args.patch_token_dropout is not None:
+        CONFIG["patch_token_dropout"] = args.patch_token_dropout
+
+    # The per-patch sequence carries the depth CLS tokens as a prefix; there is no variant
+    # without them, so this is not a flag.
+    CONFIG["use_cls_depth"] = True
+
+    # Provenance: no code path recorded a commit SHA into a checkpoint, so a reported number
+    # could not be traced to the code that produced it (§35.13).
+    try:
+        import subprocess as _sp
+        CONFIG["git_sha"] = _sp.check_output(["git", "rev-parse", "HEAD"],
+                                             text=True, stderr=_sp.DEVNULL).strip()
+        CONFIG["git_dirty"] = bool(_sp.check_output(["git", "status", "--porcelain"],
+                                                    text=True, stderr=_sp.DEVNULL).strip())
+    except Exception:
+        CONFIG["git_sha"], CONFIG["git_dirty"] = "unknown", None
     if args.weight_decay        is not None: CONFIG["weight_decay"]        = args.weight_decay
     if args.drop_path_rate      is not None: CONFIG["drop_path_rate"]      = args.drop_path_rate
     if args.early_stop_patience is not None: CONFIG["early_stop_patience"] = args.early_stop_patience
@@ -837,7 +838,8 @@ def main():
         years            = CONFIG["years"],
         category_filter  = CONFIG["category_filter"],
         shm_dir          = SHM_DIR,
-        use_mmap         = args.use_memmap,
+        token_sel        = CONFIG["token_sel"],
+        patch_token_dropout = CONFIG["patch_token_dropout"],
     )
     val_max_stations = max(1, args.max_stations // 5) if args.max_stations is not None else None
     # file_system strategy avoids fd exhaustion with 32 workers; must be set before workers spawn
@@ -896,6 +898,8 @@ def main():
         n_layers       = CONFIG["n_layers"],
         drop_path_rate = CONFIG.get("drop_path_rate", 0.1),
         use_cls_depth  = CONFIG.get("use_cls_depth", False),
+        driver_mode    = CONFIG.get("driver_mode", "memory"),
+        driver_layers  = CONFIG.get("driver_layers", 2),
     ).to(device)
 
     if is_ddp:
@@ -908,9 +912,9 @@ def main():
         # Echo the run-defining config. It is saved into the checkpoint too, but a job
         # log should be readable on its own — otherwise which flags a run actually used
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
-        _echo = ["run_name", "use_cls_depth", "per_depth_loss", "lr", "batch_size",
-                 "weight_decay", "drop_path_rate", "n_layers", "lambda_tv",
-                 "lambda_boundary", "early_stop_patience", "lr_patience"]
+        _echo = ["run_name", "driver_mode", "driver_layers", "token_sel",
+                 "per_depth_loss", "lr", "batch_size", "weight_decay", "drop_path_rate",
+                 "n_layers", "early_stop_patience", "lr_patience", "git_sha"]
         print("CONFIG: " + "  ".join(f"{k}={CONFIG.get(k)}" for k in _echo))
 
     # ── Optimiser ─────────────────────────────────────────────────────
@@ -1062,7 +1066,6 @@ def main():
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
-        _advise_l369_willneed(train_dataset, val_dataset)
         torch.cuda.reset_peak_memory_stats(device)
         _log_mem_snapshot(f"epoch_{epoch:03d}_start", device, is_main)
 
@@ -1101,8 +1104,6 @@ def main():
                 (train_loss, train_tv, data_time, compute_time,
                  train_depth_sum, train_depth_cnt) = train_one_epoch(
                     model, _loader, optimizer, device, CONFIG["grad_clip"],
-                    lambda_tv=CONFIG["lambda_tv"],
-                    lambda_boundary=CONFIG.get("lambda_boundary", 0.0),
                     per_depth=CONFIG["per_depth_loss"],
                     max_batches=args.max_train_batches, debug_nan=args.debug_nan,
                     skip_batches = _skip,
@@ -1137,6 +1138,11 @@ def main():
         # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
         # averages the loss across ranks; all_gather_object collects preds to rank 0.
         # No NCCL timeout risk: all GPUs stay active throughout validation.
+        # Arm the entropy diagnostic for the validation pass only: collecting attention
+        # weights forces the math kernel and gives up SDPA, so it stays off during training.
+        for _blk in raw_model.patch_blocks:
+            _blk.collect_entropy = True
+
         val_loss, metrics, per_station, val_depth_sum, val_depth_cnt = evaluate(
             model if not is_ddp else model.module,
             val_loader, device,
@@ -1144,6 +1150,11 @@ def main():
             max_batches=args.max_val_batches,
             per_depth=CONFIG["per_depth_loss"],
         )
+        # Disarm immediately. Collecting attention weights forces need_weights=True, which gives
+        # up the SDPA/flash kernel; leaving it on would silently slow every subsequent TRAINING
+        # epoch, not just this validation pass.
+        for _blk in raw_model.patch_blocks:
+            _blk.collect_entropy = False
         _log_mem_snapshot(f"epoch_{epoch:03d}_post_val", device, is_main)
         # Release cached-but-free VRAM each epoch.  With expandable_segments:True this
         # cannot unmap segments (by design), so reserved memory will still grow if the
@@ -1282,6 +1293,19 @@ def main():
                             log_dict[f"diag/depth_token_cos_{a}{b}"] = cos[a, b].item()
                             if cos_ctx is not None:
                                 log_dict[f"diag/depth_ctx_cos_{a}{b}"] = cos_ctx[a, b].item()
+                # TEMPORAL ATTENTION ENTROPY — the collapse detector (§35.20 step 1).
+                # Register standardisation was dropped for run 1 on the grounds that this is
+                # strictly better evidence: it measures whether attention ACTUALLY collapsed,
+                # not whether the keys look aligned. If the per-patch CLS row's entropy sits at
+                # the uniform value the model is reading a MEAN over the history, which is
+                # exactly what un-pooling exists to escape — and it does NOT show up in the map
+                # SD, so nothing else would catch it. Uniform over 100 history tokens = 4.605.
+                ent = getattr(raw_model, "_last_attn_entropy", None)
+                if ent is not None:
+                    for _i, _e in enumerate(ent.tolist()):
+                        log_dict[f"diag/attn_entropy_L{_i}"] = _e
+                    log_dict["diag/attn_entropy_mean"] = float(ent.mean())
+                    log_dict["diag/attn_entropy_uniform_ref"] = math.log(MAX_S2 + MAX_S1)
                 # Worst-5 stations per depth
                 if per_station:
                     for depth in SM_DEPTHS:

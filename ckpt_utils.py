@@ -41,21 +41,25 @@ def load_checkpoint(ckpt_path: Path, device):
         n_heads        = cfg.get("n_heads",  12),
         n_layers       = cfg.get("n_layers", 6),
         drop_path_rate = cfg.get("drop_path_rate", 0.0),
-        use_cls_depth  = cfg.get("use_cls_depth", False),
+        use_cls_depth  = cfg.get("use_cls_depth", True),
+        driver_mode    = cfg.get("driver_mode", "memory"),
+        driver_layers  = cfg.get("driver_layers", 2),
     ).to(device)
 
-    sd      = remap_checkpoint_keys(ckpt["model"])
-    missing, unexpected = model.load_state_dict(sd, strict=False)
-
-    # transformer_norm is new (old model had no post-transformer LayerNorm);
-    # it initialises as identity so eval results are valid.
-    new_keys = {"transformer_norm.weight", "transformer_norm.bias"}
-    real_missing = [k for k in missing if k not in new_keys]
-    if real_missing:
-        print(f"  WARNING — unexpected missing keys: {real_missing[:6]} ...")
-    if unexpected:
-        print(f"  WARNING — unexpected keys in ckpt: {unexpected[:4]} ...")
+    # strict=True, deliberately. The old loader used strict=False with a tolerance written for
+    # one pre-2026-06 checkpoint, and the cost was that a mismatched checkpoint produced a
+    # RANDOMLY-INITIALISED model that ran and printed entirely plausible numbers. Every eval
+    # script and figure in this project funnels through this function (§35.22).
+    if cfg.get("arch") == "unet" or any(k.startswith(("decoder.", "transformer_layers."))
+                                        for k in ckpt["model"]):
+        raise RuntimeError(
+            f"{ckpt_path} holds a POOLED U-NET checkpoint. This module only builds the "
+            "patchwise architecture. Load it with ckpt_utils_unet.load_checkpoint instead "
+            "(model_unet.py / dataset_unet.py, tag baseline-unet-temporal)."
+        )
+    model.load_state_dict(remap_checkpoint_keys(ckpt["model"]), strict=True)
 
     model.eval()
-    print(f"  Epoch {ckpt['epoch']}  best_val_loss={ckpt.get('best_val_loss','N/A')}")
+    print(f"  arch={arch}  epoch {ckpt['epoch']}  "
+          f"best_val_loss={ckpt.get('best_val_loss','N/A')}  sha={cfg.get('git_sha','?')[:8]}")
     return model, cfg, ckpt["epoch"]

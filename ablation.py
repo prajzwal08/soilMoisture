@@ -25,20 +25,24 @@ import torch
 # A modality MOVES AS A WHOLE: permuting s2_pyr without s2_rel_pos hands the model
 # tokens whose declared time offsets belong to a different acquisition, which tests
 # incoherence rather than absence.
+# --arch patchwise emits DIFFERENT keys and pops the pooled ones (dataset.py:1247-1254), so the
+# pooled names below are absent there. Both sets are listed and the swap asserts that at least
+# one key was actually present — see AblationDataset.__getitem__.
 MODALITY_KEYS = {
-    "s2":     ["s2_pyr", "s2_doys", "s2_valid", "s2_rel_pos"],
-    "s1":     ["s1_pyr", "s1_doys", "s1_valid", "s1_rel_pos"],
-    "dem":    ["dem_pyr"],
-    "lulc":   ["lulc_pyr"],
-    "anchor": ["anchor_l3", "anchor_l6", "anchor_l9", "anchor_l12",
-               "anchor_rel_pos", "anchor_orbit"],
-    # positive control: we are confident ERA5 forcing matters.  If shuffling THIS
-    # changes nothing, the harness never reached the model -- stop and debug (§24.5).
-    "era5":   ["era5", "era5_doys"],
+    "s2":   ["s2_hist", "s2_hist_valid", "s2_doys", "s2_valid", "s2_rel_pos"],
+    "s1":   ["s1_hist", "s1_hist_valid", "s1_doys", "s1_valid", "s1_rel_pos"],
+    "dem":  ["dem_tok"],
+    "lulc": ["lulc_tok"],
+    # positive control: we are confident ERA5 forcing matters. If shuffling THIS changes
+    # nothing, the harness never reached the model -- stop and debug (§24.5).
+    "era5": ["era5", "era5_doys"],
 }
 MODALITY_KEYS["sat"] = (MODALITY_KEYS["s2"] + MODALITY_KEYS["s1"]
-                        + MODALITY_KEYS["dem"] + MODALITY_KEYS["lulc"]
-                        + MODALITY_KEYS["anchor"])
+                        + MODALITY_KEYS["dem"] + MODALITY_KEYS["lulc"])
+
+# Every modality must match at least one key in every sample. Silence means a stale key list,
+# which is a SILENT NO-OP ablation -- see AblationDataset.__getitem__.
+_OPTIONAL_MODALITIES: set[str] = set()
 
 MODALITIES = sorted(MODALITY_KEYS)
 
@@ -139,9 +143,20 @@ class AblationDataset(torch.utils.data.Dataset):
         if j == i:
             return item                       # fallback: nothing to swap
         d = self.base[j]
+        n_swapped = 0
         for k in self.keys:
             if k in d:
                 item[k] = d[k]
+                n_swapped += 1
+        if n_swapped == 0 and self.modality not in _OPTIONAL_MODALITIES:
+            # This used to be a bare `if k in d` with no else, which made a stale key list a
+            # SILENT NO-OP: report() still printed a healthy donor fraction while nothing was
+            # ablated, and the run came back "this modality does not matter". §35.9's arms are
+            # the instrument for the whole patchwise hypothesis, so this must be fatal.
+            raise KeyError(
+                f"ablation '{self.modality}' matched none of {self.keys} in the sample. "
+                f"Sample keys: {sorted(d)[:12]}... MODALITY_KEYS is stale for this arch."
+            )
         return item
 
     def report(self) -> str:

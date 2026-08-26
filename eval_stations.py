@@ -57,11 +57,19 @@ def main():
     print(f"Val dataset: {len(val_dataset)} samples from {val_dataset.n_stations} stations")
 
     # Build model and load weights
+    # Four kwargs was wrong even before §35.18: no drop_path_rate, no use_cls_depth. Adding
+    # arch/driver_mode/driver_layers so a patchwise checkpoint builds the model it was trained as
+    # rather than a differently-shaped one.
     model = SoilMoistureModel(
-        n_depths = config["n_depths"],
-        n_layers = config["n_layers"],
-        d_model  = config["d_model"],
-        n_heads  = config["n_heads"],
+        n_depths       = config["n_depths"],
+        n_layers       = config["n_layers"],
+        d_model        = config["d_model"],
+        n_heads        = config["n_heads"],
+        drop_path_rate = config.get("drop_path_rate", 0.0),
+        use_cls_depth  = config.get("use_cls_depth", False),
+        arch           = config.get("arch", "unet"),
+        driver_mode    = config.get("driver_mode", "memory"),
+        driver_layers  = config.get("driver_layers", 2),
     ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()

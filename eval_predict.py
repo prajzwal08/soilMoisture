@@ -78,7 +78,10 @@ def run_split(model, loader, device) -> dict:
     for i, batch in enumerate(CudaPrefetcher(loader, device)):
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu = model(batch)
-        preds.append(mu[:, :, srow, scol].float().cpu().numpy())
+        # --arch patchwise emits (B, K, n_depths): the value IS the prediction and the dataset
+        # already selected the station patch. No map, nothing to index. §35.20.
+        _p = mu[:, 0, :] if mu.ndim == 3 else mu[:, :, srow, scol]
+        preds.append(_p.float().cpu().numpy())
         targets.append(batch["label"].float().cpu().numpy())
         keys.extend(batch["station_key"])
         years.append(np.asarray(batch["year"].cpu() if torch.is_tensor(batch["year"])
@@ -358,6 +361,22 @@ def main():
     ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
     model, cfg, epoch = load_checkpoint(ckpt_path, device)
 
+    # --arch patchwise predicts on the 14x14 token grid, not a 224x224 pixel map, so the
+    # PixelMap gather in run_split_pixels indexes an axis that does not exist. Reject rather
+    # than let it produce a wrongly-shaped answer.
+    if cfg.get("arch") == "patchwise" and getattr(args, "pixel_csv", None):
+        raise SystemExit(
+            "--pixel-csv is a 224x224-map feature and is meaningless for --arch patchwise: "
+            "the model emits one value per 160 m token. Use token indices instead (§28.9)."
+        )
+    # token_sel='all' restores the ~30 MB/sample IPC payload that _cpu_pyramid_pool was written
+    # to eliminate (its docstring records a ~437 GB queue and epoch-boundary OOM kills). At the
+    # default batch size of 128 across 8 workers that is several GB per prefetched batch.
+    if cfg.get("token_sel") == "all" and args.batch_size > 8:
+        print(f"[eval] token_sel='all': capping --batch-size {args.batch_size} -> 8 "
+              f"(~30 MB/sample crosses the DataLoader IPC barrier)")
+        args.batch_size = 8
+
     splits_df = pd.read_csv(SPLITS_CSV)
     train_split_map = dict(zip(splits_df.apply(_make_key, axis=1), splits_df["split"]))
 
@@ -445,6 +464,9 @@ def main():
             training        = False,
             use_mmap        = True,
             max_stations    = args.max_stations,
+            # Recovered from the checkpoint, never re-specified on the CLI: a mismatch here
+            # would feed pooled keys to a patchwise model (KeyError) or the reverse.
+            token_sel       = cfg.get("token_sel"),
         )
         n_stations = len({s["station_key"] for s in ds.samples})
         expected   = EXPECTED_STATIONS.get(split_name)

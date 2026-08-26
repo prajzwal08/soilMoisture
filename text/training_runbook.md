@@ -9275,3 +9275,547 @@ crash cannot occur; 1-D FiLM; explicit per-patch CLS), then `train.py` (loss gat
 `token_idx`, `--arch` into `CONFIG`, guard `lambda_boundary` and `total_variation_loss`), then
 `eval_predict.py`. **§35.15's cross-attention decision gates the encoder shape and must be settled
 first.**
+
+### 35.18 The §35.15 decision is TAKEN — read-only driver memory, both modes behind a flag (2026-08-26)
+
+**Full derivation, with every dimension and a worked numeric example: `text/patchwise_math.md`.**
+That document is the reference; this section records the decision and what it changes.
+
+**Decision.** Build both driver wirings behind `--driver-mode {memory, concat}`, default `memory`,
+and train stage 2a with `memory`. All 431 tile-level driver tokens (era5 365 + sif 50 + twsa 12 +
+soil 4) are kept **whole** in both modes — the Perceiver resampler stays dropped per §35.14, and
+with it the learned latent queries, the null token and the `-1e4` masking.
+
+```
+memory (default)
+  self:   [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 | CLS ]   L = 106   per patch
+  cross:  [ era5 365 | sif 50 | twsa 12 | soil 4 ]                M = 431   K/V once per tile-day
+concat
+          all T = 537 in one self-attention stack
+```
+
+**Why it had to be decided before the encoder is written, proved rather than asserted.** Under
+`concat` the driver tokens sit in the `(431,106)` block of the score matrix — the weather *reads the
+patch*. `text/patchwise_math.md` §3.4 works this through numerically at d=2: two patches are handed
+a byte-identical driver token `[1,1]`, and after **one** layer it has become `[1.000, 0.670]` for
+one patch and `[0.670, 1.000]` for the other. The input redundancy is real; one layer of full
+self-attention destroys it. So there is nothing to cache from layer 2 onward, and retrofitting the
+cache later is a retrain — the identical trap the resampler had.
+
+**Three corrections to §35.14–§35.17 that this derivation forces.**
+
+1. **The 4.4x is mostly the FFN, not the attention.** Per layer the linear term is `12·n·d²` and the
+   attention term `2·n²·d`; at n=537, d=768 that is 3.80e9 vs 0.44e9, so the linear term is ~90%.
+   Under `concat` the FFN runs on all 537 tokens for each of the 196 patches; under `memory` on 106.
+   Any cost claim in this runbook derived from *attention pairs* — §34.7 and `open_items.md` §G2
+   both — is wrong by a large factor and should be re-derived from `12·n·d² + 2·n²·d`.
+2. **§35.15's "12 min vs 3 min" is 2x low.** It treated multiply-adds as FLOPs. Corrected: 0.10 s vs
+   0.023 s per tile-day, i.e. **~24 min vs ~5.6 min** for a year over 40 TxSON tiles. This changes
+   nothing, and that is the point — **the cost argument is not the reason to prefer `memory`**.
+   §35.14 killed the resampler by showing the absolute cost does not bind; consistency requires
+   applying the same test here, and `memory` fails it too.
+3. **The reason that does survive is optimisation, not expressiveness.** `memory-form` is a strict
+   *subset* of `concat-form` — concat can express everything memory can, plus the deleted block, so
+   trained perfectly concat is never worse. What differs is what the optimiser is asked to do: the
+   patch-specific share of what the per-patch CLS attends over is **102/537 = 19%** under concat
+   against **102/106 = 96%** under memory. Step 1 asks whether per-patch history carries within-tile
+   SM information at all; if concat returns a null, *"un-pooling does not help"* and *"the optimiser
+   never dug the signal out of an 81% constant background"* are indistinguishable. That is the same
+   class of confound §35.9's five arms exist to remove, and §35.12 names calendar time — not GPU
+   SBU — as the scarce resource, so an uninterpretable null is the expensive outcome.
+
+The `--driver-mode` flag exists so that whether this mattered is a **measurement**, not an
+assertion. FFN, norms, heads and the driver encoder are shared; only the attention wiring differs,
+so the second mode is ~30 lines.
+
+**Two required components that were not in §35.15.**
+
+- **A driver self-encoder**, 1-2 layers over the 431 tokens, run once per tile-day *before* they
+  become K/V. Read-only memory alone never lets driver days interact: a cross-attention head can
+  form weighted sums (so "total rain over 14 days" is expressible) but not sequential structure
+  (drydown since the last event). Cost 6.7e9 MAC against ~1.1e12 for the patch stack.
+- **Explicit projections, not stock `nn.MultiheadAttention`.** MHA runs `in_proj` on whatever it is
+  given, so `m.expand(196,431,768)` would re-project the same 431 tokens 196 times and return every
+  bit of the duplication. The block needs its own `q_proj`/`k_proj`/`v_proj`/`o_proj` with
+  `F.scaled_dot_product_attention`, and the `k_proj`/`v_proj` calls lifted out of the patch loop.
+
+**Cache and batching.**
+
+```
+cache = { (Kc_l, Vc_l) : l = 1..6 }     6 x 2 x (431,768) fp16 = 7.9 MB per tile-day
+
+Kc (D,431,768) -> (D,12,431,64)          one cache per DAY
+Q  (D,P,106,768) -> (D,P,12,106,64)      one query set per (day, patch)
+S = einsum('dphlx,dhmx->dphlm', Q, Kc)   d on BOTH, p on Q ONLY -- that asymmetry IS the sharing
+```
+
+**One model instance, patches in the batch dimension** — not 196 copies. Weight sharing is what lets
+supervision at the station's single token teach the mapping at all 196 (§34.4), and it is why
+training at K=1 and inference at K=196 use the *same checkpoint*: `token_sel` changes only the batch
+width. Separate instances appear only across SLURM array tasks.
+
+**The silent bug to guard.** The cache is per *day*, not per patch. A wrong `(D,P)` view or a stray
+`repeat_interleave` on the wrong axis makes every patch read another day's weather — nothing
+crashes, the model is merely mediocre. Assert it in `test_patchwise_model.py`.
+
+**Inference is I/O-bound, not compute-bound, and the fix is loop order.** Re-reading a
+`(100,196,768)` fp16 window per tile-day is 30 MB x 14,600 = ~438 GB. But a station's *entire* L12
+record is ~35 MB per modality (Hupsel, 117 dates), ~100 MB across S2/S1asc/S1desc — **~4 GB for all
+40 TxSON tiles, ~100 GB for all 993** on a 720 GB node. **Station outer, day inner** with the array
+resident (`/dev/shm` memmap, `dataset.py:749-765`) turns 438 GB into one 4 GB read plus in-RAM
+slicing. Shard across tasks **by station, never by day**: days are independent computationally (the
+model is not recurrent), but consecutive days share ~99% of their history window, so day-sharding
+re-reads each station array once per task. `slurm/eval_predict.sh` already has
+`--csv-start-idx`/`--csv-end-idx`; reuse it. Only after the loop order is right does adding GPUs
+help — otherwise it just adds GPFS contention.
+
+**Build order is unchanged from §35.8**, with the encoder shape now settled: steps 1-3 (register
+standardisation stats, position-code probe, anchor-redundancy check) run as CPU sbatch jobs
+concurrently with step 4 coding; then 2-GPU smoke, then the five arms, then the §35.10 gate. Full
+plan in `/home/pkhanal/.claude/plans/for-implementing-the-new-enumerated-comet.md`.
+
+### 35.19 Capacity and data budget — measured, and what it can and cannot answer (2026-08-26)
+
+**Parameter counts, measured not estimated** (`SoilMoistureModel(n_depths=3, use_cls_depth=True)`
+instantiated and summed):
+
+**Estimated 2026-08-26, then MEASURED after the build — the estimate was 3.5 M low** because it
+omitted the depth heads: `FiLM1d(768, 768)` is a `Linear(768, 1536)` = 1.18 M, three of them.
+
+| configuration | params | vs baseline |
+|---|---|---|
+| **`--arch unet` (baseline)** | **50.35 M** | — |
+| — 6 transformer layers | 42.53 M | |
+| — UNet decoder | 6.70 M | |
+| — SoilEncoder + era5/sif/twsa MLPs + embeddings | 1.12 M | |
+| **`patchwise --driver-mode memory --n-layers 6 --driver-layers 2`** | **75.53 M** | **1.50x** |
+| `patchwise --driver-mode concat --n-layers 6 --driver-layers 2` | 61.34 M | 1.22x |
+| `patchwise --driver-mode memory --n-layers 4 --driver-layers 2` | **56.62 M** | **1.12x** |
+| `patchwise --driver-mode memory --n-layers 6 --driver-layers 6` | 103.88 M | 2.06x |
+
+`concat` is 14.2 M smaller than `memory` because it has no cross-attention block — 4 x d^2 per
+layer x 6. That is a real confound for the `--driver-mode` arm and must be reported with it.
+
+Per-layer blocks at d=768: self-attn 2.36 M, cross-attn 2.36 M, FFN 4.72 M. **The patch decoder alone
+exceeds the entire current model**, because every layer now carries two attention blocks instead of
+one.
+
+**Size should be chosen to remove a confound, not to save time.** §35.16 measured epochs as
+data-bound (data 250-630 s vs compute 483 s); patchwise cuts compute ~8.8x at K=1, so compute lands
+near ~55 s and the epoch becomes almost entirely dataloader-bound. Shrinking the model saves
+essentially nothing in wall-clock; growing it costs essentially nothing. What size *does* affect is
+attribution: if patchwise runs at 2x the baseline's parameters and wins, architecture and capacity
+are confounded.
+
+**DECIDED (user, 2026-08-26): `--n-layers 6 --driver-layers 2` = 75.53 M measured.** T2 stays at 6 to match
+the baseline's 6 transformer layers, keeping the architecture comparison clean. The
+**capacity-parity variant** `--n-layers 4 --driver-layers 2` (**56.62 M** measured, against the
+baseline's 50.35 M — 1.12x, the closest parity available) is deferred to **ablation, not run 1**. Note the two parities are
+mutually exclusive: the baseline layer is `self + FFN`, ours is `self + cross + FFN`, so equal
+depth means unequal parameters and vice versa.
+
+**`N_drv` is a depth, not a repeat count** — T1 runs **once per tile-day** whatever its depth.
+Do **not** default the weather encoder to 6 layers: an earlier draft argued for that on
+Vaswani equal-depth convention, but matching a convention is worth less than an interpretable
+comparison, and the extra 28 M buys depth only on a **tile-constant** input that cannot contribute
+within-tile pattern at all.
+
+**Data budget — the answer differs by question.**
+
+*For fitting the model: sufficient.* 993 stations x ~2000 days = ~2 M samples; with tau ~ 3.2 d,
+consecutive days are ~1/3 of an independent observation, so ~625 k effective station-days against
+75.5 M parameters. This is the same regime the current 50 M model already trains in without
+overfitting — one run had val still improving at **16 of 16 epochs**. Compute is not a constraint:
+79,592 of 800,000 GPU SBU used, ~47 full runs in hand.
+
+*For the question §34/§35 exists to answer: thin exactly where it matters.* At K=1 the model
+supervises **one patch per sample — token 105, the station's own cell. There is never a label for
+any off-centre patch.** The mapping is learned from station patches and *assumed* to transfer to the
+other 195; nothing in training tests that. The evidence that can test it:
+
+```
+colocated station pairs                        75 pairs / 84 stations
+  usable (>=120 common days)                   49
+  minus 19 pairs closer than 160 m (same token, identical prediction)   ~56 distinct-token
+TxSON readouts                                 96, of which 56 off-centre, over 40 tiles
+```
+
+Tens of pairs and 40 tiles. That is precisely why §35.10 requires a **within-station** primary
+endpoint, CIs bootstrapped over **stations** not samples, and a measured ceiling — scored on pooled
+samples, a null here is under-powered rather than informative. Covariate shift compounds it:
+stations sit in accessible, flat, agricultural places, so off-centre patches are drawn from a
+different distribution than anything ever supervised (this is also §G7's named trigger for
+revisiting pretraining).
+
+**The one change that would materially help is not more data — it is multi-station supervision.**
+A tile containing two stations yields **two labels for two different patches in one forward pass**,
+which is the *only* direct supervision of the spatial mapping anywhere in this dataset. §35.3 already
+flags that it is not free today:
+
+- `dataset.py:1076` has one label vector per sample
+- `station_key` is a pure function of station identity (`:818-824`)
+- **`location_group_id` exists in `csvs/station_splits.csv` — 906 groups for 993 stations — and
+  `dataset.py` never reads it**
+
+So ~87 stations share a tile with another, plus the 84 colocated ones. Wiring this turns the
+strongest evidence in the dataset from a *validation* signal into a *training* signal. **Promote it
+from a stage-2c nicety to the first item after 2a**, and note the §35.11 hazard it interacts with:
+two stations within 160 m collapse to the same token and get identical predictions, so the loss
+gather must handle duplicate `token_idx` rather than silently averaging two labels onto one patch.
+
+**Depth is not a law, and ours is not derived.** `N = 6` comes from Vaswani et al. 2017, chosen
+empirically for WMT at that compute budget (their Table 3 ablates N = 2, 4, 6, 8), and propagated by
+inheritance. BERT-base is 12, BERT-large 24, ViT-Base 12 (TerraMind's own backbone — hence
+L3/L6/L9/L12), T5-base 12+12, GPT-3 96. This project's `n_layers = 6` (`train.py:206`) copied
+ViT-Base's width (768, 12 heads) and halved the depth. So `--n-layers` should be swept once 2a has a
+baseline; it is cheap, because epochs are dataloader-bound and a smaller model costs the same
+wall-clock.
+
+**The model is fully bidirectional; there is no causal mask anywhere**, which is correct because we
+regress one value from a fixed window rather than generating a sequence. It does not leak: the
+window is strictly backward-looking (`rel_pos = 364 - (target - acq).days`, `dataset.py:89-96`), so
+attention running "forwards" inside it still only sees the past. The one open exception is §33.12's
+`c_k` look-ahead — a §33 decoder issue, untouched by stage 2a, still not closed.
+
+### 35.20 STAGE 2a — the executable build plan (2026-08-26)
+
+Settled inputs: `--arch patchwise`, `--driver-mode memory` (with `concat` behind the same flag),
+`--n-layers 6`, `--driver-layers 2`, 72.0 M parameters. Derivation in `text/patchwise_math.md`.
+Ordering is by dependency, not by importance.
+
+**Step 0 — DONE.** Store pre-flight (`slurm/train.sh:38-58`); dataset per-patch history (`d4470d7`,
+`476065d`).
+
+**Step 1 — register standardisation: DROPPED for run 1 (user decision, 2026-08-26).**
+§35.7 called it "not optional". That was over-claimed, and checking the actual measurements shows
+why. `csvs/register_across_modalities.json` (993 stations) separates two quantities that §35.3 and
+§35.7 conflated:
+
+| key | register dims | `mean_magnitude_share` | `median_token_max_over_median` |
+|---|---|---|---|
+| `dem/l12` | 87, 126, 328 | 0.884 | **13.02** (sink) |
+| `lulc/l12` | 126 | 0.354 | **9.15** (sink) |
+| `s2/l12` | 9, 87, 126, 328, 329, 723 | **0.940** | **7.19** (sink) |
+| `s1_asc/l12` | 87, 126, 716 | 0.912 | 1.23 (no sink) |
+| `s1_desc/l12` | 87, 126, 716 | 0.911 | 1.24 (no sink) |
+| `s2/l3` | 9, 126 | 0.586 | 1.51 |
+
+- The **sink** (one token position dominating) is a DEM / LULC / s2-L12 phenomenon; S1 has none. It
+  was already audited and cleared — token 105 is the sink in 0/993 DEM, 1/993 LULC (§35.3).
+- The **register** (a few dimensions dominating, shared across tokens) is broad, not DEM-only, and
+  dims 87 and 126 recur across nearly every modality.
+
+**But the number the argument rested on is DEM-only.** Post-LayerNorm median pairwise cosine
+0.783 -> 0.157 lives in `csvs/register_dim_variance.json`, which contains **only `dem` and `lulc`**
+— it is the DEM p14 row. Post-LN collapse has **never been measured for s2 or s1**, and nobody has
+measured the quantity that actually decides this: post-LN pairwise cosine between the ~100 history
+tokens of the *same patch across time*. Every existing measurement is across stations or across
+token positions; temporal attention cares about across-acquisitions.
+
+**Why deferring is safe here, unlike the driver-mode decision.** §35.10 already mandates logging
+**temporal attention entropy over the history block**, which measures whether attention actually
+collapsed in the trained model — strictly better evidence than an offline cosine proxy. And
+retrofitting standardisation later forces a retrain only in the world where entropy came back
+collapsed, i.e. where the run was invalid anyway. There is no scenario in which deferring loses a
+*good* run. Cross-attention was a one-way door; this is not.
+
+**Binding condition:** temporal attention entropy logging is now **load-bearing**, not a
+diagnostic nicety. It is the only thing separating "un-pooling does not help" from "attention
+collapsed to a mean". Log it per layer against the uniform reference (log 100 = 4.605 nats). If it
+fires, build `compute_register_stats.py` (train-split per-dimension mean/std, `Pool(64)`, subsampled
+~20 acquisitions/station -> ~2.7 M vectors for 768 statistics) plus a `--standardise-tokens` flag,
+and rerun.
+
+**Step 2 — `model.py`, additive only; `--arch unet` must not move.**
+- `DriverMemoryEncoder` — reuses `era5_mlp`/`sif_mlp`/`twsa_mlp`/`SoilEncoder`, `circular_doy_pe`,
+  `rel_pos_emb` and the modality embeddings verbatim (`model.py:604-662`), then `N_drv = 2`
+  `DropPathTransformerLayer`s. Returns `m (B,431,768)` and `pad (B,431)`. Runs once per sample.
+- `PatchwiseBlock(d, h, driver_mode)` — pre-norm self-attention over 106; under `memory` an explicit
+  cross-attention with its **own** `q_proj/k_proj/v_proj/o_proj` and `F.scaled_dot_product_attention`
+  (NOT `nn.MultiheadAttention` — it runs `in_proj` on an `.expand()`ed memory and re-projects 196
+  times, returning all the duplication); shared FFN and norms. Under `concat` the memory is
+  concatenated into the self sequence and no cross-attention is constructed.
+- `PatchwiseEncoder` — folds K into the batch, builds `x_k`, **explicit per-patch CLS**, 6 layers,
+  `FiLM1d` depth conditioning, **independent depth heads** (not §18.4's star residual), returns
+  `(B,K,n_depths)`. Statics enter as a **prefix**.
+- Cache contract: `k_proj`/`v_proj` are called **once per sample** outside the patch loop, producing
+  `[(Kc_l, Vc_l)] * 6`. The cache is indexed by **day, not patch** — a wrong `(D,P)` view makes every
+  patch read another day's weather with no crash.
+- Construction gated on `arch` so the U-Net decoder is never built under patchwise; otherwise
+  `train.py:902` (`find_unused_parameters` unset, default `False`) raises on step 1 of every DDP run.
+
+**Step 3 — `train.py`.**
+`--arch {unet,patchwise}`, `--token-sel {station,all}`, `--driver-mode {memory,concat}`,
+`--driver-layers`, all into **`CONFIG`** (`:176-220`) so they reach all three checkpoint saves
+(`:1088`, `:1132`, `:1314`). Pass `token_sel`/`patch_token_dropout` through `common_kwargs`
+(`:835-841`). Stamp `git rev-parse HEAD` into `CONFIG`. Force `use_cls_depth` under patchwise. Loss
+gathers over `token_idx` rather than `sm_map[:,:,112,112]` — an `arch`-aware branch inside
+`masked_huber_loss`, not a second loss function. Guard `lambda_boundary` (its `.mean()` renormalises
+by ~50,176x off a 224² map) and make `total_variation_loss` raise a clear error. Add `arch` /
+`driver_mode` to the config echo (`:910-915`).
+
+**Step 4 — the silent-failure fixes, all verified against source.**
+- `ckpt_utils.py:38-48` — read `arch` from `cfg`, construct the right class, `strict=True` for
+  patchwise. Today `strict=False` yields a randomly-initialised U-Net that runs and prints plausible
+  numbers. Then the three divergent copies: `demo_plot.py:44-56`,
+  `plot_satellite_sm_meeting.py:47-61`, `eval_stations.py:60-65`.
+- `ablation.py:28-38` — `MODALITY_KEYS` gains `s2_hist`/`s2_hist_valid`, `s1_hist`/`s1_hist_valid`,
+  `dem_tok`, `lulc_tok`; replace the `if k in d` guard (`:144`) with a hard error. Today
+  `--ablate sat` on patchwise ablates **nothing** and still reports a healthy donor fraction.
+- `eval_predict.py` — recover `arch` from the checkpoint `cfg`, arch-aware readout, reject
+  `--pixel-csv` under patchwise, cap `--batch-size` when `token_sel="all"`.
+
+**Step 5 — tests.** Delete `test_gather_equiv.py` (imports `gather_l12_from_shm`, gone). Keep
+`test_pyramid_equiv.py` as the unet guard. Make `test_per_depth_loss.py` arch-aware (`:196-198`
+assert `BatchNorm2d`, decoder-only). New `test_patchwise_model.py`: shapes; `memory` and `concat`
+agree on output shape; **the cache is indexed by day** (shuffle the day axis and assert predictions
+change); no parameter left ungradiented.
+
+**Step 6 — smoke on 2 GPUs, not 1.** The DDP unused-parameter failure is invisible on one device.
+
+**Step 7 — arms (§35.9), one calendar slot.** full / history-ablated / re-pooled / statics-only /
+patch-shuffle. `--driver-mode concat` and `--n-layers 4` are later ablations, not run 1.
+
+**Step 8 — pre-register the §35.10 gate before submitting run 1.**
+
+**Deferred, in order:** multi-station supervision (§35.19 — the only direct supervision of the
+spatial mapping that exists); position-code probe; anchor-redundancy check; the `/dev/shm` preload
+shrink (§35.16, sized by the probe).
+
+### 35.21 STAGE 2a BUILT AND SMOKED (2026-08-26) — what was done and what it cost
+
+Branch `feat/patchwise-temporal`. Smoke job **26070202**, 2 GPUs, COMPLETED.
+
+**Built.** `model.py`: `FiLM1d`, `PatchwiseBlock`, `_row_entropy`, `_build_driver_tokens` (T1's 431
+tokens, copied verbatim from the existing ERA5/SIF/TWSA construction so the arm stays comparable),
+`_build_patch_seq` (T2's 106), `_forward_patchwise`. Cross-attention is hand-written with explicit
+`q/k/v/o` + `F.scaled_dot_product_attention`; `k_proj`/`v_proj` are called by the parent **once per
+sample**, outside the patch loop. Queries fold to `(B, h, K*L, dh)` rather than expanding the memory
+to `(B*K, ...)` — exact, and it avoids ~2 GB at K=196. Construction is gated on `arch`, so
+`decoder`, `transformer_layers`, `scale_emb` and the three spatial embeddings do not exist under
+patchwise (required: `find_unused_parameters` is unset).
+
+`train.py`: `--arch`, `--driver-mode`, `--driver-layers`, `--token-sel`, `--patch-token-dropout`,
+all into `CONFIG`; `token_sel` finally passed through `common_kwargs`; **`git rev-parse HEAD` and a
+dirty flag stamped into every checkpoint** (§35.13's open gap, now closed). Under patchwise,
+`use_cls_depth` is forced on, `token_sel` defaults to `"station"`, and `lambda_tv`/`lambda_boundary`
+are forced to 0 **with a printed override** — `lambda_boundary` was live at 0.1 and its `.mean()`
+would have renormalised by ~50,176x.
+
+`dataset.py`: `anchor_l3/l6/l9/l12` dropped on the patchwise path (~1.15 MB/sample of dead IPC).
+
+**The loss got simpler, not more complex.** `sm_map[:, :, 112, 112]` existed only because the U-Net
+emits a map. Patchwise emits `(B, K, n_depths)` where the value IS the prediction, so the branch is
+`sm_map.ndim == 3 -> mu[:, 0, :]` and everything downstream (`per_depth`, `return_breakdown`, the
+depth accumulators) is reused untouched. There is **no gather over `token_idx`** — an earlier draft
+said there would be; `token_idx` is needed only at inference.
+
+**Three silent-failure fixes.** `ckpt_utils` is arch-aware, `strict=True` for patchwise, and raises
+if patchwise keys appear as "unexpected" — previously a patchwise checkpoint loaded as a
+**randomly-initialised U-Net that ran and printed plausible numbers**, and every eval script funnels
+through that one function. The three divergent copies (`demo_plot.py`, `plot_satellite_sm_meeting.py`,
+`eval_stations.py`) now delegate to it or carry the full kwargs, and the two plotting ones refuse a
+patchwise checkpoint rather than rendering a wrong map. `ablation.py` raises when a modality matches
+no key instead of reporting a healthy donor fraction for an ablation that never happened — with the
+pooled keys popped, `--ablate sat` on patchwise was a **total no-op**, which would have made every
+§35.9 arm return "no effect".
+
+**Measured, not estimated.**
+
+| run | params | note |
+|---|---|---|
+| `--arch unet` (smoke, `use_cls_depth=False`) | 50,050,944 | baseline unmoved, val 0.0058 -> 0.0051 |
+| `patchwise memory --n-layers 6 --driver-layers 2` | **75,526,208** | 1.50x |
+| `patchwise concat --n-layers 6 --driver-layers 2` | 61,342,784 | 1.22x |
+
+The 75.5 M is 3.5 M above the 72.0 M estimate in §35.19: the estimate omitted the depth heads, and
+`FiLM1d(768, 768)` is a `Linear(768, 1536)` = 1.18 M, three of them. **`concat` is 14.2 M smaller
+than `memory`** because it has no cross-attention block (4 x d^2 x 6 layers) — a real confound that
+must be reported alongside the `--driver-mode` arm.
+
+**Smoke results, 3 stations / 2 epochs / 2 GPUs.** All three passed. Patchwise peak VRAM 2.4 GB
+against unet's 3.6 GB, and **`data=2-4 s` against `compute=1 s`** — already dataloader-bound at
+smoke scale, exactly as §35.16 predicted, which is what sizes the next optimisation. Checkpoint
+round-trip verified: a patchwise checkpoint rebuilds the patchwise class, and forcing `arch=unet`
+on it now **raises** instead of returning a random model.
+
+**Tests.** `test_gather_equiv.py` deleted (imported `gather_l12_from_shm`, removed long ago). New
+`test_patchwise_model.py`, 30 checks, all passing — including the two that would otherwise be
+silent: permuting the weather across the batch **must** change predictions (the cache is indexed by
+sample, not patch) and every parameter must receive a gradient (the DDP precondition). It is
+deliberately built at `d_model=64, n_heads=4, n_layers=2`: every property tested is width- and
+depth-independent, and at 768/12/6 the CPU forward+backward took minutes, which broke the standing
+rule that nothing heavy runs on a login node.
+
+**Two bugs of my own, found and fixed during the build.** (1) `collect_entropy` was armed before
+validation and never disarmed, so every subsequent *training* epoch would have kept collecting
+attention weights and given up SDPA. (2) `slurm/smoke_patchwise.sh` cleared `checkpoints/smoke_*`
+via a **relative** path, but checkpoints live under `CONFIG["checkpoint_dir"]` — so the `rm` matched
+nothing, and since `train.py` auto-resumes from `last.pt` a second smoke run would have resumed the
+first one's weights while looking like a clean pass.
+
+**CHECKPOINTS HAVE NO BACKUP — verified, and it is not what it looks like.**
+`/projects/prjs1968/checkpoints` and `/gpfs/work3/0/prjs1968/checkpoints` are **the same directory**
+(device 49, inode 1561052160), exactly the trap the zarr store had. `cls_depth_star_reg/best.pt` and
+`last.pt` are byte-identical but sit in one directory on one filesystem, so that is not redundancy
+either. The rollback for *code* is the tag `baseline-unet-temporal`; the comparison baseline's 604 MB
+of unique weights exist **exactly once**. §35.13 flagged this in words; it is still open.
+
+**Next:** §35.9's arms and the §35.10 gate, pre-registered before run 1.
+
+### 35.22 PATCHWISE-ONLY REFACTOR — the live modules stop carrying two architectures (2026-08-26)
+
+**User decision.** `model.py`, `dataset.py`, `train.py` become patchwise-only: no `arch` flag, no
+branches, no dead paths. The baseline is preserved as a **frozen snapshot** instead of as a second
+code path. Baseline comparability is explicitly not a design constraint — *"we do not have to look
+for baseline, if we have to we think about it then."*
+
+**Why this is the right call, on the session's own evidence.** Every one of the four
+silent-failure bugs found while building §35.21 was the same shape — *the other path's assumption
+leaked*: `ckpt_utils`'s `strict=False` (written for one 2026-06 unet checkpoint) turning a
+patchwise checkpoint into a randomly-initialised U-Net that ran; `ablation.py`'s `if k in d`
+(written for pooled keys) making `--ablate sat` a total no-op; two plot scripts assuming a 224²
+map. Branching is where the bugs live. It is also where the I/O goes: the wide read exists only to
+keep the pooled path alive.
+
+**The snapshot** — four self-contained files, FROZEN, never edited again:
+
+```
+model_unet.py       git show HEAD:model.py
+dataset_unet.py     git show d4470d7~1:dataset.py     <- HEAD already carries the patchwise work
+train_unet.py       git show HEAD:train.py
+ckpt_utils_unet.py  git show HEAD:ckpt_utils.py
+```
+
+Imports repointed at each other so the set does not depend on the live modules. Tag
+`baseline-unet-temporal` still holds the same code state; this is the same thing addressable
+without a checkout.
+
+**Deleted from the live modules.** `model.py`: `UNetDecoder`, `_ConvBlock`, `FiLMLayer` (4-D,
+decoder-only — `FiLM1d` replaces it), `spatial_pyramid_pool`, `_pyramid_from_l12`,
+`_static_pyramid`, `_get_target_spatial_tokens`, `_get_skip_connections`, `_build_sequence`,
+`total_variation_loss`, `STATION_ROW`/`STATION_COL`, and the unet-only embeddings
+(`spatial_row/col_emb`, `spatial_modality_emb`, `scale_emb`, `transformer_layers`,
+`transformer_norm`). `masked_huber_loss` loses the station-pixel arguments entirely: it takes
+`(B, K, n_depths)` and nothing else. `train.py`: `--arch`, `--use-memmap`, `--lambda-tv`,
+`--lambda-boundary` and both regularisers — each is defined on a 224² map that no longer exists.
+
+**Two consequences that were not obvious until the deletions were traced.**
+
+1. **The I/O fix stops being a special case.** With no wide path to preserve, `zeros(max_acq, K,
+   768)` and `tokens_z[src_i, sel, :]` are simply what the loader does — **1.5 KB per acquisition
+   (one memmap page) instead of 294 KB (72 pages)**, and the slice at `dataset.py:266` becomes the
+   identity. No `if token_sel is None` guard needed anywhere.
+2. **The entire `.npy` memmap machinery retires with the anchor.** `_l369_cache`, `use_mmap`, the
+   `{orbit}_{layer}.npy` loading at `dataset.py:928-946` exist **only** to serve the anchor
+   L3/L6/L9 reads, and `--arch patchwise` STEP 1 has no decoder and therefore no anchor. That also
+   retires `--use-memmap` from `slurm/train.sh:65` and the `ulimit -n 65536` its comment justifies,
+   and means `convert_l369_to_npy.py`'s output is no longer needed for training.
+
+**One behaviour change, recorded.** `torch.isnan(tok).any()` currently sees the whole tile and
+skips an acquisition if ANY of the 196 patches is NaN. Narrowed to patch k it sees only that patch.
+That is the more defensible rule for a patchwise model — an acquisition should not be discarded
+because a far corner of the tile is bad — but it IS a change, and `test_patchwise_dataset.py` pins
+the old one.
+
+**RUN: `memory` ONLY.** `--driver-mode concat` stays in the code and is **not submitted**. It costs
+one branch in `PatchwiseBlock` and ~30 lines, and it is the one choice that cannot be retrofitted
+without a retrain: under `concat` the driver tokens are updated by each patch from layer 1, so
+there is no cache to add later (`text/patchwise_math.md` §3.4, worked numerically at d=2). Keeping
+the flag makes "was it the read-only restriction?" a flag rather than a rewrite. An option held
+open, not an experiment being run.
+
+Recorded for whenever `concat` IS run: it is **14.2 M smaller** (no cross-attention block,
+4.d^2 x 6 layers), so a `concat` loss could be capacity rather than wiring and a
+`concat --n-layers 8` arm (~72 M) would be needed to separate them; and it is `4.24e9` MAC/layer
+against `memory`'s `0.963e9`, which starts to matter once the epoch is no longer dataloader-bound.
+
+**Verification that is not optional:** the frozen snapshot must still import and still load
+`cls_depth_star_reg/best.pt`. It is the only thing standing between us and being unable to touch
+the baseline at all — and per §35.21 those weights exist exactly once, with no backup.
+
+### 35.23 REFACTOR VERIFIED (2026-08-26) — and the epoch is no longer dataloader-bound
+
+Job **26071036**, 2 GPUs, COMPLETED, `ALL VERIFICATION PASSED`.
+
+| # | check | result |
+|---|---|---|
+| 1 | unit tests (`test_patchwise_model`, `test_patchwise_dataset`) | no failures |
+| 2 | **frozen snapshot still loads the baseline** | imports OK; `cls_depth_star_reg` loads, epoch 16, 50,348,544 params, decoder present |
+| 3 | no unet remnants by grep in the live modules | clean |
+| 4 | smoke, both driver modes, 2 GPUs | `memory` 71,981,888 params; `concat` 57,798,464 |
+| 5 | per-sample IPC payload | 635.2 KB, no pooled or anchor keys |
+
+Check 2 is the one that mattered: §35.21 established those baseline weights exist exactly once
+with no backup, and after this refactor the `_unet` snapshot is the only code that can read them.
+
+**THE MEASURED WIN — the epoch flipped from dataloader-bound to compute-bound.** Same smoke, same
+3 stations, before and after the refactor:
+
+```
+before   data=4s   compute=1s     gpu_util=27%
+after    data=0s   compute=1-2s   gpu_util=93-95%
+```
+
+That is what the narrow read bought: 1.5 KB per acquisition (one memmap page) instead of 294 KB
+(72 pages), plus the anchor drop. §35.16 predicted the epoch would become almost entirely
+dataloader-bound under patchwise and that the data path was where the time was; it was, and it has
+now moved. **Caveat: 3 stations and 20 batches does not extrapolate to 993 stations**, where the
+`/dev/shm` preload dominates — treat this as direction, not magnitude.
+
+**Two consequences to carry forward.**
+
+1. **`concat`'s 4.4x compute is now a real cost.** While the epoch was dataloader-bound the extra
+   `4.24e9` vs `0.963e9` MAC/layer was nearly free. It is not any more. Add that to the §35.22
+   list of things to weigh whenever that arm is run.
+2. **`soil_patch` is now the dominant payload** — 460 KB of the 635 KB total; everything satellite
+   is down to ~153 KB. §35.3 records that per-patch soil at 14x14 would be 16 KB against 460 KB
+   (29x smaller) and that `SoilEncoder`'s four concentric centre-symmetric means keep the exact
+   defect §35 exists to remove. That is the next target after this.
+
+**FiLM AND THE PATCH CLS ARE GONE — the depth heads now predict directly (user decision).**
+
+```
+was   out_i = head_i( FiLM1d_i(h, depth_ctx[:, i, :]) )     h = a shared patch CLS row
+now   out_i = head_i( depth_ctx[:, i, :] )                  each depth CLS IS its readout
+```
+
+FiLM earned its place in the U-Net by broadcasting one context vector across a `(B,C,H,W)` map;
+here both operands are `(N,768)` vectors from the same transformer, so modulation bought nothing a
+direct readout does not have. It also cost 3 x 1.18 M parameters and, being identity-initialised,
+started all three depths reading the **identical** vector — a soft echo of the §18.4 star residual
+the design had explicitly rejected. Each depth CLS is already a full readout over all tokens with
+its own learned query, so the separate patch CLS was strictly redundant and went too.
+
+```
+sequence   106 -> 105 tokens   [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 ]
+params     75,526,208 -> 71,981,888     (-3,543,552 FiLM, -768 patch_cls)
+```
+
+which lands on the 72.0 M §35.19 first estimated, before the depth heads were counted.
+
+Consequence handled: `_row_entropy` was measuring the patch CLS row, which no longer exists. It now
+averages the **depth CLS** rows — arguably what the collapse detector wanted all along, since those
+are the rows whose attention over the history is the thing at risk.
+
+**L12 ONLY.** Nothing in `model.py` / `dataset.py` / `train.py` touches L3/L6/L9 any more — they
+existed solely for the U-Net skip connections. `convert_l369_to_npy.py`'s ~7,800 `.npy` files are
+no longer needed for training, and `--use-memmap` plus its `ulimit -n 65536` are obsolete. One
+latent crash was caught on the way: `train.py`'s `_advise_l369_willneed` still read
+`ds._l369_cache` after the cache was deleted, and would have raised at epoch 1.
+
+**`skt` KEPT, deliberately.** Dropping ERA5 skin temperature "because ECOSTRESS gives it later"
+confuses two roles: `skt` is an **input driver** (9 km, daily, complete), while ECOSTRESS LST is a
+**supervision target** in §34.6 step 3 / §33.7. The replacement is also not in hand — §29 measured
+Landsat LST against SM at within-station r = -0.077 and ECOSTRESS DTR has not passed §33.9 gate 6.
+It stays as a stage-2c ablation (§35.8), not a refactor casualty.
+
+**Three bugs of mine that the first verification run caught**, all silent-shaped: `CONFIG["token_sel"]`
+left at `None` after the arch-fixup block was removed (crashed both smokes); a stale comment
+mentioning a deleted function tripping the remnant grep; and `test_patchwise_dataset.py` still
+asserting the old `_finalise_history` contract, which used to slice and now receives an
+already-narrowed buffer. The test now also pins the condition that matters most for §35.22: **the
+narrow read must return exactly what the wide read would have** — if those ever diverge, every
+number is computed on the wrong patch and nothing crashes.
+
+**Ready to submit `memory`.** `concat` remains an unexercised flag (§35.22).

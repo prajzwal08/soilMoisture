@@ -14,7 +14,7 @@
 #SBATCH --requeue
 
 set -euo pipefail
-ulimit -n 65536   # memmap FDs: 612 stations × 3 keys × 8 workers ≈ 14k handles
+ulimit -n 65536   # kept as headroom; the L3/L6/L9 memmap FDs it was sized for are gone (§35.22)
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
@@ -57,9 +57,11 @@ fi
 echo "=== pre-flight passed ==="
 echo
 
-# --use-memmap is always correct on GPFS: the zarr l3/l6/l9 arrays are chunked [32,196,768]
-# with blosc, so reading ONE anchor index pulls a 7.8 MB compressed chunk and decompresses
-# 9.6 MB to use 294 KB — 32x read amplification, x3 layers. The flat .npy memmaps on scratch
-# read exactly 294 KB with no decompression. Omitting this flag is what made 25141399 IO-bound
-# (all dataloader workers in D-state, GPU util 28%).
-conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py --use-memmap "$@"
+# --use-memmap is GONE (§35.22). The .npy memmaps existed solely to serve the ANCHOR L3/L6/L9
+# reads for the U-Net skip connections; the patchwise model has no decoder, no anchor, and
+# touches only L12. The flag no longer exists in train.py, so passing it now fails at argparse.
+#
+# The read amplification that justified it is also gone by a different route: the loader reads
+# tokens_z[i, sel, :] -- 1.5 KB, one memmap page -- instead of the full (196,768) slab, so the
+# epoch is compute-bound rather than IO-bound (job 26071036: gpu_util 27% -> 93-95%, §35.23).
+conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py "$@"
