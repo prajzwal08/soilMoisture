@@ -37,10 +37,18 @@ for c in sm_only sm_and_flux flux_only; do mkdir -p "$DST/$c"; done
 export FAILDIR="${FAILDIR:-/tmp/restore_zarr_fail_$SLURM_JOB_ID}"
 mkdir -p "$FAILDIR"
 
+# `--chmod=u+rwX` is REQUIRED, not cosmetic. The backup is chmod a-w (§35.1
+# step 1), and plain `rsync -a` preserves source permissions -- which would
+# propagate r--r----- onto the live training store and leave it unwritable,
+# breaking memmap regeneration and every later write. Verified with
+# --dry-run --itemize-changes: without it, ~120 files per station show a `p`
+# (permission) change.
+RSYNC_OPTS=(-a --chmod=u+rwX)
+
 copy_one() {
   local rel="$1"                       # e.g. sm_only/ISMN_ARM_Omega
   mkdir -p "$DST/$rel"
-  if ! rsync -a "$SRC/$rel/" "$DST/$rel/"; then
+  if ! rsync "${RSYNC_OPTS[@]}" "$SRC/$rel/" "$DST/$rel/"; then
     # Previously this exit code was discarded inside xargs, so a failed station
     # was invisible and the job still reported success.
     echo "$rel rc=$?" >> "$FAILDIR/failures.txt"
