@@ -5621,3 +5621,76 @@ SESSION 33 — §35.29 tile-sharing stations out of training (2026-08-26)
     driver 0eb7ade028686033 -> 34ade6b95d913b52
   So §35.28's provenance check now correctly flags smoke/smoke2 checkpoints as
   trained against superseded constants.  Mechanism proved on a real change.
+
+SESSION 34 — §35.31 the preload read 196 patches to use 1 (2026-08-26)
+--------------------------------------------------------------------------------
+  Job 26076503 launched as the §35.30 stage-2a run and spent its whole life
+  loading.  Killed at 50 min, zero optimiser steps.  §35.6 pre-flight passed
+  clean (993/993, no damage) so this was NOT the purged store again.
+
+    [SHM] Preload done in 2733.5s     <- 45 min 34 s
+    647 stations, 1892 .bin files, 153.6 GB in /dev/shm
+
+  TWO INDEPENDENT DEFECTS, only one of them about speed:
+
+  1. STAGED 196 PATCHES TO READ 1.  L12 is (dates,196,768); 196 = the 14x14
+     patch grid.  Training is token_sel="station" -> patch 105 alone, K=1, and
+     train.py REFUSES to train on anything else.  Preloader did zg[...][:] and
+     wrote full width.  Of 153.6 GB staged, ~0.8 GB (0.51%) is ever read.
+     Not a new idea: dataset.py's own fallback has narrowed since §35.24 item
+     12 and its docstring said outright that the shm side had not.  The
+     l12_narrowed / _narrowed_for plumbing existed, never got a True.
+     Not free either: tmpfs is RESIDENT ram.  The old "a memmap costs no
+     resident RAM until touched" comment is true of a file-backed memmap and
+     FALSE of /dev/shm.  That was 153 GB of the node's 720 G.
+
+  2. RAN ON ONE CORE.  2733 s / 1892 arrays = 1.4 s each, 56 MB/s aggregate,
+     process averaging 10.6% CPU -> blocked on GPFS, not computing.  No
+     decompression to blame: 91.3 MB on disk for 99.3 MB raw (ratio 1.09).
+     One serial stream against a 64-core allocation.
+
+  THE KEY CONSTRAINT (why A and B are not substitutes): chunking is
+  (32,196,768), so the token axis is ONE chunk.  Zarr's unit of IO and of
+  decompression is the chunk, so patch 105 CANNOT be read without decompressing
+  all 196.  Narrowing therefore saves nothing on the read — it only changes what
+  is KEPT.  153.6 GB still moves; 0.8 GB stays.  Only parallelism touches the
+  46 minutes.
+
+  CHANGED:
+    A  _preload_one_station()  new Pool worker; reads [:,tsl,:], stamps
+                               "narrowed":true in .meta.json, blosc nthreads=1
+                               (64 workers x 64 blosc threads = oversubscription)
+    B  _preload_l12_to_shm()   selection stays SERIAL (per-split cap semantics
+                               are load-bearing), read+write over Pool(64),
+                               progress line every 100 stations
+    C  _load_l12_shm()         returns narrowed per key + a width REFUSAL check
+    D  train_one_epoch()       step-level W&B under the existing log_every
+
+  THE WIDTH CHECK IS LOAD-BEARING, not padding.  train.py builds the patch-map
+  diagnostic as dict(common_kwargs) with only token_sel="all" overridden, so it
+  INHERITS the same shm_dir and would have opened K=1 memmaps expecting 196.
+  numpy clips an over-wide basic slice SILENTLY — no exception.  Failure mode
+  would have been diag/patch_map_sd_mean quietly computed over one patch, and
+  that is a pre-registered §35.30 gate condition.  Stale full-width bins carry
+  no "narrowed" key, default False, and still read correctly.
+
+  Also caught: `import wandb` lives inside main()'s `if is_main` block, so a
+  bare wandb.log() in train_one_epoch is a NameError on the first logged batch.
+  Imported locally in the branch (sys.modules hit).
+
+  EXPECTED:  preload 2733 s -> ~5 min;  /dev/shm 153.6 GB -> ~0.8 GB;
+             boundary headroom vs 720 G  ~186 GB -> ~339 GB.  That headroom is
+             what currently holds the loader at 12+4 workers, prefetch 4.
+             OOM risk goes DOWN: ~153 GB freed against ~20 GB of transient
+             fork/buffer cost, and the preload peak is disjoint in time from
+             the val->train boundary peak.
+
+  NOT FIXED, deliberately: the 196x read amplification is paid on EVERY launch
+  and Pool(64) only hides it.  Real fix is to materialise the K=1 store once —
+  ~1.2 GB for all 993, read in seconds forever, small enough for /projects where
+  the age-based purge cannot reach it.  Deferred because it is a DERIVED
+  artifact and §35.6 exists precisely because one of those silently disagreed
+  with its source; it needs a provenance stamp + its own pre-flight, in the
+  spirit of §35.28.  It would serve TRAINING ONLY — token_sel="all" still needs
+  196 for patch_map_diag and the tile-pair sign test, so both stores coexist and
+  "which store produced this number" has to be answerable.

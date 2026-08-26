@@ -10497,3 +10497,115 @@ In descending order of what it would actually establish:
 3. all three interpretability conditions passed and the endpoint flat — a genuine, reportable
    null on un-pooling
 4. any condition failed — uninterpretable, diagnose and re-run
+
+---
+
+## §35.31 The preload read 196 patches to use 1 — and did it on one core (Session 34, 2026-08-26)
+
+Job 26076503 was launched as the §35.30 stage-2a run and spent its entire life loading. Killed
+at 50 min having taken zero optimiser steps. The §35.6 pre-flight passed clean (993/993, no
+damage), so this was not the purged-store failure again — it was the preload itself.
+
+```
+[SHM] Preload done in 2733.5s        <- 45 min 34 s
+647 stations, 1892 .bin files, 153.6 GB in /dev/shm
+```
+
+### Two independent defects, and only one of them is about speed
+
+**1. It staged 196 patches to read 1.** The L12 arrays are `(dates, 196, 768)`, where 196 is the
+14x14 patch grid. Training runs `token_sel="station"` — patch 105 alone, K=1, and `train.py`
+*refuses* to train on anything else. The preloader nonetheless did `zg[f"{key}/l12"][:]` and
+wrote the full width to tmpfs. Of 153.6 GB staged, **~0.8 GB (0.51%) is ever read.**
+
+This was not a new idea: `dataset.py`'s own fallback path has narrowed since §35.24 item 12,
+and its docstring said outright that *"the /dev/shm memmaps written by train.py are still full
+width"*. The `l12_narrowed` / `_narrowed_for` plumbing existed and had simply never been handed
+a `True` from the shm side.
+
+It also was not free memory. **tmpfs is resident RAM** — the pages are charged the moment they
+are written, whatever is read back. The old comment claiming a memmap "costs no resident RAM
+until touched" is true of a *file-backed* memmap and false of `/dev/shm`. So this was 153 GB of
+the node's 720 G, and it is the number in `train.sh`'s boundary budget
+(`145 (shm) + 159 + 240 + 60 = 604 GB`).
+
+**2. It ran on one core.** Measured: 2733 s for 1892 arrays, ~1.4 s each, **56 MB/s aggregate**,
+with the process averaging **10.6% CPU**. Blocked on GPFS, not computing — and there is no
+decompression cost to blame either, because the data is barely compressible (91.3 MB on disk
+for 99.3 MB raw, ratio 1.09). One serial stream against a 64-core allocation.
+
+### What was changed
+
+```
+A  _preload_one_station()   reads [:, tsl, :] and stamps "narrowed": true in the .meta.json
+B  _preload_l12_to_shm()    selection stays serial; read+write fans out over Pool(64)
+C  _load_l12_shm()          returns the narrowed flag per key, with a width REFUSAL check
+D  train_one_epoch()        step-level W&B under the existing log_every throttle
+```
+
+Selection is deliberately **not** parallelised. It is pure CSV iteration and its per-split cap
+semantics are load-bearing (the "counts as SEEN, not as WRITTEN" property that keeps it in
+lockstep with the dataset); walking it out of order would break that. Only the read/write fans
+out. The Pool is `fork`, which is safe here because the preload runs before `setup_ddp()` and
+no CUDA context exists yet, and because no worker touches CUDA.
+
+### The width check is not defensive padding — it is load-bearing
+
+`train.py` builds the patch-map diagnostic dataset as `dict(common_kwargs)` with only
+`token_sel="all"` overridden. It therefore **inherits the same `shm_dir` as training**, and
+would have opened the new K=1 memmaps expecting 196 columns. numpy clips an over-wide basic
+slice *silently* — no exception. The failure mode would have been `diag/patch_map_sd_mean`
+quietly computed over one patch instead of 196, and that is a **pre-registered §35.30 gate
+condition**. `_load_l12_shm` now refuses a width it did not ask for and lets the caller fall
+back to zarr at the correct width.
+
+A stale full-width bin from a pre-§35.31 run carries no `narrowed` key, defaults to False, and
+reads correctly at full width. Widths are resolved per key, never per station and never assumed.
+
+### Step-level W&B
+
+`log_every=50` drove a **stdout print only**; the sole W&B point in an epoch was the epoch
+summary. On 647 stations that is hours of flat curve in which a divergence is invisible until
+it is over. `train/loss_step`, `train/gnorm_step`, `train/lr`, `train/warmup_factor` and
+`train/step_ms` now log under that same throttle, on rank 0, from values **already synced to
+host for the print** — so no extra device sync. No explicit `step=`: the epoch-level
+`wandb.log()` uses wandb's auto-increment counter, and mixing explicit with implicit steps
+makes wandb drop whichever goes backwards. `global_step` rides along as a regular metric to be
+picked as the x-axis instead.
+
+(`import wandb` lives inside `main()`'s `if is_main` block, so it is not a module-level name —
+a bare `wandb.log()` in `train_one_epoch` is a `NameError` on the first logged batch. It is
+imported locally in the branch, which is a `sys.modules` hit.)
+
+### Expected effect
+
+| | before | after |
+|---|---|---|
+| preload wall-clock | 2733 s | ~5 min (64x fan-out on a latency-bound read) |
+| /dev/shm | 153.6 GB | ~0.8 GB |
+| boundary headroom vs 720 G | ~186 GB | ~339 GB |
+
+The headroom is the second-order win: it is the constraint currently holding the loader at
+12 train + 4 val workers and `prefetch_factor=4`.
+
+### What this does NOT fix, and the real fix
+
+Narrowing does not make the read faster and cannot. Chunking is `(32, 196, 768)` — **the token
+axis is one chunk** — so GPFS still decompresses all 196 patches to yield 1. That is a 196x read
+amplification paid on *every job launch*, and `Pool(64)` only hides it behind more cores.
+
+The actual fix is to stop paying it: **materialise the K=1 store once**. All 993 stations at
+K=1 is ~1.2 GB. Written once, read in seconds by every subsequent run, no shm preload at all,
+and small enough to live on `/projects` where the age-based scratch purge cannot reach it —
+unlike its 153 GB parent.
+
+Deferred deliberately, not forgotten. It is a derived artifact, and §35.6 exists because a
+derived artifact that silently disagreed with its source produced a plausible number from
+zeroed input. It needs a provenance stamp (which store version, which patch index) and its own
+pre-flight, in the same spirit as §35.28 binding checkpoints to their normalisation constants.
+That is a session of work, not a pre-submission patch. Until then the shm preload stays.
+
+Note that the narrowed store would serve **training only**: `token_sel="all"` still needs all
+196 for the patch-map diagnostic and for §35.30's tile-pair sign test. Both stores would
+coexist, and "which store did this number come from" becomes a question someone has to be able
+to answer — which is precisely why it gets a provenance stamp rather than a quick script.

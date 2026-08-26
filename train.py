@@ -27,6 +27,7 @@ import gc
 import json
 import math
 import hashlib
+import multiprocessing as mp
 import os
 import random
 import shutil
@@ -227,9 +228,81 @@ class CudaPrefetcher:
 
 # ── /dev/shm L12 preloader ────────────────────────────────────────────────────
 
+def _preload_one_station(task) -> int:
+    """One station → up to three /dev/shm memmaps. Returns 1 if any key was present.
+
+    Runs in a Pool worker, so it is module level (picklable) and opens its own zarr
+    handle rather than inheriting one across the fork.  `task` is
+    (cat, dir_name, shm_dir, tsl); tsl is a plain slice or None, both picklable.
+    """
+    cat, dir_name, shm_dir, tsl = task
+    import zarr
+    from dataset import ZARR_ROOT
+
+    # Parallelism is at the PROCESS level here, so every nested thread pool is pure
+    # oversubscription: blosc defaults to one decompression thread per core, which
+    # across 64 forked workers is 64x64 threads fighting for 64 cores. Pin them to 1.
+    try:
+        import numcodecs.blosc as _blosc
+        _blosc.set_nthreads(1)
+    except Exception:
+        pass
+
+    zarr_path = ZARR_ROOT / cat / dir_name
+    if not (zarr_path / ".complete").exists():
+        return 0
+    try:
+        zg = zarr.open_consolidated(str(zarr_path), mode="r")
+    except Exception:
+        try:
+            zg = zarr.open_group(str(zarr_path), mode="r")
+        except Exception:
+            return 0
+
+    wrote_any = False
+    for key in ("s2", "s1_asc", "s1_desc"):
+        if f"{key}/l12" not in zg:
+            continue
+        bin_path  = shm_dir / f"{dir_name}__{key}.bin"
+        meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
+        # The resume check MUST come before the read.  `zg[...][:]` pulls the whole
+        # L12 array off GPFS, and the old order did that read and then discarded it
+        # because the .bin already existed.  Every requeue of this --requeue/120 h job
+        # therefore paid the entire preload (worst observed: 1901 s) to produce nothing.
+        if bin_path.exists() and meta_path.exists():
+            wrote_any = True
+            continue
+        # NARROWED (§35.31).  This used to be `zg[f"{key}/l12"][:]` — the full
+        # (N,196,768) fp16 slab, measured at 153.6 GB of tmpfs across the 647 train+val
+        # stations, of which training reads exactly ONE of the 196 columns
+        # (token_sel="station" → patch 105; train.py refuses to train on anything else).
+        # dataset.py's own fallback path has narrowed since §35.24 item 12 and its
+        # docstring said outright that this side had not.  tmpfs is resident RAM, so
+        # that was 153 GB of node memory, not lazily-faulted pages.
+        #
+        # Chunking is (32,196,768): the token axis is ONE chunk, so GPFS still
+        # decompresses all 196 to yield 1.  This buys memory, not startup time —
+        # startup comes from the Pool in the caller.
+        arr = (zg[f"{key}/l12"][:, tsl, :] if tsl is not None
+               else zg[f"{key}/l12"][:])
+        mm = np.memmap(bin_path, dtype=arr.dtype, mode="w+", shape=arr.shape)
+        mm[:] = arr
+        del mm                       # flush to tmpfs
+        # `narrowed` travels WITH the array.  A stale full-width bin from an older run
+        # carries no such key, defaults False, and is read at full width — widths are
+        # resolved per key on the consumer side and never assumed.
+        meta_path.write_text(json.dumps({"shape": list(arr.shape),
+                                         "dtype": str(arr.dtype),
+                                         "narrowed": tsl is not None}))
+        wrote_any = True
+    return 1 if wrote_any else 0
+
+
 def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
                         max_train_stations: int | None = None,
-                        max_val_stations:   int | None = None) -> None:
+                        max_val_stations:   int | None = None,
+                        token_sel: str = "station",
+                        workers: int = 64) -> None:
     """LOCAL rank 0 (one process per NODE): zarr L12 tokens → /dev/shm tmpfs memmaps.
 
     All ranks on that node then open the same files via numpy.memmap(mode='r') so the
@@ -252,9 +325,8 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
         incomplete store consumes a slot there.  Skipping it here without counting
         walked further down the CSV than the dataset ever will.
     """
-    import zarr
+    # zarr / ZARR_ROOT now live in _preload_one_station: the parent only selects.
     import pandas as pd
-    from dataset import ZARR_ROOT
 
     splits = pd.read_csv(splits_csv)
     if category_filter:
@@ -264,7 +336,21 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
             return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
         splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
 
-    n_written, n_seen_total = 0, 0
+    # The token slice, resolved the same way the dataset resolves it so the two can
+    # never disagree about which column patch 105 is.  A non-contiguous selection
+    # yields None and the preload falls back to full width, which is always safe.
+    from dataset import _token_slice, STATION_TOKEN, N_TOKENS
+    _sel = (np.array([STATION_TOKEN], dtype=np.int64) if token_sel == "station"
+            else np.arange(N_TOKENS, dtype=np.int64))
+    tsl  = _token_slice(_sel)
+
+    # ── Phase 1: SELECTION, strictly serial ───────────────────────────────────
+    # This loop stays single-threaded on purpose.  It is pure CSV iteration (fast),
+    # and its per-split cap semantics are load-bearing — see the docstring.  Walking
+    # it out of order, or in parallel, would break the "counts as SEEN, not as
+    # WRITTEN" property that keeps this in lockstep with the dataset.
+    n_seen_total = 0
+    targets: list[tuple[str, str]] = []
     for split_name, cap in (("train", max_train_stations), ("val", max_val_stations)):
         sub  = splits[splits["split"] == split_name]
         seen = set()                     # (cat, dir_name) — mirrors dataset's sat_dir key
@@ -286,41 +372,32 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
                 break                    # same break point the dataset takes
             seen.add(key_seen)
             n_seen_total += 1
+            targets.append((cat, dir_name))
 
-            zarr_path = ZARR_ROOT / cat / dir_name
-            if not (zarr_path / ".complete").exists():
-                continue
-            try:
-                zg = zarr.open_consolidated(str(zarr_path), mode="r")
-            except Exception:
-                try:
-                    zg = zarr.open_group(str(zarr_path), mode="r")
-                except Exception:
-                    continue
+    # ── Phase 2: READ + WRITE, fanned out ─────────────────────────────────────
+    # Measured serial: 2733 s for 647 stations, one process averaging 10.6% CPU at
+    # 56 MB/s aggregate — blocked on GPFS, not computing (the data is barely
+    # compressible: 91.3 MB on disk for 99.3 MB raw, so there is no decompression
+    # cost to blame).  Stations are independent, the job already asks for
+    # --cpus-per-task=64, and nothing here touches CUDA, so a fork Pool is safe
+    # this early in main() (before setup_ddp, before any CUDA context exists).
+    workers = max(1, min(workers, len(targets) or 1))
+    t0 = time.perf_counter()
+    print(f"[SHM] Preloading {len(targets)} stations with {workers} workers "
+          f"(token_sel={token_sel!r}, narrowed={tsl is not None}) ...", flush=True)
 
-            wrote_any = False
-            for key in ("s2", "s1_asc", "s1_desc"):
-                if f"{key}/l12" not in zg:
-                    continue
-                bin_path  = shm_dir / f"{dir_name}__{key}.bin"
-                meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
-                # The resume check MUST come before the read. `zg[...][:]` pulls the whole
-                # L12 array off GPFS — ~120 GB across the full station list — and the old
-                # order did that read and then discarded it because the .bin already
-                # existed. Every requeue of this --requeue/120 h job therefore paid the
-                # entire preload (worst observed: 1901 s) to produce nothing.
-                if bin_path.exists() and meta_path.exists():
-                    wrote_any = True
-                    continue
-                arr = zg[f"{key}/l12"][:]
-                mm = np.memmap(bin_path, dtype=arr.dtype, mode="w+", shape=arr.shape)
-                mm[:] = arr
-                del mm                       # flush to tmpfs
-                meta_path.write_text(json.dumps({"shape": list(arr.shape),
-                                                 "dtype": str(arr.dtype)}))
-                wrote_any = True
-            if wrote_any:
-                n_written += 1
+    tasks = [(cat, dir_name, shm_dir, tsl) for cat, dir_name in targets]
+    n_written = 0
+    ctx = mp.get_context("fork")
+    with ctx.Pool(workers) as pool:
+        # imap_unordered so progress reflects completions, not submission order.
+        for i, got in enumerate(pool.imap_unordered(_preload_one_station, tasks,
+                                                    chunksize=1), start=1):
+            n_written += got
+            if i % 100 == 0 or i == len(tasks):
+                el = time.perf_counter() - t0
+                print(f"[SHM]   {i}/{len(tasks)} stations  {el:6.1f}s  "
+                      f"({i/max(el, 1e-6):.1f} st/s)", flush=True)
 
     print(f"[SHM] L12 preloaded for {n_written} stations "
           f"({n_seen_total} scanned; caps train={max_train_stations} "
@@ -961,7 +1038,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      debug_nan=False, skip_batches=0, mid_ckpt_every=500,
                      mid_ckpt_fn=None, huber_delta=0.05, depth_weights=None,
                      global_step=0, warmup=None, is_main=True, log_every=1,
-                     ddp_active=False, preempt_check_every=25):
+                     ddp_active=False, preempt_check_every=25, use_wandb=False):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -1074,9 +1151,32 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         # cost a sync per rank per step to do it.
         if is_main and (n_batches == 1 or log_every <= 1 or n_batches % log_every == 0):
             step_ms = 1000 * (data_time + compute_time) / n_batches
-            print(f"  batch {skip_batches + n_batches:04d}  loss={loss.item():.4f}"
-                  f"  gnorm={gnorm.item():.3f}  lr={optimizer.param_groups[0]['lr']:.3e}"
+            _l, _g = loss.item(), gnorm.item()
+            print(f"  batch {skip_batches + n_batches:04d}  loss={_l:.4f}"
+                  f"  gnorm={_g:.3f}  lr={optimizer.param_groups[0]['lr']:.3e}"
                   f"  wu={lr_factor:.2f}  step={step_ms:.0f}ms")
+            # Step-level W&B (§35.31). Everything logged here was ALREADY synced to host
+            # for the print above, on rank 0 only and under the same log_every throttle,
+            # so this costs no extra device sync. Without it the only wandb point in an
+            # epoch is the epoch summary — on 647 stations that is hours of a flat curve,
+            # and a divergence is invisible until it is already over.
+            #
+            # No explicit step=: the epoch-level wandb.log() uses wandb's auto-increment
+            # counter, and mixing an explicit step with an implicit one on the same run
+            # makes wandb drop whichever goes backwards. `global_step` rides along as a
+            # regular metric so it can be picked as the x-axis in the UI instead.
+            if use_wandb:
+                # Local import: `import wandb` lives inside main()'s `if is_main` block,
+                # so the name does not exist at module scope and a bare wandb.log() here
+                # is a NameError on the first logged batch. use_wandb is only ever True
+                # after that import succeeded, so this is a sys.modules hit, not a load.
+                import wandb
+                wandb.log({"train/loss_step"     : _l,
+                           "train/gnorm_step"    : _g,
+                           "train/lr"            : optimizer.param_groups[0]["lr"],
+                           "train/warmup_factor" : lr_factor,
+                           "train/step_ms"       : step_ms,
+                           "global_step"         : global_step})
 
         # Mid-epoch checkpoint every N batches.  Collective on all ranks (RNG gather);
         # every rank reaches the same n_batches because drop_last=True gives all ranks an
@@ -1593,9 +1693,14 @@ def main():
         import atexit as _atexit
         _atexit.register(lambda: shutil.rmtree(SHM_DIR, ignore_errors=True))
         t_shm = time.perf_counter()
+        # workers: the job asks for --cpus-per-task=64 and this runs before the DataLoader
+        # workers exist, so the whole allocation is idle. SLURM_CPUS_PER_TASK keeps it
+        # honest if the sbatch is ever resized.
         _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR,
                             max_train_stations=args.max_stations,
-                            max_val_stations=_val_cap)
+                            max_val_stations=_val_cap,
+                            token_sel=CONFIG["token_sel"],
+                            workers=int(os.environ.get("SLURM_CPUS_PER_TASK", "64")))
         _shm_done.touch()
         print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s  ({SHM_DIR})")
     else:
@@ -2110,6 +2215,7 @@ def main():
                     log_every      = CONFIG["log_every"],
                     ddp_active     = is_ddp,
                     preempt_check_every = CONFIG["preempt_check_every"],
+                    use_wandb      = use_wandb,
                 )
             except _Preempted:
                 # Every rank arrives here on the same batch (the all_reduce(MAX) in

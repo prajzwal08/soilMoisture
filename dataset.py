@@ -875,9 +875,24 @@ def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     return vals, doys, rel_pos, valid
 
 
-def _load_l12_shm(dir_name: str, shm_dir: Path) -> dict[str, np.ndarray] | None:
-    """Return memmapped L12 arrays from /dev/shm (shared across all DDP ranks)."""
-    result = {}
+def _load_l12_shm(dir_name: str, shm_dir: Path, expect_k: int | None = None):
+    """Memmapped L12 arrays from /dev/shm (shared across all DDP ranks).
+
+    Returns (arrays, narrowed) or None — `narrowed[key]` is True when that array was
+    already sliced to the K selected patches by the preloader, i.e. its shape is
+    (N, K, 768) and not (N, 196, 768).
+
+    `expect_k` is the caller's own K, and it is a REFUSAL check, not a hint (§35.31).
+    train.py builds the patch-map diagnostic dataset from `dict(common_kwargs)` and
+    only overrides token_sel="all" — so that dataset inherits the same shm_dir as
+    training and would otherwise open a K=1 memmap expecting 196 columns. numpy
+    clips an over-wide basic slice silently, so the failure mode is not an exception:
+    it is diag/patch_map_sd_mean quietly computed over one patch instead of 196, and
+    that number is a pre-registered §35.30 gate condition. On a width mismatch the
+    key is dropped and the caller falls back to reading it from zarr at the right
+    width.
+    """
+    result, narrowed = {}, {}
     for key in ("s2", "s1_asc", "s1_desc"):
         bin_path  = shm_dir / f"{dir_name}__{key}.bin"
         meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
@@ -888,10 +903,17 @@ def _load_l12_shm(dir_name: str, shm_dir: Path) -> dict[str, np.ndarray] | None:
         # FileNotFoundError and kill all four ranks at dataset init.
         if not (bin_path.exists() and meta_path.exists()):
             continue
-        meta = json.loads(meta_path.read_text())
-        result[key] = np.memmap(bin_path, dtype=meta["dtype"], mode="r",
-                                shape=tuple(meta["shape"]))
-    return result or None
+        meta  = json.loads(meta_path.read_text())
+        shape = tuple(meta["shape"])
+        # Absent key = written by a pre-§35.31 run, which was always full width.
+        nar   = bool(meta.get("narrowed", False))
+        if expect_k is not None:
+            want = expect_k if nar else N_TOKENS
+            if len(shape) != 3 or shape[1] != want:
+                continue
+        result[key]   = np.memmap(bin_path, dtype=meta["dtype"], mode="r", shape=shape)
+        narrowed[key] = nar
+    return (result, narrowed) if result else None
 
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
@@ -1140,14 +1162,19 @@ class SoilMoistureDataset(Dataset):
                     _l12_nar: dict[str, bool]       = {}
                     _shm_keys: set = set()
                     if shm_dir is not None:
-                        shm_l12 = _load_l12_shm(dir_name, shm_dir)
+                        shm_l12 = _load_l12_shm(dir_name, shm_dir,
+                                                expect_k=len(self._token_sel))
                         if shm_l12:
-                            # Full width, but a memmap costs no resident RAM until touched
-                            # and _read_patch_tokens faults only the page patch k lives on.
-                            _l12_src.update(shm_l12)
-                            _shm_keys = set(shm_l12)
-                            for _k in shm_l12:
-                                _l12_nar[_k] = False
+                            # Narrowed since §35.31 — the preloader now slices to the K
+                            # selected patches before writing, so these are (N,K,768) and
+                            # the whole cache is ~0.8 GB rather than 153.6 GB. tmpfs is
+                            # RESIDENT ram, so full width was never free. The flag comes
+                            # from each array's own meta: a stale full-width bin still
+                            # reads correctly at full width.
+                            _arrs, _nars = shm_l12
+                            _l12_src.update(_arrs)
+                            _shm_keys = set(_arrs)
+                            _l12_nar.update(_nars)
                     if not DISABLE_L12_CACHE:
                         for _k in ("s2", "s1_asc", "s1_desc"):
                             if _k in _l12_src or f"{_k}/l12" not in zg:
