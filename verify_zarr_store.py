@@ -54,18 +54,30 @@ DATA_ARRAYS = (
     "s2/l3", "s2/l6", "s2/l9", "s2/l12",
     "s1_asc/l3", "s1_asc/l6", "s1_asc/l9", "s1_asc/l12",
     "s1_desc/l3", "s1_desc/l6", "s1_desc/l9", "s1_desc/l12",
-    "sif/values", "twsa/lwe",
+    "sif/values", "twsa/lwe", "labels/le",
 )
 
-# Arrays that must merely exist with chunks; content is not constrained.
-STRUCTURAL_ARRAYS = (
-    "cm", "dem_token_mask", "lulc_token_mask",
-    "era5/date_ints", "era5/doys",
-    "labels/depths", "labels/dates", "labels/qc",
-    "s2/dates", "s2/token_mask",
-    "s1_asc/dates", "s1_asc/token_mask",
-    "s1_desc/dates", "s1_desc/token_mask",
+# Arrays that must merely exist; content is not constrained. The store's schema
+# varies legitimately by station, so these are grouped by what actually applies:
+#
+#   - `s2/token_mask` DOES NOT EXIST by design. Token masks are computed only for
+#     s1_asc/s1_desc/dem/lulc (compute_s1_dem_lulc_token_masks.py:10-13); S2 is
+#     masked from `cm/masks` instead (dataset.py:270,276).
+#   - flux_only stations carry a different label schema (latent-heat flux)
+#     rather than soil moisture.
+#   - some stations have s1_desc and no s1_asc, or vice versa.
+REQUIRED_ALWAYS = (
+    "dem", "lulc", "dem_token_mask", "lulc_token_mask", "soil",
+    "era5/values", "era5/date_ints", "era5/doys",
+    "s2/dates",
 )
+REQUIRED_LABELS = {
+    "sm_only":     ("labels/sm", "labels/dates", "labels/depths", "labels/qc"),
+    "sm_and_flux": ("labels/sm", "labels/dates", "labels/depths", "labels/qc"),
+    "flux_only":   ("labels/le", "labels/dates_flux", "labels/le_qc"),
+}
+# Required within an orbit group, but only when that group exists at all.
+PER_ORBIT_REQUIRED = ("dates", "token_mask", "l3", "l6", "l9", "l12")
 
 
 def _chunk_files(array_dir: Path) -> int:
@@ -190,13 +202,24 @@ def check_station(job) -> dict:
             if fin.size and float(fin.std()) == 0.0:
                 problems.append("dem: constant")
 
-        for expected in STRUCTURAL_ARRAYS:
-            if expected in seen:
+        for expected in REQUIRED_ALWAYS:
+            if expected not in seen:
+                problems.append(f"{expected}: absent")
+
+        for expected in REQUIRED_LABELS.get(category, ()):
+            if expected not in seen:
+                problems.append(f"{expected}: absent")
+
+        # Orbit groups are optional, but must be complete when present.
+        for orbit in ("s1_asc", "s1_desc"):
+            present = [k for k in seen if k.startswith(f"{orbit}/")]
+            if not present:
                 continue
-            # cm / token masks are legitimately absent for some stations
-            if expected.startswith(("cm", "s1_desc")):
-                continue
-            problems.append(f"{expected}: absent")
+            for leaf in PER_ORBIT_REQUIRED:
+                if f"{orbit}/{leaf}" not in seen:
+                    problems.append(f"{orbit}/{leaf}: absent (group exists)")
+        if not any(k.startswith(("s1_asc/", "s1_desc/")) for k in seen):
+            problems.append("s1_asc and s1_desc: BOTH absent")
 
         # ---- .npy memmaps against their sidecars and the zarr --------------
         for npy in sorted(sdir.glob("*_l[369].npy")):
