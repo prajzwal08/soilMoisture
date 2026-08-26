@@ -8435,7 +8435,7 @@ remains the only thing that can kill it.
 
 ---
 
-## §35 Restore, probe, then (maybe) build the patchwise processor (PLANNED 2026-08-26)
+## §35 Restore, then build the patchwise processor (PHASE 0 DONE + BUILD APPROVED 2026-08-26)
 
 **STATUS: PLANNED 2026-08-26. Phase 0 in progress, nothing else built.** Session 32. Written after
 a first draft was put through four adversarial critiques (architecture, science, implementation,
@@ -8577,7 +8577,7 @@ purge-exposed) — so worst case is weeks of recompute. Revisit SURF Data Archiv
 
 **Until Phase 0 passes, every number produced since the purge is suspect.**
 
-### 35.2 PHASE 1 — CPU probes that can invalidate Phase 2
+### 35.2 PHASE 1 — CPU probes (SUPERSEDED by §35.7: NOT a gate; the build was approved. Retained for reference; two items kept as build inputs)
 
 All reuse existing machinery. `Pool(64)`, `--cpus-per-task=64`, sbatch, mail flags per project rule.
 
@@ -8718,7 +8718,7 @@ a cross-modal interaction would have used. **`best.pt` IS resumable** — byte-i
 `baseline-unet-temporal` = `a46efaa`, a docs-only commit; the code that trained `cls_depth_star_reg`
 is `0313f25`. Retag, and write the commit SHA into every checkpoint.
 
-### 35.4 PHASE 2 — build only if Phase 1 warrants, and stage it
+### 35.4 PHASE 2 — build (SUPERSEDED by §35.7-§35.13, which are the approved build plan. Retained for the reasoning behind staging)
 
 **Do not ship eleven changes in one run.** The first draft bundled: patchwise encoder, drop anchor,
 drop L3/L6/L9, independent depth heads, drop ERA5 `skt`, drop spatial embeddings, three resamplers,
@@ -8849,3 +8849,278 @@ times in thirteen days** (§30 -> §31 -> §33 -> §34). The one escape this pro
 it did to §32: a cheap, pre-registered, CPU-only gate allowed to kill its own arm.
 
 Phase 1 is that gate.
+
+---
+
+### 35.6 PHASE 0 EXECUTED (2026-08-26) — what actually happened
+
+Commits `102d23c`, `aa8a07a`, `db14008`, `696badb` on `feat/per-location-processor`.
+
+| | before | after |
+|---|---|---|
+| `.complete` markers | 0 | **993** (842 + 48 + 103) |
+| `.npy` memmaps | 360 partial | **7,818**, user-writable |
+| `soil` | all zeros | real (Hupsel 7-293, Banizoumbou 8-150, CA-Cbo 14-364) |
+| `era5/values` | no chunks | 100% finite |
+| store verification | 993 FAIL | **993 PASS**, zero damage of any class |
+| dataset end-to-end | empty (0 stations) | 5,383 samples from 4 stations, sample loads |
+
+**Damage classification, measured** (`verify_zarr_store.py`, 12-station sample: 215 vs 166
+array-instances). The purge took `.zarray` headers everywhere and, for the *small* arrays, the
+chunks too. **Every large token array was META-ONLY** — the ~730 GB of L3/L6/L9/L12 chunks were on
+disk the whole time, only their ~400-byte headers were gone. Age-based purge: headers written once
+in June and never re-read; chunk files had atime refreshed by training and eval.
+
+**Procedure used, and why it differs from the first draft.** The draft said wipe-and-restore. Reading
+`slurm/restore_zarr.sh` showed `rsync -a` with **no `--delete`**, so a *merge* cannot remove
+anything and is strictly safer. A `--dry-run --itemize-changes` over 28 stations then showed the
+merge was purely additive — 2,403 files created, **0 content overwrites** — which also closed the
+staleness worry (a June backup cannot roll back a post-June fix if nothing is overwritten). Restore
+job 26058778: 9 min 36 s, no station-level rsync failures, self-verified 993/993.
+
+Backup is `chmod -R a-w` and verified intact 993/993. Leave it that way. Verified end-to-end: a real
+`rm` of a live `.zarray` in the backup is refused.
+
+**Three bugs found, all the same shape — SILENT SUCCESS:**
+1. `zarr.open_consolidated` returning `fill_value` with no exception (the original corruption).
+2. `restore_zarr.sh` verifying by counting `.complete` markers — 0-byte files that rsync restores
+   first, **and which come from the backup**, so it reported `sm_only: 842` on a gutted store.
+3. `RSYNC_OPTS=(-a --chmod=u+rwX)` as a bash array. **Bash cannot export arrays**, and `copy_one`
+   runs inside `bash -c` under `xargs`, so rsync ran with **no flags at all**: no recursion
+   (`skipping directory .` per station), no `--chmod`. Job 26058649 looked healthy while doing
+   nothing. Cancelled at 64 s; the partial copy was additive and harmless.
+
+Plus one latent bug caught by the dry-run: the backup is now read-only, and `rsync -a` preserves
+source permissions, so the restore would have handed the live store `r--r-----` — surfacing days
+later as a permission error during memmap regeneration, far from its cause. `--chmod=u+rwX` added.
+
+**The generalisable lesson:** every check that verified a *proxy* instead of the thing itself passed
+while the thing was broken. `verify_zarr_store.py` exists to verify contents — `.zarray` present,
+chunk count > 0, sampled read != `fill_value`, `soil.min() > 0` — and is schema-aware (S2 has no
+`token_mask` by design; flux-only stations carry `labels/{le,dates_flux,le_qc}`; some stations have
+`s1_desc` and no `s1_asc`).
+
+**Recurrence is certain.** Scratch is purged **by age, not quota** — usage is 8.8% of an 8 TiB
+allowance, so nothing was evicted for space. Restore-and-verify is a recurring operation. The
+durable fix is a store-integrity pre-flight (below), not the restore.
+
+**Not on scratch and never was:** raw S1 dB + S2 imagery live in
+`/gpfs/work3/0/prjs1968/satellite_zarr` (998 stores, ~150 GB, on work3, not purge-exposed). §33's
+decomposition needs that raw dB, not the tokens.
+
+### 35.7 DECISION 2026-08-26 — BUILD THE PATCHWISE MODEL
+
+**User decision, taken after the four critiques were presented. §35.2's Phase 1 is NOT a gate and
+does not block the build.** Two items are retained from it as build *inputs*, both cheap:
+
+- **Register standardisation stats** (§27a.7, train-split only, `Pool(64)`, "zero training-time
+  cost"). **Not optional.** 102 of 141 tokens are L12 and `s2/l12` has register magnitude share
+  **0.940**; LayerNorm is per-token and does not remove a direction shared *across* tokens (§27a.5:
+  post-LN median pairwise cosine 0.783 -> 0.157 when two of 768 dims are zeroed). If all 100 history
+  keys point nearly the same way, `q.k` is near-constant and **temporal attention collapses to a
+  mean** — silently defeating the entire point of un-pooling.
+- **Position-code probe** (~1 h CPU). TerraMind bakes 2-D sin-cos position into every token
+  (`terratorch/.../encoder_embeddings.py:151`, `tm_utils.py:51`, `sincos_pos_emb=True` default), so
+  dropping `spatial_row/col_emb` removes only the *explicit* channel and leaves the implicit one
+  frozen into the features where it **cannot be ablated at all**. Decides whether translation
+  augmentation lands in stage 2a.
+
+**Honest scoping of what this build can answer.** §27b.8 measured own-token within-network SM skill
+at **0-4.2%** on the **un-pooled centre token** (`probe_token_sm_structure.py:63,78`,
+`CENTRE_TOK == 105`) — the same object this build introduces. The *spatial* question has already
+been answered once, negatively. What is untested is the **temporal** axis: §27b.8 collapsed ~100
+acquisitions to a multi-year mean; this keeps them. Consequently the arms in §35.9 are **not
+optional** — without history-ablated and re-pooled, a null cannot distinguish "un-pooling does not
+help" from "we re-measured what was already known".
+
+**Layer:** default **L12** (status quo), with `--hist-layer {3,6,12}` exposed so §27a.7's "build fine
+resolution from L3/L6, not L12" is tested as an ablation rather than assumed either way. The `.npy`
+memmaps already hold the full `(N,196,768)` for L3/L6/L9.
+
+### 35.8 Build order
+
+| # | step | note |
+|---|---|---|
+| 0 | Store-integrity pre-flight | `slurm/train.sh` calls `verify_zarr_store.py` before training; a 3-line check in `_open_zarr` additionally covers the other 14 dataset construction sites |
+| 1 | Register standardisation stats | not optional, see §35.7 |
+| 2 | Position-code probe | ~1 h CPU |
+| 3 | Anchor-redundancy check | fraction of samples whose anchor date is not in that sample's history, **per modality** |
+| 4 | **Stage 2a** | dataset slicing, `PatchwiseEncoder`, per-depth heads, raw drivers, `--arch`, loss readout |
+| 5 | Smoke on **2 GPUs** | the DDP bug is invisible on one |
+| 6 | Four arms + shuffle control | §35.9 |
+| 7 | Pre-register the gate, then run | §35.10 |
+| 8 | Stage 2b (resamplers), 2c (`skt`, ASC/DESC, per-patch soil, translation aug) | each its own ablation |
+
+**Staging rationale.** At K=1 the driver resampler *saves nothing at training time* — raw drivers
+give 536 tokens, still 3.7x cheaper than today's 1035. It is an inference-cost optimisation for
+K=196, and the gate's inference is TxSON only. So the most bug-prone new component (learned null
+token, `-1e4` masking, the ~25% both-blank path with no precedent in this codebase) must NOT go into
+the highest-stakes run for no benefit that run needs.
+
+**Target sequence**, per patch k, patch axis folded into batch, weights shared:
+
+```
+[ depth_CLS x3 | dem_k | lulc_k | soil x4 | era5 | sif | twsa | hist_k x100 | CLS ]
+        N transformer layers over THIS sequence only
+        token head -> SM for patch k      196 patches -> 14x14 map @ 160 m
+```
+
+Statics enter as a **prefix, not appended to the summary**, so temporal attention can condition
+drydown on cover and terrain. An **explicit per-patch CLS is required** — §34.3 says "learned CLS
+per patch" but §G's 141-token count has no such token, leaving `h_k` undefined.
+
+**Dropped:** `anchor_l12` and `anchor_l3/l6/l9` (the anchor is normally already one of the 100
+history tokens with its own staleness; it existed *because* the history was pooled — verify per
+modality first, step 3); `spatial_row_emb`/`spatial_col_emb`/`spatial_modality_emb`; `scale_emb`
+(indexes pyramid levels, meaningless un-pooled). **Kept:** `rel_pos_emb`, `hist_modality_emb`,
+`static_modality_emb`, the block modality tags, `circular_doy_pe`, `depth_tokens`.
+
+**Depth heads: independent, NOT §18.4's star residual** (user decision). Measured label mass
+(120-station sample): 0-10 at 100% of stations / 41.0% of station-days; 10-30 at 77.5% / 32.6%;
+30-100 at 60.8% / 26.4%. The star residual was a sample-efficiency bias, not a data necessity.
+**Caveat for reporting:** depth coverage is **not missing at random** — sensor configuration is a
+network property confounded with climate, so deep heads train on a systematically different station
+population. `FiLMLayer` (`model.py:162-168`) is 4-D only; a 1-D variant is needed, and
+`depth_ctx[:, d, :]` is `(B,768)` against `u_k`'s `(B*K,768)` so it needs `repeat_interleave`.
+
+### 35.9 Arms — one run answers nothing
+
+Same code, same seed, one flag apart. `ablation.py`'s `MODALITY_KEYS` (`:28-38`) is the instrument.
+
+| arm | change | answers |
+|---|---|---|
+| full | - | the headline |
+| **history-ablated** | zero the 100 history tokens | does per-patch history contribute at all? |
+| **re-pooled** | history replaced by its tile mean | isolates *un-pooling* — the actual hypothesis |
+| **statics-only** | zero `dem_k`/`lulc_k` | §27b.8: `dem/l12` is the strongest within-network token signal (eta^2_w = 0.075, p = 0.0005). If this matches full, the finding is "un-pooling the *statics* helps" |
+| **patch-shuffle** (negative control) | permute per-patch history across the 196 patches at eval | spread and off-centre skill **must** collapse. §29.7 mandated a shuffle control; §34 had none |
+
+### 35.10 The gate must be rebuilt — §28.8's version is not usable
+
+Four confirmed defects:
+
+- **">35% spread" misquotes its source.** `plot_network_timeseries.py:156-158`: **0.6** is *"the map
+  resolves the tile"*; **0.35** is only the floor below which it *"repeats ~one series"*. Passing
+  §28.8's gate buys the verdict *"partly resolves"*. Misquoted in four places in this runbook.
+- **`r > 0` on CR200-18 is a coin flip.** n = 6; the 95% CI on the current -0.175 is
+  [-0.864, +0.742]. Across §26.11's four densest tiles the current model gives -0.135, +0.012,
+  -0.589, -0.077 — **CR200-3 already passes** — and P(>=1 of 4 passing by chance) = 0.94. The
+  reference tile was chosen post hoc.
+- **The reference is not an artefact.** §28.8 records no run, checkpoint, epoch, SHA or W&B id; its
+  `r = -0.175` contradicts §26.11's own table (-0.135); spread appears as 15-19% / 17% / 18.8% /
+  20% in four places; the adjudicating parquet is gitignored. Regenerate from a named checkpoint or
+  drop the comparison.
+- **The baseline mixes memorised train stations with held-out ones.** §26.11 split-stratified:
+  train 0.0110 / val 0.0299 / oos 0.0386. TxSON's 40 stations are 14/8/18, so the pooled 0.0301 is
+  not a generalisation metric; the honest held-out bar is ~0.036.
+
+**Replacement, pre-registered before run 1.**
+
+**Primary endpoint — a within-station criterion, which the old gate lacked entirely.** At off-centre
+readouts, de-mean prediction and observation *by station*, then score the residuals. Without this,
+passing is compatible with having learned a **static landscape map** — which §27a/§27b say is what
+these tokens encode, and which the following measurement says would suffice: from
+`csvs/gate_pair_deltas.csv`, for pairs >=160 m apart **the sign of the between-station SM difference
+holds on 98.6% of days** (§32.11 measured 95.8% and called it "the finding that outlives the terrain
+arm"). A static per-patch offset captures nearly all of the target. **That is the §29 failure
+repeated**, and §29.15's own verdict was *"a static field cannot track a dynamic variable"*.
+
+Secondary: the four §28.8 metrics, **split-stratified** (train/val/oos), CIs bootstrapped over
+**stations** not samples, each expressed as a fraction of the achievable ceiling. **The ceiling was
+never measured** though §27.2 pre-registered it as *"this runs first; a null reported without it is
+uninterpretable"* — first-cut from `csvs/gate_pair_deltas.csv`: ~30.4% of the >=160 m
+between-station variance sits **below one token cell**, so max spread ratio ~ 0.83.
+
+Also: spread and correlation gated **jointly** (spread alone is unbounded above and rises whenever
+the model emits per-patch variation, correct or not); fix the tile set in advance; give "materially
+closer off-centre" a number and a paired test; state a **collapse criterion** not just a log, and log
+**temporal** attention entropy over the history block (the register-driven collapse shows up there,
+not in the map SD); one primary endpoint with secondaries under Benjamini-Hochberg, as §27b.6 did
+correctly.
+
+**Delete the "~2M supervised samples is ample" argument** (§G7 reason 2). §27b.3 already rejected it
+as *"pseudo-replication — it multiplies rows without adding information about a per-station
+target"*, and §29.14 measured the damage. Effective n for the spatial question is 993 stations, and
+generously: 33 networks, top-5 = 74.8%, SNOTEL alone 38.8%; drydown tau ~ 3.2 d so consecutive days
+are ~1/3 of an independent observation.
+
+**Set a stopping rule before submitting.** Thirteen 4xGPU runs have never converged: five OOM-killed,
+three cancelled by human judgement, ~412 GPU-h on abandoned runs, 15 jobs with `oom_kill` events.
+Best-val epochs were 3, 3, 3, and **16 of 16 still improving**. The recorded note: *"I called this
+run converged at e5 and again at e9. Wrong both times."* And `val_loss` is **not** comparable across
+`per_depth_loss` settings — changing the depth-head structure invalidates every val-loss comparison
+to a prior run unless recomputed.
+
+### 35.11 Implementation defects to fix, all verified against source
+
+**Two guaranteed crashes.** (1) `train.py:902` uses DDP with `find_unused_parameters=False`, so
+leaving the unet path *constructed* but unused raises `RuntimeError` on step 1 of every DDP run —
+gate **construction** on `arch`, and smoke on **2 GPUs** since this is invisible on one.
+(2) `token_mask` is `(T,14,14)` not `(T,196)` (`dataset.py:244`, `:328`), so `token_mask[:, sel]`
+indexes the row axis and silently returns `(T,K,14)`.
+
+**Silent wrongness.** Padded and NaN slots are marked **valid** — `token_mask` inits to `ones` and is
+written only for filled slots matching a cloud-mask date; median S2 acquisitions/station-year is
+**36** against `MAX_S2 = 60`; NaN slots `continue` at `:289-290`; no-cloud-mask dates have no `else`
+at `:295`. Mask must be `token_mask.reshape(T,196)[:, sel] & (doys > 0)[:, None]`. Two zero-fallback
+branches (`:248-249`, `:371-372`) break collation for stations with no S2/S1 in window.
+"Everything after `model.py:779` is shape-agnostic" is **false** — `label` is `(B,n_depths)` and
+never flattened, and in `readouts` mode the K tokens are *different stations with different labels*.
+`lambda_boundary = 0.1` silently changes meaning (50,176 px x 3 depths today vs K=1 x 3 patchwise)
+and `total_variation_loss` raises `IndexError` under patchwise. `--use-cls-depth` is not default-on
+(`train.py:207`) but the sequence requires it. `slurm/train.sh:43` hardcodes `--use-memmap`.
+`--arch` must land in **`CONFIG`** (saved `:1088`/`:1132`; `ckpt_utils.py:38-45` rebuilds from
+`ckpt["config"]`) or every eval script silently constructs the unet — note `demo_plot.py:44-48` and
+`plot_satellite_sm_meeting.py:47-50` carry **duplicate** `load_checkpoint` implementations that
+bypass `ckpt_utils` entirely. `token_sel=all` reinstates the *"~437 GB DataLoader IPC queue that
+caused epoch-boundary OOM kills"* recorded in `_cpu_pyramid_pool`'s own docstring (`:194-196`) — cap
+eval batch size. Two stations within 160 m collapse to the same token (19 of 75 colocated pairs) and
+get identical predictions; nothing guards this.
+
+**Also missing from §34's change list:** `check_dataset.py:37-58` (already stale),
+`tier1_probe.py:195,205`, `plot_spatial_heterogeneity.py`, `plot_architecture.py:208`; `STATION_ROW`
+or literal `112` in eight further files (`plot_tile_context.py:440` **already** computes
+`(row//16)*14 + (col//16)` — reuse it); **six independent copies of `ERA5_VARS`** plus three
+hardcoded `19`s, with `station_mean_probe.py:140` reading `ERA5_VARS.index("skt_mean")` directly and
+breaking outright on the `skt` drop; and 15 `SoilMoistureDataset(...)` construction sites.
+
+**Dead/broken tests:** `test_gather_equiv.py` imports a function that no longer exists;
+`test_pyramid_equiv.py` tests `_cpu_pyramid_pool` and dies with the refactor;
+`test_per_depth_loss.py` breaks in four places.
+
+### 35.12 Cost — the §34.7 / §G2 arithmetic measures the wrong quantity
+
+Per-layer per-sample FLOPs at d=768 are `12.T.d^2 + 2.T^2.d`; the **linear term dominates**, so
+counting attention pairs is wrong:
+
+| | T | total/layer | vs baseline |
+|---|---|---|---|
+| baseline | 1038 | 9.00e9 | - |
+| patchwise K=1 | ~141 | 1.03e9 | **8.8x cheaper** (not 54x) |
+| patchwise K=196 | - | 2.02e11 | **22x more expensive** (not 3.6x) |
+
+Attention is 3% of the patchwise cost. And **epochs are data-bound** (data 250-630 s vs compute
+483 s), so an 8.8x compute cut applies to under half the epoch — realistic gain **1.6-2x**, not 54x.
+The 145 GB `/dev/shm` preload is unchanged at **17-32 min per job start** (project total: 44 starts,
+8.5 h wall ~ 34 GPU-h). Budget is not the constraint: 79,592 of 800,000 GPU SBU used in six months,
+expiring 2027-02-16, ~47 full runs in hand. **The scarce resource is calendar time.**
+
+### 35.13 Rollback — checked, no retag needed
+
+The red-team claimed `baseline-unet-temporal` sat on the wrong commit and that the real code was
+`0313f25`. **Both halves are wrong**, verified 2026-08-26: `0313f25` is itself **docs-only**
+(touches `text/logs.txt` alone), and while the tag's commit `a46efaa` has a docs-only *subject*, the
+**code state** is what matters — `git diff b81faf7 a46efaa -- model.py train.py dataset.py
+ckpt_utils.py` is **empty**, the only code delta being that `eval_predict.py` was *added*.
+`b81faf7` ("Pre-launch bug hunt: fix 9 defects", 2026-08-05) is the last code commit before the
+`cls_depth_star_reg` run. So the tag holds exactly the baseline training code plus eval tooling —
+**leave it alone**. The reviewer inferred from a commit subject without checking the tree: the same
+class of error as trusting a `.complete` marker.
+
+**The real gap does stand:** no code path records a commit SHA into a checkpoint, so a reported
+number cannot be traced to the code that produced it. Stamp `git rev-parse HEAD` into `CONFIG`
+during stage 2a. Also, `best.pt` **is** resumable — byte-identical to `last.pt` (both 604,402,070 B,
+epoch 16) — so §G6's claim was wrong; the real gap is that there is no second copy.
+
+Branch: **`feat/patchwise-temporal`**, created off `feat/per-location-processor` so the Phase 0
+store-verification work travels with it. `baseline-unet-temporal` remains the rollback point.
