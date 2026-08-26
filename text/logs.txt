@@ -5750,3 +5750,65 @@ SESSION 34 — §35.31 the preload read 196 patches to use 1 (2026-08-26)
   already said this: blocked on PER-FILE LATENCY, which parallelism removes and a
   warm cache would only partly mask.  The caveat reached a commit message and this
   log before a free experiment refuted it.
+
+SESSION 34b — §35.32 CAPACITY TEST: pw_stage2a stopped, L3 launched (2026-08-27)
+--------------------------------------------------------------------------------
+  pw_stage2a (26082396) STOPPED at epoch 12 by request, before the §35.30 gate
+  could read out.  Cost recorded honestly: no scored endpoint at a converged best
+  epoch, and grad_ratio / patch_map_sd_mean were only ever written to W&B, never
+  read.  Re-runnable (~7 h).
+    best = epoch 9: select=0.047712, 0-10 ubRMSE=0.0547 r=0.737
+    tag `pw_stage2a-ep9`; archived to
+    checkpoints_archive/pw_stage2a_ep9_20260826/  (best.pt + val_station_metrics
+    + full log), verified DISTINCT INODE, md5 504bf831c81a6b77f3b1f44d8f23e510.
+    Same filesystem though -- protects against overwrite/deletion, NOT storage
+    loss.  [[project_checkpoint_backup]] still stands.
+
+  WHY STOPPED: train/val loss gap reached 17x by ep11 (~4x on error) while val
+  moved 8%.  Implied train ubRMSE ~0.014 against a measured 160 m noise floor of
+  F=0.043 -- fitting training stations ~3x better than two co-located sensors
+  agree.  Suggestive of memorisation, NOT proof: train and val are different
+  STATIONS, so distribution shift predicts the same shape.
+
+  pw_stage2a_L3 (26083217, gcn117) LAUNCHED: --n-layers 3 --lr-patience 5.
+    params 72,262,976 -> 43,907,648  (-39%; my ~51M estimate was wrong -- each
+    patchwise layer is ~9.5M not ~7.1M, because the cross-attention to the driver
+    memory carries its own k/v/o projections on top of self-attention)
+    149 s/epoch vs 205 s; peak VRAM 8.5 GB vs 11.8 GB.
+
+    ep  L3 select   L6 select | L3 gap  L6 gap | L3 0-10  L6 0-10
+    1   0.049516    0.049476  |  1.0x    1.1x  | 0.0574   0.0577
+    2   0.048987    0.049282  |  3.4x    4.0x  | 0.0567   0.0568   <- L3 best
+    3   0.049910    0.048790  |  4.9x    6.0x  | 0.0586   0.0568
+    4   0.049828    0.048938  |  6.4x    7.6x  | 0.0585   0.0561
+
+  PROVISIONAL READ (4 epochs, could reverse -- L6 did not step down until ep7):
+  THE GAP NARROWS ON L3 AT EVERY EPOCH, BUT VAL DOES NOT IMPROVE.  If
+  over-parameterisation were what capped val, removing 28M params should have
+  freed capacity for generalisable structure and val should have moved.  It did
+  not.  So memorisation looks like a SIDE-EFFECT, not the cause, and the ceiling
+  is set elsewhere.  Supporting: L3 reaches nearly L6's train loss (0.000477 vs
+  0.000395 @ep3) with 39% fewer params -- the extra 28M bought almost nothing,
+  not even better memorisation.  Underfitting ruled out on the same evidence.
+
+  LEADING ALTERNATIVE: the STATICS ARE A STATION ID.  soil/dem/lulc are constant
+  per station and near-unique across 563; that is an INPUT-level shortcut, so
+  shrinking the transformer cannot remove it.  Consistent with
+  R2_station_mean = -17.5 at 30-100 (ranks val stations worse than the global
+  mean would).  ubRMSE is BLIND to this by construction -- it de-means per
+  station -- so the selection metric cannot see the failure mode.
+
+  TOMORROW, in order:
+    1. STATICS ABLATION on the archived best.pt (eval only, no training).
+       Zero soil/dem/lulc: barely moves -> identity; collapses -> information.
+       ablation.py / eval_predict.py --ablate exist; §35.24 fixed the stale-key
+       bug that made --ablate a silent no-op on patchwise.
+    2. Tile-pair sign test -- §35.30's TOP criterion and it still does not exist
+       as code.  26 pairs already flagged in station_splits.csv (tile_pair_eval).
+    3. Year-holdout folded into the next run's split: separates "new days" from
+       "new places".  Nothing else distinguishes memorisation from shift.
+
+  ALSO: §35.31a's warm-cache caveat WITHDRAWN (commit 7c14855).  Cold node gcn117
+  preloaded in 47.4 s vs gcn91's warm 55.5 s -- FASTER.  58x, entirely from the
+  fan-out.  The caveat was reasoning, not measurement, and reached the runbook,
+  the session log and a commit message before a free experiment refuted it.
