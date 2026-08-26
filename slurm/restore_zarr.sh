@@ -37,18 +37,23 @@ for c in sm_only sm_and_flux flux_only; do mkdir -p "$DST/$c"; done
 export FAILDIR="${FAILDIR:-/tmp/restore_zarr_fail_$SLURM_JOB_ID}"
 mkdir -p "$FAILDIR"
 
+# The rsync flags are INLINE, deliberately. They were briefly held in a bash
+# array (RSYNC_OPTS) -- but bash cannot export arrays, and copy_one runs inside
+# `bash -c` under xargs, where the array is unset. rsync then ran with NO flags:
+# no recursion (`skipping directory .` for every station) and no --chmod. It
+# looked like it was working. Job 26058649 was cancelled for this.
+#
 # `--chmod=u+rwX` is REQUIRED, not cosmetic. The backup is chmod a-w (§35.1
-# step 1), and plain `rsync -a` preserves source permissions -- which would
-# propagate r--r----- onto the live training store and leave it unwritable,
-# breaking memmap regeneration and every later write. Verified with
-# --dry-run --itemize-changes: without it, ~120 files per station show a `p`
-# (permission) change.
-RSYNC_OPTS=(-a --chmod=u+rwX)
+# step 1), and `rsync -a` preserves source permissions -- which would propagate
+# r--r----- onto the live training store and leave it unwritable, breaking
+# memmap regeneration and every later write. Verified with
+# --dry-run --itemize-changes: without it ~120 files per station show a `p`
+# (permission) change; with it that class disappears and 0 files are overwritten.
 
 copy_one() {
   local rel="$1"                       # e.g. sm_only/ISMN_ARM_Omega
   mkdir -p "$DST/$rel"
-  if ! rsync "${RSYNC_OPTS[@]}" "$SRC/$rel/" "$DST/$rel/"; then
+  if ! rsync -a --chmod=u+rwX "$SRC/$rel/" "$DST/$rel/"; then
     # Previously this exit code was discarded inside xargs, so a failed station
     # was invisible and the job still reported success.
     echo "$rel rc=$?" >> "$FAILDIR/failures.txt"
