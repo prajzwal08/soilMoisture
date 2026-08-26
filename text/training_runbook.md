@@ -8432,3 +8432,420 @@ It recovers the full information available **at 160 m**. It does not create sub-
 every TerraMind layer is 14 x 14, so `skip_L3` at `up3` is a 16x interpolation carrying nothing it
 did not carry at 160 m. §33's S1 decomposition remains the only route below 160 m, and §33.9 gate 1
 remains the only thing that can kill it.
+
+---
+
+## §35 Restore, probe, then (maybe) build the patchwise processor (PLANNED 2026-08-26)
+
+**STATUS: PLANNED 2026-08-26. Phase 0 in progress, nothing else built.** Session 32. Written after
+a first draft was put through four adversarial critiques (architecture, science, implementation,
+red-team). Two independent reviewers found the draft's founding premise misquoted, a third found
+two guaranteed crashes, and the fourth found the training store is currently corrupt. This section
+records the corrected plan and, as importantly, the corrections themselves — so they are not
+re-derived.
+
+### 35.0 The premise §34 was built on is wrong
+
+§34 and the first draft of this section both open with: *"§27b.8 measured own-token within-network
+skill at 0-4.2% **with the pooled history**; this is the first test of whether un-pooling moves
+it."*
+
+That is not what §27b.8 measured. `probe_token_sm_structure.py:63` sets
+`CENTRE_TOK = (GRID//2)*GRID + GRID//2`, `:78` asserts `CENTRE_TOK == 105`, `:113` and `:286`
+describe *"the station's own centre token (index 105)"*, and `training_runbook.md:5602-5610` states
+the setup verbatim. **§27b.8 measured the UN-POOLED per-patch token — the exact object §34 proposes
+to introduce — and got the null.** The pooled-pyramid contrast was designed as a secondary
+comparison (§27b.3, "Secondary contrast, free") and is not in the results table; it was never run.
+
+So spatial un-pooling at station-mean scale has already been tested. What remains genuinely
+untested is narrower, and different:
+
+1. **The temporal axis of that token.** §27b.8 collapsed ~100 acquisitions to a multi-year mean.
+   Does the token's *variation over time* track SM *anomaly*?
+2. **Between-patch differences.** Do differences between two patches track differences between two
+   stations? §27's Arm A was designed for exactly this and never run.
+
+Both are answerable on CPU with machinery that already exists. Neither needs a new architecture.
+This is why §35 stages the work: **the cheap things that can invalidate the expensive thing run
+first.**
+
+### 35.1 PHASE 0 — the training store is corrupt (BLOCKING)
+
+Verified 2026-08-26 on `ZARR_ROOT = /gpfs/scratch1/shared/pkhanal/zarr` (`dataset.py:39`):
+
+```
+.complete sentinels, whole tree ............ 0      (of 993)
+soil/ array dir (ISMN_TWENTE_Hupsel) ....... EMPTY - no .zarray, no chunks
+era5/values ................................ chunk 0.0 present, .zarray GONE
+L3/L6/L9 .npy memmaps ...................... gone for 953 of 993 stations
+station dirs still present ................. 842 (sm_only)
+```
+
+**The damage classifies into two very different kinds** (`verify_zarr_store.py`, 12-station sample
+2026-08-26 — 215 vs 166 array-instances):
+
+| class | count | arrays affected | repair |
+|---|---|---|---|
+| **META-ONLY** — `.zarray` deleted, chunks intact | 215 | `s2/{l3,l6,l9,l12}`, `s1_asc/{l3,l6,l9,l12}`, `s2/dates`, `s1_asc/dates`, `dem`, `lulc`, `dem_token_mask`, `lulc_token_mask`, `labels/*`, sometimes `era5/*` | ~400 bytes per array |
+| **DATA LOSS** — chunks gone too | 166 | `soil`, `cm/*`, `era5/*` (most stations), `sif/*`, `twsa/*`, `s1_asc/token_mask`, `s2/token_mask` | restore from backup |
+
+**The expensive part survived.** Every large TerraMind token array is META-ONLY — the ~730 GB of
+L3/L6/L9/L12 chunks are on disk; only the tiny `.zarray` headers were purged. That is exactly what
+an age-based purge produces: headers were written once in June and never re-read, while chunk files
+had their atime refreshed by training and eval reads. What is genuinely lost is the small auxiliary
+arrays.
+
+Consequence for the restore: **the rsync merge transfers far less than 1.4 TB**, because `rsync -a`
+skips files that already match. It restores the `.zarray` headers plus the small arrays and leaves
+the token chunks untouched.
+
+The scratch purge ate array *contents* while `.zmetadata` survived at each station root. So
+`zarr.open_consolidated` still exposes `soil` as a valid array and returns `fill_value` — **all
+zeros, no exception, no warning**. Sampled 40/40 stations: scratch `min=0.0 max=0.0`, backup
+`min=8.0 max=150.0`. With zero `.complete` markers, `dataset.py:132-134` drops every station, so
+the dataset is empty; `train.py:140-141` preloads 0 stations and touches `.done` anyway.
+`slurm/train.sh:43` hardcodes `--use-memmap`, and only the 40 TxSON stations kept their memmaps —
+their atime was refreshed by the August eval.
+
+**The actual bug is the silence.** A `fill_value` read is indistinguishable from real data
+downstream, and soil is §20.14's strongest tabular block. A run started today would train on zeroed
+soil and report a plausible number.
+
+**This was an age-based purge, not a quota eviction** — scratch usage is 8.8% of an 8 TiB quota.
+Restoring resets the clock; it *will* recur. Restore-and-verify is a recurring operation.
+
+**Backup status, verified.** `/gpfs/work3/0/prjs1968/zarr_tokens` = `/projects/prjs1968/zarr_tokens`
+(**the same directory**, device 43 inode 1561365504 — the `restore_zarr.sh` `SRC` path is correct).
+All 993 stations (842 + 48 + 103), **1.4 TB** measured (1.2 T + 86 G + 66 G), all 842 `sm_only`
+`.complete` markers present. For the station checked array-by-array, chunk counts and mtimes match
+the live store and `.zmetadata` is the same generation (Jun 12 10:04). **Caveat: the backup's newest
+chunks are Jun 26-29**, so anything fixed on scratch after that (`fix_bad_s1_tokens.py`,
+`test_resanitize_s1.py`, `find_bad_s1_acquisitions.py` all exist) would be silently rolled back.
+
+**Three storage tiers — the memmaps are only a partial duplicate.** Exactly nine arrays,
+`{s2, s1_asc, s1_desc} x {l3, l6, l9}`, **no L12**:
+
+| tier | holds | why | rebuilt from |
+|---|---|---|---|
+| zarr on scratch | everything (all `l12`, soil, era5, labels, dem, lulc, cm, sif, twsa) | source of truth | the backup |
+| `.npy` memmaps | L3/L6/L9 only | anchor reads ONE random date; zarr chunks `[32,196,768]` amplify 32x | zarr |
+| `/dev/shm` preload | L12 only, ~145 GB | history reads many dates -> load wholesale once per job | zarr |
+
+Tiers 2 and 3 are derived and rebuildable; the zarr is not. **Zarr is not redundant** — it is the
+only copy of `soil` and `era5/values`. `convert_l369_to_npy.py:68` writes `mm[:] = arr[:]`, i.e. the
+**full** `(N,196,768)`, not an anchor cache (Hupsel `s2_l3.npy` = 35.2 MB = 117x196x768x2) — so the
+memmaps are the complete L3/L6/L9 history, which matters if §35.2's P1 picks L3/L6 over L12.
+
+#### 35.1.1 Procedure — reversible at every step
+
+**Governing rule (user instruction, 2026-08-26): no step may destroy the only copy of anything.**
+Every deletion happens *after* its replacement is verified, never before.
+
+1. **Protect the source.** `chmod -R a-w /gpfs/work3/0/prjs1968/zarr_tokens`. Verify a test write
+   fails. Nothing else touches the backup for the rest of the procedure.
+2. **Verify the BACKUP before touching scratch.** This ordering is the point — the first draft wiped
+   scratch first, which would destroy the only other copy if the backup proved incomplete. Full
+   per-array sweep over 993 stations: `.zarray` present, chunk count > 0, sampled read is not
+   `fill_value`, `soil.min() > 0`, `era5/values` non-empty, `.npy` shapes match their sidecars.
+   `Pool(64)`, sbatch. **If this fails anywhere, stop.**
+3. **Check headroom.** 8 TiB quota, 0.71 TiB used, +1.4 TiB restore = ~2.1 TiB ~ 26%. Comfortable.
+4. **Snapshot scratch state** (seconds, no data copied):
+   `find $ZARR_ROOT -type f -printf '%P %s %T@\n' | sort > scratch_manifest_pre.txt`.
+   `rsync -a` overwrites when size/mtime differ, so this is how we prove afterwards whether a
+   post-June scratch file was replaced by the June backup.
+5. **Merge-restore, no wipe, no rename.** `slurm/restore_zarr.sh` was read and is sound in the ways
+   that matter: `rsync -a "$SRC/$rel/" "$DST/$rel/"` per station, 64-way via `xargs`, **no
+   `--delete` anywhere**, both paths hardcoded rather than arguments, idempotent, `staging`
+   partition, correct mail flags. A merge is **strictly safer than the wipe-and-restore first
+   approved**, because nothing is ever deleted. Two defects to fix first:
+   - **Verification is unsound** — it counts `.complete` markers, which come *from* the backup, so
+     it reports `sm_only: 842` even if every array chunk failed. Replace with step 2's content check.
+   - **It can fail silently** — `set -uo pipefail` without `-e`, no exit-code check on the individual
+     `rsync`s inside `xargs`. Collect per-station exit codes.
+6. **Verify the restored store**, same sweep as step 2, plus a manifest diff. Any file whose mtime
+   moved backwards means a post-June version was overwritten — investigate before accepting.
+7. **Nothing to delete.** The merge leaves old files in place.
+8. **Add a store-integrity assertion to `dataset.__init__`** so a `fill_value` read can never again
+   pass as data. This is the durable fix; the restore is only the immediate one.
+
+**Backup protection decision:** `chmod` only, no second copy. The realistic threat is our own
+restore command, which `chmod` blocks for zero cost. A 730 GB second copy would sit on the same
+`wstor_work3` filesystem and add little. Nothing here is irreplaceable — soil is re-downloadable
+from OpenLandMap, tokens recomputable from the intact `satellite_zarr` raw imagery (on `work3`, not
+purge-exposed) — so worst case is weeks of recompute. Revisit SURF Data Archive (`/archive` exists,
+`dmftar` installed, `/archive/pkhanal` would need requesting) nearer the 2027-02-16 expiry.
+
+**Until Phase 0 passes, every number produced since the purge is suspect.**
+
+### 35.2 PHASE 1 — CPU probes that can invalidate Phase 2
+
+All reuse existing machinery. `Pool(64)`, `--cpus-per-task=64`, sbatch, mail flags per project rule.
+
+**P0. The ceiling — `probe_variogram.py`.** §27.2 pre-registered this as *"this runs first; a null
+reported without it is uninterpretable"* and it was never run. First-cut estimate from
+`csvs/gate_pair_deltas.csv`:
+
+```
+E[dSM^2] pairs  <160 m (n=15) = 0.002340 -> sd_b + micro = 0.0342
+E[dSM^2] pairs >=160 m (n=34) = 0.007701 -> sd_total     = 0.0621
+=> 30.4% of the >=160 m between-station variance sits BELOW one token cell
+=> max achievable between-station spread ratio ~ sqrt(0.696) = 0.83
+```
+
+Do it properly: bin all 75 pairs of `csvs/colocated_pairs.csv` by separation, bootstrap the
+variogram, report `R2_max(160 m)` with a CI. Every gate number then becomes a fraction of what is
+physically achievable. Labels only, minutes.
+
+**P1. The dynamic pair-difference probe — the decisive test, never run.** `de_t = e_i(t) - e_j(t)`
+versus `dSM_t` over colocated pairs separated by **more than** 160 m, pair mean removed. Both tokens
+come from one forward pass on one image, so climate, ERA5 cell, season, biome, network, sensor
+vendor and calibration epoch are annihilated by construction — the confounds that killed §29 and
+§32 cannot occur. The *level* version has n ~ 33 and is hopeless; the *dynamic* version has ~33-54
+pairs x ~1500 days. Control: the same statistic from the pooled tile mean, which must be ~0 by
+construction. Statistic: distance correlation with an exact permutation null (§27.3).
+**Sweep all 14 modality x layer combinations**, which settles P3 as a side effect.
+
+**P2. Within-station daily anomaly — the temporal question §27b.8 did not ask.** Regress SM anomaly
+on the station's own token 105 *per acquisition date*, station fixed effects, GroupKFold on
+`location_group_id`, with a persistence control.
+
+**P3. Which layer — decided by data, not inherited.** §27a.7: *"L3/L6 are cleaner on both counts —
+more within-tile spatial structure and far less register dominance. **Anything aiming at fine
+resolution should be built from them, not from L12.**"* S2 L12 register magnitude share is
+**0.940**, the worst of any modality x layer; L3/L6 are 0.586/0.603. The first draft built the whole
+history path on L12 without argument, conflating "drop the four-layer *anchor*" (an I/O argument,
+legitimate) with "the *history* must be L12" (never argued). P1's sweep decides it.
+
+**P4. Position-code probe.** **TerraMind bakes 2-D sin-cos positional embeddings into every token** —
+`terratorch/models/backbones/terramind/model/encoder_embeddings.py:151`, `tm_utils.py:51
+build_2d_sincos_posemb`, `sincos_pos_emb: bool = True` by default, propagating through all 12 blocks.
+So the claim that dropping `spatial_row_emb`/`spatial_col_emb` makes §28.5's position leakage
+*unrepresentable* is **false**: it removes the explicit channel and leaves the implicit one frozen
+into the features, where — unlike an `nn.Embedding` — it cannot be ablated at all. Worse than the
+status quo. Probe: linear regression of (row, col) from L12 tokens, ~50 tiles x 196 tokens, held-out
+tiles, one hour. §34.4's translation augmentation must be reinstated regardless, since it was deleted
+on the strength of the false claim.
+
+**P5. The additive baseline — the competitor a referee will demand.**
+`SM(patch k, t) = f(ERA5, soil, tile drivers)_t + g(dem_k, lulc_k)`. No transformer, no per-patch
+history, no GPU, CPU-minutes. Motivated by measurement, not parsimony: from
+`csvs/gate_pair_deltas.csv`, for pairs >=160 m apart the *sign* of the between-station SM difference
+holds on **98.6% of days** (§32.11 measured 95.8%). The target is very nearly a static field. If the
+additive baseline matches, the transformer is unjustified.
+
+**P6. Two cheap audits that change Phase 2's design.** (a) Covariate shift over all 993 tiles: LULC
+histogram and DEM stats of token 105 vs all 196; report the fraction of patches whose LULC class
+never occurs at any station's token 105. If ~30% are out of support, the 14x14 map needs a **mask,
+not a caveat**. Note §G7's trigger reads this in TxSON, 72% rangeland — where patch diversity is
+smallest and shift least detectable. (b) Within-tile variance of the 21 OpenLandMap soil channels,
+which decides the soil treatment in §35.3.
+
+#### 35.2.1 Exit criteria — pre-registered, written before P1 is submitted
+
+- **P1 fires** (significant against the permutation null on some layer) -> Phase 2 justified, and
+  P1 names the layer.
+- **P1 null, P2 fires** -> the signal is temporal-only at tile scale; the within-tile ambition is
+  not supported, and the honest next step is a better tile-level temporal model.
+- **P1 and P2 both null** -> per-patch tokens carry neither between-patch nor within-station SM
+  information. **Do not build Phase 2.** Redirect to §33, which uses a *measured* radar quantity
+  rather than a frozen embedding.
+- **P5 matches whatever Phase 2 could achieve** -> build nothing; report the additive model.
+
+### 35.3 Corrections to §34 / open_items §G, recorded so they are not re-derived
+
+**The sink audit was already done.** `csvs/static_token_outliers.csv` (993 rows) already carries
+`dem_argmax_r/c/i` and `lulc_argmax_r/c/i` per station, `argmax_i == r*14+c` on 100% of rows. Token
+105 is the sink in **0/993 (DEM)** and **1/993 (LULC)**; sinks cluster in rows 11-12 at the bottom
+edge. That is the "proceed" branch. The claim that the file held only summary statistics was wrong.
+
+**But the register problem was scoped wrongly.** Mitigating only `dem_k`/`lulc_k` covers **2 of 141
+tokens** while `s2/l12` has register magnitude share **0.940** and **102 of 141 tokens are L12**.
+LayerNorm is per-token and does not remove a shared direction across tokens — §27a.5 measured
+post-LayerNorm median pairwise cosine **0.783 -> 0.157** when two of 768 dims are zeroed. For a
+*temporal* transformer this is acute: if all 100 history keys point nearly the same way, `q.k` is
+near-constant and **attention over the history collapses to near-uniform** — the model gets a mean,
+which is what un-pooling was supposed to escape. §27a.7 already prescribes the fix and it was
+silently dropped: **per-dimension standardisation over the dataset, train-split only**, *"It
+discards nothing"*, *"Zero training-time cost"*. Adopt it; compute the stats in Phase 1.
+
+**Rejected fixes, do not revisit.** *Inpainting the sink patch and re-running TerraMind*: the input
+there is pristine (§27a.3 — DEM 452.88-454.55 m, 254 distinct values, zero NaN; LULC uniform
+rangeland); the -1671 coordinate is manufactured by the ViT, which needs somewhere to park global
+information, so replacing the patch relocates the sink rather than removing it — at the cost of a
+full GPU re-tokenisation and destroying good data. *Changing input normalisation*: already correct
+(`precompute_terramind.py:72-75`, `:124-140` z-score with `v1_pretraining_{mean,std}`; LULC v1_5
+stats are identity), and massive activations occur in correctly-normalised in-distribution ViTs
+regardless.
+
+**Cost arithmetic was wrong in both directions.** §34.7, §G2 and the first draft counted *attention
+pairs*, ignoring that FFN/projection cost scales with `K.T`. Per-layer per-sample FLOPs at d=768 are
+`12.T.d^2 + 2.T^2.d`, and the linear term dominates:
+
+| | T | total/layer | vs baseline |
+|---|---|---|---|
+| baseline | 1038 | 9.00e9 | - |
+| patchwise K=1 | 141 | 1.03e9 | **8.8x cheaper** (not 54x) |
+| patchwise K=196 | - | 2.02e11 | **22x more expensive** (not 3.6x) |
+
+Attention is 3% of the patchwise cost. And **epochs are data-bound** (data 250-630 s vs compute
+483 s), so an 8.8x compute cut applies to under half the epoch — realistic ceiling **1.6-2x**. The
+145 GB `/dev/shm` preload is unchanged at **17-32 min per job start** (project total: 44 starts,
+8.5 h wall ~ 34 GPU-h).
+
+**Soil keeps the exact defect §35 exists to remove.** It is **OpenLandMap, not SoilGrids**
+(`download_soil_openlandmap.py:62-64`, `PATCH_PX=74`, `RES_M=30` -> `(21,74,74)`), and `SoilEncoder`
+(`model.py:328-331`) collapses it to four **concentric centre-symmetric means** — after the tile mean
+is removed only radially-symmetric structure survives, the identical criticism §27a.2 levels at
+pyramid pooling. Per-patch soil at 14x14 is **21 x 196 x 4 B ~ 16 KB against the 460 KB currently
+kept — 29x smaller**. The "redundant with DEM/LULC" argument was a non-sequitur: SoilGrids being
+*predicted from* DEM does not mean the model can recover it from TerraMind's frozen,
+register-dominated *encoding* of DEM.
+
+**Other corrections.** `h_k` was undefined — the 141-token sequence has no readout; add an explicit
+per-patch CLS, and note the depth CLS changes meaning (3 x 196 per sample, so §19.3's
+`_last_depth_ctx` diagnostic no longer applies). Multi-station supervision is **not** free —
+`dataset.py:1076` has one label vector per sample and `station_key` is a pure function of station
+identity (`:818-824`), so there is no mechanism to attach two labels to one forward pass;
+`location_group_id` exists in `station_splits.csv` (906 groups) but `dataset.py` never reads it.
+The anchor-drop membership test is insufficient: the anchor is selected as *most recent with all 196
+patches valid* (`:418-421`, `:488-492`) — a tile-level criterion the per-token mask does not encode —
+its pool spans S2/S1-asc/S1-desc (`:448`) and is not truncated to `MAX_S2`/`MAX_S1` while the history
+is, and **68.2% of station-years exceed `MAX_S1 = 40`**. The "three separate resamplers for clean
+ablation" justification is false: masking a modality's inputs gives exact ablation in a shared
+resampler and is already the code path (`:1064-1065`, `:1071-1072`); separation instead discards what
+a cross-modal interaction would have used. **`best.pt` IS resumable** — byte-identical to `last.pt`
+(both 604,402,070 B, epoch 16); §G6's claim was wrong. **The rollback tag is on the wrong commit** —
+`baseline-unet-temporal` = `a46efaa`, a docs-only commit; the code that trained `cls_depth_star_reg`
+is `0313f25`. Retag, and write the commit SHA into every checkpoint.
+
+### 35.4 PHASE 2 — build only if Phase 1 warrants, and stage it
+
+**Do not ship eleven changes in one run.** The first draft bundled: patchwise encoder, drop anchor,
+drop L3/L6/L9, independent depth heads, drop ERA5 `skt`, drop spatial embeddings, three resamplers,
+new loss readout, new token masks, `--arch` flag, `hist_modality_emb` widening. If the gate fails,
+nothing is attributable.
+
+The sharpest staging argument: **at K=1 the driver resampler saves nothing at training time** — raw
+drivers give 536 tokens, still 3.7x cheaper than today's 1035. It is an inference-cost optimisation
+for K=196, and the gate's inference is TxSON only. So the most bug-prone new component (learned null
+token, `-1e4` masking, the ~25% both-blank path with no precedent in this codebase) would enter the
+highest-stakes run for no benefit that run needs.
+
+| stage | contains |
+|---|---|
+| **2a** | patchwise encoder, raw drivers, layer from P1, register standardisation, per-depth heads |
+| **2b** | driver resamplers (inference optimisation only) |
+| **2c** | ERA5 `skt` removal, `hist_modality_emb`->3, translation augmentation |
+
+**Required arms — one run answers nothing.** Same code, same seed, one flag apart: *full*;
+*history-ablated* (zero the 100 history tokens — does per-patch history contribute at all?);
+*re-pooled* (history replaced by its tile mean — isolates un-pooling, the actual hypothesis);
+*statics-only* (zero `dem_k`/`lulc_k` — §27b.8 says `dem/l12` is the strongest within-network token
+signal, eta^2_w = 0.075, p = 0.0005); and a **patch-shuffle negative control** (permute per-patch
+history across the 196 patches at eval — spread and off-centre skill must collapse; §29.7 mandated a
+shuffle control and the first draft had none). `ablation.py`'s `MODALITY_KEYS` (`:28-38`) is the
+instrument.
+
+**Depth heads: independent, not §18.4's star residual** (user decision 2026-08-26). Measured label
+mass over a 120-station sample: 0-10 at 100% of stations / 41.0% of station-days, 10-30 at 75.5% /
+32.6%, 30-100 at 60.8% / 26.4%; combinations all-three 68, `0-10+10-30` 25, `0-10` only 22,
+`0-10+30-100` 5. The star residual was an inductive bias for sample efficiency, not a data
+necessity. Caveat to carry: depth coverage is **not missing at random** — sensor configuration is a
+network property confounded with climate, so the deep heads train on a systematically different
+station population. Compare the depth-1/depth-2 subsets against the full set on Koppen,
+`igbp_macro`, `elevation_band` before trusting per-depth attribution.
+
+#### 35.4.1 The gate must be rebuilt — the §28.8 version is not usable
+
+- **">35% spread" misquotes its source.** `plot_network_timeseries.py:156-158`: **0.6** is *"the map
+  resolves the tile"*; **0.35** is only the floor below which it *"repeats ~one series"*. Passing
+  bought the verdict *"partly resolves"*. Misquoted in four places in this runbook.
+- **`r > 0` on CR200-18 is a coin flip.** n = 6; 95% CI on the current -0.175 is [-0.864, +0.742].
+  Across §26.11's four densest tiles the current model gives -0.135, +0.012, -0.589, -0.077 —
+  **CR200-3 already passes** — and P(>=1 of 4 passing by chance) = 0.94. The tile was chosen post hoc.
+- **The reference numbers are not an artefact.** §28.8 records no run, checkpoint, epoch, SHA or
+  W&B id; its `r = -0.175` contradicts §26.11's own table (-0.135); the adjudicating parquet is
+  gitignored; spread appears as 15-19%, 17%, 18.8% and 20% in four places. Regenerate from a named
+  checkpoint or drop the comparison.
+- **The baseline mixes memorised training stations with held-out ones.** §26.11 split-stratified:
+  train 0.0110 / val 0.0299 / oos 0.0386. TxSON's 40 stations are 14/8/18, so the pooled 0.0301 is
+  not a generalisation metric; the honest held-out bar is ~0.036.
+
+**Replacement, pre-registered before any run.** **Primary endpoint: a within-station criterion,
+which the old gate lacked entirely.** At off-centre readouts, de-mean prediction and observation *by
+station*, then score the residuals — does the predicted map's *anomaly pattern* move with time in
+step with observed station-to-station differences on a given day? Without it, passing is compatible
+with having learned a static landscape map, which §27a/§27b say is exactly what these tokens encode
+and which the 98.6% sign-stability measurement says would suffice. **That is the §29 failure
+repeated**; §29.15's own verdict was *"a static field cannot track a dynamic variable"*.
+
+Secondary: the four §28.8 metrics, each split-stratified, each with a CI bootstrapped over
+**stations** not samples, each expressed as a fraction of P0's ceiling. Spread and correlation gated
+**jointly** — spread alone is unbounded above and rises whenever the model emits per-patch variation,
+correct or not. Fix the tile set in advance (all TxSON tiles with >=4 readouts, not one). Give
+"materially closer off-centre" a number and a paired test. State a **collapse criterion**, not just a
+log, and add **temporal** attention entropy over the history block — the register-driven collapse
+shows up there, not in the map SD. One primary endpoint, secondaries under Benjamini-Hochberg (as
+§27b.6 did correctly); *the gate is read on run 1 with default flags, every later run is exploratory
+and labelled so.*
+
+**Delete the "~2M supervised samples is ample" argument** (§G7 reason 2). §27b.3 already rejected it
+as *"pseudo-replication — it multiplies rows without adding information about a per-station
+target"*, and §29.14 measured the damage. Effective n for the spatial question is 993 stations, and
+generously: 33 networks, top-5 = 74.8%, SNOTEL alone 38.8%; drydown tau ~ 3.2 d, so consecutive days
+are ~1/3 of an independent observation.
+
+**No full run has ever converged.** Thirteen 4xGPU runs: five OOM-killed, three cancelled by human
+judgement, the rest superseded — ~412 GPU-h on abandoned runs, 15 jobs with `oom_kill` events.
+Best-val epochs were 3, 3, 3, and **16 of 16 still improving**; the recorded note is *"I called this
+run converged at e5 and again at e9. Wrong both times."* **Set the stopping rule before submitting.**
+And `val_loss` is not comparable across `per_depth_loss` settings — changing the depth-head structure
+invalidates every val-loss comparison to a prior run unless recomputed.
+
+**Budget is not the constraint**: 79,592 of 800,000 GPU SBU used in six months, expiring 2027-02-16,
+~47 full runs in hand. The scarce resource is **calendar time** — which argues for Phase 1, not
+against it.
+
+#### 35.4.2 Implementation defects, verified against source
+
+Two guaranteed crashes: **(1) DDP** — `train.py:902` uses `find_unused_parameters=False`, so leaving
+the unet path constructed-but-unused raises `RuntimeError` on step 1 of every DDP run; gate
+*construction* on `arch` and smoke on **2 GPUs**, since it is invisible on one. **(2) `token_mask` is
+`(T,14,14)`, not `(T,196)`** (`dataset.py:244`, `:328`), so `token_mask[:, sel]` indexes the row axis
+and silently returns `(T,K,14)`.
+
+Silent-wrongness: padded and NaN slots are marked **valid** (`token_mask` inits to `ones`, median S2
+acquisitions/station-year is 36 against `MAX_S2 = 60`, NaN slots `continue` at `:289-290`, no-cloud-mask
+dates have no `else` at `:295`) — the mask must be `token_mask.reshape(T,196)[:, sel] & (doys>0)[:,None]`;
+two zero-fallback branches (`:248-249`, `:371-372`) break collation for stations with no S2/S1 in
+window; "everything after `model.py:779` is shape-agnostic" is false (`label` is `(B,n_depths)`, and
+in readouts mode the K tokens are different stations with different labels); `lambda_boundary = 0.1`
+silently changes meaning and `total_variation_loss` raises `IndexError` under patchwise; the §G3
+resampler sketch does not run (six defects, incl. `circular_doy_pe` needing 1-D input and an
+`nn.ModuleList` called as a function); `FiLMLayer` is 4-D only (`model.py:162-168`);
+`--use-cls-depth` is not default-on (`train.py:207`); `slurm/train.sh:43` hardcodes `--use-memmap`;
+`--arch` must land in `CONFIG` or every eval script silently rebuilds the unet (note `demo_plot.py:44-48`
+and `plot_satellite_sm_meeting.py:47-50` carry duplicate `load_checkpoint` implementations bypassing
+`ckpt_utils`); `token_sel=all` reinstates the ~437 GB DataLoader IPC OOM that pooling was added to fix
+(`_cpu_pyramid_pool` docstring `:194-196`); two stations within 160 m collapse to the same token
+(19 of 75 pairs); and the `patch_mode=all`[105] == `patch_mode=station` smoke invariant cannot be
+bitwise on GPU — use `allclose`, or CPU fp32 under `model.eval()`.
+
+Also missing from the first draft's change list: `check_dataset.py:37-58` (already stale),
+`tier1_probe.py:195,205`, `plot_spatial_heterogeneity.py`, `plot_architecture.py:208`; `STATION_ROW`
+/ literal `112` in a further eight files (`plot_tile_context.py:440` **already** computes
+`(row//16)*14+(col//16)` — reuse it); **six independent copies of `ERA5_VARS`** plus three hardcoded
+`19`s, and `station_mean_probe.py:140` reads `ERA5_VARS.index("skt_mean")` directly and breaks
+outright on the `skt` drop; and 15 `SoilMoistureDataset(...)` construction sites.
+
+### 35.5 The failure mode this staging exists to avoid
+
+Three to four weeks of engineering; the run trains against a restored-but-unverified store; the gate
+returns unchanged because three of its four numbers measure a quantity three independent studies
+(§27b.8, §29.13, §32.10) have already measured as absent; eleven simultaneous changes make the
+result unattributable against a bar that is a prose cross-reference contradicting its own source
+table; the decision on step 2 cannot be made; §36 gets designed. **That loop is in the record four
+times in thirteen days** (§30 -> §31 -> §33 -> §34). The one escape this project has found is what
+it did to §32: a cheap, pre-registered, CPU-only gate allowed to kill its own arm.
+
+Phase 1 is that gate.

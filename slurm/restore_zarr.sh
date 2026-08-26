@@ -30,10 +30,22 @@ echo "SRC: $SRC  ->  DST: $DST   (64-way parallel)"
 
 for c in sm_only sm_and_flux flux_only; do mkdir -p "$DST/$c"; done
 
+# NOTE (§35.1, 2026-08-26): NO `--delete`, deliberately. This is a MERGE, so it
+# can only fill gaps, never remove anything -- which is why it is preferred over
+# wipe-and-restore. The backup is also chmod a-w, so a reversed direction fails
+# closed rather than destroying it.
+export FAILDIR="${FAILDIR:-/tmp/restore_zarr_fail_$SLURM_JOB_ID}"
+mkdir -p "$FAILDIR"
+
 copy_one() {
   local rel="$1"                       # e.g. sm_only/ISMN_ARM_Omega
   mkdir -p "$DST/$rel"
-  rsync -a "$SRC/$rel/" "$DST/$rel/"
+  if ! rsync -a "$SRC/$rel/" "$DST/$rel/"; then
+    # Previously this exit code was discarded inside xargs, so a failed station
+    # was invisible and the job still reported success.
+    echo "$rel rc=$?" >> "$FAILDIR/failures.txt"
+    return 1
+  fi
 }
 export -f copy_one
 
@@ -43,9 +55,32 @@ find "$SRC" -mindepth 2 -maxdepth 2 -type d -printf '%P\n' \
 
 echo "All rsyncs dispatched/completed at $(date)"
 
-# Verify: count restored .complete markers per category
-for c in sm_only sm_and_flux flux_only; do
-  n=$(find "$DST/$c" -maxdepth 2 -name .complete 2>/dev/null | wc -l)
-  echo "  $c: $n stores with .complete"
-done
+n_fail=0
+if [[ -s "$FAILDIR/failures.txt" ]]; then
+  n_fail=$(wc -l < "$FAILDIR/failures.txt")
+  echo "!!! $n_fail stations FAILED to rsync:"
+  head -50 "$FAILDIR/failures.txt"
+else
+  echo "rsync: no station-level failures reported"
+fi
+
+# Verify by ARRAY CONTENT, not by sentinel files.
+#
+# The previous check counted `.complete` markers. Those are 0-byte files that
+# rsync restores first AND that come from the backup, so it reported
+# "sm_only: 842" even on a store whose every chunk was missing -- which is
+# exactly the state the 2026-08-26 purge left behind. See §35.1.
+echo
+echo "=== verifying restored store by array content ==="
+conda run -n terramind --no-capture-output \
+  python /gpfs/work3/0/prjs1968/soilMoisture/verify_zarr_store.py \
+    --root "$DST" --out "csvs/verify_live_${SLURM_JOB_ID}.csv" --workers 64
+rc_verify=$?
+
 echo "Finished: $(date)"
+echo "rsync failures: $n_fail   verify exit: $rc_verify"
+if (( n_fail > 0 )) || (( rc_verify != 0 )); then
+  echo "RESTORE INCOMPLETE -- do NOT train against this store."
+  exit 1
+fi
+echo "RESTORE VERIFIED."
