@@ -9124,3 +9124,154 @@ epoch 16) — so §G6's claim was wrong; the real gap is that there is no second
 
 Branch: **`feat/patchwise-temporal`**, created off `feat/per-location-processor` so the Phase 0
 store-verification work travels with it. `baseline-unet-temporal` remains the rollback point.
+
+### 35.14 The Perceiver resampler is DROPPED — the cost it was solving does not bind
+
+§G2/§G3 specified three Perceiver-style resamplers compressing the tile-level drivers
+(ERA5 365 + SIF 50 + TWSA 12 = **427 tokens**) to 32 latents, justified by inference cost: each
+patch's sequence carries the drivers, so at K=196 you pay 427 driver tokens **196 times**, quoted
+as "59x". That framing never asks whether the *absolute* cost binds. It does not.
+
+Raw drivers give a per-patch sequence of `3 depth_CLS + 1 dem + 1 lulc + 4 soil + 365 + 50 + 12 +
+100 hist + 1 CLS = 537`. Per tile-day, forward, 6 layers, d=768:
+
+```
+linear     12 . T . d^2 = 12 x 537 x 768^2 = 3.80e9   per patch per layer
+attention   2 . T^2 . d =  2 x 537^2 x 768 = 0.44e9
+                                        ->  4.24e9 x 196 patches x 6 layers ~= 5.0 TFLOP
+```
+
+**~0.05 s per tile-day on an H100 even at 10% of peak.** A full year of 14x14 maps over all 40
+TxSON tiles is ~12 minutes. The resampler would make that ~3 minutes.
+
+Where K=196 is actually needed is narrower than §G2 assumes:
+
+| use | K | needs the resampler? |
+|---|---|---|
+| training | 1 | no — raw drivers at 537 tokens are already ~3.7x cheaper than today's 1035 |
+| gate evaluation (off-centre readouts) | <= 6 | no |
+| 14x14 map figures | 196 | no — 0.05 s/tile-day |
+
+**And deferring it to "stage 2b" was not free, which the staging argument missed.** Training 2a with
+raw drivers and then introducing a resampler is a *different model* — the weights do not transfer,
+so 2b would be a full retrain rather than an add-on. A retrain to save 9 minutes of figure
+rendering is unjustifiable.
+
+Two further reasons the design was weak, from the critiques:
+
+- **"Three separate resamplers, for clean ablation" rests on a false premise.** Exact ablation of a
+  modality is achieved by masking its *inputs* and letting the null token absorb it — and that is
+  already the live code path at `dataset.py:1064-1065`, `:1071-1072`, which blanks SIF and TWSA on
+  ~50% of training samples by design. Separation therefore buys nothing that masking does not
+  already give, while costing real cross-modal capacity: modality-blind compression discards what a
+  cross-modal interaction would have used, so "same expressiveness, interaction moved downstream"
+  is wrong.
+- **The 32-latent budget contradicts its own derivation.** §G2 derives 32 from a *meteorological*
+  argument (14 daily + 8 weekly + 10 monthly) and then hands 8 of the 32 to SIF and TWSA — which the
+  same document calls *"tile-constant, so neither can contribute to within-tile pattern"*. Step 1's
+  entire question is within-tile pattern.
+
+**Decision: no resampler. Raw drivers everywhere.** This removes the most bug-prone component in the
+plan (learned null token, `-1e4` masking, the ~25% both-blank path with no precedent in this
+codebase) and removes a retrain. The property worth preserving from the idea — drivers living
+*inside* each patch's attention rather than broadcast as one vector, so each patch can integrate the
+same weather differently (§34.8's "response x wetness") — is preserved *better* by raw tokens than
+by 32 latents.
+
+### 35.15 Tile-level tokens become a read-only cross-attended memory (the real inference lever)
+
+The genuine inefficiency at K=196 is not the number of driver tokens, it is that **427 of each
+patch's 537 tokens are byte-identical across all 196 patches, and self-attention recomputes their
+projections 196 times.**
+
+```
+per patch:   [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 | CLS ]     106 tokens, SELF-attention
+tile-level:  [ era5 365 | sif 50 | twsa 12 | soil 4 ]                  431 tokens, K/V computed ONCE
+             every patch CROSS-attends into that memory
+```
+
+Per layer, d=768, K=196:
+
+| design | FLOPs/layer |
+|---|---|
+| naive, everything in self-attention (T=537) | 8.32e11 |
+| self-attn over 106 + cross-attn to 431 | **1.89e11** |
+| | **~4.4x cheaper** |
+
+Breakdown of the cross-attention arm: Q/O projections `2 . 106 . d^2` per patch = 2.45e10 over 196;
+attention `2 . 106 . 431 . d` = 1.38e10 over 196; and K/V projections `2 . 431 . d^2` computed
+**once per tile** = 5.1e8. Activation memory falls with it — `196 x 106` instead of `196 x 537`.
+
+**This subsumes the resampler and beats it.** The resampler bought ~3.8x by *discarding* 427 driver
+tokens down to 32. Cross-attention gets ~4.4x while keeping every driver token intact, needs no new
+module to train, and introduces none of the null-token machinery.
+
+**There is a physical argument for it, not merely an arithmetic one.** Meteorology is exogenous:
+ERA5 at 9 km is not modified by which 160 m patch is being predicted. A patch must read the weather;
+the weather need not read the patch. Read-only drivers encode that. What is given up is drivers
+being contextualised *by patch content* — which the current global model permits, but for which no
+mechanism has ever been articulated.
+
+`soil` (tile-level, 4 tokens) gets the same treatment for free. `dem_k` / `lulc_k` are per-patch and
+stay in the self-attention sequence.
+
+**OPEN DECISION, and it must be taken before stage 2a trains.** Cross-attention changes the
+encoder's shape, so retrofitting it later means a retrain — the identical trap the resampler had.
+Either build it into 2a from the start, or accept the naive form permanently. Not a decision to
+defer.
+
+### 35.16 Training speed — the model is not the bottleneck, and patchwise makes that worse
+
+Measured from the last full run: `data = 250-630 s` against `compute = 483 s`, GPU utilisation
+43-46%. Patchwise cuts compute ~8.8x at K=1, so compute lands near ~55 s and the epoch becomes
+**almost entirely dataloader-bound**. Optimising the model buys nothing; the data path is where the
+time is. Three wins, all unlocked *by* patchwise:
+
+1. **Read patch k directly instead of copying whole acquisitions.** The loader currently does
+   `tok = torch.from_numpy(tokens_z[src_i])` — a full `(196,768)` = 294 KB — writes it into a
+   `(T,196,768)` buffer, and only then slices. Per sample that is 100 x 294 KB ~= **29 MB of memcpy
+   to use 150 KB of it**. `l12` is C-contiguous, so element `[i,k,:]` is a contiguous 768-float run
+   and `tokens_z[src_i, sel, :]` reads **1.5 KB** directly. ~196x less memory traffic, and the large
+   per-sample buffer allocation disappears.
+2. **The `/dev/shm` preload can shrink ~196x.** It holds **145 GB** because the pooled path needed
+   every token. If training only ever reads token 105, the preload needs one column: **145 GB ->
+   ~0.74 GB.** That removes the **17-32 min startup cost per job start** (project total: 44 starts,
+   30,626 s = 8.5 h wall ~= 34 GPU-h on preload alone) and frees ~145 GB of host RAM — which is what
+   four of the five OOM kills were about.
+   **Dependency:** this only holds if training reads a *fixed* token set. If the position-code probe
+   says translation augmentation is required, k varies per sample and a neighbourhood (or all 196)
+   must be resident. A k x k window around centre is the middle option. **The probe result sizes
+   this win.**
+3. **IPC payload drops ~8x** — `(T,4,768)` fp32 pooled = 1.2 MB/sample against `(T,1,768)` fp16 =
+   154 KB.
+
+Second-order, after the data path: `torch.compile` on the encoder, and confirming
+`nn.TransformerEncoderLayer` reaches SDPA/flash rather than the math fallback.
+
+### 35.17 Stage 2a progress (2026-08-26)
+
+Branch `feat/patchwise-temporal`. Commits `d4470d7` (dataset), `476065d` (tests), plus the Phase 0
+set.
+
+**Done — build step 0 and step 4 part 1/4.**
+- `slurm/train.sh` runs `verify_zarr_store.py` before training and refuses a damaged store.
+- `dataset.py`: `_finalise_history()` / `_empty_history()` shared by both loaders, so the S2 and S1
+  paths cannot drift — they already differ subtly (S2 uses `enumerate(win_idx)` so NaN skips leave
+  gaps; S1 increments `out_i` only on success). `--arch unet` is unchanged (`token_sel=None`).
+  Patchwise emits **distinct keys** (`s2_hist`, `s2_hist_valid`, `dem_tok`, `lulc_tok`, `token_idx`,
+  `token_valid`) and **removes** the pooled ones, so a stale consumer raises `KeyError` rather than
+  silently reading `(T,K,768)` as `(T,4,768)`. All three silent-wrongness bugs of §35.11 fixed, each
+  with a regression test in `test_patchwise_dataset.py`.
+
+**Confirmed against source while implementing — both §35.11 claims hold:**
+- `circular_doy_pe` (`model.py:75-91`) uses `len(doys)` and `doys.unsqueeze(1)`, so it **requires
+  1-D input**; a `(B,N)` call raises. Every existing call flattens first.
+- `FiLMLayer.forward` (`model.py:162-168`) does `params[:, :C].unsqueeze(-1).unsqueeze(-1)` —
+  **4-D only**. The token head needs a 1-D variant, and `depth_ctx[:, d, :]` is `(B,768)` against
+  `u_k`'s `(B*K,768)`, so it needs `repeat_interleave(K, 0)`.
+
+**Next:** `model.py` (`PatchwiseEncoder`, construction gated on `arch` so the DDP unused-parameter
+crash cannot occur; 1-D FiLM; explicit per-patch CLS), then `train.py` (loss gather over
+`token_idx`, `--arch` into `CONFIG`, guard `lambda_boundary` and `total_variation_loss`), then
+`eval_predict.py`. **§35.15's cross-attention decision gates the encoder shape and must be settled
+first.**
