@@ -5517,3 +5517,65 @@ SESSION 33 addendum — §35.27 the audit fix that cost 62% of the split (2026-0
   part of the model contract; train.py stamps only git_sha.  Regenerating stats
   after a run degrades eval_predict.py with NO error.  Stamp a hash of both stats
   files into the checkpoint and verify at eval before the first reported run.
+
+--------------------------------------------------------------------------------
+SESSION 33 close-out — §35.28 smoke run + provenance (2026-08-26)
+--------------------------------------------------------------------------------
+  SMOKE RUN PASSED.  4:59, exit 0, 4 ranks.  First end-to-end execution of the
+  ~30 changes from §35.24-§35.27.
+    fail-closed tallies   all ZERO on 20 stations (cm/masks, S1 token_mask,
+                          DEM/LULC, dead soil channels)
+    era5 guard            4857 samples dropped, counted and printed
+    head_bias_init        0.1720 / 0.1922 / 0.1860 from driver_stats.json
+    RAM                   78.9 / 811 GB (10%) — §35.16's 145 GB preload fixed
+    K=196 map SD          0.0444 / 0.0479 / 0.0491 — path had NEVER run
+    grad ratio            0.143 — the per-patch pathway IS being read
+    DDP                   no unused-parameter error
+
+  DO NOT READ THE VALUES AS RESULTS.  2 epochs on 20 stations.  entropy
+  collapse_ratio 0.99 and depth_ctx_cos 0.9998 are what INITIALISATION looks
+  like with near-uniform attention, not findings.
+
+  diag/depth_ctx_cos_* IS logging — to W&B, not stdout (a console grep says
+  otherwise and is wrong).  Value worth noting: input depth tokens near-orthogonal
+  (0.017/-0.035/0.054) while the OUTPUT rows the heads read are cosine 0.9998 —
+  literally what train.py's comment predicted the input cosine would fail to show.
+  That producer was dead for several sessions before §35.24 restored it.
+
+  depth_ctx_n = 4664 vs 4661 val samples = world_size-1, independently confirming
+  the known sample_idx double-count.
+
+  §35.28 PROVENANCE.  Nothing bound a checkpoint to its normalisation constants.
+  era5_stats.json / driver_stats.json ARE the model contract (every driver input
+  is z-scored against them; head biases come from label_mean), and §35.27
+  overwrote era5_stats.json in place — silently invalidating every earlier
+  checkpoint.  train.py now hashes both into CONFIG (already saved into all three
+  ckpt paths); ckpt_utils.load_checkpoint recomputes and warns loudly on mismatch.
+  Verified in smoke2: era5_stats_sha=7d72c8f82bc7d2f9
+  driver_stats_sha=0eb7ade028686033.
+
+  Fixing that surfaced a second gap: use_input_norm went straight from args to the
+  constructor and was never in CONFIG, so an --input-norm checkpoint could not have
+  been reloaded at all (the flag swaps 4 LayerNorms for 4 nn.Identity -> strict
+  load_state_dict shape mismatch).  Now recorded and carried through.
+
+  STATE: 6 commits on feat/patchwise-temporal, clean tree, 120 tests passing,
+  rollback tag pre-s33-audit-fixes.
+
+  THE ONE THING LEFT BEFORE A REAL RUN — and it is a scientific judgement, not an
+  engineering task: PRE-REGISTER THE §35.10 GATE.  The runbook mandates setting it
+  before the result is in (§28.8 is the cautionary tale), and its stated threshold
+  "log 100 = 4.605 nats" no longer refers to anything the code emits.  There are
+  now THREE detectors, not one:
+      entropy ratio    temporal collapse    1.0 = uniform = collapsed
+      patch_map_sd     spatial invariance   ~0  = constant map
+      grad_ratio       is the per-patch pathway read at all
+  Entropy cannot see spatial invariance and map SD cannot see temporal collapse.
+  Neither substitutes for the other.
+
+  KNOWN, DELIBERATELY NOT FIXED:
+    - sample_idx not reaching evaluate: 3 of 4661 val samples double-counted
+      (0.06%), prints a loud warning every epoch.
+    - soil_ch_valid computed but not emitted (dead channels land on the corpus
+      mean after z-scoring — imputation, not fabrication).
+    - ckpt_utils mismatch-warning path itself is unexercised (print statements).
