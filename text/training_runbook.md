@@ -9818,4 +9818,46 @@ already-narrowed buffer. The test now also pins the condition that matters most 
 narrow read must return exactly what the wide read would have** — if those ever diverge, every
 number is computed on the wrong patch and nothing crashes.
 
-**Ready to submit `memory`.** `concat` remains an unexercised flag (§35.22).
+**PUSHED FOR REVIEW, NOT SUBMITTED.** `feat/patchwise-temporal` on
+`github.com/prajzwal08/soilMoisture`:
+
+```
+1dc43e7  Freeze the pooled U-Net baseline as a self-contained snapshot
+fe0dc2c  Patchwise-only: strip the U-Net path, narrow the read, drop FiLM
+```
+
+Split deliberately: the first commit is additions only and can be reviewed on its own; the second
+is the whole refactor. `text/patchwise_math.md` and `test_patchwise_model.py` were force-added —
+`.gitignore` has `*.md` and `test_*.py`, the same trap `csvs/dem_regions.csv` hit in §32.9.
+
+`slurm/train.sh` no longer passes `--use-memmap` (the flag no longer exists in `train.py`, so it
+would have failed at argparse). The submission line is:
+
+```
+sbatch slurm/train.sh --driver-mode memory --driver-layers 2 --n-layers 6 \
+                      --run-name patchwise_2a
+```
+
+**Two things must happen before that result is looked at.**
+
+1. **Review the diff.** The two places where a mistake is silent rather than loud:
+   `model.py _forward_patchwise` — the `kv = [(blk.k_proj(m), blk.v_proj(m)) ...]` line and how
+   `kc`/`vc` reach the block; a wrong `(D,P)` view makes every patch read another sample's weather
+   with no error. And `dataset.py _read_patch_tokens` — if the narrow and wide reads ever diverge,
+   every number is computed on the wrong patch and nothing crashes. Both are pinned by tests, but
+   both are worth human eyes.
+2. **PRE-REGISTER the §35.10 gate**, before run 1 finishes rather than after. Choosing the
+   threshold with the answer in view is precisely what §28.8's gate did wrong. Primary endpoint is
+   the **within-station** criterion — de-mean prediction and observation by station, then score the
+   residuals — with CIs bootstrapped over **stations**, not samples, and spread and correlation
+   gated jointly. Log temporal attention entropy per layer: if it sits at the uniform value
+   (log 100 = 4.605 nats) the run is uninterpretable whatever its loss.
+
+`concat` remains an unexercised flag (§35.22).
+
+**Deferred, in priority order:** back up `cls_depth_star_reg` (604 MB, exists once, no copy);
+`/dev/shm` preload 145 GB -> ~0.74 GB (valid only while `k` is fixed, i.e. while translation
+augmentation stays undecided); per-patch soil (460 KB -> 16 KB, and it removes the concentric-mean
+defect §35.3 names); multi-station supervision via `location_group_id`, which
+`csvs/station_splits.csv` has had all along (906 groups for 993 stations) and `dataset.py` has
+never read — §35.19 argues it is the only direct supervision of the spatial mapping that exists.
