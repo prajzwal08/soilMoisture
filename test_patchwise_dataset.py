@@ -151,11 +151,17 @@ def build_store(root: zarr.Group, *,
             y2021 = [i for i, d in enumerate(dates) if d.startswith("2021")]
             step = max(1, len(y2021) // n_observed_days)
             qc[:, y2021[::step][:n_observed_days]] = QC_OBSERVED
-        if qc_mode == "short":
-            # trim_pre2016.py used to trim sm/dates WITHOUT trimming qc, so qc ends up longer
-            # than sm and the offset between them is unrecoverable.
+        if qc_mode in ("front_trimmed", "short"):
+            # trim_pre2016.py trims sm/dates from the FRONT and leaves qc at its original
+            # length, so qc ends up LONGER by exactly the pre-2016 span. §35.27: recoverable,
+            # and verified — with a gapless daily `dates`, qc's trailing n columns are the
+            # aligned ones. ("short" is the old name for this mode and described it backwards;
+            # kept as an alias so nothing silently stops exercising the path.)
             qc = np.concatenate(
                 [np.full((3, 5), QC_OBSERVED, dtype=np.uint8), qc], axis=1)
+        elif qc_mode == "truncated":
+            # qc SHORTER than sm. No front-trim can align these; always fatal.
+            qc = qc[:, 5:]
         root.array("labels/qc", qc, overwrite=True)
 
     # ── S2 tokens + dates ──
@@ -555,17 +561,32 @@ def test_dataset_refuses_to_build_without_driver_stats(tmp_path, monkeypatch):
         make_dataset(env, monkeypatch)
 
 
-def test_label_qc_length_mismatch_is_refused_not_guessed(tmp_path):
-    """The old code GUESSED a front-trim and took the trailing n columns. If the truncation
-    was at the back instead, every QC flag is offset and the loader trains on gap-filled days
-    believing they are observed."""
-    env = make_env(tmp_path, qc_mode="short")
-    zg = open_store(env)
-    with pytest.raises(ValueError, match="trim_pre2016|different passes"):
-        _load_zarr_labels(zg, strict=True)
-    # the permissive default still realigns, for the analysis scripts that documented it
-    sm, depths, times, qc = _load_zarr_labels(zg, strict=False)
-    assert qc.shape[1] == sm.shape[1]
+def test_front_trimmed_qc_is_recovered_not_refused(tmp_path):
+    """§35.27. §35.24 made ANY qc/sm length mismatch fatal, on the grounds that the trailing
+    slice was an unverifiable guess. It fired for 362 of 587 train stations — 62% of the split
+    — because trim_pre2016.py really does trim sm/dates from the front and leave qc alone, so
+    qc is longer by exactly the pre-2016 span and its trailing n columns ARE the aligned ones.
+
+    Measured on ISMN_AMMA-CATCH_Banizoumbou: sm/dates 1095, qc 1825, diff 730; and
+    station_splits.csv gives actual_start 2014-01-01, start 2016-01-01, end 2018-12-30 — 1825
+    untrimmed, 1095 trimmed. Exact. This path must recover, under both strictness settings."""
+    zg = open_store(make_env(tmp_path, qc_mode="front_trimmed"))
+    for strict in (False, True):
+        sm, depths, times, qc = _load_zarr_labels(zg, strict=strict)
+        assert qc.shape[1] == sm.shape[1], (
+            f"strict={strict}: front-trimmed qc was not realigned onto sm"
+        )
+        assert qc.shape[0] == sm.shape[0]
+
+
+def test_qc_shorter_than_sm_is_always_fatal(tmp_path):
+    """The other direction, which §35.27 separated out. No front-trim can make a SHORTER qc
+    align with sm — there is nothing to recover, so it raises whatever `strict` says. Merging
+    this with the recoverable case is what cost 62% of the split."""
+    zg = open_store(make_env(tmp_path, qc_mode="truncated"))
+    for strict in (False, True):
+        with pytest.raises(ValueError, match="SHORTER|corrupt"):
+            _load_zarr_labels(zg, strict=strict)
 
 
 def test_label_dates_sm_mismatch_always_raises(tmp_path):
@@ -673,8 +694,20 @@ def test_absent_qc_array_drops_the_station(tmp_path, monkeypatch):
     assert len(ds) == 0
 
 
-def test_qc_misalignment_drops_the_station(tmp_path, monkeypatch):
-    ds = make_dataset(make_env(tmp_path, qc_mode="short"), monkeypatch)
+def test_front_trimmed_qc_keeps_the_station(tmp_path, monkeypatch):
+    """§35.27, end to end. The station must survive — this is the ordinary case for 62% of
+    the train split, not an error. Dropping it was the regression."""
+    ds = make_dataset(make_env(tmp_path, qc_mode="front_trimmed"), monkeypatch)
+    assert len(ds) > 0, (
+        "a front-trimmed labels/qc dropped the station; that is the §35.24 regression "
+        "that took the train split from 587 to 225 stations"
+    )
+
+
+def test_truncated_qc_drops_the_station(tmp_path, monkeypatch):
+    """qc SHORTER than sm is unrecoverable, so the station must still be dropped — the
+    fail-closed behaviour survives for the case that genuinely warrants it."""
+    ds = make_dataset(make_env(tmp_path, qc_mode="truncated"), monkeypatch)
     assert len(ds) == 0
 
 
