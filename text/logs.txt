@@ -5579,3 +5579,45 @@ SESSION 33 close-out — §35.28 smoke run + provenance (2026-08-26)
     - soil_ch_valid computed but not emitted (dead channels land on the corpus
       mean after z-scoring — imputation, not fabrication).
     - ckpt_utils mismatch-warning path itself is unexercised (print statements).
+
+--------------------------------------------------------------------------------
+SESSION 33 — §35.29 tile-sharing stations out of training (2026-08-26)
+--------------------------------------------------------------------------------
+  Each station has its OWN 2240 m tile centred on it, so "shares a tile" = B falls
+  inside A's tile.  Two cases, different consequences:
+    SAME PATCH (<160 m)      both in ONE token -> contradictory supervision, and
+                             their disagreement IS the irreducible 160 m noise
+                             floor (nothing else in the data gives that number)
+    DIFF PATCH, SAME TILE    the ONLY direct test of §34: predict A's tile, read
+    (160-1120 m)             the patch containing B, compare to B's observation.
+                             patch_map_sd shows the map VARIES; this shows it is
+                             CORRECT.  26 pairs, mostly TxSON+FMI, low power.
+
+  FINDING: location_group_id does NOT capture tile-sharing.
+                          via group    global sweep
+    same-patch                   17              26
+    tile-pair                    25              44
+    train affected                5              17
+  Missed Lamont-CF1, SMOSMANIA (Pezenas, Prades-le-Lez), Carpeneto STEMS pair,
+  TonziRanch/US-Ton, +4 TxSON.  §35.19's deferred multi-station-supervision item
+  reasons from location_group_id and is therefore working from an undercount.
+
+  NO LEAKAGE: every pair <1120 m checked for a split mismatch — none.  Checked,
+  not assumed.
+
+  APPLIED (update_splits_tile_pairs.py, slurm/update_splits.sh, --apply to write):
+    train 612 -> 595 (17 -> oos, 2.8%);  oos 202 -> 218;  val 76;  duplicate 1
+    new cols: same_patch_pair, tile_pair_eval, duplicate_of
+    backup:   csvs/station_splits.csv.pre_s3529
+    VairaRanch (FLUXNET-AMERIFLUX mirror) vs US-Var (AmeriFlux), 6.1 m = SAME
+    SITE ingested twice -> split="duplicate" (inert to every split_filter, row
+    kept).  TonziRanch/US-Ton same pattern at 50-160 m, not auto-marked; both
+    held out as same-patch anyway.  50 m threshold deliberate: Lamont-CF2/US-ARM
+    at 152 m are genuinely different instruments at ARM SGP.
+
+  STATS REFITTED on the new split: 563/573 (was 577/587).  Label means moved
+  0.1720 -> 0.1715 at 0-10 — robust.  Both hashes changed:
+    era5   7d72c8f82bc7d2f9 -> 572028af6cd66199
+    driver 0eb7ade028686033 -> 34ade6b95d913b52
+  So §35.28's provenance check now correctly flags smoke/smoke2 checkpoints as
+  trained against superseded constants.  Mechanism proved on a real change.

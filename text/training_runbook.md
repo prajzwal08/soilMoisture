@@ -10320,3 +10320,91 @@ OOT-leak fix). Any checkpoint trained against the old file is now silently misma
 normalisation constants are part of the model contract and `train.py` stamps only `git_sha`.
 Regenerating the stats after a run degrades `eval_predict.py` with no error. Stamp a hash of
 both stats files into the checkpoint and verify it at eval before the first reported run.
+
+---
+
+## §35.29 Tile-sharing stations held out of training — and location_group_id does not catch them all (Session 33, 2026-08-26)
+
+Each station gets its OWN 2240 m tile centred on itself, so "two stations share a tile" means
+station B falls inside station A's tile. That splits into two cases with different
+consequences, and they must not be treated alike.
+
+```
+SAME PATCH   (< 160 m)        both land in the SAME TerraMind token
+DIFFERENT PATCH, SAME TILE    (160 - 1120 m)   B is in A's tile, a different token
+> 1120 m                      outside each other's tile — ordinary stations
+```
+
+**Same-patch pairs are contradictory supervision.** Training on both feeds the model two
+different labels for one input and silently double-weights the site. They are also the single
+most useful number available for interpreting §35.10: their disagreement is the **irreducible
+noise floor** of any 160 m prediction. If two sensors 100 m apart differ by 0.04 m3/m3, no
+model at this resolution can beat 0.04. Nothing else in the data gives that number.
+
+**Different-patch pairs are the only DIRECT test of §34's hypothesis.** Predict station A's
+tile, read the 160 m patch containing station B, compare against B's observation.
+`diag/patch_map_sd` shows the map is not constant; it cannot show the pattern is CORRECT.
+These can. 26 usable pairs, almost entirely TxSON and FMI — low power, so a qualitative sign
+test rather than a precise metric.
+
+### The finding: location_group_id misses most of them
+
+`csvs/station_splits.csv` has carried `location_group_id` all along and §35.24 verified that no
+group straddles a split. But the grouping is not the same relation as "shares a tile", and a
+global O(n^2) sweep finds far more:
+
+```
+                        via location_group_id      global sweep
+same-patch stations                    17                   26
+tile-pair stations                     25                   44
+train stations affected                 5                   17
+```
+
+It missed `Lamont-CF1`, the SMOSMANIA pair (Pezenas, Prades-le-Lez), the Carpeneto STEMS pair,
+`TonziRanch`/`US-Ton`, and four further TxSON stations. Anyone reasoning about co-location from
+`location_group_id` alone — as §35.19's deferred multi-station-supervision item does — is
+working from an undercount.
+
+**No leakage was present.** The sweep checks every pair under 1120 m for a split mismatch and
+found none, so despite the incomplete grouping nothing was training on a tile it would later be
+evaluated on. Checked rather than assumed.
+
+### Applied
+
+`update_splits_tile_pairs.py` + `slurm/update_splits.sh` (dry run by default, `--apply` writes;
+backup at `csvs/station_splits.csv.pre_s3529`). Three new columns — `same_patch_pair`,
+`tile_pair_eval`, `duplicate_of` — so evaluation can find these without recomputing geometry.
+
+```
+train 612 -> 595   (17 moved to oos, 2.8%)
+oos   202 -> 218
+val    76 ->  76
+duplicate        1
+```
+
+Nothing is deleted. The one cross-network duplicate found globally under 50 m —
+`VairaRanch` (ISMN's FLUXNET-AMERIFLUX mirror) and `US-Var` (AmeriFlux direct), **6.1 m apart,
+the same physical site ingested twice** — is marked `split="duplicate"`, which every existing
+`split_filter` excludes without touching the inventory row.
+
+`TonziRanch`/`US-Ton` is the same mirror pattern but sits between 50 and 160 m, so it is not
+auto-marked; both are held out as same-patch anyway. The 50 m threshold is deliberate:
+`Lamont-CF2`/`US-ARM` at 152 m are genuinely DIFFERENT instruments at the ARM SGP site and
+marking one a duplicate would be wrong.
+
+### Consequence: the stats had to be refitted
+
+`csvs/era5_stats.json` and `csvs/driver_stats.json` were fitted on the old train split, which
+included the 17 stations now held out. Regenerated: 563/573 stations contributing (was
+577/587); label means moved only 0.1720 -> 0.1715 at 0-10 cm, so the constants stay robust to
+the sample.
+
+Both hashes changed, which is the §35.28 provenance mechanism proving itself on a real change:
+
+```
+era5_stats    7d72c8f82bc7d2f9  ->  572028af6cd66199
+driver_stats  0eb7ade028686033  ->  34ade6b95d913b52
+```
+
+Any checkpoint trained before this — `smoke`, `smoke2` — now correctly reports a mismatch at
+load. That is the intended behaviour, not a fault.

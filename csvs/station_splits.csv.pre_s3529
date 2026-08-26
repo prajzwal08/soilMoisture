@@ -1,0 +1,994 @@
+source_network,network,station_id,station_name,latitude,longitude,elevation_m,start_date,actual_start_date,end_date,n_years,IGBP,lc_cci,koppen_geiger,has_soil_moisture,has_flux,location_group_id,split,oot_eligible,oost_eligible,joint_eval,flux_only_eval,ablation_train,ablation_oos,kg_macro,igbp_macro,elevation_band,soil_nan_pct,soil_patch_ok
+ISMN,AMMA-CATCH,Banizoumbou,Banizoumbou,13.5325,2.6604,208.0,20160101,20140101,20181230,5.0,CRO,10.0,BSh,True,False,0,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,AMMA-CATCH,Tondikiboro,Tondikiboro,13.548,2.6956,235.0,20160101,20140101,20181230,5.0,CRO,10.0,BSh,True,False,2,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0013,True
+ISMN,ARM,Anthony,Anthony,37.2134,-98.0969,412.0,20160101,20140101,20210920,7.7,CRO,10.0,Cfa,True,False,3,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Ashton,Ashton,37.133,-97.266,386.0,20160226,20160226,20230928,7.5,GRA,130.0,Cfa,True,False,4,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0002,True
+ISMN,ARM,Byron,Byron,36.881,-98.285,360.0,20160225,20160225,20211130,5.8,GRA,130.0,Cfa,True,False,5,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Lamont-CF1,Lamont-CF1,36.605,-97.485,318.0,20160223,20160223,20251230,9.8,GRA,130.0,Cfa,True,False,950,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Lamont-CF2,Lamont-CF2,36.607,-97.488,315.0,20210729,20210729,20251230,4.4,GRA,130.0,Cfa,True,False,950,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,MapleCity,MapleCity,37.0694,-97.7606,417.0,20191004,20191004,20230928,4.0,GRA,130.0,Cfa,True,False,6,oos,False,True,False,False,False,True,C,Grass-Crop,Low,0.0004,True
+ISMN,ARM,Marshall,Marshall,36.1166,-97.5112,336.0,20160525,20160525,20230928,7.3,GRA,130.0,Cfa,True,False,7,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Medford,Medford,36.819,-97.8199,328.0,20160226,20160226,20251230,9.8,GRA,130.0,Cfa,True,False,8,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Morrison,Morrison,36.37354,-97.06905,279.0,20160101,20151001,20251230,10.2,GRA,130.0,Cfa,True,False,9,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0002,True
+ISMN,ARM,Newkirk,Newkirk,36.926,-97.082,357.0,20160224,20160224,20251230,9.8,GRA,130.0,Cfa,True,False,10,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Omega,Omega,35.88,-98.173,371.0,20160101,20140101,20210606,7.4,CRO,10.0,Cfa,True,False,11,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Pawhuska,Pawhuska,36.841,-96.427,331.0,20160305,20160305,20251230,9.8,GRA,130.0,Cfa,True,False,12,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Ringwood,Ringwood,36.431,-98.284,418.0,20160302,20160302,20230928,7.6,GRA,130.0,Cfa,True,False,13,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,ARM,Tryon,Tryon,35.8615,-97.0695,294.0,20160303,20160303,20230928,7.6,GRA,130.0,Cfa,True,False,14,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0016,True
+ISMN,ARM,Tyro,Tyro,37.068,-95.788,248.0,20160101,20160101,20251230,10.0,GRA,130.0,Cfa,True,False,15,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0005,True
+ISMN,ARM,Waukomis,Waukomis,36.311,-97.928,379.0,20160101,20140101,20251230,12.0,GRA,130.0,Cfa,True,False,16,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,Berlin,DWDBerlin-Spaeth,DWDBerlin-Spaeth,52.45366,13.4577,9.0,20211001,20211001,20251230,4.2,URB,190.0,Dfb,True,False,17,oos,False,True,False,False,False,True,D,Other,Low,0.004,True
+ISMN,Berlin,DWDBerlinTempel,DWDBerlinTempel,52.45388,13.4312,4.0,20220629,20220629,20251230,3.5,URB,190.0,Dfb,True,False,17,oos,False,True,False,False,False,True,D,Other,Low,0.0,True
+ISMN,Berlin,PSA14wiltinger,PSA14wiltinger,52.63489,13.28991,85.0,20221129,20221129,20251230,3.0,URB,190.0,Dfb,True,False,18,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,Berlin,PSA15bucherchaus,PSA15bucherchaus,52.62005,13.48854,49.0,20221129,20221129,20251230,3.1,URB,190.0,Dfb,True,False,19,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,Berlin,PSA16krugwiesen,PSA16krugwiesen,52.56089,13.52688,91.0,20221129,20221129,20251230,3.1,URB,190.0,Dfb,True,False,20,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,Berlin,PSA17suedpark,PSA17suedpark,52.40145,13.51,63.0,20221129,20221129,20251230,3.1,CRO,10.0,Dfb,True,False,21,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,Berlin,PSA18Pfaueninsel,PSA18Pfaueninsel,52.43147,13.12135,57.0,20221129,20221129,20251230,3.1,ENF,70.0,Dfb,True,False,22,train,True,False,False,False,False,False,D,Forest,Low,0.4173,True
+ISMN,Berlin,PSA1BerlinerStr,PSA1BerlinerStr,52.43899,13.2726,89.0,20201125,20201125,20240414,3.4,URB,190.0,Dfb,True,False,23,val,False,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,Berlin,PSA2Tiergarten,PSA2Tiergarten,52.51474,13.36619,46.0,20201125,20201125,20251230,5.1,URB,190.0,Dfb,True,False,24,train,True,False,False,False,False,False,D,Other,Low,0.0002,True
+ISMN,Berlin,PSA4Heerstrasse,PSA4Heerstrasse,52.50821,13.24764,5.0,20201125,20201125,20240326,3.3,URB,190.0,Dfb,True,False,25,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,Berlin,PSA6Plaenterwald,PSA6Plaenterwald,52.47629,13.48714,21.0,20201127,20201127,20251230,5.1,URB,190.0,Dfb,True,False,26,train,True,False,False,False,False,False,D,Other,Low,0.0447,True
+ISMN,Berlin,PSA7Ruebezahl,PSA7Ruebezahl,52.42399,13.6251,28.0,20201127,20201127,20250527,4.5,ENF,70.0,Dfb,True,False,27,val,False,False,False,False,False,False,D,Forest,Low,0.1843,True
+ISMN,Berlin,PflABerlin11Humb,PflABerlin11Humb,52.54434,13.38112,99.0,20221115,20221115,20251230,3.1,URB,190.0,Dfb,True,False,28,train,True,False,False,False,False,False,D,Other,Low,0.0002,True
+ISMN,Berlin,PflABerlin12Schi,PflABerlin12Schi,52.50847,13.42852,93.0,20221115,20221115,20251230,3.1,URB,190.0,Dfb,True,False,29,train,True,False,False,False,False,False,D,Other,Low,0.0049,True
+ISMN,Berlin,PflABerlin13Marz,PflABerlin13Marz,52.54064,13.57653,17.0,20221115,20221115,20251230,3.1,URB,190.0,Dfb,True,False,30,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,COSMOS,KLEE,KLEE,0.2825,36.8669,1824.0,20160101,20140101,20180428,4.3,MF,40.0,Aw,True,False,31,train,False,False,False,False,False,False,A,Forest,High,0.0,True
+ISMN,COSMOS-UK,AliceHolt,AliceHolt,51.15355,-0.85823,80.0,20160101,20150306,20221231,7.8,DBF,60.0,Cfb,True,False,32,train,False,False,False,False,False,False,C,Forest,Low,0.0004,True
+ISMN,COSMOS-UK,Balruddery,Balruddery,56.4823,-3.11149,130.0,20160101,20150125,20190129,4.0,CRO,10.0,Cfb,True,False,33,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,BickleyHall,BickleyHall,53.02635,-2.70053,78.0,20160101,20150128,20221231,7.9,GRA,130.0,Cfb,True,False,34,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0089,True
+ISMN,COSMOS-UK,BunnyPark,BunnyPark,52.86073,-1.12685,39.0,20160101,20150127,20221231,7.9,CRO,10.0,Cfb,True,False,35,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Cardington,Cardington,52.1056,-0.42464,29.0,20160101,20150624,20220624,7.0,CRO,10.0,Cfb,True,False,36,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,ChimneyMeadows,ChimneyMeadows,51.70802,-1.47877,65.0,20160101,20140101,20190927,5.7,GRA,130.0,Cfb,True,False,37,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Cochno,Cochno,55.94142,-4.40354,168.0,20170824,20170824,20201114,3.2,GRA,130.0,Cfb,True,False,38,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0022,True
+ISMN,COSMOS-UK,CwmGarw,CwmGarw,51.95136,-4.74658,299.0,20170205,20170205,20201024,3.7,GRA,130.0,Cfb,True,False,39,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Elmsett,Elmsett,52.09465,0.99307,76.0,20160811,20160811,20191212,3.3,CRO,10.0,Cfb,True,False,40,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Euston,Euston,52.33639,0.79592,18.0,20190610,20190610,20221231,3.6,CRO,10.0,Cfb,True,False,41,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Fincham,Fincham,52.61777,0.51073,15.0,20170607,20170607,20221231,5.6,CRO,10.0,Cfb,True,False,42,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Fivemiletown,Fivemiletown,54.2985,-7.29186,174.0,20180626,20180626,20221231,4.5,GRA,130.0,Cfb,True,False,43,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,HartwoodHome,HartwoodHome,55.81026,-3.82896,225.0,20170223,20170223,20220725,5.4,GRA,130.0,Cfb,True,False,44,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Heytesbury,Heytesbury,51.20289,-2.0796,166.0,20180808,20180808,20220730,4.0,GRA,130.0,Cfb,True,False,45,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,HollinHill,HollinHill,54.11068,-0.95952,82.0,20180512,20180512,20220212,3.7,CRO,10.0,Cfb,True,False,46,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,HolmeLacy,HolmeLacy,52.02088,-2.66211,76.0,20180411,20180411,20221231,4.7,CRO,10.0,Cfb,True,False,47,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Loddington,Loddington,52.61016,-0.82642,186.0,20160426,20160426,20190826,3.3,CRO,10.0,Cfb,True,False,48,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,LullingtonHeath,LullingtonHeath,50.79372,0.18887,119.0,20181104,20181104,20220204,3.2,DBF,60.0,Cfb,True,False,49,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,COSMOS-UK,MoretonMorrell,MoretonMorrell,52.19941,-1.56308,53.0,20181116,20181116,20221231,4.1,GRA,130.0,Cfb,True,False,50,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Morley,Morley,52.54815,1.03423,55.0,20160101,20140514,20220517,8.0,CRO,10.0,Cfb,True,False,51,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,PortonDown,PortonDown,51.11988,-1.68125,146.0,20160101,20141218,20181128,3.9,GRA,130.0,Cfb,True,False,52,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Redhill,Redhill,51.26287,0.42914,91.0,20160218,20160218,20211203,5.8,GRA,130.0,Cfb,True,False,53,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Redmere,Redmere,52.44577,0.42104,3.0,20160101,20150210,20180918,3.6,GRA,130.0,Cfb,True,False,54,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0042,True
+ISMN,COSMOS-UK,Rothamsted,Rothamsted,51.81387,-0.37832,131.0,20170128,20170128,20221231,5.9,CRO,10.0,Cfb,True,False,55,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Sheepdrove,Sheepdrove,51.53032,-1.48187,170.0,20160101,20140101,20221231,8.9,CRO,10.0,Cfb,True,False,56,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,SpenFarm,SpenFarm,53.86886,-1.31886,57.0,20161123,20161123,20201121,4.0,CRO,10.0,Cfb,True,False,57,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Stoughton,Stoughton,52.60164,-1.04701,130.0,20160101,20150819,20210603,5.8,CRO,10.0,Cfb,True,False,58,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Waddesdon,Waddesdon,51.83948,-0.94842,98.0,20160101,20140101,20180806,4.6,GRA,130.0,Cfb,True,False,59,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,COSMOS-UK,Writtle,Writtle,51.734,0.4179,44.0,20170704,20170704,20221231,5.5,CRO,10.0,Cfb,True,False,60,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,CW3E,BoyesCreekCanyon,BoyesCreekCanyon,39.34053,-123.16349,350.0,20211201,20211201,20251230,4.0,GRA,130.0,Csa,True,False,61,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,CW3E,BrownsValleySchool,BrownsValleySchool,39.23586,-121.40621,71.0,20210414,20210414,20251230,4.7,GRA,130.0,Csa,True,False,62,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,CW3E,Deerwood,Deerwood,39.19757,-123.15985,280.0,20171006,20171006,20251218,8.1,GRA,130.0,Csa,True,False,63,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.1103,True
+ISMN,CW3E,FeatherRiverCollege,FeatherRiverCollege,39.94597,-120.96972,1047.0,20191118,20191118,20240319,4.3,GRA,130.0,Csb,True,False,64,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,CW3E,NorthCowMountain,NorthCowMountain,39.17967,-123.08009,1041.0,20171007,20171007,20250917,7.9,GRA,130.0,Csa,True,False,65,oos,False,True,False,False,False,True,C,Grass-Crop,Mid,0.0,True
+ISMN,CW3E,PotterValleyNorth,PotterValleyNorth,39.36141,-123.11312,410.0,20190308,20190308,20250210,5.9,SAV,120.0,Csa,True,False,66,val,False,False,False,False,False,False,C,Shrub-Savanna,Low,0.0007,True
+ISMN,CW3E,SkylineHarvest,SkylineHarvest,39.47095,-121.09175,836.0,20200731,20200731,20251230,5.4,ENF,70.0,Csb,True,False,67,oos,False,True,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,CW3E,YucaipaValley,YucaipaValley,34.0074,-117.0916,641.0,20221202,20221202,20251230,3.1,SAV,120.0,BSk,True,False,69,oos,False,True,False,False,False,True,B,Shrub-Savanna,Mid,0.0,True
+ISMN,FLUXNET-AMERIFLUX,BouldinIslandAlfalfa,BouldinIslandAlfalfa,38.09915,-121.49933,-2.7,20160813,20160813,20191230,3.4,CRO,10.0,Csa,True,False,888,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.1253,True
+ISMN,FLUXNET-AMERIFLUX,TonziRanch,TonziRanch,38.4316,-120.966,177.0,20170115,20170115,20200211,3.0,GRA,130.0,Csa,True,False,955,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,FLUXNET-AMERIFLUX,VairaRanch,VairaRanch,38.4133,-120.95073,129.0,20160101,20140101,20200211,6.1,GRA,130.0,Csa,True,False,955,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,FMI,SAA111,SAA111,68.33019,27.55062,441.0,20200614,20200614,20251230,5.5,SAV,110.0,Dfc,True,False,70,oos,False,True,False,False,False,True,D,Shrub-Savanna,Low,0.0,True
+ISMN,FMI,SAA112,SAA112,68.33025,27.55076,441.0,20210429,20210429,20240807,3.2,SAV,110.0,Dfc,True,False,70,oos,False,True,False,False,False,True,D,Shrub-Savanna,Low,0.0,True
+ISMN,FMI,SAA120,SAA120,68.33881,27.53543,381.0,20160313,20160313,20190816,3.4,MF,100.0,Dfc,True,False,70,oos,False,False,False,False,False,True,D,Forest,Low,0.0,True
+ISMN,FMI,SOD011,SOD011,67.36187,26.63378,179.0,20200614,20200614,20251230,5.5,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0785,True
+ISMN,FMI,SOD012,SOD012,67.36179,26.63378,179.0,20200614,20200614,20251230,5.5,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0794,True
+ISMN,FMI,SOD013,SOD013,67.36195,26.63378,179.0,20160101,20140105,20190816,5.5,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0798,True
+ISMN,FMI,SOD071,SOD071,67.35687,26.68492,184.0,20200614,20200614,20251230,5.5,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,FMI,SOD072,SOD072,67.35693,26.68506,184.0,20220321,20220321,20251230,3.7,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,FMI,SOD073,SOD073,67.35681,26.68478,184.0,20220321,20220321,20251230,3.7,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,FMI,SOD081,SOD081,67.38425,26.62529,174.0,20200614,20200614,20251230,5.4,MF,100.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0688,True
+ISMN,FMI,SOD083,SOD083,67.38431,26.62515,174.0,20211204,20211204,20251230,4.0,MF,100.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0703,True
+ISMN,FMI,SOD101,SOD101,67.35919,26.68595,186.0,20160101,20140101,20200506,6.3,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0002,True
+ISMN,FMI,SOD102,SOD102,67.35922,26.68595,186.0,20160101,20140101,20200506,6.3,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0002,True
+ISMN,FMI,SOD103,SOD103,67.35917,26.68594,186.0,20160101,20140101,20200506,6.3,ENF,70.0,Dfc,True,False,73,val,False,False,False,False,False,False,D,Forest,Low,0.0002,True
+ISMN,FMI,SOD130,SOD130,67.25729,26.74857,152.0,20160101,20141005,20200506,5.5,ENF,70.0,Dfc,True,False,71,train,False,False,False,False,False,False,D,Forest,Low,0.0237,True
+ISMN,FMI,SOD140,SOD140,67.15288,26.72914,255.0,20160101,20141006,20190604,4.7,ENF,70.0,Dfc,True,False,72,oos,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,FR_Aqui,fraye,fraye,44.467,-0.7269,52.42,20160101,20151207,20190616,3.5,ENF,70.0,Cfb,True,False,74,train,False,False,False,False,True,False,C,Forest,Low,0.0,True
+ISMN,FR_Aqui,hillan2,hillan2,44.49126,-0.758,53.78,20180714,20180714,20220318,3.7,ENF,70.0,Cfb,True,False,75,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,FR_Aqui,parcmeteo,parcmeteo,44.7899,-0.5765,24.88,20170724,20170724,20220127,4.5,CRO,10.0,Cfb,True,False,76,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,HOBE,1.05,1.05,56.033,9.1912,80.0,20160101,20140101,20190218,5.1,ENF,70.0,Dfb,True,False,78,oos,False,False,False,False,False,True,D,Forest,Low,0.0,True
+ISMN,HOBE,1.07,1.07,56.0426,9.1413,60.0,20160101,20140920,20190217,4.4,CRO,10.0,Dfb,True,False,79,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,HOBE,2.01,2.01,55.9398,9.2207,63.0,20160101,20140101,20190219,5.1,ENF,70.0,Dfb,True,False,80,train,False,False,False,False,False,False,D,Forest,Low,0.0005,True
+ISMN,HOBE,2.11,2.11,55.9704,9.0225,40.0,20160101,20140101,20190219,5.1,ENF,70.0,Dfb,True,False,82,train,False,False,False,False,True,False,D,Forest,Low,0.0,True
+ISMN,HOBE,3.06,3.06,55.9115,8.8831,38.0,20160101,20141110,20190219,4.3,ENF,70.0,Dfb,True,False,83,oos,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,LAB-net,OromoCalibrationSite,OromoCalibrationSite,-40.88502,-73.10873,115.0,20160101,20140718,20180325,3.7,CRO,11.0,Cfb,True,False,84,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,LABFLUX,Bussolenobosco,Bussolenobosco,45.1186,7.1625,1100.0,20200703,20200703,20250413,4.8,DBF,60.0,Cfb,True,False,85,train,True,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,LABFLUX,Nivolet,Nivolet,45.51918,7.17144,2555.0,20190104,20190104,20231030,4.8,CRO,10.0,Dfc,True,False,86,oos,False,True,False,False,False,True,D,Grass-Crop,High,0.0029,True
+ISMN,MOL-RAO,Falkenberg,Falkenberg,52.16694,14.12417,73.0,20160101,20140101,20200629,6.5,CRO,10.0,Dfb,True,False,87,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,NAQU,NQKema,NQKema,31.27209,92.11031,4465.0,20160101,20140913,20180718,3.8,GRA,130.0,Dwc,True,False,88,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0022,True
+ISMN,NAQU,NQMS,NQMS,31.22623,91.7833,4583.0,20160101,20150603,20180717,3.1,GRA,130.0,Dwc,True,False,89,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0024,True
+ISMN,NAQU,NQNorth,NQNorth,31.37878,91.86848,4497.0,20160101,20140913,20180718,3.8,GRA,130.0,ET,True,False,90,train,False,False,False,False,True,False,E,Grass-Crop,High,0.0024,True
+ISMN,NGARI,ALI01,ALI01,33.43287,79.74763,4265.0,20160101,20140906,20180821,4.0,GRA,130.0,BWk,True,False,91,train,False,False,False,False,True,False,B,Grass-Crop,High,0.3658,True
+ISMN,NGARI,ALI02,ALI02,33.45517,79.63061,4267.0,20160101,20140906,20180412,3.6,WAT,210.0,BWk,True,False,92,oos,False,False,False,False,False,True,B,Other,High,0.0553,True
+ISMN,NGARI,ALI03,ALI03,33.45402,79.63412,4268.0,20160101,20140906,20180821,4.0,WAT,210.0,BWk,True,False,92,oos,False,False,False,False,False,True,B,Other,High,0.1766,True
+ISMN,NGARI,SQ19,SQ19,32.62528,80.00139,4647.0,20160812,20160812,20190907,3.1,GRA,130.0,Dsb,True,False,99,val,False,False,False,False,False,False,D,Grass-Crop,High,0.3886,True
+ISMN,NGARI,SQ20,SQ20,32.68417,79.91861,4695.0,20160812,20160812,20190907,3.1,GRA,130.0,Dsb,True,False,100,train,False,False,False,False,False,False,D,Grass-Crop,High,0.4436,True
+ISMN,NGARI,SQ21,SQ21,32.74722,79.79694,4606.0,20160812,20160812,20190907,3.1,GRA,130.0,Dsb,True,False,101,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,REMEDHUS,Canizal,Canizal,41.19603,-5.35997,-99.9,20210120,20210120,20241231,3.9,CRO,20.0,BSk,True,False,103,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,Carretoro,Carretoro,41.26504,-5.38049,-99.9,20160101,20140101,20201211,6.9,CRO,10.0,BSk,True,False,104,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,CasaPeriles,CasaPeriles,41.39392,-5.32146,-99.9,20160101,20140708,20241231,10.5,CRO,10.0,BSk,True,False,105,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,ConcejodelMonte,ConcejodelMonte,41.3001,-5.24704,-99.9,20210114,20210114,20241231,4.0,CRO,10.0,BSk,True,False,106,oos,False,True,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,ElCoto,ElCoto,41.38134,-5.42922,-99.9,20160706,20160706,20210104,4.5,CRO,10.0,BSk,True,False,107,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,ElTomillar,ElTomillar,41.34888,-5.49027,-99.9,20210120,20210120,20241231,3.9,CRO,10.0,BSk,True,False,108,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,Granja-g,Granja-g,41.30582,-5.37566,-99.9,20170808,20170808,20241231,7.4,CRO,20.0,BSk,True,False,109,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,Guarrati,Guarrati,41.2892,-5.46713,-99.9,20160101,20150209,20181212,3.8,CRO,20.0,BSk,True,False,110,train,False,False,False,False,True,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LaCruzdeElias,LaCruzdeElias,41.28546,-5.30003,-99.9,20160101,20140101,20201001,6.7,CRO,10.0,BSk,True,False,112,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LasArenas,LasArenas,41.37338,-5.5485,-99.9,20190613,20190613,20241231,5.6,CRO,10.0,BSk,True,False,113,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LasBrozas,LasBrozas,41.44649,-5.3587,-99.9,20180731,20180731,20240414,5.7,CRO,12.0,BSk,True,False,117,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LasEritas,LasEritas,41.20548,-5.41558,-99.9,20160101,20141111,20241231,10.1,CRO,20.0,BSk,True,False,114,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LasTresRayas,LasTresRayas,41.27473,-5.5919,-99.9,20160101,20150610,20241215,9.5,CRO,10.0,BSk,True,False,115,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LasVacas,LasVacas,41.34709,-5.22474,-99.9,20160616,20160616,20200929,4.3,CRO,10.0,BSk,True,False,116,oos,False,False,False,False,False,True,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LasVictorias,LasVictorias,41.42413,-5.37403,-99.9,20160101,20150825,20241231,9.3,CRO,10.0,BSk,True,False,117,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,LlanosdelaBoveda,LlanosdelaBoveda,41.35757,-5.33113,-99.9,20160101,20140101,20210202,7.1,CRO,10.0,BSk,True,False,118,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,Paredinas,Paredinas,41.45586,-5.411,-99.9,20160101,20150602,20211103,6.4,CRO,20.0,BSk,True,False,119,train,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,REMEDHUS,Zamarron,Zamarron,41.23923,-5.54427,-99.9,20160101,20140101,20210101,7.0,CRO,10.0,BSk,True,False,120,oos,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,ROMPS,AbramovGlacier,AbramovGlacier,39.64848,71.58556,4091.6,20160101,20140101,20211213,7.9,SNO,220.0,BWk,True,False,121,train,False,False,False,False,True,False,B,Other,High,0.0,True
+ISMN,ROMPS,Baytik,Baytik,42.64932,74.49644,0.0,20160101,20150326,20210704,6.2,GRA,130.0,Dsa,True,False,122,oos,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,ROMPS,GolubinGlacier,GolubinGlacier,42.48161,74.48417,3305.0,20180711,20180711,20251230,7.4,BSV,200.0,Dsa,True,False,123,train,True,False,False,False,False,False,D,Other,High,0.0595,True
+ISMN,ROMPS,Kokomeren,Kokomeren,41.84843,74.33435,1442.6,20160101,20140101,20211227,8.0,GRA,130.0,Dsb,True,False,124,train,False,False,False,False,False,False,D,Grass-Crop,Mid,0.0073,True
+ISMN,ROMPS,Maidanak,Maidanak,38.6738,66.8969,2551.3,20160101,20140708,20251230,11.5,GRA,130.0,BSk,True,False,125,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,ROMPS,Maydantal,Maydantal,41.99651,70.63916,1446.7,20160101,20140929,20251230,11.2,MF,40.0,Dsa,True,False,126,train,True,False,False,False,False,False,D,Forest,Mid,0.0206,True
+ISMN,RSMN,Alexandria,Alexandria,43.97781,25.35286,75.46,20160501,20160501,20190724,3.2,URB,190.0,Dfb,True,False,127,oos,False,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,RSMN,Bacles,Bacles,44.47617,23.1129,313.0,20160501,20160501,20220829,6.3,URB,190.0,Cfa,True,False,128,train,False,False,False,False,False,False,C,Other,Low,0.0,True
+ISMN,RSMN,Banloc,Banloc,45.3829,21.13626,83.4,20160501,20160501,20200905,4.3,URB,190.0,Dfb,True,False,129,train,False,False,False,False,True,False,D,Other,Low,0.0,True
+ISMN,RSMN,Barlad,Barlad,46.23313,27.64438,172.0,20160501,20160501,20240208,7.7,CRO,10.0,Dfb,True,False,130,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,Calarasi,Calarasi,44.20572,27.33852,18.72,20191206,20191206,20250914,5.8,URB,190.0,Dfa,True,False,131,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,RSMN,Cotnari,Cotnari,47.3583,26.92546,289.0,20160501,20160501,20240202,7.7,CRO,10.0,Dfb,True,False,132,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,Darabani,Darabani,48.19477,26.57325,259.0,20160501,20160501,20240128,7.7,CRO,10.0,Dfb,True,False,133,train,True,False,False,False,True,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,Dumbraveni,Dumbraveni,46.22786,24.59161,318.0,20160501,20160501,20210118,4.6,CRO,10.0,Dfc,True,False,134,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,Iasi,Iasi,47.16315,27.62546,74.29,20191206,20191206,20250914,5.7,URB,190.0,Dfb,True,False,135,oos,False,True,False,False,False,False,D,Other,Low,0.0104,True
+ISMN,RSMN,Oradea,Oradea,47.0358,21.89612,136.0,20160501,20160501,20190829,3.3,CRO,10.0,Dfb,True,False,136,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,RosioriideVede,RosioriideVede,44.10711,24.97872,102.15,20191205,20191205,20230619,3.5,CRO,10.0,Dfb,True,False,137,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,SannicolauMare,SannicolauMare,46.07156,20.60159,85.0,20160501,20160501,20200210,3.7,CRO,10.0,Dfa,True,False,138,oos,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,SatuMare,SatuMare,47.72144,22.88737,123.0,20191206,20191206,20240521,4.4,CRO,10.0,Dfb,True,False,139,oos,False,True,False,False,False,True,D,Grass-Crop,Low,0.0,True
+ISMN,RSMN,Slatina,Slatina,44.44211,24.35446,172.0,20191206,20191206,20231025,3.9,URB,190.0,Dfb,True,False,140,oos,False,True,False,False,False,False,D,Other,Low,0.0009,True
+ISMN,RSMN,Tecuci,Tecuci,45.84164,27.40901,60.0,20160501,20160501,20221130,6.5,URB,190.0,Dfb,True,False,141,train,False,False,False,False,False,False,D,Other,Low,0.0,True
+ISMN,SCAN,AAMU-JTG,AAMU-JTG,34.78534,-86.55906,241.0,20160130,20160130,20231118,7.8,GRA,130.0,Cfa,True,False,142,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Abrams,Abrams,37.1313,-97.0859,363.0,20160101,20140101,20220621,8.5,GRA,130.0,Cfa,True,False,143,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,AdamsRanch#1,AdamsRanch#1,32.25296,-105.41975,1868.0,20160101,20140101,20251230,12.0,SAV,120.0,BSk,True,False,144,train,True,False,False,False,True,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,Alcalde,Alcalde,36.0908,-106.05668,1735.0,20160101,20140101,20180526,4.4,URB,190.0,Dfb,True,False,145,train,False,False,False,False,True,False,D,Other,High,0.0015,True
+ISMN,SCAN,AlkaliMesa,AlkaliMesa,37.67455,-109.36429,1964.0,20160101,20140729,20251230,11.4,SAV,120.0,Dsa,True,False,146,train,True,False,False,False,True,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,AllenFarms,AllenFarms,35.0747,-86.8938,215.0,20210306,20210306,20251230,4.8,GRA,130.0,Cfa,True,False,147,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Ames,Ames,42.01667,-93.73333,327.0,20160412,20160412,20230206,6.7,CRO,10.0,Dfa,True,False,148,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.004,True
+ISMN,SCAN,AshValley,AshValley,41.05204,-120.6872,1554.0,20201112,20201112,20241221,4.1,SAV,120.0,Dsb,True,False,149,train,True,False,False,False,False,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,BlueCreek,BlueCreek,41.93531,-112.4336,1579.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,150,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SCAN,BodieHills,BodieHills,38.26477,-119.12645,2385.0,20160101,20141028,20251230,11.2,SAV,120.0,Csa,True,False,151,train,True,False,False,False,True,False,C,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,BraggFarm,BraggFarm,34.89375,-86.60236,243.0,20160101,20150612,20200518,4.9,CRO,10.0,Cfa,True,False,152,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Buckhorn,Buckhorn,40.87959,-119.9534,1972.0,20201113,20201113,20251230,5.1,SAV,120.0,BWk,True,False,153,train,True,False,False,False,True,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,BuffaloJump,BuffaloJump,41.34363,-111.18798,2037.0,20160101,20140101,20251230,12.0,SAV,120.0,Dfb,True,False,154,train,True,False,False,False,False,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,Bushland#1,Bushland#1,35.16667,-102.1,1164.0,20220126,20220126,20251230,3.9,GRA,130.0,BSk,True,False,155,val,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,CPER,CPER,40.8228,-104.71068,1625.0,20160101,20140101,20200821,6.6,GRA,130.0,BSk,True,False,156,train,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,CacheJunction,CacheJunction,41.81568,-111.98043,1349.0,20160101,20140101,20240513,10.4,GRA,130.0,Dfa,True,False,157,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0153,True
+ISMN,SCAN,CarverFarm,CarverFarm,38.52557,-92.13475,171.0,20180515,20180515,20210720,3.2,GRA,130.0,Dfa,True,False,158,train,False,False,False,False,True,False,D,Grass-Crop,Low,0.0002,True
+ISMN,SCAN,CaveValley,CaveValley,37.35524,-113.12341,1912.0,20191206,20191206,20250908,5.8,GRA,130.0,BSk,True,False,159,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0391,True
+ISMN,SCAN,CentraliaLake,CentraliaLake,39.70045,-96.1629,397.0,20170620,20170620,20220801,5.1,GRA,130.0,Dfa,True,False,160,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.1634,True
+ISMN,SCAN,Charkiln,Charkiln,36.36651,-115.82047,2037.0,20160101,20140630,20251230,11.5,ENF,70.0,BWh,True,False,161,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SCAN,ChickenRidge,ChickenRidge,41.33136,-111.3036,2331.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,162,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SCAN,Circleville,Circleville,38.15133,-112.25122,1865.0,20160101,20140101,20221118,8.9,CRO,10.0,BSk,True,False,163,oos,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,Combate,Combate,17.98333,-67.16667,10.0,20191107,20191107,20240503,4.5,GRA,130.0,Aw,True,False,165,val,False,False,False,False,False,False,A,Grass-Crop,Low,0.0,True
+ISMN,SCAN,ConradAgRc,ConradAgRc,48.30453,-111.92363,1130.0,20160101,20140101,20200930,6.7,CRO,10.0,BSk,True,False,166,val,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,CrescentLake#1,CrescentLake#1,45.41667,-93.95,299.0,20160101,20140101,20251230,12.0,CRO,10.0,Dfb,True,False,167,val,False,False,False,False,False,False,D,Grass-Crop,Low,0.0164,True
+ISMN,SCAN,Crossroads,Crossroads,33.53513,-103.242,1236.0,20160313,20160313,20251230,9.8,GRA,130.0,BSk,True,False,168,oos,False,True,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Cullman-NAHRC,Cullman-NAHRC,34.19492,-86.79897,244.0,20180617,20180617,20251119,7.4,GRA,130.0,Cfa,True,False,169,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0888,True
+ISMN,SCAN,DeepSprings,DeepSprings,37.37222,-117.97383,1646.0,20160101,20140101,20251230,12.0,SAV,120.0,BWk,True,False,170,oos,False,True,False,False,False,False,B,Shrub-Savanna,High,0.0002,True
+ISMN,SCAN,Dexter,Dexter,36.78333,-89.93333,93.0,20160101,20150803,20200930,5.2,CRO,10.0,Cfa,True,False,171,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0071,True
+ISMN,SCAN,DoeRidge,DoeRidge,37.63423,-118.82643,2237.0,20160101,20140101,20250924,11.7,SAV,120.0,Csa,True,False,172,oos,False,True,False,False,False,False,C,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,EagleLake,EagleLake,40.6175,-120.72472,1565.0,20160101,20140101,20200611,6.3,ENF,70.0,Dsb,True,False,173,train,False,False,False,False,False,False,D,Forest,High,0.2029,True
+ISMN,SCAN,Eastland,Eastland,37.77853,-109.17193,2084.0,20160101,20140101,20220630,8.5,SAV,120.0,Dfa,True,False,174,train,False,False,False,False,False,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,EastviewFarm,EastviewFarm,35.13905,-86.19113,321.0,20210214,20210214,20251230,4.8,CRO,10.0,Cfa,True,False,175,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,ElsberryPMC,ElsberryPMC,39.15306,-90.78278,138.0,20160101,20150805,20241224,9.4,GRA,130.0,Dfa,True,False,176,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0077,True
+ISMN,SCAN,Enterprise,Enterprise,37.63343,-113.64324,1600.0,20160101,20140101,20240628,10.5,SAV,120.0,BSk,True,False,177,val,False,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,Ephraim,Ephraim,39.36798,-111.57803,1686.0,20160101,20140101,20220814,8.6,GRA,130.0,BSk,True,False,178,val,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,ErosDataCenter,ErosDataCenter,43.73835,-96.61455,488.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfa,True,False,179,oos,False,True,False,False,False,False,D,Grass-Crop,Low,0.0046,True
+ISMN,SCAN,EvergladesARS,EvergladesARS,25.5,-80.55,3.0,20190225,20190225,20221008,3.6,CRO,11.0,Aw,True,False,180,train,False,False,False,False,True,False,A,Grass-Crop,Low,0.0119,True
+ISMN,SCAN,FortAssiniboine#1,FortAssiniboine#1,48.48333,-109.8,826.0,20160101,20140101,20191006,5.8,GRA,130.0,BSk,True,False,182,oos,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,FortReno#1,FortReno#1,35.55,-98.01667,427.0,20160101,20150714,20230410,7.7,GRA,130.0,Cfa,True,False,183,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Fortuna,Fortuna,18.02502,-66.5279,28.0,20160101,20140101,20180709,4.4,URB,190.0,Am,True,False,184,train,False,False,False,False,True,False,A,Other,Low,0.0,True
+ISMN,SCAN,FrenchGulch,FrenchGulch,40.79361,-122.55083,1129.0,20170531,20170531,20200930,3.3,ENF,70.0,Csa,True,False,185,oos,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,SCAN,Geneva#1,Geneva#1,42.88333,-77.03333,221.0,20160101,20140101,20191203,5.9,GRA,130.0,Dfb,True,False,186,train,False,False,False,False,True,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,GlacialRidge,GlacialRidge,47.71667,-96.26667,343.0,20160101,20140101,20210328,7.2,CRO,10.0,Dfb,True,False,187,oos,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,GoodwinCkTimber,GoodwinCkTimber,34.23333,-89.9,98.0,20160101,20140910,20251230,11.2,GRA,130.0,Cfa,True,False,188,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0005,True
+ISMN,SCAN,Goshute,Goshute,39.99003,-114.00025,1672.0,20160101,20140101,20220529,8.4,SAV,120.0,BSk,True,False,189,oos,False,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,Grantsville,Grantsville,40.59089,-112.39258,1322.0,20160101,20140101,20191215,6.0,SAV,120.0,Dfa,True,False,190,train,False,False,False,False,False,False,D,Shrub-Savanna,Mid,0.0,True
+ISMN,SCAN,GreenRiver,GreenRiver,39.01825,-110.16264,1251.0,20180713,20180713,20251230,7.5,CRO,10.0,BWk,True,False,191,oos,False,True,False,False,False,False,B,Grass-Crop,Mid,0.1806,True
+ISMN,SCAN,GrouseCreek,GrouseCreek,41.77846,-113.82048,1779.0,20160101,20140101,20251230,12.0,GRA,130.0,BSk,True,False,192,train,True,False,False,False,True,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,HalsCanyon,HalsCanyon,38.59445,-113.75102,1603.0,20160101,20140101,20220211,8.1,SAV,120.0,BSk,True,False,193,oos,False,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,HarmsWay,HarmsWay,38.31347,-109.23998,2150.0,20160101,20150422,20251230,10.7,SAV,120.0,BSk,True,False,194,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0002,True
+ISMN,SCAN,Hodges,Hodges,34.4448,-86.16557,223.0,20210811,20210811,20251230,4.4,GRA,130.0,Cfa,True,False,195,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Holden,Holden,39.19216,-112.40155,1446.0,20160101,20140101,20251230,12.0,CRO,10.0,Dfa,True,False,196,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,HubbardBrook,HubbardBrook,43.94843,-71.72644,451.0,20161217,20161217,20251230,9.0,DBF,61.0,Dfb,True,False,197,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,SCAN,IsbellFarms,IsbellFarms,34.81982,-87.98685,184.0,20160818,20160818,20240704,7.9,GRA,130.0,Cfa,True,False,199,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,JohnsonFarm,JohnsonFarm,40.37042,-101.7201,1018.0,20200822,20200822,20251230,5.4,CRO,10.0,BSk,True,False,200,oos,False,True,False,False,False,True,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Jordan,Jordan,47.522,-107.12731,860.0,20160101,20140101,20251230,12.0,GRA,130.0,BSk,True,False,201,train,True,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,JornadaExpRange,JornadaExpRange,32.5566,-106.69997,1329.0,20160101,20140101,20200821,6.6,SAV,120.0,BSk,True,False,203,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.2155,True
+ISMN,SCAN,JournaganRanch,JournaganRanch,36.9973,-92.2594,337.0,20160101,20140101,20200326,6.2,GRA,130.0,Cfa,True,False,204,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,KnoxCity,KnoxCity,33.44635,-99.86657,441.0,20160101,20140924,20180629,3.8,CRO,10.0,Cfa,True,False,207,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,KoptisFarms,KoptisFarms,30.5238,-87.69797,41.0,20170717,20170717,20230515,5.8,CRO,10.0,Cfa,True,False,208,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,KyleCanyon,KyleCanyon,36.26527,-115.60852,2148.0,20160101,20140101,20251230,12.0,ENF,70.0,BWh,True,False,611,oos,False,True,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SCAN,LTSP,LTSP,37.18167,-91.11778,268.0,20211225,20211225,20251230,4.0,GRA,130.0,Cfa,True,False,210,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Lehman,Lehman,33.62647,-102.7453,1148.0,20160101,20140412,20200902,6.4,GRA,130.0,BSk,True,False,211,train,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Levelland,Levelland,33.55125,-102.37392,1070.0,20160717,20160717,20210601,4.9,GRA,130.0,BSk,True,False,212,train,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Lind#1,Lind#1,47.0,-118.56667,500.0,20160101,20140101,20251230,12.0,CRO,10.0,BSk,True,False,213,train,True,False,False,False,True,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,LittleRedFox,LittleRedFox,40.17957,-110.30464,1644.0,20160101,20140101,20251230,12.0,CRO,10.0,BSk,True,False,215,oos,False,True,False,False,False,False,B,Grass-Crop,High,0.0015,True
+ISMN,SCAN,LittleRiver,LittleRiver,31.5,-83.55,107.0,20160101,20140101,20210413,7.3,GRA,130.0,Cfa,True,False,216,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0119,True
+ISMN,SCAN,LosLunasPMC,LosLunasPMC,34.7715,-106.76288,1477.0,20160101,20140101,20230216,9.1,CRO,10.0,BSk,True,False,218,oos,False,True,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,LovellSummit,LovellSummit,36.16555,-115.61195,2006.0,20160101,20140101,20251230,12.0,GRA,130.0,BWh,True,False,219,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,LovelockNNR,LovelockNNR,40.09247,-118.49345,1199.0,20160101,20140101,20200917,6.7,CRO,10.0,BWk,True,False,220,train,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,LyeBrook,LyeBrook,43.05753,-73.03834,742.0,20181017,20181017,20251230,7.2,DNF,81.0,Dfb,True,False,221,train,True,False,False,False,False,False,D,Forest,Mid,0.0029,True
+ISMN,SCAN,MahantangoCk,MahantangoCk,40.66667,-76.66667,223.0,20160101,20140101,20180929,4.7,CRO,10.0,Dfa,True,False,222,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,MammothCave,MammothCave,37.1864,-86.04093,244.0,20160101,20140101,20200801,6.6,DBF,61.0,Cfa,True,False,223,train,False,False,False,False,True,False,C,Forest,Low,0.0,True
+ISMN,SCAN,Mandan#1,Mandan#1,46.76667,-100.91667,588.0,20160101,20150523,20251230,10.6,GRA,130.0,Dfb,True,False,940,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Manderfield,Manderfield,38.36649,-112.64291,1885.0,20170512,20170512,20251230,8.6,CRO,10.0,Dfb,True,False,225,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SCAN,MarbleCreek,MarbleCreek,37.77767,-118.4209,1885.0,20200415,20200415,20240929,4.5,SAV,120.0,BWk,True,False,226,val,False,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,MaricaoForest,MaricaoForest,18.15,-67.00468,747.0,20160101,20140101,20180314,4.2,EBF,50.0,Af,True,False,227,train,False,False,False,False,True,False,A,Forest,Mid,0.0,True
+ISMN,SCAN,Mason#1,Mason#1,40.31667,-89.9,174.0,20170213,20170213,20250321,8.1,CRO,10.0,Dfa,True,False,228,oos,False,True,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Mayday,Mayday,32.86153,-90.51989,33.0,20201108,20201108,20240530,3.2,CRO,10.0,Cfa,True,False,229,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,McAllisterFarm,McAllisterFarm,35.06445,-86.59137,278.0,20160101,20150315,20251230,10.8,CRO,11.0,Cfa,True,False,230,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,MccrackenMesa,MccrackenMesa,37.44671,-109.33776,1620.0,20160101,20140101,20250321,11.2,SAV,120.0,BSk,True,False,231,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,Milford,Milford,38.34196,-113.01053,1526.0,20160101,20140101,20250907,11.7,CRO,10.0,BSk,True,False,232,oos,False,True,False,False,False,True,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,Moccasin,Moccasin,47.05818,-109.95082,1297.0,20160101,20140101,20250321,11.2,GRA,130.0,BSk,True,False,233,train,True,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,MonoclineRidge,MonoclineRidge,36.54417,-120.55463,267.0,20160101,20141030,20211101,7.0,SAV,120.0,BWk,True,False,234,train,False,False,False,False,False,False,B,Shrub-Savanna,Low,0.0215,True
+ISMN,SCAN,Morgan,Morgan,40.9999,-111.68555,1558.0,20160101,20140101,20251230,12.0,CRO,10.0,Dsb,True,False,235,train,True,False,False,False,True,False,D,Grass-Crop,High,0.0,True
+ISMN,SCAN,MorrisFarms,MorrisFarms,32.41222,-85.91028,67.0,20160823,20160823,20200416,3.6,MF,40.0,Cfa,True,False,236,oos,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,SCAN,MountainHome,MountainHome,40.37263,-110.40602,2111.0,20160101,20140101,20241122,10.9,CRO,11.0,BSk,True,False,237,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,MtVernon,MtVernon,37.06667,-93.88333,351.0,20160921,20160921,20201126,4.2,GRA,130.0,Cfa,True,False,238,oos,False,False,False,False,False,True,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,NPiedmontArec,NPiedmontArec,38.23333,-78.11667,158.0,20160101,20140101,20251230,12.0,GRA,130.0,Cfa,True,False,239,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Nacogdoches,Nacogdoches,31.504,-94.75994,75.0,20180427,20180427,20220709,4.2,ENF,70.0,Cfa,True,False,240,oos,False,False,False,False,False,False,C,Forest,Low,0.0409,True
+ISMN,SCAN,Nephi,Nephi,39.64554,-111.87044,1599.0,20160101,20140101,20250321,11.2,GRA,130.0,Dfa,True,False,242,val,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SCAN,NorthIssaquena,NorthIssaquena,32.9972,-91.05993,34.0,20160101,20150919,20210503,5.6,CRO,10.0,Cfa,True,False,243,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Nunn#1,Nunn#1,40.85989,-104.74033,1798.0,20220107,20220107,20251230,4.0,GRA,130.0,BSk,True,False,244,train,True,False,False,False,True,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,Onward,Onward,32.75358,-90.94208,30.0,20160101,20150919,20251230,10.3,CRO,10.0,Cfa,True,False,245,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,OrchardRangeSite,OrchardRangeSite,43.32268,-115.99643,975.0,20210512,20210512,20251230,4.6,SAV,120.0,BSk,True,False,246,train,True,False,False,False,True,False,B,Shrub-Savanna,Mid,0.0,True
+ISMN,SCAN,Panguitch,Panguitch,37.86975,-112.43437,1992.0,20160101,20140101,20220529,8.4,CRO,10.0,BSk,True,False,247,train,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,ParkValley,ParkValley,41.77318,-113.28596,1554.0,20160101,20140101,20220717,8.5,GRA,130.0,BSk,True,False,248,train,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,PeeDee,PeeDee,34.3,-79.73333,37.0,20190221,20190221,20251230,6.9,CRO,10.0,Cfa,True,False,249,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0499,True
+ISMN,SCAN,PerdidoRivFarms,PerdidoRivFarms,31.10923,-87.55277,91.0,20160101,20140101,20200614,6.5,GRA,130.0,Cfa,True,False,250,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0071,True
+ISMN,SCAN,Perthshire,Perthshire,33.9737,-90.90496,61.0,20160216,20160216,20210916,5.6,CRO,10.0,Cfa,True,False,251,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Phillipsburg,Phillipsburg,39.78638,-99.32953,605.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfa,True,False,252,train,True,False,False,False,True,False,D,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,PineNut,PineNut,36.57285,-115.20422,2067.0,20210703,20210703,20250805,4.1,GRA,130.0,BWh,True,False,253,val,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,PowderMill,PowderMill,39.01667,-76.85,32.0,20160101,20140101,20251230,12.0,GRA,130.0,Cfa,True,False,254,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0007,True
+ISMN,SCAN,PowellGardens,PowellGardens,38.86667,-94.03333,293.0,20160319,20160319,20210707,5.1,GRA,130.0,Dfa,True,False,255,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0091,True
+ISMN,SCAN,PrairieView#1,PrairieView#1,30.08333,-95.98333,82.0,20160101,20150712,20220505,6.8,GRA,130.0,Cfa,True,False,256,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0011,True
+ISMN,SCAN,Price,Price,39.53288,-110.80604,1718.0,20160101,20140101,20251211,11.9,CRO,10.0,Dfb,True,False,257,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0458,True
+ISMN,SCAN,Princeton#1,Princeton#1,37.1,-87.83333,187.0,20160101,20140401,20180323,3.8,CRO,10.0,Cfa,True,False,258,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,ReeseCenter,ReeseCenter,33.61536,-102.03869,1016.0,20160311,20160311,20210601,5.2,GRA,130.0,BSk,True,False,259,train,False,False,False,False,True,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,ReynoldsHomestead,ReynoldsHomestead,36.63333,-80.13333,344.0,20211120,20211120,20251230,4.1,DBF,61.0,Cfa,True,False,260,train,True,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,SCAN,RiverRoadFarms,RiverRoadFarms,31.01912,-85.03693,33.0,20160101,20140916,20190827,4.9,CRO,10.0,Cfa,True,False,261,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,RockSpringsPa,RockSpringsPa,40.71667,-77.93333,372.0,20170101,20170101,20251230,9.0,CRO,10.0,Dfa,True,False,262,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0018,True
+ISMN,SCAN,RogersFarm#1,RogersFarm#1,40.85,-96.46667,370.0,20160101,20140101,20210121,7.0,CRO,10.0,Dfa,True,False,263,val,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,SanAngelo,SanAngelo,31.5496,-100.50748,600.0,20160101,20140925,20220324,7.5,SAV,120.0,BSh,True,False,264,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+ISMN,SCAN,SandyRidge,SandyRidge,33.65911,-90.57297,42.0,20160101,20140101,20251230,12.0,CRO,10.0,Cfa,True,False,266,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0002,True
+ISMN,SCAN,Scott,Scott,33.61962,-91.10184,50.0,20210824,20210824,20251230,4.4,CRO,10.0,Cfa,True,False,267,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,SellersLake#1,SellersLake#1,29.1,-81.63333,23.0,20160101,20140101,20220224,8.2,ENF,70.0,Cfa,True,False,268,train,False,False,False,False,False,False,C,Forest,Low,0.0495,True
+ISMN,SCAN,Selma,Selma,32.40392,-86.89137,43.0,20160822,20160822,20231020,7.1,ENF,70.0,Cfa,True,False,269,train,True,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,SCAN,Sevilleta,Sevilleta,34.35813,-106.69127,1595.0,20180418,20180418,20210818,3.3,GRA,130.0,BSk,True,False,923,train,False,False,False,False,True,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,ShagbarkHills,ShagbarkHills,42.43333,-95.76667,427.0,20160101,20140101,20200402,6.2,CRO,10.0,Dfa,True,False,271,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Shenandoah,Shenandoah,37.91667,-79.2,537.0,20160101,20140101,20180419,4.3,DBF,60.0,Cfa,True,False,272,train,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,SCAN,Sidney,Sidney,47.77102,-104.247,693.0,20200807,20200807,20251230,5.4,GRA,130.0,BSk,True,False,273,train,True,False,False,False,True,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,SilverCity,SilverCity,33.0875,-90.51151,35.0,20160101,20140101,20210725,7.5,CRO,10.0,Cfa,True,False,274,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,SinkinForest,SinkinForest,37.50138,-91.2594,405.0,20210720,20210720,20250321,3.7,DBF,61.0,Dfa,True,False,276,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,SCAN,Spickard,Spickard,40.25,-93.71667,278.0,20190603,20190603,20251230,6.6,GRA,130.0,Dfa,True,False,277,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0026,True
+ISMN,SCAN,SplitMountain,SplitMountain,40.39136,-109.35326,1476.0,20160101,20140101,20250321,11.2,CRO,10.0,BSk,True,False,278,train,True,False,False,False,False,False,B,Grass-Crop,Mid,0.0089,True
+ISMN,SCAN,StanleyFarm,StanleyFarm,34.43333,-86.68333,194.0,20220304,20220304,20251230,3.8,MF,100.0,Cfa,True,False,280,train,True,False,False,False,False,False,C,Forest,Low,0.0007,True
+ISMN,SCAN,Starkville,Starkville,33.47094,-88.78051,104.0,20160101,20140101,20200930,6.7,CRO,10.0,Cfa,True,False,281,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0029,True
+ISMN,SCAN,Stephenville,Stephenville,32.24535,-98.19563,400.0,20160101,20140922,20200601,5.7,GRA,130.0,Cfa,True,False,282,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0011,True
+ISMN,SCAN,Stubblefield,Stubblefield,34.97018,-119.47831,913.0,20160101,20141101,20190519,4.5,GRA,130.0,BSk,True,False,283,train,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,SudduthFarms,SudduthFarms,34.17973,-87.45618,235.0,20160101,20150529,20241009,9.4,GRA,130.0,Cfa,True,False,284,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,SunleafNursery,SunleafNursery,41.79618,-81.07653,204.0,20160101,20140101,20200620,6.5,GRA,130.0,Dfb,True,False,285,oos,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,TableMountain,TableMountain,45.80272,-111.58655,1364.0,20160101,20140101,20250321,11.2,GRA,130.0,Dfb,True,False,286,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,TidewaterArec,TidewaterArec,36.68333,-76.76667,24.0,20160101,20140621,20190619,5.0,CRO,10.0,Cfa,True,False,287,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0091,True
+ISMN,SCAN,TncFortBayou,TncFortBayou,30.4712,-88.74162,13.0,20161130,20161130,20210605,4.5,ENF,70.0,Cfa,True,False,288,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,SCAN,Torrington#1,Torrington#1,42.06667,-104.13333,1305.0,20160414,20160414,20250321,8.9,GRA,130.0,BSk,True,False,289,train,True,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,TroughSprings,TroughSprings,36.37355,-115.78127,2391.0,20160101,20140101,20180804,4.6,GRA,130.0,BWh,True,False,290,oos,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SCAN,TuleValley,TuleValley,39.23724,-113.45866,1400.0,20160101,20140101,20231202,9.9,SAV,120.0,BWk,True,False,291,train,True,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0084,True
+ISMN,SCAN,Tunica,Tunica,34.6764,-90.41142,79.0,20160101,20150924,20200529,4.7,CRO,10.0,Cfa,True,False,292,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0013,True
+ISMN,SCAN,TwinPinesConservationArea,TwinPinesConservationArea,36.99024,-91.30943,293.0,20210105,20210105,20250321,4.2,DBF,61.0,Cfa,True,False,294,oos,False,True,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,SCAN,UWPlatteville,UWPlatteville,42.70785,-90.3899,328.0,20160101,20140101,20231025,9.8,CRO,10.0,Dfa,True,False,295,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Uapb-Earle,Uapb-Earle,35.27732,-90.45031,65.0,20160723,20160723,20251230,9.4,URB,190.0,Cfa,True,False,296,oos,False,True,False,False,False,False,C,Other,Low,0.0287,True
+ISMN,SCAN,UapbCampus-PB,UapbCampus-PB,34.25188,-92.02632,71.0,20210310,20210310,20251230,4.8,URB,190.0,Cfa,True,False,297,train,True,False,False,False,False,False,C,Other,Low,0.01,True
+ISMN,SCAN,UapbDewitt,UapbDewitt,34.27788,-91.35017,60.0,20170127,20170127,20220930,5.7,URB,190.0,Cfa,True,False,298,train,False,False,False,False,False,False,C,Other,Low,0.0,True
+ISMN,SCAN,UapbPointRemove,UapbPointRemove,35.20842,-92.92462,96.0,20210728,20210728,20251230,4.4,CRO,10.0,Cfa,True,False,299,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Uvalde,Uvalde,29.21578,-99.75517,279.0,20160101,20140926,20200524,5.7,SAV,120.0,Cfa,True,False,300,train,False,False,False,False,False,False,C,Shrub-Savanna,Low,0.0004,True
+ISMN,SCAN,Vallecitos,Vallecitos,36.45976,-120.70601,494.0,20221029,20221029,20251230,3.2,GRA,130.0,BSk,True,False,301,train,True,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Vermillion,Vermillion,37.19061,-112.19252,1948.0,20160101,20140101,20251230,12.0,SAV,120.0,BSk,True,False,302,train,True,False,False,False,True,False,B,Shrub-Savanna,High,0.0005,True
+ISMN,SCAN,Vernon,Vernon,34.01635,-99.2464,361.0,20160101,20150715,20210429,5.8,GRA,130.0,Cfa,True,False,303,oos,False,False,False,False,False,True,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,Violett,Violett,48.43578,-111.18423,983.0,20160101,20140101,20210114,7.0,CRO,10.0,BSk,True,False,304,train,False,False,False,False,True,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Wabeno#1,Wabeno#1,45.46667,-88.58333,482.0,20160101,20140101,20220101,8.0,DBF,61.0,Dfb,True,False,305,train,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,SCAN,Wakulla#1,Wakulla#1,30.3,-84.41667,46.0,20170901,20170901,20250321,7.6,ENF,70.0,Cfa,True,False,307,train,True,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,SCAN,WalnutGulch#1,WalnutGulch#1,31.73333,-110.05,1372.0,20160101,20150723,20240620,8.9,SAV,120.0,BSk,True,False,956,oos,False,True,False,False,False,True,B,Shrub-Savanna,Mid,0.0,True
+ISMN,SCAN,Watkinsville#1,Watkinsville#1,33.88333,-83.43333,235.0,20210810,20210810,20251230,4.4,GRA,130.0,Cfa,True,False,308,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0029,True
+ISMN,SCAN,WestSummit,WestSummit,38.01394,-109.12745,2131.0,20160101,20140101,20230530,9.4,SAV,120.0,Dfa,True,False,311,train,True,False,False,False,False,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SCAN,WillowWells,WillowWells,33.53382,-103.63097,1383.0,20170218,20170218,20251230,8.9,GRA,130.0,BSk,True,False,312,train,True,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SCAN,Wtars,Wtars,34.9,-86.53333,191.0,20160101,20140101,20180618,4.5,GRA,130.0,Cfa,True,False,313,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SCAN,YoumansFarm,YoumansFarm,32.66667,-81.2,23.0,20160101,20140619,20221101,8.4,MF,40.0,Cfa,True,False,314,train,False,False,False,False,False,False,C,Forest,Low,0.0022,True
+ISMN,SD_DEM,Demokeya,Demokeya,13.2829,30.4783,550.0,20160101,20140610,20201111,6.4,CRO,10.0,BWh,True,False,315,train,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SMOSMANIA,Barnas,Barnas,44.666,4.15983,480.0,20190912,20190912,20230629,3.8,DBF,60.0,Dfb,True,False,316,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,SMOSMANIA,Berzeme,Berzeme,44.62833,4.56667,650.0,20170613,20170613,20230629,6.0,GRA,130.0,Cfb,True,False,317,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,SMOSMANIA,CabrieresdAvignon,CabrieresdAvignon,43.88367,5.16483,142.0,20160101,20140101,20230629,9.4,CRO,12.0,Csb,True,False,318,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Condom,Condom,43.9744,0.3361,174.0,20180417,20180417,20241231,6.7,CRO,12.0,Cfb,True,False,319,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,CreondArmagnac,CreondArmagnac,43.9936,-0.0469,149.0,20170817,20170817,20241231,7.3,CRO,10.0,Cfb,True,False,320,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,LaGrandCombe,LaGrandCombe,44.243,4.01017,499.0,20160205,20160205,20230629,7.3,URB,190.0,Cfb,True,False,321,train,True,False,False,False,False,False,C,Other,Low,0.0,True
+ISMN,SMOSMANIA,Lahas,Lahas,43.5472,0.8878,249.0,20160101,20140101,20230507,9.3,CRO,10.0,Cfb,True,False,322,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0004,True
+ISMN,SMOSMANIA,LezignanCorbieres,LezignanCorbieres,43.1733,2.7283,60.0,20170518,20170518,20241231,7.6,URB,190.0,Cfa,True,False,323,train,True,False,False,False,False,False,C,Other,Low,0.0,True
+ISMN,SMOSMANIA,Mazan-Abbaye,Mazan-Abbaye,44.73383,4.08383,1240.0,20171010,20171010,20230117,5.2,GRA,130.0,Dfb,True,False,324,val,False,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,SMOSMANIA,Mejannes-le-Clap,Mejannes-le-Clap,44.222,4.34483,318.0,20160614,20160614,20220928,6.3,GRA,130.0,Csb,True,False,325,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Montaut,Montaut,43.1922,1.6436,295.0,20160101,20140101,20241231,10.9,CRO,10.0,Cfb,True,False,326,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Mouthoumet,Mouthoumet,42.96,2.53,538.0,20160101,20140101,20241231,10.9,GRA,130.0,Cfa,True,False,327,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,SMOSMANIA,Narbonne,Narbonne,43.15,2.9567,112.0,20170818,20170818,20241231,7.3,CRO,10.0,Csa,True,False,328,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,PeyrusseGrande,PeyrusseGrande,43.6664,0.2217,245.0,20160101,20140101,20241231,10.9,CRO,10.0,Dfb,True,False,329,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0033,True
+ISMN,SMOSMANIA,Pezenas,Pezenas,43.43833,3.40333,30.0,20160614,20160614,20230629,7.0,CRO,12.0,Csa,True,False,330,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Prades-le-Lez,Prades-le-Lez,43.43767,3.40033,40.0,20160101,20140101,20181204,4.9,CRO,12.0,Csa,True,False,330,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Sabres,Sabres,44.1475,-0.8456,81.0,20160309,20160309,20230925,7.5,CRO,10.0,Cfb,True,False,331,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,SaintFelixdeLauragais,SaintFelixdeLauragais,43.4417,1.88,337.0,20160122,20160122,20241231,8.9,CRO,10.0,Cfb,True,False,332,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Savenes,Savenes,43.825,1.1767,158.0,20160101,20141201,20200319,5.2,CRO,10.0,Cfb,True,False,333,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Urgons,Urgons,43.6397,-0.435,145.0,20181115,20181115,20241231,6.1,CRO,10.0,Dfc,True,False,334,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,SMOSMANIA,Villevielle,Villevielle,43.79517,4.09083,41.0,20160101,20140101,20230629,9.4,CRO,12.0,Csa,True,False,335,train,True,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,SNOTEL,AguaCanyon,AguaCanyon,37.52217,-112.27118,2710.0,20160101,20140101,20200930,6.7,ENF,70.0,Dfb,True,False,336,oos,False,False,False,False,False,False,D,Forest,High,0.0818,True
+ISMN,SNOTEL,AmericanCreek,AmericanCreek,64.78969,-141.23376,311.0,20200629,20200629,20251230,5.5,ENF,70.0,Dfc,True,False,337,oos,False,True,False,False,False,True,D,Forest,Low,0.0066,True
+ISMN,SNOTEL,AnchorRiverDivide,AnchorRiverDivide,59.8608,-151.31494,494.0,20160101,20140101,20251022,11.8,MF,100.0,Dsc,True,False,338,train,True,False,False,False,True,False,D,Forest,Low,0.0,True
+ISMN,SNOTEL,Aniak,Aniak,61.58337,-159.57708,27.0,20170511,20170511,20220506,5.0,SAV,120.0,Dfc,True,False,339,train,False,False,False,False,False,False,D,Shrub-Savanna,Low,0.2062,True
+ISMN,SNOTEL,ArapahoRidge,ArapahoRidge,40.35098,-106.38141,3341.0,20170829,20170829,20251230,8.3,ENF,70.0,Dfc,True,False,340,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,AtlantaSummit,AtlantaSummit,43.7569,-115.23907,2307.0,20160101,20140101,20240715,10.5,ENF,70.0,Dsb,True,False,342,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Atwater,Atwater,40.59124,-111.63775,2667.0,20220825,20220825,20251230,3.4,ENF,70.0,Dsb,True,False,343,oos,False,True,False,False,False,False,D,Forest,High,0.0075,True
+ISMN,SNOTEL,BakerButte,BakerButte,34.45654,-111.40651,2243.0,20160427,20160427,20251022,9.5,ENF,70.0,Csa,True,False,344,train,True,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,BakerButteSmt,BakerButteSmt,34.45552,-111.38262,2353.0,20160101,20140607,20230706,9.1,ENF,70.0,Csa,True,False,344,train,True,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,Baldy,Baldy,33.97845,-109.50357,2807.0,20160707,20160707,20200611,3.9,ENF,70.0,Dfb,True,False,345,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BannerSummit,BannerSummit,44.30342,-115.23447,2146.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,346,train,True,False,False,False,False,False,D,Forest,High,0.0018,True
+ISMN,SNOTEL,BarM,BarM,34.86142,-111.60497,1945.0,20160101,20140101,20251022,11.8,ENF,70.0,Csa,True,False,347,train,True,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,BearCanyon,BearCanyon,43.74367,-113.93797,2414.0,20200225,20200225,20240526,4.3,ENF,70.0,Dfb,True,False,348,train,True,False,False,False,False,False,D,Forest,High,0.0139,True
+ISMN,SNOTEL,BearCreek,BearCreek,41.83391,-115.45278,2466.0,20191016,20191016,20251230,6.2,ENF,70.0,BSk,True,False,349,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BearRiverRS,BearRiverRS,40.8852,-110.8277,2594.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,350,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BeaverDams,BeaverDams,39.13683,-111.55813,2429.0,20160101,20141001,20251230,11.2,ENF,70.0,BSk,True,False,351,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BeaverDivide,BeaverDivide,40.61233,-111.09782,2509.0,20160101,20140905,20251230,11.3,ENF,70.0,Dfb,True,False,352,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BenLomondPeak,BenLomondPeak,41.37603,-111.94405,2347.0,20160101,20140101,20200520,6.4,ENF,70.0,Dsa,True,False,353,oos,False,False,False,False,False,True,D,Forest,High,0.0,True
+ISMN,SNOTEL,BenLomondTrail,BenLomondTrail,41.38291,-111.92103,1823.0,20160101,20140101,20200803,6.6,ENF,70.0,Dsa,True,False,353,oos,False,False,False,False,False,True,D,Forest,High,0.0,True
+ISMN,SNOTEL,BerryCreek,BerryCreek,39.31917,-114.62278,2850.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,354,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BerthoudSummit,BerthoudSummit,39.80364,-105.77786,3444.0,20170629,20170629,20230920,6.2,ENF,70.0,Dfc,True,False,355,train,True,False,False,False,True,False,D,Forest,High,0.0007,True
+ISMN,SNOTEL,BevansCabin,BevansCabin,40.46182,-112.25233,1972.0,20160101,20140101,20220929,8.7,ENF,70.0,Dfa,True,False,356,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BigBend,BigBend,41.76168,-115.6931,2100.0,20160101,20140101,20251230,12.0,GRA,130.0,BWk,True,False,357,oos,False,True,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,BigCreekSum,BigCreekSum,39.29148,-117.11506,2655.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,358,oos,False,True,False,False,False,False,D,Forest,High,0.0161,True
+ISMN,SNOTEL,BigFlat,BigFlat,38.30183,-112.35672,3146.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,359,oos,False,True,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BigMeadow,BigMeadow,39.455,-119.9422,2512.0,20160101,20140101,20250201,11.1,ENF,70.0,Csb,True,False,360,train,True,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,BigSandyOpening,BigSandyOpening,42.6458,-109.25965,2774.0,20160101,20140101,20210811,7.6,ENF,70.0,Dfb,True,False,361,train,False,False,False,False,False,False,D,Forest,High,0.004,True
+ISMN,SNOTEL,BirdCreek,BirdCreek,39.46138,-114.64863,2298.0,20160101,20140101,20201210,6.9,ENF,70.0,BSk,True,False,362,oos,False,False,False,False,False,True,B,Forest,High,0.0,True
+ISMN,SNOTEL,BlackFlat-U.M.Ck,BlackFlat-U.M.Ck,38.6799,-111.59765,2871.0,20160101,20140101,20251230,12.0,GRA,130.0,BSk,True,False,363,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,BlackhallMtn,BlackhallMtn,41.05623,-106.714,2996.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,364,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BlacksForkJct,BlacksForkJct,40.95814,-110.5828,2707.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,365,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BlazedAlder,BlazedAlder,45.4287,-121.85605,1116.0,20220831,20220831,20251230,3.3,ENF,70.0,Csb,True,False,366,val,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,SNOTEL,BlueLakes,BlueLakes,38.60801,-119.92455,2457.0,20160101,20140101,20251230,12.0,ENF,70.0,Csb,True,False,367,train,True,False,False,False,False,False,C,Forest,High,0.0878,True
+ISMN,SNOTEL,BobsHollow,BobsHollow,38.94569,-112.15349,2841.0,20161006,20161006,20251230,9.2,GRA,130.0,BSk,True,False,368,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0024,True
+ISMN,SNOTEL,BogusBasin,BogusBasin,43.76377,-116.09685,1942.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsa,True,False,369,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BostetterR.S.,BostetterR.S.,42.16442,-114.19272,2295.0,20160101,20150807,20251230,10.4,ENF,70.0,BSk,True,False,370,oos,False,True,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,Bourne,Bourne,44.83052,-118.18787,1783.0,20210602,20210602,20251230,4.6,ENF,70.0,BSk,True,False,371,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BoxCreek,BoxCreek,38.50809,-112.01856,3002.0,20210930,20210930,20251230,4.3,ENF,70.0,BSk,True,False,372,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BoxSprings,BoxSprings,38.49746,-112.00779,2813.0,20160101,20140101,20200416,6.3,GRA,130.0,BSk,True,False,372,train,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,BrianHead,BrianHead,37.67994,-112.85674,3060.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,373,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.0243,True
+ISMN,SNOTEL,Brighton,Brighton,40.59936,-111.58167,2679.0,20160101,20150720,20251230,10.4,ENF,70.0,Dsb,True,False,374,train,True,False,False,False,False,False,D,Forest,High,0.0038,True
+ISMN,SNOTEL,BristleconeTrail,BristleconeTrail,36.31575,-115.69543,2713.0,20160101,20140101,20251230,12.0,ENF,70.0,BWh,True,False,526,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,BrooklynLake,BrooklynLake,41.36038,-106.23038,3124.0,20180731,20180731,20241003,6.2,ENF,70.0,Dfc,True,False,896,train,True,False,False,False,False,False,D,Forest,High,0.0004,True
+ISMN,SNOTEL,BrownDuck,BrownDuck,40.58102,-110.58587,3222.0,20160101,20140922,20200916,6.0,ENF,70.0,BSk,True,False,375,train,False,False,False,False,False,False,B,Forest,High,0.0152,True
+ISMN,SNOTEL,BrownTop,BrownTop,48.92753,-121.19717,1783.0,20210916,20210916,20250922,4.0,ENF,70.0,Dsb,True,False,376,train,True,False,False,False,False,False,D,Forest,High,0.0095,True
+ISMN,SNOTEL,BuckFlat,BuckFlat,39.134,-111.43722,2868.0,20160101,20140101,20251230,12.0,GRA,130.0,BSk,True,False,378,train,True,False,False,False,True,False,B,Grass-Crop,High,0.0004,True
+ISMN,SNOTEL,BuckPasture,BuckPasture,40.84456,-110.66068,2932.0,20160101,20140101,20250817,11.6,ENF,70.0,Dfb,True,False,379,train,True,False,False,False,False,False,D,Forest,High,0.0005,True
+ISMN,SNOTEL,BuckboardFlat,BuckboardFlat,37.86943,-109.44717,2719.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsa,True,False,380,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Buckinghorse,Buckinghorse,47.7086,-123.45747,1481.0,20201002,20201002,20251230,5.2,ENF,70.0,Cfb,True,False,381,train,True,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,SNOTEL,BuckskinJoe,BuckskinJoe,39.30378,-106.11316,3402.0,20160101,20140101,20210928,7.7,ENF,70.0,Dfc,True,False,382,val,False,False,False,False,False,False,D,Forest,High,0.0787,True
+ISMN,SNOTEL,BuckskinLower,BuckskinLower,41.75067,-117.53182,2109.0,20160101,20140101,20250530,11.4,GRA,130.0,BSk,True,False,383,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,BugLake,BugLake,41.68541,-111.41987,2432.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,384,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BurntMountain,BurntMountain,47.0444,-121.94032,1268.0,20201015,20201015,20251230,5.2,ENF,70.0,Dsb,True,False,386,train,True,False,False,False,True,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,BurroMountain,BurroMountain,39.87504,-107.59902,2832.0,20200509,20200509,20251230,5.6,ENF,70.0,Dfb,True,False,387,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,BurtsMillerRanch,BurtsMillerRanch,40.98492,-110.85075,2408.0,20190424,20190424,20251230,6.7,GRA,130.0,Dfb,True,False,388,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.0037,True
+ISMN,SNOTEL,Butte,Butte,38.89435,-106.95327,3106.0,20170816,20170816,20251230,8.4,ENF,70.0,Dfc,True,False,389,train,True,False,False,False,False,False,D,Forest,High,0.0097,True
+ISMN,SNOTEL,CampJackson,CampJackson,37.81333,-109.48723,2694.0,20180704,20180704,20251230,7.5,ENF,70.0,Dsa,True,False,390,train,True,False,False,False,False,False,D,Forest,High,0.0013,True
+ISMN,SNOTEL,CarsonPass,CarsonPass,38.6927,-120.0022,2548.0,20160101,20140101,20230929,9.7,ENF,70.0,Csb,True,False,391,train,True,False,False,False,True,False,C,Forest,High,0.0035,True
+ISMN,SNOTEL,Cascade#2,Cascade#2,37.65751,-107.80287,2740.0,20160101,20140101,20210614,7.5,ENF,70.0,Dfc,True,False,392,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,CascadeMountain,CascadeMountain,40.283,-111.60992,2362.0,20160101,20140101,20210214,7.1,ENF,70.0,Dfa,True,False,393,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,CastleValley,CastleValley,37.66098,-112.74093,2929.0,20180717,20180717,20251230,7.5,ENF,70.0,Dfb,True,False,394,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,CaveMountain,CaveMountain,39.16337,-114.6133,3225.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,395,train,True,False,False,False,True,False,B,Forest,High,0.0007,True
+ISMN,SNOTEL,Chalender,Chalender,35.26238,-112.06221,2140.0,20160101,20140101,20230616,9.4,ENF,70.0,Dsb,True,False,396,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ChalkCreek#1,ChalkCreek#1,40.85464,-111.04765,2792.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,397,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.0005,True
+ISMN,SNOTEL,ChalkCreek#2,ChalkCreek#2,40.88529,-111.06954,2499.0,20160101,20140101,20230507,9.3,ENF,70.0,Dfb,True,False,398,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Chepeta,Chepeta,40.77458,-110.0105,3197.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,399,train,True,False,False,False,True,False,B,Forest,High,0.0095,True
+ISMN,SNOTEL,Chisana,Chisana,62.06947,-142.04919,1012.0,20180801,20180801,20251230,7.4,ENF,70.0,Dsc,True,False,400,train,True,False,False,False,False,False,D,Forest,Mid,0.0667,True
+ISMN,SNOTEL,ChocolateGulch,ChocolateGulch,43.7685,-114.41812,1923.0,20160101,20140101,20200719,6.5,ENF,70.0,Dsb,True,False,401,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,CinnabarPark,CinnabarPark,41.23843,-106.23101,2947.0,20160101,20140101,20201004,6.8,ENF,70.0,Dfc,True,False,402,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ClackamasLake,ClackamasLake,45.09658,-121.75443,1036.0,20201111,20201111,20251230,5.1,ENF,70.0,Csb,True,False,403,train,True,False,False,False,False,False,C,Forest,Mid,0.0015,True
+ISMN,SNOTEL,ClaytonSprings,ClaytonSprings,37.9725,-111.83355,3051.0,20160101,20141002,20221022,8.1,ENF,70.0,BSk,True,False,404,oos,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,ClearCreek#1,ClearCreek#1,39.86671,-111.28363,2731.0,20160101,20140828,20251230,11.3,ENF,70.0,Dfa,True,False,405,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ClearCreek#2,ClearCreek#2,39.89275,-111.25154,2393.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfa,True,False,406,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Coldfoot,Coldfoot,67.25333,-150.183,326.0,20160101,20140101,20251230,12.0,BSV,150.0,Dfc,True,False,408,train,True,False,False,False,False,False,D,Other,Low,0.0093,True
+ISMN,SNOTEL,CorralCanyon,CorralCanyon,40.27551,-115.54017,2573.0,20170504,20170504,20251230,8.7,GRA,130.0,Dfb,True,False,411,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0257,True
+ISMN,SNOTEL,CouchSummit,CouchSummit,43.51762,-114.80214,2063.0,20211014,20211014,20251230,4.2,ENF,70.0,Dsb,True,False,412,train,True,False,False,False,False,False,D,Forest,High,0.0005,True
+ISMN,SNOTEL,CrabCreek,CrabCreek,44.437,-111.99384,2094.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,413,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,CraterMeadows,CraterMeadows,46.56394,-115.28903,1817.0,20160101,20140101,20180505,4.3,ENF,70.0,Dsb,True,False,414,train,False,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,CrowCreek,CrowCreek,41.22824,-105.38571,2536.0,20160517,20160517,20251230,9.6,ENF,70.0,BSk,True,False,415,oos,False,True,False,False,False,True,B,Forest,High,0.0,True
+ISMN,SNOTEL,CssLab,CssLab,39.32565,-120.36807,2097.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,416,oos,False,True,False,False,False,False,D,Forest,High,0.002,True
+ISMN,SNOTEL,Culebra#2,Culebra#2,37.20939,-105.19988,3222.0,20180107,20180107,20251230,8.0,ENF,70.0,Dfb,True,False,417,train,True,False,False,False,False,False,D,Forest,High,0.034,True
+ISMN,SNOTEL,CurrantCreek,CurrantCreek,40.35747,-111.08993,2414.0,20160101,20140101,20251022,11.8,GRA,130.0,BSk,True,False,418,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,Daniels-Strawberry,Daniels-Strawberry,40.2953,-111.25677,2441.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfa,True,False,419,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,DillsCamp,DillsCamp,39.04554,-111.46875,2816.0,20160101,20150827,20251230,10.3,GRA,130.0,BSk,True,False,421,oos,False,True,False,False,False,False,B,Grass-Crop,High,0.0018,True
+ISMN,SNOTEL,DisasterPeak,DisasterPeak,41.96737,-118.18934,1908.0,20160101,20140101,20251230,12.0,SAV,120.0,BSk,True,False,422,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0221,True
+ISMN,SNOTEL,DonkeyReservoir,DonkeyReservoir,38.2084,-111.47412,2987.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,423,val,False,False,False,False,False,False,B,Forest,High,0.0037,True
+ISMN,SNOTEL,DorseyBasin,DorseyBasin,40.89343,-115.21104,2408.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,424,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,DrawCreek,DrawCreek,41.661,-115.3234,2225.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,425,train,True,False,False,False,True,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,DryBreadPond,DryBreadPond,41.41289,-111.5377,2527.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,426,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,DryCreek,DryCreek,40.8638,-115.22014,1999.0,20160101,20140101,20220920,8.7,GRA,130.0,Dfb,True,False,427,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,DryFork,DryFork,40.56533,-112.17343,2192.0,20160101,20140101,20251022,11.8,ENF,70.0,Dfa,True,False,428,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,DryLake,DryLake,40.5337,-106.7814,2512.0,20170826,20170826,20251230,8.3,GRA,130.0,Dfb,True,False,429,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,EFBlacksForkGS,EFBlacksForkGS,40.88472,-110.54056,2853.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,430,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,EagleSummit,EagleSummit,65.48588,-145.41212,1106.0,20200817,20200817,20250521,4.8,BSV,150.0,Dfc,True,False,431,train,True,False,False,False,False,False,D,Other,Mid,0.0294,True
+ISMN,SNOTEL,EastRimDivide,EastRimDivide,43.13097,-110.2023,2441.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,432,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,EastWillowCreek,EastWillowCreek,39.31213,-109.53179,2533.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,433,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,EbbettsPass,EbbettsPass,38.5497,-119.80468,2640.0,20160101,20140101,20220815,8.6,ENF,70.0,Csb,True,False,434,train,False,False,False,False,False,False,C,Forest,High,0.0208,True
+ISMN,SNOTEL,EchoPeak,EchoPeak,38.849,-120.0795,2332.0,20180808,20180808,20251230,7.4,ENF,70.0,Csb,True,False,435,oos,False,True,False,False,False,True,C,Forest,High,0.067,True
+ISMN,SNOTEL,ElkCabin,ElkCabin,35.7073,-105.80584,2502.0,20160101,20150930,20201210,5.2,ENF,70.0,BSk,True,False,436,oos,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,ExitGlacier,ExitGlacier,60.18957,-149.6228,110.0,20160101,20151008,20251230,10.2,MF,100.0,Dfc,True,False,437,train,True,False,False,False,False,False,D,Forest,Low,0.0469,True
+ISMN,SNOTEL,FallenLeaf,FallenLeaf,38.93403,-120.0545,1905.0,20210615,20210615,20251230,4.5,MF,90.0,Dsb,True,False,438,oos,False,True,False,False,False,False,D,Forest,High,0.1238,True
+ISMN,SNOTEL,Farmington,Farmington,40.97462,-111.80975,2414.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsa,True,False,439,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,FarmingtonLower,FarmingtonLower,40.992,-111.81702,2088.0,20160101,20140101,20251022,11.8,ENF,70.0,Dsa,True,False,439,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,FarnsworthLake,FarnsworthLake,38.77246,-111.67662,2932.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,463,train,True,False,False,False,False,False,B,Forest,High,0.0013,True
+ISMN,SNOTEL,FawnCreek,FawnCreek,41.82098,-116.10153,2146.0,20160101,20140101,20251230,12.0,ENF,70.0,BWk,True,False,440,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,FieldingLake,FieldingLake,63.2026,-145.63442,917.0,20190830,20190830,20251230,6.3,MF,100.0,Dwc,True,False,441,train,True,False,False,False,False,False,D,Forest,Mid,0.0632,True
+ISMN,SNOTEL,Fifteenmile,Fifteenmile,45.35265,-121.53,1820.0,20221006,20221006,20251230,3.2,ENF,70.0,Csb,True,False,442,train,True,False,False,False,False,False,C,Forest,High,0.0004,True
+ISMN,SNOTEL,FishLakeUtah,FishLakeUtah,38.50455,-111.76693,2679.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,443,train,True,False,False,False,False,False,B,Forest,High,0.0002,True
+ISMN,SNOTEL,FivePointsLake,FivePointsLake,40.71785,-110.46721,3328.0,20160101,20140101,20220618,8.4,ENF,70.0,BSk,True,False,444,train,False,False,False,False,False,False,B,Forest,High,0.0539,True
+ISMN,SNOTEL,ForestdaleCreek,ForestdaleCreek,38.68245,-119.9597,2454.0,20160101,20140101,20251230,12.0,ENF,70.0,Csb,True,False,445,oos,False,True,False,False,False,False,C,Forest,High,0.0011,True
+ISMN,SNOTEL,FranklinBasin,FranklinBasin,42.0505,-111.6012,2481.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,447,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,FredonyerPeak,FredonyerPeak,40.68799,-120.60805,2201.0,20161118,20161118,20251230,9.1,SAV,120.0,Dsb,True,False,448,val,False,False,False,False,False,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SNOTEL,FremontPass,FremontPass,39.38014,-106.19784,3447.0,20160101,20140101,20250606,11.4,URB,190.0,Dfc,True,False,449,train,True,False,False,False,False,False,D,Other,High,0.0499,True
+ISMN,SNOTEL,FryCanyon,FryCanyon,41.58008,-115.9364,2070.0,20160101,20141009,20251230,11.2,GRA,130.0,BWk,True,False,450,train,True,False,False,False,True,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,GBRCHQ,GBRCHQ,39.32019,-111.48827,2682.0,20160101,20140807,20251230,11.4,ENF,70.0,Dfb,True,False,451,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,GBRCMeadows,GBRCMeadows,39.30229,-111.45383,3002.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,631,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0016,True
+ISMN,SNOTEL,GalenaAK,GalenaAK,64.69662,-156.71497,104.0,20180817,20180817,20251230,7.4,MF,100.0,Dfc,True,False,452,train,True,False,False,False,False,False,D,Forest,Low,0.0075,True
+ISMN,SNOTEL,GalenaSummit,GalenaSummit,43.87497,-114.71363,2676.0,20160101,20140101,20251230,12.0,SAV,120.0,Dsb,True,False,453,train,True,False,False,False,True,False,D,Shrub-Savanna,High,0.0009,True
+ISMN,SNOTEL,GallegosPeak,GallegosPeak,36.19418,-105.55742,2883.0,20171221,20171221,20230506,5.4,ENF,70.0,Dfb,True,False,454,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,GardenCitySummit,GardenCitySummit,41.9215,-111.4693,2341.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,455,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,GardnerPeak,GardnerPeak,37.40083,-113.45988,2536.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,456,train,True,False,False,False,True,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,GaritaPeak,GaritaPeak,36.00469,-106.54805,3078.0,20170405,20170405,20251230,8.7,ENF,70.0,Dfb,True,False,457,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,GeorgeCreek,GeorgeCreek,41.91562,-113.41154,2731.0,20160101,20140101,20220725,8.6,ENF,70.0,BSk,True,False,458,train,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,Giveout,Giveout,42.4132,-111.1663,2115.0,20160101,20140101,20180622,4.5,GRA,130.0,Dfb,True,False,459,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,GobblersKnob,GobblersKnob,66.745,-150.6675,622.0,20160101,20140101,20220531,8.4,BSV,150.0,Dfc,True,False,460,train,False,False,False,False,False,False,D,Other,Mid,0.0013,True
+ISMN,SNOTEL,Golconda,Golconda,40.88358,-117.58812,2021.0,20160101,20140101,20251022,11.8,SAV,120.0,BSk,True,False,461,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SNOTEL,GoldAxeCamp,GoldAxeCamp,48.9516,-118.9864,1640.0,20210629,20210629,20251022,4.3,ENF,70.0,Dfb,True,False,462,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,GoldBasin,GoldBasin,38.46516,-109.26332,3069.0,20210924,20210924,20251230,4.3,ENF,70.0,BSk,True,False,522,train,True,False,False,False,False,False,B,Forest,High,0.0005,True
+ISMN,SNOTEL,GooseberryRS,GooseberryRS,38.80034,-111.68333,2417.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,463,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,GooseberryRSUp,GooseberryRSUp,38.7882,-111.68892,2560.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,463,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,GrandTarghee,GrandTarghee,43.77933,-110.92783,2822.0,20160101,20140919,20251219,11.2,SAV,120.0,Dfb,True,False,464,train,True,False,False,False,False,False,D,Shrub-Savanna,High,0.0004,True
+ISMN,SNOTEL,GraniteCreek,GraniteCreek,43.34298,-110.43495,2063.0,20160101,20150923,20251230,10.2,ENF,70.0,Dfc,True,False,465,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,GraniteCrk,GraniteCrk,63.94382,-145.39993,381.0,20160101,20140101,20200505,6.3,BSV,150.0,Dwc,True,False,466,train,False,False,False,False,True,False,D,Other,Low,0.0394,True
+ISMN,SNOTEL,GranitePeak,GranitePeak,41.67032,-117.56668,2591.0,20160101,20140101,20251230,12.0,GRA,130.0,BSk,True,False,467,oos,False,True,False,False,False,False,B,Grass-Crop,High,0.0024,True
+ISMN,SNOTEL,GreenMountain,GreenMountain,40.3848,-115.52757,2493.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfa,True,False,468,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,GrizzlyPeak,GrizzlyPeak,39.64646,-105.8694,3386.0,20160101,20150723,20210707,6.0,ENF,70.0,Dfc,True,False,469,oos,False,False,False,False,False,False,D,Forest,High,0.0329,True
+ISMN,SNOTEL,GulkanaRiver,GulkanaRiver,62.40962,-145.37513,558.0,20190412,20190412,20251230,6.7,ENF,70.0,Dwc,True,False,470,train,True,False,False,False,False,False,D,Forest,Mid,0.0018,True
+ISMN,SNOTEL,GutzPeak,GutzPeak,37.49617,-113.94235,2073.0,20170523,20170523,20251230,8.6,GRA,130.0,BSk,True,False,471,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,HagansMeadow,HagansMeadow,38.8519,-119.9374,2359.0,20160101,20140101,20240101,10.0,ENF,70.0,Dsb,True,False,472,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HappyJack,HappyJack,34.74594,-111.41219,2292.0,20160630,20160630,20230501,6.8,ENF,70.0,Csa,True,False,473,oos,False,True,False,False,False,True,C,Forest,High,0.0,True
+ISMN,SNOTEL,Hardscrabble,Hardscrabble,40.86833,-111.71865,2216.0,20160101,20140101,20240606,10.4,ENF,70.0,Dsb,True,False,474,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HarrisFlat,HarrisFlat,37.48997,-112.57602,2377.0,20170409,20170409,20251230,8.7,ENF,70.0,Dsb,True,False,475,train,True,False,False,False,False,False,D,Forest,High,0.0066,True
+ISMN,SNOTEL,HawleyLake,HawleyLake,33.97121,-109.76531,2527.0,20160101,20150918,20230503,7.6,ENF,70.0,Csa,True,False,476,train,True,False,False,False,False,False,C,Forest,High,0.0004,True
+ISMN,SNOTEL,HaydenFork,HaydenFork,40.79669,-110.88472,2792.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,477,train,True,False,False,False,False,False,D,Forest,High,0.0007,True
+ISMN,SNOTEL,HeavenlyValley,HeavenlyValley,38.92431,-119.91641,2603.0,20160101,20140918,20250608,10.7,SAV,120.0,Dsb,True,False,478,train,True,False,False,False,False,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SNOTEL,Hewinta,Hewinta,40.95009,-110.48419,2899.0,20160101,20140101,20251021,11.8,ENF,70.0,Dfb,True,False,479,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HickersonPark,HickersonPark,40.90663,-109.96287,2783.0,20160101,20140101,20200930,6.7,ENF,70.0,BSk,True,False,480,train,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,HighLonesome,HighLonesome,40.0359,-105.75472,3240.0,20180912,20180912,20251230,7.3,ENF,70.0,Dfc,True,False,481,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HighRidge,HighRidge,45.69682,-118.10657,1494.0,20221006,20221006,20251230,3.2,ENF,70.0,Dsb,True,False,482,oos,False,True,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,HiltsCreek,HiltsCreek,44.01896,-113.47242,2463.0,20160101,20140101,20190811,5.6,ENF,70.0,BSk,True,False,483,oos,False,False,False,False,False,False,B,Forest,High,0.0013,True
+ISMN,SNOTEL,HobbleCreek,HobbleCreek,40.18538,-111.35971,2243.0,20160101,20140101,20221230,9.0,ENF,70.0,Dfa,True,False,484,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Hole-in-Mountain,Hole-in-Mountain,40.94168,-115.0954,2490.0,20161020,20161020,20251230,9.2,GRA,130.0,Dfb,True,False,485,train,True,False,False,False,True,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,Hole-in-Rock,Hole-in-Rock,40.92167,-110.18623,2795.0,20160101,20140101,20220720,8.5,ENF,70.0,BSk,True,False,486,oos,False,False,False,False,False,False,B,Forest,High,0.0026,True
+ISMN,SNOTEL,HollandMeadows,HollandMeadows,43.66917,-122.56877,1503.0,20221105,20221105,20251230,3.2,ENF,70.0,Csb,True,False,487,oos,False,True,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,HoosierPass,HoosierPass,39.36092,-106.05999,3536.0,20160101,20140101,20230216,9.1,ENF,70.0,Dfc,True,False,488,train,True,False,False,False,True,False,D,Forest,High,0.0035,True
+ISMN,SNOTEL,Hopewell,Hopewell,36.71632,-106.2637,3072.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,489,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HorseMeadow,HorseMeadow,38.83652,-119.88732,2615.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,490,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HorseRidge,HorseRidge,41.31372,-111.44624,2502.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,491,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,HuntingtonHorse,HuntingtonHorse,39.61774,-111.30576,2941.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,492,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,ImnaviatCreek,ImnaviatCreek,68.61652,-149.3033,927.0,20160101,20140101,20230829,9.7,BSV,150.0,Dfc,True,False,902,val,False,False,False,False,False,False,D,Other,Mid,0.0256,True
+ISMN,SNOTEL,IndependenceCamp,IndependenceCamp,39.45269,-120.29367,2124.0,20160101,20140101,20251230,12.0,WAT,210.0,Dsb,True,False,494,train,True,False,False,False,False,False,D,Other,High,0.2018,True
+ISMN,SNOTEL,IndependenceCreek,IndependenceCreek,39.49001,-120.28226,1963.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,495,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,IndependenceLake,IndependenceLake,39.42752,-120.31342,2542.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,496,train,True,False,False,False,False,False,D,Forest,High,0.0942,True
+ISMN,SNOTEL,IslandPark,IslandPark,44.4203,-111.38512,1920.0,20160730,20160730,20241115,8.3,ENF,70.0,Dfc,True,False,497,train,True,False,False,False,True,False,D,Forest,High,0.1525,True
+ISMN,SNOTEL,JackCreekUpper,JackCreekUpper,41.54675,-116.00517,2249.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,498,train,True,False,False,False,False,False,B,Forest,High,0.0004,True
+ISMN,SNOTEL,JackWadeJct,JackWadeJct,64.14797,-141.32985,1052.0,20170816,20170816,20230512,5.7,MF,100.0,Dfc,True,False,499,train,True,False,False,False,False,False,D,Forest,Mid,0.0055,True
+ISMN,SNOTEL,JacksPeak,JacksPeak,41.5136,-116.0117,2573.0,20160101,20140101,20230912,9.7,ENF,70.0,BSk,True,False,500,val,False,False,False,False,False,False,B,Forest,High,0.0345,True
+ISMN,SNOTEL,JacksonPeak,JacksonPeak,44.05092,-115.44322,2152.0,20181028,20181028,20240526,5.6,ENF,70.0,Dsb,True,False,501,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,JackwhackerGulch,JackwhackerGulch,39.57096,-105.80355,3362.0,20160101,20140101,20211226,8.0,ENF,70.0,Dfb,True,False,502,val,False,False,False,False,False,False,D,Forest,High,0.0612,True
+ISMN,SNOTEL,JonesCorral,JonesCorral,38.07125,-112.16788,2960.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,503,train,True,False,False,False,False,False,B,Forest,High,0.0005,True
+ISMN,SNOTEL,JonesPass,JonesPass,39.7645,-105.90655,3176.0,20180921,20180921,20240930,6.0,ENF,70.0,Dfc,True,False,504,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Kalamazoo,Kalamazoo,39.5579,-114.62762,2359.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,505,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,KelleyR.S.,KelleyR.S.,42.26554,-110.80181,2512.0,20190119,20190119,20251230,6.9,ENF,70.0,Dfb,True,False,506,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,KellyStation,KellyStation,67.9297,-162.2906,116.0,20160101,20140101,20230812,9.6,GRA,140.0,Dfc,True,False,507,train,True,False,False,False,True,False,D,Grass-Crop,Low,0.1116,True
+ISMN,SNOTEL,KenaiMoosePens,KenaiMoosePens,60.72499,-150.47369,91.0,20160101,20140101,20251022,11.8,ENF,70.0,Dsc,True,False,508,train,True,False,False,False,False,False,D,Forest,Low,0.0318,True
+ISMN,SNOTEL,KilfoilCreek,KilfoilCreek,41.24764,-111.41249,2204.0,20160101,20140101,20250321,11.2,ENF,70.0,Dfb,True,False,509,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,KimberlyMine,KimberlyMine,38.48383,-112.39273,2777.0,20180902,20180902,20251230,7.3,ENF,70.0,BSk,True,False,510,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,KingsCabin,KingsCabin,40.71632,-109.54401,2664.0,20160101,20140101,20230706,9.5,ENF,70.0,BSk,True,False,511,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,KlondikeNarrows,KlondikeNarrows,41.96769,-111.59713,2219.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,512,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Kolob,Kolob,37.52664,-113.05386,2819.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,513,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,Lakefork#1,Lakefork#1,40.59709,-110.43316,3085.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,514,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LakeforkBasin,LakeforkBasin,40.73785,-110.62121,3319.0,20200723,20200723,20251230,5.4,ENF,70.0,BSk,True,False,516,train,True,False,False,False,False,False,B,Forest,High,0.0004,True
+ISMN,SNOTEL,LamanceCreek,LamanceCreek,41.51542,-117.63197,1948.0,20161110,20161110,20251230,9.1,GRA,130.0,BSk,True,False,517,val,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,Lamoille#3,Lamoille#3,40.6448,-115.3812,2448.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,518,val,False,False,False,False,False,False,D,Grass-Crop,High,0.0038,True
+ISMN,SNOTEL,LamoilleUpper,LamoilleUpper,40.59965,-115.37902,2740.0,20220810,20220810,20251230,3.4,GRA,130.0,Dfb,True,False,519,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.1225,True
+ISMN,SNOTEL,LapreleCreek,LapreleCreek,42.43566,-105.86051,2551.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,520,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LarsenCreek,LarsenCreek,42.58019,-109.08829,2707.0,20180815,20180815,20251230,7.4,ENF,70.0,Dfb,True,False,521,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LasalMountain,LasalMountain,38.48226,-109.27198,2920.0,20160101,20140101,20210612,7.4,ENF,70.0,BSk,True,False,522,train,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LasalMountain-Lower,LasalMountain-Lower,38.48167,-109.29164,2676.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,522,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LaurelDraw,LaurelDraw,41.77637,-116.02957,2036.0,20160101,20140101,20251230,12.0,GRA,130.0,BWk,True,False,523,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,LeavittLake,LeavittLake,38.27594,-119.61281,2926.0,20160812,20160812,20251230,9.4,SAV,120.0,Csb,True,False,524,train,True,False,False,False,True,False,C,Shrub-Savanna,High,0.3431,True
+ISMN,SNOTEL,LeavittMeadows,LeavittMeadows,38.30367,-119.55111,2195.0,20160101,20140101,20210402,7.3,ENF,70.0,Csb,True,False,525,train,False,False,False,False,False,False,C,Forest,High,0.0055,True
+ISMN,SNOTEL,LeeCanyon,LeeCanyon,36.30537,-115.67508,2627.0,20160101,20140101,20251230,12.0,ENF,70.0,BWh,True,False,526,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LewisLakeDivide,LewisLakeDivide,44.20862,-110.66628,2402.0,20160101,20140101,20210809,7.6,ENF,70.0,Dfc,True,False,527,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LewisPeak,LewisPeak,40.3572,-116.8647,2249.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,528,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LightningRidge,LightningRidge,41.35891,-111.48749,2499.0,20201104,20201104,20250321,4.4,ENF,70.0,Dfb,True,False,529,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LilyLake,LilyLake,40.86493,-110.79813,2783.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,530,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LilyPond,LilyPond,37.38028,-106.54823,3371.0,20170825,20170825,20251230,8.4,ENF,70.0,Dfb,True,False,531,train,True,False,False,False,False,False,D,Forest,High,0.0049,True
+ISMN,SNOTEL,LittleBear,LittleBear,41.40562,-111.82607,1993.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsa,True,False,532,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LittleChenaRidge,LittleChenaRidge,65.12422,-146.7339,655.0,20160101,20140101,20191013,5.8,BSV,150.0,Dfc,True,False,533,oos,False,False,False,False,False,False,D,Other,Mid,0.0,True
+ISMN,SNOTEL,LittleGrassy,LittleGrassy,37.48631,-113.84582,1847.0,20160101,20140909,20251230,11.3,ENF,70.0,BSk,True,False,534,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LittleSnakeRiver,LittleSnakeRiver,41.07051,-106.94284,2722.0,20160101,20140912,20210613,6.8,ENF,70.0,Dfb,True,False,535,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LittleValley,LittleValley,39.25259,-119.8771,1981.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,536,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LizardHeadPass,LizardHeadPass,37.79895,-107.92475,3106.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,537,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LobdellLake,LobdellLake,38.43745,-119.36572,2822.0,20160101,20140101,20251230,12.0,ENF,70.0,Csb,True,False,538,train,True,False,False,False,False,False,C,Forest,High,0.0148,True
+ISMN,SNOTEL,LoneCone,LoneCone,37.89169,-108.19636,2966.0,20160101,20140101,20220606,8.4,GRA,130.0,Dfb,True,False,539,oos,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,LonesomeBeaver,LonesomeBeaver,38.07,-110.77241,2905.0,20160101,20141016,20251230,11.2,ENF,70.0,BWk,True,False,540,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LongDrawResv,LongDrawResv,40.51154,-105.7654,3045.0,20160101,20140101,20200112,6.0,ENF,70.0,ET,True,False,541,train,False,False,False,False,True,False,E,Forest,High,0.0281,True
+ISMN,SNOTEL,LongFlat,LongFlat,37.51255,-113.39661,2435.0,20160101,20141001,20200507,5.6,ENF,70.0,BSk,True,False,542,train,False,False,False,False,True,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,LongValley,LongValley,44.78835,-116.08878,1490.0,20160101,20140101,20180326,4.2,GRA,130.0,Dsb,True,False,543,train,False,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,SNOTEL,LongValleyJct,LongValleyJct,37.48756,-112.51458,2274.0,20160101,20140922,20251230,11.3,ENF,70.0,Dfb,True,False,544,train,True,False,False,False,False,False,D,Forest,High,0.0002,True
+ISMN,SNOTEL,Lookout,Lookout,47.45749,-115.70457,1579.0,20160101,20140101,20251230,12.0,SAV,120.0,Dsb,True,False,545,train,True,False,False,False,True,False,D,Shrub-Savanna,High,0.0,True
+ISMN,SNOTEL,LookoutPeak,LookoutPeak,40.83731,-111.70965,2484.0,20160101,20140101,20210319,7.2,ENF,70.0,Dsb,True,False,546,train,False,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LostCreekResv,LostCreekResv,41.22155,-111.35947,1850.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,547,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,LostDog,LostDog,40.81557,-106.74833,2847.0,20190628,20190628,20220719,3.1,GRA,130.0,Dfc,True,False,548,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,LouisMeadow,LouisMeadow,40.83033,-111.76457,2057.0,20160101,20140101,20240204,10.1,ENF,70.0,Dsa,True,False,549,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,MagicMountain,MagicMountain,42.18071,-114.28665,2115.0,20160101,20140101,20200823,6.6,ENF,70.0,BSk,True,False,550,train,False,False,False,False,False,False,B,Forest,High,0.0002,True
+ISMN,SNOTEL,Mammoth-Cottonwood,Mammoth-Cottonwood,39.68338,-111.31818,2655.0,20160101,20140930,20210317,6.5,GRA,130.0,Dfb,True,False,551,train,False,False,False,False,True,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,MarletteLake,MarletteLake,39.16395,-119.89672,2396.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,552,train,True,False,False,False,False,False,D,Forest,High,0.1698,True
+ISMN,SNOTEL,MayCreek,MayCreek,61.34918,-142.69355,482.0,20190506,20190506,20251230,6.7,ENF,70.0,Dfc,True,False,553,oos,False,True,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,SNOTEL,McGrath,McGrath,62.94652,-155.6102,104.0,20190911,20190911,20250414,5.6,BSV,150.0,Dfc,True,False,554,train,True,False,False,False,False,False,D,Other,Low,0.2067,True
+ISMN,SNOTEL,McneilRiverSGS,McneilRiverSGS,59.08358,-154.27785,34.0,20160101,20140101,20190502,5.3,WAT,210.0,Dfc,True,False,555,train,False,False,False,False,False,False,D,Other,Low,0.0944,True
+ISMN,SNOTEL,MedBow,MedBow,41.37833,-106.34697,3200.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,556,train,True,False,False,False,False,False,D,Forest,High,0.0046,True
+ISMN,SNOTEL,MerchantValley,MerchantValley,38.30285,-112.43637,2655.0,20180928,20180928,20251230,7.2,ENF,70.0,BSk,True,False,558,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,MicaCreek,MicaCreek,47.15045,-116.26643,1366.0,20190306,20190306,20251230,6.8,ENF,70.0,Dsb,True,False,559,train,True,False,False,False,True,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,MichiganCreek,MichiganCreek,39.43579,-105.91072,3261.0,20170426,20170426,20220902,5.4,ENF,70.0,Dfb,True,False,560,train,False,False,False,False,False,False,D,Forest,High,0.0044,True
+ISMN,SNOTEL,MiddleForkCamp,MiddleForkCamp,39.79565,-106.02802,2731.0,20160101,20140101,20210706,7.5,ENF,70.0,Dfc,True,False,561,train,False,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,MidwayValley,MidwayValley,37.56933,-112.83849,2996.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,562,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Mill-DNorth,Mill-DNorth,40.65883,-111.63683,2725.0,20160101,20140101,20220328,8.2,ENF,70.0,Dsb,True,False,563,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,MiningFork,MiningFork,40.49384,-112.61141,2527.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfa,True,False,564,train,True,False,False,False,True,False,D,Grass-Crop,High,0.0042,True
+ISMN,SNOTEL,MonitorPass,MonitorPass,38.6683,-119.6087,2536.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,565,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,MonteCristo,MonteCristo,41.46547,-111.49688,2722.0,20160101,20140821,20251230,11.4,ENF,70.0,Dfb,True,False,566,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,MonumentCreek,MonumentCreek,65.07738,-145.87358,567.0,20160101,20140101,20191013,5.8,MF,100.0,Dfc,True,False,567,oos,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,MooreCreekBridge,MooreCreekBridge,59.58668,-135.19455,1024.0,20170516,20170516,20210504,4.0,ENF,70.0,Dsb,True,False,568,train,False,False,False,False,True,False,D,Forest,Mid,0.1786,True
+ISMN,SNOTEL,MormonMountain,MormonMountain,34.94141,-111.51864,2283.0,20160101,20140101,20221008,8.8,ENF,70.0,Csa,True,False,569,oos,False,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,MormonMtnSummit,MormonMtnSummit,34.96942,-111.50868,2576.0,20160101,20150513,20250321,9.8,ENF,70.0,Dsb,True,False,570,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,MosbyMtn.,MosbyMtn.,40.60798,-109.8881,2911.0,20170605,20170605,20251230,8.6,ENF,70.0,BSk,True,False,571,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,MoscowMountain,MoscowMountain,46.805,-116.8535,1433.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,572,oos,False,True,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,MosesMtn,MosesMtn,48.36166,-119.08158,1667.0,20210917,20210917,20250321,3.5,ENF,70.0,Dfb,True,False,573,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,MosquitoRidge,MosquitoRidge,48.05726,-116.23055,1606.0,20160929,20160929,20241003,8.0,ENF,70.0,Dsb,True,False,574,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Mt.Ryan,Mt.Ryan,65.25113,-146.15133,838.0,20160101,20140101,20191013,5.8,MF,100.0,Dfc,True,False,575,train,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,MtBaldy,MtBaldy,39.13648,-111.50527,2905.0,20160101,20140101,20230828,9.7,GRA,130.0,BSk,True,False,576,oos,False,True,False,False,False,False,B,Grass-Crop,High,0.0071,True
+ISMN,SNOTEL,MtPennell,MtPennell,37.97793,-110.7933,2807.0,20160101,20150818,20251230,10.4,ENF,70.0,BWk,True,False,577,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,MtRoseSkiArea,MtRoseSkiArea,39.31573,-119.89473,2685.0,20160101,20140101,20251230,12.0,SAV,120.0,Dsb,True,False,578,oos,False,True,False,False,False,False,D,Shrub-Savanna,High,0.0011,True
+ISMN,SNOTEL,MudFlat,MudFlat,42.6004,-116.55925,1753.0,20160101,20140101,20180507,4.3,SAV,120.0,BSk,True,False,579,train,False,False,False,False,True,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SNOTEL,MyrtleCreek,MyrtleCreek,48.72263,-116.46312,1079.0,20170920,20170920,20251230,8.3,ENF,70.0,Dsb,True,False,580,oos,False,True,False,False,False,True,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,NavajoWhiskeyCk,NavajoWhiskeyCk,36.17716,-108.94556,2758.0,20160101,20140101,20250321,11.2,ENF,70.0,BSk,True,False,581,train,True,False,False,False,True,False,B,Forest,High,0.0005,True
+ISMN,SNOTEL,NukaGlacier,NukaGlacier,59.69804,-150.71163,372.0,20160101,20140101,20251230,12.0,SAV,120.0,Dsc,True,False,582,train,True,False,False,False,False,False,D,Shrub-Savanna,Low,0.0234,True
+ISMN,SNOTEL,ONeilCreek,ONeilCreek,41.86411,-115.08251,1981.0,20180611,20180611,20250305,6.7,SAV,120.0,BSk,True,False,583,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,SNOTEL,OakCreek,OakCreek,39.3485,-112.192,2390.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,584,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,PalisadesTahoe,PalisadesTahoe,39.18986,-120.26576,2441.0,20160101,20140101,20251230,12.0,GRA,130.0,Dsb,True,False,585,train,True,False,False,False,True,False,D,Grass-Crop,High,0.0164,True
+ISMN,SNOTEL,Palo,Palo,36.40869,-105.33038,2844.0,20160101,20140101,20230507,9.3,ENF,70.0,Dfb,True,False,586,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,PanguitchLakeRS,PanguitchLakeRS,37.70463,-112.65037,2530.0,20160101,20140528,20251230,11.6,ENF,70.0,Dfb,True,False,587,oos,False,True,False,False,False,False,D,Forest,High,0.1901,True
+ISMN,SNOTEL,ParkCone,ParkCone,38.81982,-106.58962,2926.0,20210302,20210302,20250321,4.1,ENF,70.0,Dfc,True,False,588,train,True,False,False,False,False,False,D,Forest,High,0.3254,True
+ISMN,SNOTEL,ParkReservoir,ParkReservoir,39.04433,-107.87951,3045.0,20160101,20140101,20210628,7.5,ENF,70.0,Dfb,True,False,589,train,False,False,False,False,True,False,D,Forest,High,0.0639,True
+ISMN,SNOTEL,ParleysSummit,ParleysSummit,40.76184,-111.62917,2313.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,590,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ParleysUpper,ParleysUpper,40.70194,-111.60619,2539.0,20190821,20190821,20251230,6.4,ENF,70.0,Dsb,True,False,591,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ParrishCreek,ParrishCreek,40.93417,-111.81372,2365.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsa,True,False,592,oos,False,True,False,False,False,True,D,Forest,High,0.0,True
+ISMN,SNOTEL,PaysonR.S.,PaysonR.S.,39.92976,-111.63109,2454.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfa,True,False,593,oos,False,True,False,False,False,False,D,Forest,High,0.0104,True
+ISMN,SNOTEL,PebbleCreek,PebbleCreek,42.7674,-112.10648,1987.0,20211013,20211013,20251230,4.2,ENF,70.0,Dfb,True,False,594,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,PhantomValley,PhantomValley,40.39803,-105.84606,2752.0,20160101,20140101,20231224,10.0,ENF,70.0,ET,True,False,595,train,True,False,False,False,True,False,E,Forest,High,0.0,True
+ISMN,SNOTEL,PickleKeg,PickleKeg,39.01219,-111.58259,2746.0,20160101,20140101,20220216,8.1,ENF,70.0,BSk,True,False,596,train,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,PierceR.S.,PierceR.S.,46.49597,-115.7957,939.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsa,True,False,597,train,True,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,PineCreek,PineCreek,38.88185,-112.24915,2658.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,598,oos,False,True,False,False,False,False,B,Forest,High,0.0004,True
+ISMN,SNOTEL,PocketCreek,PocketCreek,42.7121,-109.4112,2856.0,20170712,20170712,20230920,6.2,ENF,70.0,Dfb,True,False,599,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,PoisonFlat,PoisonFlat,38.50576,-119.62624,2356.0,20160101,20140101,20220720,8.6,ENF,70.0,Csb,True,False,600,train,False,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,PoleCanyon,PoleCanyon,40.86293,-115.12067,2365.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,601,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,PoleCreekR.S.,PoleCreekR.S.,41.87255,-115.24713,2548.0,20160101,20140101,20190716,5.5,ENF,70.0,BSk,True,False,602,train,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,PorphyryCreek,PorphyryCreek,38.48864,-106.33967,3289.0,20160101,20140101,20220706,8.5,ENF,70.0,Dfb,True,False,603,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,PortGraham,PortGraham,59.35065,-151.84768,82.0,20160101,20140101,20220601,8.4,ENF,70.0,Dfc,True,False,604,train,False,False,False,False,False,False,D,Forest,Low,0.2933,True
+ISMN,SNOTEL,PorterCanyon,PorterCanyon,39.46544,-117.62069,2192.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,605,val,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,PowderMountain,PowderMountain,41.37428,-111.76673,2588.0,20220627,20220627,20251230,3.5,ENF,70.0,Dsa,True,False,606,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,QuartzMountain,QuartzMountain,42.31923,-120.82533,1740.0,20220901,20220901,20251230,3.3,GRA,130.0,Dsb,True,False,607,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,QuartzPeak,QuartzPeak,47.87927,-117.08938,1436.0,20190822,20190822,20251230,6.3,ENF,70.0,Dsb,True,False,608,oos,False,True,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,Quemazon,Quemazon,35.92195,-106.39179,2893.0,20180509,20180509,20250321,6.9,ENF,70.0,Dfb,True,False,609,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,RaggedMountain,RaggedMountain,47.85583,-117.03667,1283.0,20160101,20140101,20250318,11.2,ENF,70.0,Dsb,True,False,610,val,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,RainbowCanyon,RainbowCanyon,36.2493,-115.62972,2390.0,20160101,20140101,20251230,12.0,ENF,70.0,BWh,True,False,611,oos,False,True,False,False,False,False,B,Forest,High,0.0002,True
+ISMN,SNOTEL,RainyPass,RainyPass,48.51865,-120.7358,1487.0,20210202,20210202,20251102,4.8,URB,190.0,Dsb,True,False,612,oos,False,True,False,False,False,False,D,Other,Mid,0.0038,True
+ISMN,SNOTEL,ReddenMineLwr,ReddenMineLwr,40.67505,-111.21765,2603.0,20160101,20140101,20250321,11.2,ENF,70.0,Dfb,True,False,613,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ReesFlat,ReesFlat,39.49667,-111.72508,2188.0,20160101,20140101,20251119,11.9,ENF,70.0,BSk,True,False,614,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,ReynoldsCreek,ReynoldsCreek,43.28863,-116.8431,1704.0,20160101,20140101,20190826,5.7,GRA,130.0,BSk,True,False,615,train,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,RioSantaBarbara,RioSantaBarbara,36.07196,-105.62949,3243.0,20170921,20170921,20251230,8.3,ENF,70.0,Dfb,True,False,616,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,RockCreek,RockCreek,40.54875,-110.69292,2402.0,20160101,20140101,20250223,11.1,ENF,70.0,BSk,True,False,617,oos,False,True,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,RockSprings,RockSprings,44.00883,-118.83842,1612.0,20220624,20220624,20251230,3.5,ENF,70.0,BSk,True,False,618,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,RockwoodGS,RockwoodGS,38.67101,-112.3305,2621.0,20220909,20220909,20251230,3.3,GRA,130.0,BSk,True,False,619,oos,False,True,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,RockyBasin-Settleme,RockyBasin-Settleme,40.44293,-112.22377,2652.0,20160101,20140101,20220707,8.5,ENF,70.0,Dfa,True,False,620,train,False,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,RoughAndTumble,RoughAndTumble,39.02611,-106.08063,3176.0,20160101,20140101,20210807,7.6,ENF,70.0,Dfb,True,False,621,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Rubicon#2,Rubicon#2,38.99927,-120.13139,2307.0,20160101,20140827,20251230,11.3,ENF,70.0,Dsb,True,False,622,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SageCreekBasin,SageCreekBasin,41.40107,-107.2574,2387.0,20160101,20140101,20200511,6.4,GRA,130.0,BSk,True,False,623,train,False,False,False,False,True,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,SaltRiverSummit,SaltRiverSummit,42.5075,-110.9099,2326.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,624,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SandstoneRS,SandstoneRS,41.11179,-107.17043,2484.0,20170817,20170817,20251230,8.4,ENF,70.0,Dfb,True,False,625,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SantaFe,SantaFe,35.77154,-105.78487,3499.0,20160101,20150312,20251230,10.7,ENF,70.0,Dfb,True,False,626,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SantaquinMeadows,SantaquinMeadows,39.92076,-111.71802,2387.0,20161027,20161027,20240109,7.2,ENF,70.0,Dfa,True,False,627,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SavagePass,SavagePass,46.46633,-114.63333,1881.0,20180822,20180822,20251230,7.4,ENF,70.0,Dfb,True,False,628,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Sawtooth,Sawtooth,40.13632,-105.58486,2938.0,20180206,20180206,20220406,4.2,ENF,70.0,Dfc,True,False,629,val,False,False,False,False,False,False,D,Forest,High,0.0005,True
+ISMN,SNOTEL,SchofieldPass,SchofieldPass,39.01467,-107.04933,3243.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,630,train,True,False,False,False,False,False,D,Forest,High,0.0263,True
+ISMN,SNOTEL,SeeleyCreek,SeeleyCreek,39.31042,-111.43297,3018.0,20160101,20140101,20251013,11.8,GRA,130.0,Dfb,True,False,631,train,True,False,False,False,False,False,D,Grass-Crop,High,0.0058,True
+ISMN,SNOTEL,SenoritaDivide#2,SenoritaDivide#2,36.00152,-106.83408,2609.0,20210306,20210306,20250321,4.0,ENF,70.0,Dfb,True,False,632,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SeventysixCreek,SeventysixCreek,41.73732,-115.47215,2243.0,20160101,20140101,20230910,9.7,GRA,130.0,BSk,True,False,633,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,ShanghiSummit,ShanghiSummit,46.56603,-115.74216,1399.0,20190806,20190806,20251230,6.4,ENF,70.0,Dsa,True,False,634,train,True,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,Sharkstooth,Sharkstooth,37.50356,-108.11405,3271.0,20160101,20140101,20200721,6.6,ENF,70.0,Dfb,True,False,635,oos,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SheepMtn.,SheepMtn.,43.2103,-111.68792,2021.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,636,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Sheldon,Sheldon,41.90435,-119.44464,1786.0,20160101,20140101,20230508,9.3,GRA,130.0,BSk,True,False,637,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0004,True
+ISMN,SNOTEL,Sherwin,Sherwin,46.95028,-116.33972,972.0,20201014,20201014,20251230,5.2,ENF,70.0,Dsb,True,False,638,val,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,SNOTEL,Shuree,Shuree,36.78765,-105.2392,3072.0,20190606,20190606,20251230,6.6,ENF,70.0,Dfb,True,False,639,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Silvies,Silvies,42.75333,-118.68785,2134.0,20221001,20221001,20251230,3.2,ENF,70.0,BSk,True,False,640,oos,False,True,False,False,False,True,B,Forest,High,0.0,True
+ISMN,SNOTEL,Slumgullion,Slumgullion,37.99076,-107.20392,3523.0,20171026,20171026,20251230,8.2,ENF,70.0,Dfc,True,False,641,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SmithMorehouse,SmithMorehouse,40.78931,-111.09192,2329.0,20160101,20140905,20221226,8.3,ENF,70.0,Dfb,True,False,642,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SnakeRiverStation,SnakeRiverStation,44.13361,-110.66917,2103.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,643,val,False,False,False,False,False,False,D,Forest,High,0.0053,True
+ISMN,SNOTEL,Snowbird,Snowbird,40.56914,-111.65852,2795.0,20190711,20190711,20251230,6.5,ENF,70.0,Dsb,True,False,644,train,True,False,False,False,False,False,D,Forest,High,0.002,True
+ISMN,SNOTEL,SomsenRanch,SomsenRanch,42.95275,-111.35933,2082.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,645,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SonoraPass,SonoraPass,38.31021,-119.6003,2673.0,20160101,20140101,20230615,9.5,ENF,70.0,Csb,True,False,646,val,False,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,SourdoughGulch,SourdoughGulch,46.23713,-117.39435,1207.0,20160101,20140101,20250623,11.5,GRA,130.0,BSk,True,False,647,train,True,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,SNOTEL,SouthBrushCreek,SouthBrushCreek,41.3295,-106.5025,2585.0,20170818,20170818,20251230,8.4,ENF,70.0,Dfb,True,False,648,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SouthMtn.,SouthMtn.,42.76476,-116.90029,2027.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,649,val,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,SpiritLk,SpiritLk,40.83868,-110.00527,3121.0,20160101,20140101,20241225,11.0,ENF,70.0,BSk,True,False,650,train,True,False,False,False,False,False,B,Forest,High,0.0365,True
+ISMN,SNOTEL,SprattCreek,SprattCreek,38.66627,-119.81741,1847.0,20160101,20140101,20210715,7.5,ENF,70.0,Csb,True,False,651,train,False,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,SNOTEL,SpringCreek,SpringCreek,61.65653,-149.12926,180.0,20191206,20191206,20251230,6.0,WET,180.0,Dsc,True,False,652,train,True,False,False,False,True,False,D,Other,Low,0.0004,True
+ISMN,SNOTEL,StateLine,StateLine,41.98609,-120.71574,1734.0,20210706,20210706,20250321,3.7,GRA,130.0,Dsb,True,False,653,train,True,False,False,False,True,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,SteelCreekPark,SteelCreekPark,40.90862,-110.50462,3091.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,654,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,StickneyMill,StickneyMill,43.86117,-114.20902,2268.0,20160730,20160730,20251230,9.4,SAV,120.0,Dfb,True,False,655,oos,False,True,False,False,False,False,D,Shrub-Savanna,High,0.1326,True
+ISMN,SNOTEL,StillwaterCreek,StillwaterCreek,40.22532,-105.9198,2670.0,20201118,20201118,20251230,5.1,ENF,70.0,Dfc,True,False,656,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,StrawberryDivide,StrawberryDivide,40.16483,-111.20665,2469.0,20161105,20161105,20251230,9.1,ENF,70.0,Dfb,True,False,657,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SummitCreek,SummitCreek,60.61713,-149.53128,408.0,20160101,20140101,20210920,7.7,MF,100.0,Dfc,True,False,658,train,False,False,False,False,False,False,D,Forest,Low,0.0347,True
+ISMN,SNOTEL,SummitLk,SummitLk,41.48953,-118.99663,2313.0,20180820,20180820,20251230,7.4,ENF,70.0,BSk,True,False,659,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,SummitMeadow,SummitMeadow,38.39747,-119.53522,2853.0,20160101,20140101,20251126,11.9,SAV,120.0,Csb,True,False,660,train,True,False,False,False,False,False,C,Shrub-Savanna,High,0.0037,True
+ISMN,SNOTEL,SummitRanch,SummitRanch,39.71803,-106.1577,2850.0,20160106,20160106,20210803,5.6,ENF,70.0,Dfc,True,False,661,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SunflowerFlat,SunflowerFlat,38.048,-111.33981,3051.0,20160101,20141002,20251119,11.1,ENF,70.0,BSk,True,False,662,val,False,False,False,False,False,False,B,Forest,High,0.0005,True
+ISMN,SNOTEL,Sunset,Sunset,47.55545,-115.82422,1701.0,20160826,20160826,20210915,5.0,ENF,70.0,Dsb,True,False,663,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SusitnaValleyHigh,SusitnaValleyHigh,62.13245,-150.04391,113.0,20160101,20140703,20240502,9.8,WET,180.0,Dfc,True,False,664,train,True,False,False,False,False,False,D,Other,Low,0.0533,True
+ISMN,SNOTEL,SuuRanch,SuuRanch,37.59711,-112.92949,2454.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfa,True,False,665,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,SwedePeak,SwedePeak,43.626,-113.96887,2329.0,20190119,20190119,20251230,6.9,ENF,70.0,Dsb,True,False,666,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,TahoeCityCross,TahoeCityCross,39.17162,-120.15362,2060.0,20160101,20140101,20251230,12.0,ENF,70.0,Dsb,True,False,667,train,True,False,False,False,False,False,D,Forest,High,0.0015,True
+ISMN,SNOTEL,TakkaWiiya,TakkaWiiya,39.74104,-113.98262,2777.0,20161102,20161102,20240513,7.5,ENF,70.0,BWk,True,False,668,train,True,False,False,False,True,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,TaosPowderhorn,TaosPowderhorn,36.58195,-105.45617,3362.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,669,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,TaosPueblo,TaosPueblo,36.54099,-105.35944,3350.0,20210923,20210923,20250321,3.5,ENF,70.0,Dfb,True,False,670,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,TaylorCanyon,TaylorCanyon,41.2287,-116.0293,1926.0,20190622,20190622,20230510,3.9,GRA,130.0,BSk,True,False,671,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,TelaquanaLake,TelaquanaLake,60.98347,-153.91866,369.0,20161017,20161017,20251230,9.2,ENF,70.0,Dfc,True,False,672,val,False,False,False,False,False,False,D,Forest,Low,0.2701,True
+ISMN,SNOTEL,TempleFork,TempleFork,41.793,-111.54605,2262.0,20181001,20181001,20251230,7.2,ENF,70.0,Dfb,True,False,673,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,ThaynesCanyon,ThaynesCanyon,40.6235,-111.53322,2819.0,20160101,20140101,20200201,6.1,GRA,130.0,Dsb,True,False,674,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,ThistleFlat,ThistleFlat,39.23803,-111.51998,2679.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,675,train,True,False,False,False,True,False,B,Forest,High,0.0005,True
+ISMN,SNOTEL,ThumbDivide,ThumbDivide,44.36917,-110.57717,2429.0,20160101,20150720,20250423,9.7,ENF,70.0,Dfc,True,False,676,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Timberline,Timberline,39.67712,-110.43395,2658.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,677,train,True,False,False,False,True,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,TimpanogosDivide,TimpanogosDivide,40.42817,-111.61633,2493.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,678,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,Tipton,Tipton,44.65567,-118.42617,1570.0,20220623,20220623,20251230,3.5,ENF,70.0,BSk,True,False,679,oos,False,True,False,False,False,False,B,Forest,High,0.0007,True
+ISMN,SNOTEL,ToeJam,ToeJam,41.3187,-116.3408,2347.0,20160101,20140101,20240711,10.5,GRA,130.0,BWk,True,False,680,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,Tok,Tok,63.32529,-143.03834,500.0,20210301,20210301,20250321,4.1,ENF,70.0,Dwc,True,False,681,train,True,False,False,False,False,False,D,Forest,Mid,0.01,True
+ISMN,SNOTEL,TokositnaValley,TokositnaValley,62.62918,-150.7741,256.0,20170507,20170507,20251230,8.7,MF,100.0,Dfc,True,False,682,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,SNOTEL,TonyGroveLake,TonyGroveLake,41.89833,-111.62957,2576.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,683,train,True,False,False,False,False,False,D,Forest,High,0.0015,True
+ISMN,SNOTEL,TonyGroveRS,TonyGroveRS,41.88573,-111.56918,1926.0,20160101,20140101,20200603,6.4,GRA,130.0,Dfb,True,False,684,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,Touchet,Touchet,46.11868,-117.8505,1682.0,20160101,20140101,20201027,6.8,ENF,70.0,Dsb,True,False,685,train,False,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,TresRitos,TresRitos,36.1279,-105.52706,2664.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,686,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,TrialLake,TrialLake,40.678,-110.94873,3039.0,20160101,20140101,20230131,9.1,ENF,70.0,Dfb,True,False,687,train,True,False,False,False,False,False,D,Forest,High,0.0866,True
+ISMN,SNOTEL,TriplePeak,TriplePeak,42.76393,-110.5914,2597.0,20160813,20160813,20250305,8.6,ENF,70.0,Dfc,True,False,688,train,True,False,False,False,False,False,D,Forest,High,0.0018,True
+ISMN,SNOTEL,Trough,Trough,47.23328,-120.29412,1670.0,20200612,20200612,20231126,3.4,MF,100.0,BWk,True,False,689,train,True,False,False,False,False,False,B,Forest,High,0.0013,True
+ISMN,SNOTEL,TroutCreek,TroutCreek,40.739,-109.6728,2877.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,690,train,True,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,Truckee#2,Truckee#2,39.30087,-120.18407,1981.0,20160101,20140101,20250321,11.2,ENF,70.0,Dsb,True,False,691,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,UpperJoesValley,UpperJoesValley,39.4155,-111.2491,2621.0,20160101,20140101,20200613,6.5,GRA,130.0,Dfb,True,False,692,train,False,False,False,False,True,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,UpperNomeCreek,UpperNomeCreek,65.3671,-146.592,762.0,20160101,20140101,20201122,6.9,BSV,150.0,Dfc,True,False,693,train,False,False,False,False,True,False,D,Other,Mid,0.0194,True
+ISMN,SNOTEL,UpperRioGrande,UpperRioGrande,37.72172,-107.25971,2856.0,20170425,20170425,20230712,6.2,ENF,70.0,Dfc,True,False,694,val,False,False,False,False,False,False,D,Forest,High,0.0148,True
+ISMN,SNOTEL,UpperSanJuan,UpperSanJuan,37.48563,-106.83528,3091.0,20160101,20140715,20230730,9.0,ENF,70.0,Dfc,True,False,716,oos,False,True,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,UpperTaylor,UpperTaylor,38.99071,-106.74504,3264.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfc,True,False,695,train,True,False,False,False,False,False,D,Forest,High,0.0015,True
+ISMN,SNOTEL,UpperTsainaRiver,UpperTsainaRiver,61.19112,-145.64807,527.0,20180907,20180907,20251230,7.3,MF,100.0,Dfc,True,False,696,train,True,False,False,False,True,False,D,Forest,Mid,0.0119,True
+ISMN,SNOTEL,UsuDocDaniel,UsuDocDaniel,41.86425,-111.50603,2624.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,697,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,VacarroSprings,VacarroSprings,39.4495,-115.9834,2405.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,698,train,True,False,False,False,False,False,D,Forest,High,0.0035,True
+ISMN,SNOTEL,VacasLocas,VacasLocas,36.02653,-106.81361,2850.0,20160101,20140101,20230713,9.5,ENF,70.0,Dfb,True,False,699,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,VernonCreek,VernonCreek,39.93667,-112.41478,2228.0,20160101,20140101,20251230,12.0,GRA,130.0,BSk,True,False,700,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,VirginiaLakesRidge,VirginiaLakesRidge,38.07298,-119.23433,2865.0,20160101,20140101,20251230,12.0,ENF,70.0,Csa,True,False,701,train,True,False,False,False,False,False,C,Forest,High,0.0005,True
+ISMN,SNOTEL,WardCreek#3,WardCreek#3,39.13545,-120.21865,2057.0,20160101,20140101,20251119,11.9,ENF,70.0,Dsb,True,False,702,train,True,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,WardMountain,WardMountain,39.13242,-114.95575,2795.0,20160101,20140101,20210608,7.4,ENF,70.0,BSk,True,False,703,train,False,False,False,False,False,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,WebsterFlat,WebsterFlat,37.575,-112.90155,2789.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfa,True,False,704,train,True,False,False,False,False,False,D,Forest,High,0.0002,True
+ISMN,SNOTEL,WesnerSprings,WesnerSprings,35.77584,-105.54337,3386.0,20180508,20180508,20220510,4.0,ENF,70.0,BSk,True,False,705,train,False,False,False,False,True,False,B,Forest,High,0.0,True
+ISMN,SNOTEL,WheelerPeak,WheelerPeak,39.00995,-114.31021,3069.0,20180628,20180628,20251119,7.4,ENF,70.0,BSk,True,False,706,train,True,False,False,False,False,False,B,Forest,High,0.0007,True
+ISMN,SNOTEL,WhiteRiver#1,WhiteRiver#1,39.9645,-110.98845,2627.0,20160101,20140101,20251230,12.0,GRA,130.0,Dfb,True,False,708,train,True,False,False,False,True,False,D,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,Widtsoe#3,Widtsoe#3,37.83633,-111.88163,2938.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,709,train,True,False,False,False,False,False,B,Forest,High,0.0197,True
+ISMN,SNOTEL,WilburBench,WilburBench,39.89166,-110.74604,2795.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,710,train,True,False,False,False,False,False,D,Forest,High,0.0007,True
+ISMN,SNOTEL,WildBasin,WildBasin,40.201,-105.6025,2868.0,20160817,20160817,20220715,5.9,ENF,70.0,Dfc,True,False,711,train,False,False,False,False,True,False,D,Forest,High,0.0013,True
+ISMN,SNOTEL,WildhorseDivide,WildhorseDivide,42.75743,-112.47783,1975.0,20160101,20140805,20200802,6.0,ENF,70.0,Dfb,True,False,712,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,WilsonCreek,WilsonCreek,42.01257,-115.00278,2167.0,20160101,20140101,20200922,6.7,GRA,130.0,BSk,True,False,713,train,False,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,WindyPeak,WindyPeak,42.27991,-105.57782,2408.0,20160101,20140101,20200508,6.4,ENF,70.0,Dfb,True,False,714,train,False,False,False,False,True,False,D,Forest,High,0.0,True
+ISMN,SNOTEL,WolfCreekPeak,WolfCreekPeak,40.47733,-111.04469,2978.0,20200901,20200901,20251230,5.3,GRA,130.0,BSk,True,False,715,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+ISMN,SNOTEL,WolfCreekSummit,WolfCreekSummit,37.47903,-106.80234,3331.0,20160101,20140101,20220411,8.3,ENF,70.0,Dfc,True,False,716,oos,False,False,False,False,False,False,D,Forest,High,0.0002,True
+ISMN,SNOTEL,WrigleyCreek,WrigleyCreek,39.13233,-111.35685,2844.0,20160101,20140101,20251230,12.0,ENF,70.0,BSk,True,False,717,oos,False,True,False,False,False,False,B,Forest,High,0.0002,True
+ISMN,SNOTEL,YankeeReservoir,YankeeReservoir,37.74797,-112.77495,2649.0,20160101,20140101,20251230,12.0,ENF,70.0,Dfb,True,False,718,oos,False,True,False,False,False,False,D,Forest,High,0.0614,True
+ISMN,SNOTEL,Zirkel,Zirkel,40.79492,-106.59544,2841.0,20160101,20150211,20250320,10.1,ENF,70.0,Dfc,True,False,719,val,False,False,False,False,False,False,D,Forest,High,0.0005,True
+ISMN,SOILSCAPE,Lucky-Hills-1503,Lucky-Hills-1503,31.74302,-110.05263,1367.5,20220827,20220827,20251201,3.3,SAV,120.0,BSk,True,False,956,oos,False,True,False,False,False,True,B,Shrub-Savanna,Mid,0.0,True
+ISMN,SOILSCAPE,Lucky-Hills-1506,Lucky-Hills-1506,31.74404,-110.05301,1370.5,20220901,20220901,20251230,3.3,SAV,120.0,BSk,True,False,956,oos,False,True,False,False,False,True,B,Shrub-Savanna,Mid,0.0,True
+ISMN,STEMS,CarpenetopermanentGrassCoverNoTrackposition,CarpenetopermanentGrassCoverNoTrackposition,44.68278,8.6267,275.0,20170510,20170510,20210118,3.7,CRO,12.0,Cfa,True,False,720,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,STEMS,CarpenetopermanentGrassCoverTrackposition,CarpenetopermanentGrassCoverTrackposition,44.68277,8.62669,275.0,20170510,20170510,20210118,3.7,CRO,12.0,Cfa,True,False,720,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,TERENO,Gevenich,Gevenich,50.9892,6.32355,84.0,20201123,20201123,20251230,5.0,CRO,10.0,Cfb,True,False,722,oos,False,True,False,False,False,True,C,Grass-Crop,Low,0.0,True
+ISMN,TERENO,Merzenhausen,Merzenhausen,50.9303,6.29747,94.0,20160101,20140915,20200322,5.5,CRO,10.0,Cfb,True,False,723,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TERENO,Schoeneseiffen,Schoeneseiffen,50.5149,6.37559,612.0,20160101,20150623,20200323,4.8,GRA,130.0,Cfb,True,False,724,train,False,False,False,False,True,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TERENO,Selhausen,Selhausen,50.8691,6.44954,103.76,20160101,20140101,20230803,9.5,CRO,10.0,Cfb,True,False,858,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,Hupsel,Hupsel,52.06747,6.65677,27.0,20171220,20171220,20201230,3.0,GRA,130.0,Dfb,True,False,726,train,False,False,False,False,True,False,D,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,ITCSM-07b,ITCSM-07b,52.37328,6.96228,22.0,20160101,20151103,20201230,5.2,CRO,10.0,Dfb,True,False,728,oos,False,False,False,False,False,True,D,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,ITCSM-08b,ITCSM-08b,52.13578,6.74507,29.0,20160101,20151009,20201230,5.2,CRO,10.0,Dfb,True,False,729,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,ITCSM-09,ITCSM-09,52.14639,6.84306,29.0,20160101,20150719,20201230,5.5,MF,100.0,Dfb,True,False,730,train,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ISMN,TWENTE,ITCSM-13,ITCSM-13,52.19389,6.4175,8.0,20160101,20140703,20201230,6.5,GRA,130.0,Cfb,True,False,731,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,ITCSM-15b,ITCSM-15b,52.31036,6.61053,9.0,20160307,20160307,20190317,3.0,GRA,130.0,Dfb,True,False,732,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,ITCSM-16b,ITCSM-16b,52.36781,6.53525,8.0,20160101,20141107,20191110,5.0,GRA,130.0,Cfb,True,False,733,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TWENTE,ITCSM-17c,ITCSM-17c,52.41877,6.5407,10.0,20160401,20160401,20200221,3.9,CRO,10.0,Cfb,True,False,734,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR1000-1,CR1000-1,30.4205,-98.8033,543.0,20180506,20180506,20220416,3.9,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR1000-2,CR1000-2,30.2454,-98.7059,458.0,20160101,20141003,20210605,6.7,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR1000-3,CR1000-3,30.2758,-98.7242,499.0,20160101,20141112,20221107,8.0,GRA,130.0,Cfa,True,False,739,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR1000-4,CR1000-4,30.46,-98.9407,588.0,20160101,20141114,20221107,8.0,GRA,130.0,Cfa,True,False,735,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR1000-5,CR1000-5,30.3989,-98.6105,503.0,20160101,20141114,20221107,8.0,GRA,130.0,Cfa,True,False,736,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR1000-6,CR1000-6,30.4421,-98.8427,538.0,20160101,20141204,20221107,7.9,GRA,130.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-1,CR200-1,30.4376,-98.8059,524.0,20160101,20141001,20210921,7.0,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-10,CR200-10,30.3072,-98.7703,505.0,20160101,20141001,20191120,5.1,GRA,130.0,Cfa,True,False,737,val,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-11,CR200-11,30.2317,-98.7685,468.0,20160101,20141002,20190325,4.5,CRO,10.0,Cfa,True,False,741,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-12,CR200-12,30.2108,-98.8331,481.0,20160101,20141002,20221107,8.1,GRA,130.0,Cfa,True,False,738,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-13,CR200-13,30.4327,-98.8583,555.0,20160101,20141010,20221107,8.1,GRA,130.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-14,CR200-14,30.4151,-98.8025,528.0,20160101,20141009,20221107,8.1,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-15,CR200-15,30.2501,-98.7069,468.0,20160101,20141003,20221107,8.1,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-16,CR200-16,30.2836,-98.7417,501.0,20160101,20141110,20220708,7.6,GRA,130.0,Cfa,True,False,739,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-17,CR200-17,30.2754,-98.7268,502.0,20160101,20141111,20221107,8.0,GRA,130.0,Cfa,True,False,739,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-18,CR200-18,30.2456,-98.6988,460.0,20160101,20141111,20221107,8.0,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-19,CR200-19,30.4175,-98.8542,595.0,20160101,20141203,20210211,6.2,ENF,70.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,TxSON,CR200-2,CR200-2,30.2896,-98.745,523.0,20160101,20141002,20221107,8.1,GRA,130.0,Cfa,True,False,739,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-21,CR200-21,30.4218,-98.7839,541.0,20160101,20141113,20221107,8.0,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-22,CR200-22,30.4315,-98.8604,548.0,20160101,20141231,20190207,4.1,GRA,130.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0002,True
+ISMN,TxSON,CR200-23,CR200-23,30.2022,-98.6543,504.0,20160101,20141112,20221107,8.0,GRA,130.0,Cfa,True,False,740,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-24,CR200-24,30.2534,-98.699,468.0,20160101,20141112,20221107,8.0,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-25,CR200-25,30.2492,-98.6995,465.0,20160101,20141112,20221107,8.0,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-26,CR200-26,30.4193,-98.8046,560.0,20160101,20141114,20221107,8.0,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-28,CR200-28,30.4613,-98.8451,604.0,20160101,20141203,20221107,7.9,ENF,70.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,TxSON,CR200-29,CR200-29,30.4487,-98.848,596.0,20160101,20141204,20220711,7.6,GRA,130.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-3,CR200-3,30.4283,-98.8065,527.0,20160101,20141001,20221107,8.1,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-4,CR200-4,30.4298,-98.7792,511.0,20170127,20170127,20221107,5.7,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-5,CR200-5,30.2381,-98.7701,469.0,20160101,20141002,20221012,8.0,GRA,130.0,Cfa,True,False,741,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-6,CR200-6,30.2383,-98.7037,450.0,20160101,20141003,20221107,8.1,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-7,CR200-7,30.2318,-98.7084,456.0,20160101,20141001,20191202,5.2,GRA,130.0,Cfa,True,False,742,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,TxSON,CR200-8,CR200-8,30.2834,-98.6864,539.0,20160101,20141002,20221107,8.1,GRA,130.0,Cfa,True,False,743,train,False,False,False,False,True,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,CR200-9,CR200-9,30.4319,-98.8133,534.0,20160101,20141001,20221107,8.1,GRA,130.0,Cfa,True,False,744,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,LCRA-1,LCRA-1,30.4306,-98.6136,430.0,20160101,20141031,20221102,8.0,ENF,70.0,Cfa,True,False,745,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,TxSON,LCRA-2,LCRA-2,30.4206,-98.8518,614.0,20160101,20141031,20221102,7.9,ENF,70.0,Cfa,True,False,746,oos,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,TxSON,LCRA-3,LCRA-3,30.1713,-98.6136,501.0,20160101,20141030,20221102,8.0,GRA,130.0,Cfa,True,False,747,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0037,True
+ISMN,TxSON,LCRA-4,LCRA-4,30.3423,-98.8679,547.0,20160101,20141031,20221102,8.0,GRA,130.0,Cfa,True,False,748,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0015,True
+ISMN,TxSON,LCRA-5,LCRA-5,30.33,-98.6116,501.0,20160826,20160826,20220312,5.3,GRA,130.0,Cfa,True,False,749,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,TxSON,LCRA-6,LCRA-6,30.2408,-98.6253,429.0,20160101,20141030,20220312,7.4,GRA,130.0,Cfa,True,False,750,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0075,True
+ISMN,TxSON,LCRA-7,LCRA-7,30.1658,-98.9498,556.0,20160101,20150121,20220312,7.1,GRA,130.0,Cfa,True,False,751,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,USCRN,Asheville-13-S,Asheville-13-S,35.4185,-82.5567,641.0,20160101,20140101,20211102,7.8,GRA,130.0,Cfa,True,False,752,oos,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,USCRN,Austin-33-NW,Austin-33-NW,30.6222,-98.0846,415.0,20160101,20140101,20211102,7.7,GRA,130.0,Cfa,True,False,753,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Baker-5-W,Baker-5-W,39.0118,-114.209,2017.0,20160107,20160107,20200109,3.9,SAV,120.0,BSk,True,False,754,oos,False,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+ISMN,USCRN,Batesville-8-WNW,Batesville-8-WNW,35.8201,-91.7812,139.0,20160101,20140101,20211116,7.8,CRO,10.0,Cfa,True,False,755,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Bedford-5-WNW,Bedford-5-WNW,38.8882,-86.5707,232.0,20180112,20180112,20211116,3.8,GRA,130.0,Dfa,True,False,756,train,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Bowling-Green-21-NNE,Bowling-Green-21-NNE,37.2504,-86.2325,241.0,20160101,20150630,20191015,4.3,DBF,61.0,Cfa,True,False,758,oos,False,False,False,False,False,True,C,Forest,Low,0.0,True
+ISMN,USCRN,Bronte-11-NNE,Bronte-11-NNE,32.0408,-100.2495,609.0,20170304,20170304,20211102,4.7,GRA,130.0,Cfa,True,False,759,train,False,False,False,False,True,False,C,Grass-Crop,Mid,0.0,True
+ISMN,USCRN,Brunswick-23-S,Brunswick-23-S,30.8078,-81.4596,8.0,20160101,20140101,20190524,5.4,ENF,70.0,Cfa,True,False,760,train,False,False,False,False,False,False,C,Forest,Low,0.0382,True
+ISMN,USCRN,Cape-Charles-5-ENE,Cape-Charles-5-ENE,37.2907,-75.927,9.0,20160101,20150305,20211102,6.6,CRO,11.0,Cfa,True,False,761,oos,False,False,False,False,False,True,C,Grass-Crop,Low,0.181,True
+ISMN,USCRN,Charlottesville-2-SSE,Charlottesville-2-SSE,37.9975,-78.4656,359.0,20160101,20140101,20211102,7.7,DBF,60.0,Cfa,True,False,762,oos,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,USCRN,Chatham-1-SE,Chatham-1-SE,46.3345,-86.92,267.0,20160101,20140101,20211102,7.8,GRA,130.0,Dfb,True,False,763,train,False,False,False,False,True,False,D,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Cortez-8-SE,Cortez-8-SE,37.2553,-108.5035,2449.0,20160101,20150111,20180115,3.0,GRA,130.0,Dfa,True,False,764,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,USCRN,Corvallis-10-SSW,Corvallis-10-SSW,44.4185,-123.3257,95.0,20160101,20140101,20211102,7.8,GRA,130.0,Csb,True,False,765,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0243,True
+ISMN,USCRN,Crossville-7-NW,Crossville-7-NW,36.0138,-85.1345,583.0,20160101,20140101,20180101,4.0,GRA,130.0,Cfa,True,False,766,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,USCRN,Durham-11-W,Durham-11-W,35.9705,-79.0931,171.0,20160101,20140219,20210531,7.2,SAV,110.0,Cfa,True,False,768,train,False,False,False,False,False,False,C,Shrub-Savanna,Low,0.0,True
+ISMN,USCRN,Durham-2-N,Durham-2-N,43.1716,-70.9277,36.0,20160101,20150203,20180203,3.0,GRA,130.0,Dfb,True,False,769,oos,False,False,False,False,False,False,D,Grass-Crop,Low,0.0002,True
+ISMN,USCRN,Elgin-5-S,Elgin-5-S,31.5907,-110.5087,1466.0,20170331,20170331,20210628,4.2,SAV,120.0,BSh,True,False,771,oos,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+ISMN,USCRN,Elkins-21-ENE,Elkins-21-ENE,39.013,-79.4743,1033.0,20160101,20140101,20200908,6.7,MF,100.0,Dfb,True,False,772,train,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,USCRN,Everglades-City-5-NE,Everglades-City-5-NE,25.8996,-81.3183,1.0,20160101,20140101,20200323,6.2,WET,180.0,Cfa,True,False,773,train,False,False,False,False,False,False,C,Other,Low,0.0524,True
+ISMN,USCRN,Fallbrook-5-NE,Fallbrook-5-NE,33.4392,-117.1904,347.0,20160101,20140101,20211116,7.9,ENF,70.0,BSk,True,False,774,train,False,False,False,False,True,False,B,Forest,Low,0.0,True
+ISMN,USCRN,Gadsden-19-N,Gadsden-19-N,34.2851,-85.9621,351.0,20160101,20140101,20211116,7.9,GRA,130.0,Cfa,True,False,775,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0026,True
+ISMN,USCRN,Goodwell-2-E,Goodwell-2-E,36.5993,-101.595,995.0,20170222,20170222,20200506,3.2,GRA,130.0,BSk,True,False,776,train,False,False,False,False,True,False,B,Grass-Crop,Mid,0.0,True
+ISMN,USCRN,Goodwell-2-SE,Goodwell-2-SE,36.5682,-101.6097,1000.0,20160101,20140101,20211102,7.8,GRA,130.0,BSk,True,False,777,train,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0,True
+ISMN,USCRN,John-Day-35-WNW,John-Day-35-WNW,44.556,-119.6459,684.0,20160101,20140101,20211102,7.8,SAV,120.0,BSk,True,False,778,train,False,False,False,False,True,False,B,Shrub-Savanna,Mid,0.0141,True
+ISMN,USCRN,Joplin-24-N,Joplin-24-N,37.4277,-94.5829,290.0,20161230,20161230,20210215,4.1,GRA,130.0,Cfa,True,False,779,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0046,True
+ISMN,USCRN,Lafayette-13-SE,Lafayette-13-SE,30.0918,-91.8731,11.0,20160101,20140101,20211116,7.8,CRO,10.0,Cfa,True,False,780,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Las-Cruces-20-N,Las-Cruces-20-N,32.6137,-106.7414,1319.0,20160101,20140101,20211102,7.8,SAV,120.0,BSk,True,False,781,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0053,True
+ISMN,USCRN,Los-Alamos-13-W,Los-Alamos-13-W,35.8584,-106.5214,2657.0,20160101,20141024,20201208,6.1,GRA,130.0,Dfb,True,False,782,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,USCRN,McClellanville-7-NE,McClellanville-7-NE,33.1532,-79.3637,3.0,20160101,20150910,20211102,6.1,ENF,70.0,Cfa,True,False,783,train,False,False,False,False,False,False,C,Forest,Low,0.0973,True
+ISMN,USCRN,Mercury-3-SSW,Mercury-3-SSW,36.624,-116.0225,1001.0,20160101,20140101,20211102,7.8,SAV,120.0,BWh,True,False,784,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0004,True
+ISMN,USCRN,Monahans-6-ENE,Monahans-6-ENE,31.6219,-102.8071,830.0,20160101,20140101,20211102,7.8,SAV,120.0,BSh,True,False,785,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.1455,True
+ISMN,USCRN,Monroe-26-N,Monroe-26-N,32.8833,-92.1165,27.0,20160101,20151114,20190126,3.2,ENF,70.0,Cfa,True,False,786,val,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,USCRN,Muleshoe-19-S,Muleshoe-19-S,33.9557,-102.774,1141.0,20170307,20170307,20211102,4.6,GRA,130.0,BSk,True,False,787,val,False,False,False,False,False,False,B,Grass-Crop,Mid,0.0285,True
+ISMN,USCRN,Newton-5-ENE,Newton-5-ENE,32.3378,-89.0703,114.0,20160921,20160921,20211102,5.1,GRA,130.0,Cfa,True,False,788,oos,False,False,False,False,False,True,C,Grass-Crop,Low,0.0024,True
+ISMN,USCRN,Newton-8-W,Newton-8-W,31.3127,-84.4706,54.0,20160101,20140101,20181013,4.8,ENF,70.0,Cfa,True,False,789,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ISMN,USCRN,Panther-Junction-2-N,Panther-Junction-2-N,29.3483,-103.2093,1065.0,20160101,20140101,20211102,7.8,SAV,120.0,BSk,True,False,790,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+ISMN,USCRN,Quinault-4-NE,Quinault-4-NE,47.5139,-123.812,87.0,20160101,20140101,20210612,7.4,ENF,70.0,Cfb,True,False,791,train,False,False,False,False,True,False,C,Forest,Low,0.0,True
+ISMN,USCRN,Salem-10-W,Salem-10-W,37.6344,-91.7226,365.0,20160101,20140219,20210213,7.0,GRA,130.0,Dfa,True,False,792,val,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Santa-Barbara-11-W,Santa-Barbara-11-W,34.4141,-119.8796,5.0,20170328,20170328,20211116,4.6,GRA,130.0,Csb,True,False,793,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.3466,True
+ISMN,USCRN,Socorro-20-N,Socorro-20-N,34.3557,-106.8859,1477.0,20160101,20140101,20211102,7.8,SAV,120.0,BSk,True,False,794,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0007,True
+ISMN,USCRN,Spokane-17-SSW,Spokane-17-SSW,47.4174,-117.5264,691.0,20170304,20170304,20211102,4.7,GRA,130.0,Dsb,True,False,795,train,False,False,False,False,True,False,D,Grass-Crop,Mid,0.0029,True
+ISMN,USCRN,Stillwater-2-W,Stillwater-2-W,36.1181,-97.0914,271.0,20160101,20140101,20211102,7.8,CRO,10.0,Cfa,True,False,796,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ISMN,USCRN,Stillwater-5-WNW,Stillwater-5-WNW,36.1346,-97.1082,271.0,20160101,20140101,20201209,6.9,GRA,130.0,Cfa,True,False,796,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0011,True
+ISMN,USCRN,Stovepipe-Wells-1-SW,Stovepipe-Wells-1-SW,36.602,-117.1449,26.0,20160101,20140101,20211116,7.9,SAV,120.0,BWh,True,False,797,train,False,False,False,False,False,False,B,Shrub-Savanna,Low,0.1673,True
+ISMN,USCRN,Tucson-11-W,Tucson-11-W,32.2395,-111.1696,833.0,20160101,20140101,20211116,7.9,SAV,120.0,BWh,True,False,798,oos,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+ISMN,USCRN,Versailles-3-NNW,Versailles-3-NNW,38.0945,-84.7465,272.0,20160101,20150304,20211116,6.7,GRA,130.0,Cfa,True,False,799,oos,False,False,False,False,False,False,C,Grass-Crop,Low,0.0009,True
+ISMN,USCRN,Watkinsville-5-SSE,Watkinsville-5-SSE,33.7837,-83.3896,226.0,20160101,20140101,20211116,7.9,GRA,130.0,Cfa,True,False,800,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0015,True
+ISMN,USCRN,Yosemite-Village-12-W,Yosemite-Village-12-W,37.7592,-119.8208,2018.0,20180824,20180824,20211116,3.2,ENF,70.0,Csa,True,False,801,train,False,False,False,False,False,False,C,Forest,High,0.0,True
+ISMN,USCRN,Yuma-27-ENE,Yuma-27-ENE,32.835,-114.1884,189.0,20160101,20140101,20211116,7.9,SAV,120.0,BWh,True,False,802,oos,False,False,False,False,False,False,B,Shrub-Savanna,Low,0.0064,True
+ISMN,WATERLINE,Kerasia,Kerasia,41.18,25.28,628.0,20211007,20211007,20250609,3.7,DBF,60.0,Csb,True,False,803,train,True,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,WATERLINE,Komotini,Komotini,41.123,25.386,34.0,20220127,20220127,20250609,3.4,URB,190.0,Csb,True,False,804,oos,False,True,False,False,False,False,C,Other,Low,0.0,True
+ISMN,WATERLINE,Nymfaia,Nymfaia,41.264,25.436,711.0,20211007,20211007,20250609,3.7,DBF,60.0,Dsb,True,False,805,train,True,False,False,False,False,False,D,Forest,Mid,0.0,True
+ISMN,XMS-CAT,BatlliudeSort,BatlliudeSort,42.42841,1.1244,890.0,20160801,20160801,20251230,9.4,GRA,130.0,Dfb,True,False,806,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,BordaColl,BordaColl,42.4142,1.46531,865.0,20211201,20211201,20251230,4.1,ENF,70.0,Cfb,True,False,807,train,True,False,False,False,False,False,C,Forest,Mid,0.0,True
+ISMN,XMS-CAT,CamidelsNerets,CamidelsNerets,42.1554,0.9255,487.0,20170330,20170330,20251230,8.8,CRO,10.0,Dfb,True,False,808,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+ISMN,XMS-CAT,Clarella,Clarella,42.11946,2.28235,922.0,20211201,20211201,20251230,4.1,GRA,130.0,Cfb,True,False,809,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,ClotdelesPeresII,ClotdelesPeresII,42.15623,0.83767,602.0,20210225,20210225,20251230,4.8,CRO,10.0,Dfb,True,False,810,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,ColldePaller,ColldePaller,42.19748,1.24688,1164.0,20190301,20190301,20251230,6.8,CRO,10.0,Cfb,True,False,811,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,ElBoixer,ElBoixer,42.39871,0.95839,1217.0,20190301,20190301,20251230,6.8,GRA,130.0,Dfb,True,False,812,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,ElMiracle,ElMiracle,41.91393,1.5276,811.0,20210801,20210801,20251230,4.4,CRO,10.0,Cfb,True,False,813,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,LaCultiadAreu,LaCultiadAreu,42.58803,1.3299,1236.0,20200301,20200301,20251230,5.8,GRA,130.0,Dfb,True,False,814,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,Llivia,Llivia,42.46915,1.97235,1219.0,20210701,20210701,20251230,4.5,GRA,130.0,Cfb,True,False,815,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,LosCoscolls,LosCoscolls,42.14571,0.98318,560.0,20171101,20171101,20251230,8.2,CRO,10.0,Cfb,True,False,816,train,True,False,False,False,True,False,C,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,Pessonada,Pessonada,42.218,1.0196,911.0,20170330,20170330,20251230,8.8,CRO,10.0,Dfb,True,False,817,val,False,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,XMS-CAT,RiberadeSio,RiberadeSio,41.80319,0.90969,283.0,20200301,20200301,20251230,5.8,CRO,20.0,Cfb,True,False,818,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0004,True
+ISMN,XMS-CAT,SerradeCostaAmpla,SerradeCostaAmpla,42.2112,0.8939,922.0,20170330,20170330,20230623,6.2,CRO,10.0,Dfb,True,False,819,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+ISMN,iRON,BrushCreek,BrushCreek,39.23353,-106.90815,2371.0,20160101,20141008,20220607,7.7,GRA,130.0,Dfc,True,False,822,oos,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ISMN,iRON,GlenwoodSprings,GlenwoodSprings,39.54418,-107.34133,1890.0,20160615,20160615,20220523,5.9,URB,190.0,Dfb,True,False,820,train,False,False,False,False,True,False,D,Other,High,0.0031,True
+ISMN,iRON,NorthstarAspenGrove,NorthstarAspenGrove,39.17067,-106.79944,2454.0,20160101,20150912,20210705,5.8,GRA,130.0,Dfc,True,False,821,oos,False,False,False,False,False,False,D,Grass-Crop,High,0.0009,True
+ISMN,iRON,NorthstarTransitionZone,NorthstarTransitionZone,39.17114,-106.79917,2452.0,20200504,20200504,20250924,5.3,GRA,130.0,Dfc,True,False,821,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.0013,True
+ISMN,iRON,SkyMountain,SkyMountain,39.22098,-106.91313,2554.0,20160101,20140101,20220607,8.4,ENF,70.0,Dfc,True,False,822,oos,False,False,False,False,False,False,D,Forest,High,0.0,True
+ICOS,ICOS,CH-Cha,Chamau,47.21022,8.41044,393.0,20170101,20170101,20201231,4.0,GRA,,Cfb,False,True,823,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0005,True
+ICOS,ICOS,CH-Fru,Früebüel ,47.11583,8.53778,971.0,20170101,20170101,20201231,4.0,GRA,,Cfb,False,True,824,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ICOS,ICOS,CH-Lae,Laegern,47.47833,8.36439,683.0,20170101,20170101,20201231,4.0,MF,,Cfb,False,True,825,val,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+ICOS,ICOS,CH-Oe2,Oensingen crop,47.28642,7.73375,452.0,20170101,20170101,20201231,4.0,CRO,,Cfb,False,True,826,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,CZ-KrP,,49.573257,15.078773,519.0,20170101,20170101,20201231,4.0,CRO,,Cfb,False,True,827,train,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ICOS,ICOS,CZ-RAJ,,49.44372,16.696512,648.0,20170101,20170101,20201231,4.0,ENF,,Cfb,False,True,828,train,False,False,False,False,True,False,C,Forest,Mid,0.0,True
+ICOS,ICOS,CZ-Stn,,49.035976,17.9699,553.0,20170101,20170101,20201231,4.0,DBF,,Dfb,False,True,843,train,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ICOS,ICOS,CZ-wet,Trebon,49.02465,14.77035,426.0,20170101,20170101,20241231,8.0,WET,,Cfb,False,True,829,train,True,False,False,False,True,False,C,Other,Low,0.1039,True
+ICOS,ICOS,DE-Kli,Klingenberg,50.893044,13.5223,478.0,20170101,20170101,20240502,7.3,CRO,,Cfb,False,True,830,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0005,True
+ICOS,ICOS,DE-Obe,Oberbärenburg,50.78666,13.72129,766.0,20170101,20170101,20201231,4.0,ENF,,Dfb,False,True,831,train,False,False,False,False,True,False,D,Forest,Mid,0.0,True
+ICOS,ICOS,ES-Abr,,38.70184,-6.785881,279.0,20170101,20170101,20201231,4.0,SAV,,Csa,False,True,832,oos,False,False,False,True,False,False,C,Shrub-Savanna,Low,0.0,True
+ICOS,ICOS,ES-Agu,,36.939384,-2.034044,200.0,20171020,20171020,20201111,3.1,GRA,,BSk,False,True,833,val,False,False,False,False,False,False,B,Grass-Crop,Low,0.0,True
+ICOS,ICOS,ES-Cnd,,37.914997,-3.227659,368.0,20170101,20170101,20200131,3.1,CRO,,Csa,False,True,834,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0055,True
+ICOS,ICOS,ES-LM1,,39.94269,-5.778683,265.0,20170101,20170101,20201231,4.0,SAV,,Csa,False,True,835,train,False,False,False,False,False,False,C,Shrub-Savanna,Low,0.0038,True
+ICOS,ICOS,ES-LM2,,39.934593,-5.775881,267.0,20170101,20170101,20201231,4.0,SAV,,Csa,False,True,835,train,False,False,False,False,False,False,C,Shrub-Savanna,Low,0.0007,True
+ICOS,ICOS,ES-LMa,Las Majadas de Tiétar,39.94033,-5.77465,265.0,20200101,20200101,20241231,5.0,SAV,,Csa,False,True,835,train,True,False,False,False,False,False,C,Shrub-Savanna,Low,0.0005,True
+ICOS,ICOS,FR-Aur,Aurade,43.54965,1.106103,250.0,20170101,20170101,20220612,5.4,CRO,,Cfb,False,True,836,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,FR-EM2,Estrees-Mons A28,49.87211,3.02065,85.0,20170101,20170101,20241231,8.0,CRO,,Cfb,False,True,837,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,FR-FBn,Font-Blanche,43.24079,5.67865,436.0,20170504,20170504,20201231,3.7,ENF,,Csa,False,True,838,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ICOS,ICOS,IL-Yat,,31.345045,35.051987,649.0,20170101,20170101,20201231,4.0,OSH,,BSh,False,True,840,oos,False,False,False,True,False,False,B,Shrub-Savanna,Mid,0.0,True
+ICOS,ICOS,IT-BCi,Borgo Cioffi,40.52375,14.957444,10.0,20170101,20170101,20201231,4.0,CRO,,Csa,False,True,841,oos,False,False,False,True,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,IT-MBo,Monte Bondone,46.01468,11.045831,1550.0,20170101,20170101,20201009,3.8,GRA,,Dfb,False,True,842,train,False,False,False,False,False,False,D,Grass-Crop,High,0.0,True
+ICOS,ICOS,RU-Fy2,,49.035976,17.9699,553.0,20170101,20170101,20201231,4.0,ENF,,Dfb,False,True,843,train,False,False,False,False,False,False,D,Forest,Mid,0.0,True
+ICOS,ICOS,RU-Fyo,Fyodorovskoye,56.46153,32.92208,275.0,20171210,20171210,20201231,3.1,ENF,,Dfb,False,True,844,train,False,False,False,False,False,False,D,Forest,Low,0.0,True
+ICOS,ICOS,UK-AMo,Auchencorth Moss,55.792545,-3.2436917,268.0,20211119,20211119,20241231,3.1,WET,,Cfb,False,True,845,train,True,False,False,False,False,False,C,Other,Low,0.0,True
+ICOS,ICOS,BE-Bra,Brasschaat,51.30761,4.51984,16.0,20200101,20200101,20241230,5.0,ENF,,Cfb,True,True,846,oos,False,True,False,False,False,True,C,Forest,Low,0.0057,True
+ICOS,ICOS,BE-Lon,Lonzee,50.55162,4.746234,170.0,20180420,20180420,20240408,6.0,CRO,,Cfb,True,True,847,oos,False,True,False,False,False,True,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,BE-Maa,Maasmechelen,50.97987,5.631851,85.0,20190904,20190904,20241230,5.3,CSH,,Cfb,True,True,848,oos,False,True,True,False,False,True,C,Shrub-Savanna,Low,0.0077,True
+ICOS,ICOS,BE-Vie,Vielsalm,50.304962,5.998099,490.0,20180713,20180713,20241230,6.5,MF,,Cfb,True,True,849,oos,False,True,True,False,False,False,C,Forest,Low,0.0,True
+ICOS,ICOS,CH-Dav,Davos,46.81533,9.85591,1637.0,20170101,20170101,20241230,8.0,ENF,,ET,True,True,850,oos,False,True,True,False,False,True,E,Forest,High,0.0961,True
+ICOS,ICOS,CZ-BK1,Bily Kriz forest,49.502075,18.536882,881.0,20170101,20170101,20201230,4.0,ENF,,Dfb,True,True,851,train,False,False,False,False,True,False,D,Forest,Mid,0.0,True
+ICOS,ICOS,CZ-Lnz,Lanzhot,48.68155,16.946331,182.0,20170101,20170101,20201230,4.0,DBF,,Cfb,True,True,852,train,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ICOS,ICOS,DE-Geb,Gebesee,51.09973,10.91463,163.0,20170101,20170101,20200101,3.0,CRO,,Cfb,True,True,853,oos,False,False,True,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,DE-Gri,Grillenburg,50.950005,13.512533,385.0,20201112,20201112,20241230,4.1,GRA,,Cfb,True,True,854,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,DE-Har,Hartheim,47.93391,7.59814,201.0,20210715,20210715,20241230,3.5,MF,,Cfb,True,True,855,train,True,False,False,False,False,False,C,Forest,Low,0.0341,True
+ICOS,ICOS,DE-HoH,Hohes Holz,52.08656,11.22235,217.0,20170101,20170101,20241230,8.0,DBF,,Cfb,True,True,856,val,False,False,False,False,False,False,C,Forest,Low,0.0,True
+ICOS,ICOS,DE-RuR,Rollesbroich,50.621914,6.304126,514.7,20170101,20170101,20241230,8.0,GRA,,Cfb,True,True,857,val,False,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+ICOS,ICOS,DE-RuS,Selhausen Juelich,50.865906,6.4471445,106.0,20190429,20190429,20241230,5.7,CRO,,Cfb,True,True,858,oos,False,True,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,DE-RuW,Wustebach,50.50493,6.3309627,610.0,20181025,20181025,20241230,6.2,ENF,,Cfb,True,True,859,train,True,False,False,False,False,False,C,Forest,Mid,0.0,True
+ICOS,ICOS,DK-Sor,Soroe,55.48587,11.644645,55.0,20211117,20211117,20241230,3.1,DBF,,Cfb,True,True,861,train,True,False,False,False,True,False,C,Forest,Low,0.0,True
+ICOS,ICOS,FI-Hyy,Hyytiala,61.84741,24.29477,181.0,20181106,20181106,20241230,6.2,ENF,,Dfc,True,True,862,oos,False,True,True,False,False,False,D,Forest,Low,0.0703,True
+ICOS,ICOS,FI-Ken,Kenttarova,67.98721,24.24301,347.0,20180101,20180101,20241230,7.0,ENF,,Dfc,True,True,863,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+ICOS,ICOS,FI-Sii,Siikaneva,61.83265,24.19285,164.0,20170607,20170607,20241230,7.6,WET,,Dfc,True,True,864,train,True,False,False,False,False,False,D,Other,Low,0.0,True
+ICOS,ICOS,FI-Var,Varrio,67.7549,29.61,395.0,20200115,20200115,20241230,5.0,ENF,,Dfc,True,True,865,train,True,False,False,False,False,False,D,Forest,Low,0.0004,True
+ICOS,ICOS,FR-Bil,Bilos,44.493652,-0.956092,39.18,20170101,20170101,20241230,8.0,ENF,,Cfb,True,True,866,train,True,False,False,False,True,False,C,Forest,Low,0.0,True
+ICOS,ICOS,FR-CLt,Col du Lautaret,45.0414,6.41053,2050.6,20190101,20190101,20241230,6.0,GRA,,Cfc,True,True,867,train,True,False,False,False,False,False,C,Grass-Crop,High,0.0004,True
+ICOS,ICOS,FR-Gri,Grignon,48.84422,1.95191,125.0,20170101,20170101,20200701,3.5,CRO,,Cfb,True,True,868,oos,False,False,True,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,FR-Hes,Hesse,48.6741,7.06465,310.0,20170101,20170101,20201230,4.0,DBF,,Cfb,True,True,869,train,False,False,False,False,True,False,C,Forest,Low,0.0,True
+ICOS,ICOS,FR-Mej,Mejusseaume,48.1184,-1.79635,40.0,20190930,20190930,20241230,5.3,GRA,,Cfb,True,True,870,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+ICOS,ICOS,FR-Pue,Puechabon,43.7413,3.5957,271.0,20211117,20211117,20241230,3.1,EBF,,Csa,True,True,871,oos,False,True,True,False,False,False,C,Forest,Low,0.0002,True
+ICOS,ICOS,FR-Tou,Toulouse,43.572857,1.37474,158.0,20180101,20180101,20241230,7.0,GRA,,Cfb,True,True,872,oos,False,True,True,False,False,False,C,Grass-Crop,Low,0.0057,True
+ICOS,ICOS,GF-Guy,Guyaflux,5.2787,-52.9248,40.0,20170101,20170101,20220612,5.4,EBF,,Af,True,True,873,train,False,False,False,False,False,False,A,Forest,Low,0.0,True
+ICOS,ICOS,IT-BFt,Bosco Fontana,45.197754,10.741966,23.0,20190101,20190101,20241230,6.0,DBF,,Cfa,True,True,874,oos,False,True,True,False,False,False,C,Forest,Low,0.0367,True
+ICOS,ICOS,IT-Lsn,Lison,45.740482,12.750297,1.0,20170101,20170101,20230118,6.0,OSH,,Cfa,True,True,875,train,True,False,False,False,False,False,C,Shrub-Savanna,Low,0.0,True
+ICOS,ICOS,IT-SR2,San Rossore 2,43.73202,10.29091,4.0,20170101,20170101,20200406,3.3,ENF,,Csa,True,True,876,train,False,False,False,False,True,False,C,Forest,Low,0.0236,True
+ICOS,ICOS,IT-Tor,Torgnon,45.84444,7.578055,2168.0,20200922,20200922,20241204,4.2,GRA,,Dfc,True,True,877,oos,False,True,False,False,False,False,D,Grass-Crop,High,0.0,True
+ICOS,ICOS,IT-TrF,Torgnon-LD,45.82376,7.56089,2100.0,20170101,20170101,20240921,7.7,DNF,,Dfc,True,True,877,oos,False,True,True,False,False,False,D,Forest,High,0.0,True
+ICOS,ICOS,SE-Deg,Degero,64.18203,19.55654,270.0,20170101,20170101,20241230,8.0,WET,,Dfc,True,True,878,oos,False,True,True,False,False,False,D,Other,Low,0.0,True
+ICOS,ICOS,SE-Htm,Hyltemossa,56.09763,13.41897,115.0,20170101,20170101,20241230,8.0,ENF,,Cfb,True,True,879,train,True,False,False,False,False,False,C,Forest,Low,0.0133,True
+ICOS,ICOS,SE-Nor,Norunda,60.0865,17.479504,58.0,20180809,20180809,20241230,6.4,ENF,,Dfb,True,True,880,oos,False,True,False,False,False,True,D,Forest,Low,0.0,True
+ICOS,ICOS,SE-Svb,Svartberget,64.25611,19.7745,267.0,20170101,20170101,20241230,8.0,ENF,,Dfc,True,True,881,oos,False,True,True,False,False,True,D,Forest,Low,0.0079,True
+AmeriFlux,AmeriFlux,CA-Cbo,"Ontario - Mixed Deciduous, Borden Forest Site",44.3184,-79.9341,210.0,20170101,20170101,20201231,4.0,DBF,,Dfb,False,True,882,oos,False,False,False,True,False,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,CA-DB2,Delta Burns Bog 2,49.119,-122.9951,4.0,20191122,20191122,20241231,5.1,WET,,Cfb,False,True,883,train,True,False,False,False,True,False,C,Other,Low,0.0,True
+AmeriFlux,AmeriFlux,CA-DBB,Delta Burns Bog,49.1293,-122.9849,4.0,20180126,20180126,20211213,3.9,WET,,Csb,False,True,883,train,False,False,False,False,True,False,C,Other,Low,0.0,True
+AmeriFlux,AmeriFlux,CA-DSM,Delta Salt Marsh,49.0887,-122.8954,1.0,20210904,20210904,20241231,3.3,WET,,Csb,False,True,884,train,True,False,False,False,False,False,C,Other,Low,0.3488,True
+AmeriFlux,AmeriFlux,CA-Mer,"Ontario - Eastern Peatland, Mer Bleue",45.4094,-75.5186,70.0,20170101,20170101,20201231,4.0,WET,,Dfb,False,True,885,train,False,False,False,False,False,False,D,Other,Low,0.0,True
+AmeriFlux,AmeriFlux,US-ALQ,Allequash Creek Site,46.0308,-89.6067,503.0,20190105,20190105,20230115,4.0,WET,,Dfb,False,True,886,val,False,False,False,False,False,False,D,Other,Mid,0.2423,True
+AmeriFlux,AmeriFlux,US-BZB,Bonanza Creek Thermokarst Bog,64.6955,-148.3208,100.0,20180221,20180221,20240917,6.6,WET,,Dfd,False,True,887,train,True,False,False,False,False,False,D,Other,Low,0.0004,True
+AmeriFlux,AmeriFlux,US-BZo,Bonanza Creek Old Thermokarst Bog,64.6936,-148.33,100.0,20180407,20180407,20211125,3.6,WET,,Dfd,False,True,887,train,False,False,False,False,False,False,D,Other,Low,0.0004,True
+AmeriFlux,AmeriFlux,US-Bi1,Bouldin Island Alfalfa,38.0992,-121.4993,-2.7,20170101,20170101,20241231,8.0,CRO,,Csa,False,True,888,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.1255,True
+AmeriFlux,AmeriFlux,US-Bi2,Bouldin Island corn,38.1091,-121.5351,-5.0,20170427,20170427,20211231,4.7,CRO,,Csa,False,True,889,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0402,True
+AmeriFlux,AmeriFlux,US-DFC,"US Dairy Forage Research Center, Prairie du Sac",43.3448,-89.7117,264.9,20181018,20181018,20231213,5.2,CRO,,Dfb,False,True,890,oos,False,True,False,True,False,True,D,Grass-Crop,Low,0.0471,True
+AmeriFlux,AmeriFlux,US-DS2,Staten Corn 2,38.1375,-121.514,-6.0,20200322,20200322,20231004,3.5,CRO,,Csa,False,True,891,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0688,True
+AmeriFlux,AmeriFlux,US-Dmg,Dutch Slough Marsh Gilbert Tract,38.0015,-121.6691,1.0,20210903,20210903,20241231,3.3,WET,,Csa,False,True,892,train,True,False,False,False,False,False,C,Other,Low,0.0122,True
+AmeriFlux,AmeriFlux,US-Esm,Everglades (short hydroperiod marsh),25.4379,-80.5946,1.07,20171103,20171103,20230825,5.8,WET,,Aw,False,True,893,oos,False,True,False,True,False,True,A,Other,Low,0.0013,True
+AmeriFlux,AmeriFlux,US-EvM,Everglades Saltwater intrusion marsh,25.3539,-80.381,0.332,20200501,20200501,20230521,3.1,WET,,Aw,False,True,894,train,True,False,False,False,True,False,A,Other,Low,0.0933,True
+AmeriFlux,AmeriFlux,US-GLE,GLEES,41.3665,-106.2399,3197.0,20170101,20170101,20200930,3.7,ENF,,Dfc,False,True,896,train,False,False,False,False,False,False,D,Forest,High,0.0254,True
+AmeriFlux,AmeriFlux,US-HB1,North Inlet Crab Haul Creek,33.3455,-79.1957,0.1,20191206,20191206,20221231,3.1,WET,,Cfa,False,True,897,val,False,False,False,False,False,False,C,Other,Low,0.3884,True
+AmeriFlux,AmeriFlux,US-HB3,Hobcaw Barony Longleaf Pine Restoration,33.3482,-79.2322,7.3,20190101,20190101,20221231,4.0,ENF,,Cfa,False,True,898,train,False,False,False,False,False,False,C,Forest,Low,0.0024,True
+AmeriFlux,AmeriFlux,US-HB4,Minim Creek Brackish Impoundment,33.2015,-79.2975,1.0,20200317,20200317,20241231,4.8,WET,,Cfa,False,True,899,train,True,False,False,False,False,False,C,Other,Low,0.1558,True
+AmeriFlux,AmeriFlux,US-Ho1,Howland Forest (main tower),45.2041,-68.7402,60.0,20170101,20170101,20231231,7.0,ENF,,Dfb,False,True,900,oos,False,True,False,True,False,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Ho2,Howland Forest (west tower),45.2091,-68.747,61.0,20200224,20200224,20230728,3.4,ENF,,Dfb,False,True,900,oos,False,True,False,True,False,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Hsm,Hill Slough Marsh,38.2368,-122.0212,1.113,20210316,20210316,20241231,3.8,WET,,Csa,False,True,901,oos,False,True,False,True,False,True,C,Other,Low,0.0341,True
+AmeriFlux,AmeriFlux,US-ICs,Imnavait Creek Watershed Wet Sedge Tundra,68.6058,-149.311,920.0,20170101,20170101,20200914,3.7,WET,,ET,False,True,902,val,False,False,False,False,False,False,E,Other,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-ICt,Imnavait Creek Watershed Tussock Tundra,68.6063,-149.3041,930.0,20170101,20170101,20200906,3.7,OSH,,ET,False,True,902,val,False,False,False,False,False,False,E,Shrub-Savanna,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-Jo1,Jornada Experimental Range Bajada Site,32.582,-106.635,1188.0,20170822,20170822,20210407,3.6,OSH,,Bwk,False,True,903,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0022,True
+AmeriFlux,AmeriFlux,US-Jo2,Jornada Experimental Range Mixed Shrubland,32.5849,-106.6032,1469.0,20171222,20171222,20201231,3.0,OSH,,Bwk,False,True,903,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0005,True
+AmeriFlux,AmeriFlux,US-KFS,Kansas Field Station,39.0561,-95.1907,310.0,20170101,20170101,20191231,3.0,GRA,,Cfa,False,True,945,oos,False,False,False,True,False,False,C,Grass-Crop,Low,0.0038,True
+AmeriFlux,AmeriFlux,US-KLS,Kansas Land Institute,38.7745,-97.5684,373.0,20170101,20170101,20191231,3.0,GRA,,Cfa,False,True,904,oos,False,False,False,True,False,False,C,Grass-Crop,Low,0.0278,True
+AmeriFlux,AmeriFlux,US-Kon,Konza Prairie LTER (KNZ),39.0824,-96.5603,417.0,20170101,20170101,20191231,3.0,GRA,,Cfa,False,True,905,train,False,False,False,False,True,False,C,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-MMS,Morgan Monroe State Forest,39.3232,-86.4131,275.0,20170101,20170101,20201231,4.0,DBF,,Cfa,False,True,906,val,False,False,False,False,False,False,C,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-MN2,"Morris: Corn-Soybean-Wheat with Cover Crops, Minimal Tillage",45.627,-96.1271,339.0,20190223,20190223,20241231,5.9,CRO,,Dwb,False,True,907,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0049,True
+AmeriFlux,AmeriFlux,US-MN3,"Morris: Corn-Soybean, Conventional Tillage",45.6091,-96.1265,339.0,20200428,20200428,20241231,4.7,CRO,,Dwb,False,True,907,train,True,False,False,False,False,False,D,Grass-Crop,Low,0.0051,True
+AmeriFlux,AmeriFlux,US-Me2,Metolius mature ponderosa pine,44.4526,-121.5589,1253.0,20181231,20181231,20220712,3.5,ENF,,Csb,False,True,908,train,False,False,False,False,False,False,C,Forest,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-Mo1,LTAR CMRB Field 1 (CMRB ASP),39.2298,-92.1167,260.0,20180113,20180113,20241231,7.0,CRO,,Cfa,False,True,910,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0011,True
+AmeriFlux,AmeriFlux,US-Mo2,LTAR CMRB Tucker Prairie (CMRB TP),38.9488,-91.9945,275.0,20180101,20180101,20230126,5.1,GRA,,Cfa,False,True,909,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0106,True
+AmeriFlux,AmeriFlux,US-Mo3,LTAR CMRB Field 3 (CMRB BAU),39.2322,-92.1493,261.0,20170101,20170101,20211231,5.0,CRO,,Cfa,False,True,910,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0084,True
+AmeriFlux,AmeriFlux,US-Mpj,Mountainair Pinyon-Juniper Woodland,34.4385,-106.2377,2196.0,20170101,20170101,20240624,7.5,WSA,,Bsk,False,True,911,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+AmeriFlux,AmeriFlux,US-MtB,Mt Bigelow,32.416,-110.7256,2573.0,20190319,20190319,20241231,5.8,ENF,,Dwb,False,True,912,oos,False,True,False,True,False,True,D,Forest,High,0.0,True
+AmeriFlux,AmeriFlux,US-NC3,NC_Clearcut#3,35.799,-76.656,5.0,20170101,20170101,20200305,3.2,ENF,,Cfa,False,True,913,train,False,False,False,False,True,False,C,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Ne1,Mead - irrigated continuous maize site,41.1651,-96.4766,361.0,20170101,20170101,20241231,8.0,CRO,,Dfa,False,True,914,oos,False,True,False,True,False,False,D,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Ne2,Mead - irrigated maize-soybean rotation site,41.1649,-96.4701,362.0,20170101,20170101,20240430,7.3,CRO,,Dfa,False,True,914,oos,False,True,False,True,False,False,D,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-ONA,Florida pine flatwoods,27.3836,-81.9509,25.0,20180427,20180427,20221231,4.7,GRA,,Cfa,False,True,915,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-RGB,Butte County Rice Farm,39.5782,-121.8579,33.0,20210101,20210101,20240530,3.4,CRO,,Csa,False,True,916,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-RGo,Glenn County Organic Rice Farm,39.6805,-122.0026,40.0,20210621,20210621,20241231,3.5,CRO,,Csa,False,True,917,val,False,False,False,False,False,False,C,Grass-Crop,Low,0.0058,True
+AmeriFlux,AmeriFlux,US-Rls,RCEW Low Sagebrush,43.1439,-116.7356,1608.0,20170101,20170101,20230930,6.7,CSH,,Bsh,False,True,920,train,True,False,False,False,True,False,B,Shrub-Savanna,High,0.0002,True
+AmeriFlux,AmeriFlux,US-Rms,RCEW Mountain Big Sagebrush,43.0645,-116.7486,2111.0,20170101,20170101,20230929,6.7,CSH,,Bsh,False,True,918,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+AmeriFlux,AmeriFlux,US-Ro4,Rosemount Prairie,44.6781,-93.0723,274.0,20170101,20170101,20240930,7.7,GRA,,Dfa,False,True,919,val,False,False,False,False,False,False,D,Grass-Crop,Low,0.0075,True
+AmeriFlux,AmeriFlux,US-Ro5,Rosemount I18_South,44.691,-93.0576,283.0,20170101,20170101,20241231,8.0,CRO,,Dfa,False,True,919,val,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Ro6,Rosemount I18_North,44.6946,-93.0578,282.0,20170101,20170101,20241231,8.0,CRO,,Dfa,False,True,919,val,False,False,False,False,False,False,D,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Rwf,RCEW Upper Sheep Prescibed Fire,43.1207,-116.7231,1878.0,20170101,20170101,20230930,6.7,CSH,,Bsh,False,True,920,train,True,False,False,False,True,False,B,Shrub-Savanna,High,0.0,True
+AmeriFlux,AmeriFlux,US-Rws,Reynolds Creek Wyoming big sagebrush,43.1675,-116.7132,1425.0,20170101,20170101,20230930,6.7,OSH,,Bsk,False,True,921,train,True,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-SHC,Sagehen Creek Field Station,39.4315,-120.2398,1934.0,20170621,20170621,20200930,3.3,ENF,,Dsb,False,True,922,train,False,False,False,False,False,False,D,Forest,High,0.0,True
+AmeriFlux,AmeriFlux,US-Seg,Sevilleta grassland,34.3623,-106.702,1596.0,20170101,20170101,20241231,8.0,GRA,,Bsk,False,True,923,train,True,False,False,False,True,False,B,Grass-Crop,High,0.0,True
+AmeriFlux,AmeriFlux,US-Ses,Sevilleta shrubland,34.3349,-106.7442,1604.0,20180822,20180822,20211231,3.4,OSH,,Bsk,False,True,924,train,False,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+AmeriFlux,AmeriFlux,US-Sne,Sherman Island Restored Wetland,38.0369,-121.7547,-5.0,20170101,20170101,20201231,4.0,GRA,,Csa,False,True,925,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.1594,True
+AmeriFlux,AmeriFlux,US-Tw4,Twitchell East End Wetland,38.1027,-121.6413,-5.0,20170101,20170101,20221130,5.9,WET,,Csa,False,True,926,train,False,False,False,False,True,False,C,Other,Low,0.1134,True
+AmeriFlux,AmeriFlux,US-UC1,LTAR UCB (Upper Chesapeake Bay) EC1,40.7536,-78.0056,390.0,20200708,20200708,20240117,3.5,CVM,,Dfb,False,True,927,oos,False,True,False,True,False,True,D,Other,Low,0.0,True
+AmeriFlux,AmeriFlux,US-UMB,Univ. of Mich. Biological Station,45.5598,-84.7138,234.0,20170101,20170101,20211231,5.0,DBF,,Dfb,False,True,954,train,False,False,False,False,False,False,D,Forest,Low,0.0429,True
+AmeriFlux,AmeriFlux,US-Vcm,Valles Caldera Mixed Conifer,35.8884,-106.5321,3030.0,20170101,20170101,20231231,7.0,ENF,,Dfb,False,True,928,train,True,False,False,False,True,False,D,Forest,High,0.0,True
+AmeriFlux,AmeriFlux,US-Vcp,Valles Caldera Ponderosa Pine,35.8642,-106.5967,2500.0,20210121,20210121,20241231,3.9,ENF,,Dfb,False,True,929,oos,False,True,False,True,False,True,D,Forest,High,0.0,True
+AmeriFlux,AmeriFlux,US-Wjs,Willard Juniper Savannah,34.4255,-105.8615,1931.0,20170913,20170913,20241231,7.3,SAV,,Bsk,False,True,930,train,True,False,False,False,False,False,B,Shrub-Savanna,High,0.0,True
+AmeriFlux,AmeriFlux,US-xBR,NEON Bartlett Experimental Forest (BART),44.0639,-71.2873,232.0,20201208,20201208,20240830,3.7,DBF,,Dfb,False,True,931,train,True,False,False,False,True,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-xCL,NEON LBJ National Grassland (CLBJ),33.4012,-97.57,259.0,20210201,20210201,20241231,3.9,GRA,,Cfa,False,True,932,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-xCP,NEON Central Plains Experimental Range (CPER),40.8155,-104.7456,1654.0,20210421,20210421,20241231,3.7,GRA,,Bsk,False,True,933,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
+AmeriFlux,AmeriFlux,US-xDJ,NEON Delta Junction (DEJU),63.8811,-145.7514,529.0,20191120,20191120,20241231,5.1,ENF,,Dfc,False,True,934,train,True,False,False,False,True,False,D,Forest,Mid,0.0069,True
+AmeriFlux,AmeriFlux,US-xDL,NEON Dead Lake (DELA),32.5417,-87.8039,22.0,20201210,20201210,20241231,4.1,MF,,Cfa,False,True,935,train,True,False,False,False,True,False,C,Forest,Low,0.1328,True
+AmeriFlux,AmeriFlux,US-xHA,NEON Harvard Forest (HARV),42.5369,-72.1727,351.0,20200820,20200820,20240731,3.9,DBF,,Dfb,False,True,936,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-xJE,NEON Jones Ecological Research Center (JERC),31.1948,-84.4686,44.0,20190807,20190807,20230130,3.5,ENF,,Cfa,False,True,937,train,True,False,False,False,False,False,C,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-xJR,NEON Jornada LTER (JORN),32.5907,-106.8425,1329.0,20190530,20190530,20230116,3.6,OSH,,Bsk,False,True,938,train,True,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-xKA,NEON Konza Prairie Biological Station - Relocatable (KONA),39.1104,-96.6129,1329.0,20211001,20211001,20241231,3.3,GRA,,Cfa,False,True,939,train,True,False,False,False,False,False,C,Grass-Crop,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-xNG,NEON Northern Great Plains Research Laboratory (NOGP),46.7697,-100.9154,578.0,20210806,20210806,20241231,3.4,GRA,,Dfb,False,True,940,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-xRM,"NEON Rocky Mountain National Park, CASTNET (RMNP)",40.2759,-105.5459,2743.0,20210914,20210914,20241231,3.3,ENF,,Dfc,False,True,941,val,False,False,False,False,False,False,D,Forest,High,0.0,True
+AmeriFlux,AmeriFlux,US-xSC,NEON Smithsonian Conservation Biology Institute (SCBI),38.8929,-78.1395,361.0,20211020,20211020,20241231,3.2,DBF,,Cfa,False,True,942,train,True,False,False,False,False,False,C,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-xSE,NEON Smithsonian Environmental Research Center (SERC),38.8901,-76.56,15.0,20200130,20200130,20241231,4.9,DBF,,Cfa,False,True,943,train,True,False,False,False,False,False,C,Forest,Low,0.0029,True
+AmeriFlux,AmeriFlux,US-xSJ,NEON San Joaquin Experimental Range (SJER),37.1088,-119.7323,368.0,20201126,20201126,20240130,3.2,SAV,,Csa,False,True,944,train,True,False,False,False,False,False,C,Shrub-Savanna,Low,0.0,True
+AmeriFlux,AmeriFlux,US-xUK,NEON The University of Kansas Field Station (UKFS),39.0404,-95.1921,335.0,20200101,20200101,20241231,5.0,DBF,,Cfa,False,True,945,oos,False,True,False,True,False,False,C,Forest,Low,0.0007,True
+AmeriFlux,AmeriFlux,US-xUN,NEON University of Notre Dame Environmental Research Center (UNDE),46.2339,-89.5373,518.0,20210714,20210714,20241231,3.5,MF,,Dfb,False,True,946,train,True,False,False,False,False,False,D,Forest,Mid,0.0888,True
+AmeriFlux,AmeriFlux,US-xWD,NEON Woodworth (WOOD),47.1282,-99.2414,579.0,20191227,20191227,20241231,5.0,GRA,,Dfb,False,True,947,train,True,False,False,False,False,False,D,Grass-Crop,Mid,0.0866,True
+AmeriFlux,AmeriFlux,CA-TP1,Ontario - Turkey Point 2002 Plantation White Pine,42.6609,-80.5595,265.0,20190527,20190527,20231230,4.6,ENF,,Dfb,True,True,949,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,CA-TP3,Ontario - Turkey Point 1974 Plantation White Pine,42.7068,-80.3483,184.0,20180906,20180906,20231230,5.3,ENF,,Dfb,True,True,948,oos,False,True,True,False,False,True,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,CA-TPD,Ontario - Turkey Point Mature Deciduous,42.6353,-80.5577,260.0,20170101,20170101,20231230,7.0,DBF,,Dfb,True,True,949,train,True,False,False,False,False,False,D,Forest,Low,0.0,True
+AmeriFlux,AmeriFlux,US-ARM,ARM Southern Great Plains site- Lamont,36.6058,-97.4888,314.0,20170101,20170101,20230518,6.4,CRO,,Cfa,True,True,950,train,True,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Me6,Metolius Young Pine Burn,44.3233,-121.6078,998.0,20200611,20200611,20241230,4.6,ENF,,Csb,True,True,951,train,True,False,False,False,False,False,C,Forest,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-SRG,Santa Rita Grassland,31.7894,-110.8277,1291.0,20180424,20180424,20240524,6.1,GRA,,Bsk,True,True,952,oos,False,True,True,False,False,False,B,Grass-Crop,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-SRM,Santa Rita Mesquite,31.8214,-110.8661,1120.0,20190101,20190101,20220705,3.5,WSA,,Bsk,True,True,953,train,False,False,False,False,False,False,B,Shrub-Savanna,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-Ton,Tonzi Ranch,38.4309,-120.966,177.0,20170101,20170101,20201230,4.0,WSA,,Csa,True,True,955,train,False,False,False,False,False,False,C,Shrub-Savanna,Low,0.0,True
+AmeriFlux,AmeriFlux,US-UMd,UMBS Disturbance,45.5625,-84.6975,239.0,20170223,20170223,20231230,6.9,DBF,,Dfb,True,True,954,train,True,False,False,False,False,False,D,Forest,Low,0.2385,True
+AmeriFlux,AmeriFlux,US-Var,Vaira Ranch- Ione,38.4133,-120.9508,129.0,20171109,20171109,20211024,4.0,GRA,,Csa,True,True,955,train,False,False,False,False,False,False,C,Grass-Crop,Low,0.0,True
+AmeriFlux,AmeriFlux,US-Whs,Walnut Gulch Lucky Hills Shrub,31.7438,-110.0522,1370.0,20170101,20170101,20201230,4.0,OSH,,Bsk,True,True,956,oos,False,False,True,False,False,True,B,Shrub-Savanna,Mid,0.0,True
+AmeriFlux,AmeriFlux,US-Wkg,Walnut Gulch Kendall Grasslands,31.7365,-109.9419,1531.0,20170101,20170101,20241230,8.0,GRA,,Bsk,True,True,957,train,True,False,False,False,False,False,B,Grass-Crop,High,0.0,True
