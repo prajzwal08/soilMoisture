@@ -10865,3 +10865,1121 @@ numbers, which is where it is surfacing.
 
 Not on the list, deliberately: more hyperparameter variants. Two capacity points now say the
 gap is not the lever, and a third would not add much.
+
+---
+
+## §35.33 A repeatable held-out evaluation — and the three CPU faults that cost 12 minutes of H100 (Session 34c, 2026-08-27)
+
+**STATUS: eval running (job 26093455). Code landed, smoke test landed, parallel preload
+landed. Held-out numbers in §35.33.6 — the model has MEMORISED its training stations.**
+
+The §22 evaluation pipeline worked, but only as a one-off: every path defaulted to a single
+shared `eval_output/`, the val gate was hardcoded to one run's numbers, and the six figure
+commands lived in shell history. Evaluating `pw_stage2a_L3` would have overwritten
+`cls_depth_star_reg`'s tables — the current paper numbers — and the next run would have
+re-derived the same commands again.
+
+So the deliverable is the **procedure**, not this run's figures.
+
+### 35.33.1 Two commands per run
+
+```bash
+RUN=pw_stage2a_L3
+sbatch slurm/smoke_eval.sh   "$RUN" best.pt                                  # CPU, ~30 s
+sbatch slurm/eval_predict.sh "$RUN" best.pt --out-dir "eval_output/$RUN"     # GPU
+sbatch slurm/eval_figures.sh "$RUN"                                          # CPU, ~2 min
+```
+
+Outputs are keyed by run name — `eval_output/{run}/`, `figures/eval/{run}/` — so a second
+run can never clobber the first. That convention is the point; the rest is plumbing.
+
+| split | filter | years | tests |
+|---|---|---|---|
+| val | `["val"]` | 2016–2022 | the number early stopping used; the tie-back to the training log |
+| oos | `["oos"]` | 2016–2022 | spatial transfer |
+| oot | `["train","val"]` | 2023 | temporal transfer |
+| oost | `["oos"]` | 2023 | spatial + temporal |
+
+### 35.33.2 Smoke test on CPU before every GPU job — the rule, and what it cost to learn
+
+Three GPU jobs died in a row, none of them on anything the GPU does:
+
+| job | died after | cause |
+|---|---|---|
+| 26091536 | 18 s | `NameError: arch` — `ckpt_utils.py` referenced an unbound name on the LAST line of `load_checkpoint`, after the weights had loaded |
+| 26091672 | 19 s | `use_mmap=` kwarg that `dataset.py` had dropped |
+| 26091686 | **11 min** | `SoilMoistureModel.STATION_ROW` — a U-Net-era constant, resolved at `run_split` entry |
+
+All three are one drift class: **eval and plotting scripts falling behind `dataset.py` /
+`model.py` refactors**, because nothing exercises them between training runs. The third is
+the expensive one — the dataset's L12 preload runs before the first batch, so the job burned
+eleven minutes of H100 to reach a missing attribute.
+
+`smoke_eval.py` (+ `slurm/smoke_eval.sh`) now runs the whole path on CPU with
+`CUDA_VISIBLE_DEVICES=""`, in the order the real job hits it: imports → `load_checkpoint` on
+CPU → shm preload → dataset built with exactly the kwargs `eval_predict.py` passes → collate
+→ `model(batch)` forward → readout indexing → every plot script's argparse against the flags
+`slurm/eval_figures.sh` sends. **21 checks, 26 seconds.** It would have caught all three.
+
+The preload check asserts `n_written > 0` specifically: a preload that writes nothing is
+invisible, because the dataset silently falls back to the serial path and the only symptom
+is the job taking ninety minutes longer.
+
+### 35.33.3 Evaluation never got the §35.31 preload fix
+
+`train.py` has staged L12 into `/dev/shm` with a fork Pool since §35.31 (2733 s → 47.4 s).
+`eval_predict.py` passed no `shm_dir`, so `SoilMoistureDataset.__init__` took the fallback —
+`zg["s2/l12"][:, tsl, :]` per station, one core — **once per split**. Measured on job
+26091958:
+
+```
+VAL, 74 stations:  ~8 min building the dataset,  0.7 min running the model
+```
+
+The GPU idles for the first eight minutes. `dataset.py`'s own comment had said why the §35.24
+narrowing does not help here: *"Chunking is (T_TOKENS, 196, 768), so the token axis is one
+chunk and DECOMPRESSION cost is unchanged — this buys resident memory, not startup time."*
+Reading patch 105 decompresses all 196.
+
+**Fix:** `shm_preload.py`, a new shared module. `train.py`'s `_preload_l12_to_shm` is now a
+thin wrapper over it and its duplicated 100-line body is gone — one implementation, so the
+two cannot drift again. The only generalisation is that the split list became a parameter
+instead of the hardcoded `[("train", cap), ("val", cap)]`; eval needs `("oos", None)` and
+OOT's `["train","val"]`. Selection stays strictly serial with per-split caps and the
+"counts as SEEN, not as WRITTEN" property, because those keep it in lockstep with the dataset.
+
+Two things `eval_predict.py` does that training does not need to:
+
+* **Stages once for all four splits, not per split.** OOS and OOST are the same stations and
+  OOT is train+val, so per-split staging would re-read most of them.
+* **Loads the checkpoint on CPU first.** `torch.cuda.is_available()` alone initialises a CUDA
+  context, and forking a Pool underneath one is unsafe. Model moves to GPU after the preload.
+
+`--shm-workers` defaults to `$SLURM_CPUS_PER_TASK`. `slurm/eval_predict.sh` asks for 16 cores,
+**not 64**: a `gpu_h100` node is 64 cores / 4 GPUs shared by up to four jobs, so requesting all
+64 takes the whole node and bills four GPUs. 16 workers already gets the win.
+
+### 35.33.4 Measured effect — and what it does NOT fix
+
+```
+[SHM] Preloading 841 stations with 16 workers (token_sel='station', narrowed=True) ...
+[SHM]   841/841 stations   328.8s  (2.6 st/s)
+```
+
+841 stations in **5.5 min**, once. Serial was ~6.5 s/station = 0.15 st/s, so the staging is
+**17× faster on 16 workers** — near-linear, confirming §35.31's finding that it was
+GPFS-blocked, not CPU-bound.
+
+End to end it is **not** 17×, and the claim should not be made:
+
+| milestone | serial (26091958) | parallel (26093455) |
+|---|---|---|
+| VAL saved | 9.3 min | **7.6 min** (incl. the one-time 5.5 min preload) |
+| OOS saved | ~32 min (projected; still building at 35 min when cancelled) | **17.9 min** |
+
+OOS still spent ~8.5 min in `__init__` *after* its tokens were already in `/dev/shm`. The
+preload removes the token I/O and nothing else; sample enumeration, ERA5 window checks, label
+reads and mask assembly are now the dominant startup term. **If eval startup matters again,
+that pass is the next target — not the token I/O.**
+
+The alternative fix, re-chunking the zarr on the token axis, would eliminate the 196× read
+amplification rather than parallelise it — but it means rewriting the whole token store and
+would penalise any future `token_sel='all'` work. Not now.
+
+### 35.33.5 The val gate must be run-aware, and "unknown" is not "the reference run"
+
+`eval_metrics.py`'s §22.6 hard gate reproduces val ubRMSE 0.0539 / 0.0500 / 0.0552. Those are
+**`cls_depth_star_reg`'s** numbers. The gate answers "does this metric code agree with
+`train.py:compute_metrics`", and it can only answer it against the run the reference was
+measured on — any other run differs by construction, so applying it there reports a model
+difference as a code failure.
+
+It now reads `run_name` from `manifest.json` and applies only on a match. First attempt got
+this wrong in a way worth recording: `eval_predict.py` writes that manifest only after its
+last split, so running metrics against a partly-finished directory left `run_name = None`, and
+the guard was written as `run_name is not None and run_name != REF` — which fell through to
+**applying** the gate and printed a full `GATE FAILED` against another model's ubRMSE.
+An unknown run must be treated like a different run, never like the reference run.
+
+**The tie-back that actually matters, for `pw_stage2a_L3`:**
+
+| depth | eval `ubRMSE_stn` |
+|---|---|
+| 0-10 | 0.0507 |
+| 10-30 | 0.0482 |
+| 30-100 | 0.0481 |
+| **mean** | **0.04900** |
+
+Training log at the best epoch: `val_ubrmse_depth_mean = 0.048987`. Agreement to ~1e-5 — the
+eval path and the training val path are the same code path. Note it is the **station-equal**
+(`_stn`) mean that matches, not `_pool`; mixing the two produced one wrong conclusion already
+(§21.7).
+
+### 35.33.6 THE RESULT — the model has memorised its training stations
+
+`figures/eval/pw_stage2a_L3/scatter_station_mean.png`, station-mean predicted vs observed —
+absolute level only, one dot per station. The contrast between rows is the finding:
+
+| split | stations seen in training? | year | r (0-10 / 10-30 / 30-100) | RMS offset |
+|---|---|---|---|---|
+| **OOT** | **YES** (train+val) | novel (2023) | **0.88 / 0.92 / 0.90** | 0.038 / 0.035 / 0.041 |
+| **OOS** | no | seen (2016–22) | **0.60 / 0.63 / 0.50** | 0.064 / 0.066 / 0.086 |
+| **OOST** | no | novel (2023) | **0.60 / 0.65 / 0.38** | 0.062 / 0.065 / 0.090 |
+
+Same model, same metric, same figure. The only difference between the top row and the bottom
+two is **whether the station was in the training set** — and it is worth 0.3 of correlation
+and half the level error. Given a station it has seen, the model reproduces its mean moisture
+in a year it has never seen almost perfectly. Given a new station, it barely predicts the
+level at all.
+
+**This is the statics-as-station-ID hypothesis, confirmed on held-out data.** §35.32 could
+only say the train/val gap widened without val improving, which is consistent with several
+stories. This separates them: temporal generalisation is excellent (OOT), spatial
+generalisation is poor (OOS), and the gap between them is the memorised station identity.
+
+It also explains the two pre-registered checks that "failed":
+
+* `OOT ~ val` passes on the tolerance but OOT ubRMSE is *better* than val (0.0434 vs 0.0507
+  at 0-10). A novel year should not beat the split used for early stopping — unless most of
+  those 396 stations are training stations the model has memorised. They are.
+* `OOST >= OOS` fails at 0-10 (0.0500 vs 0.0509) and `OOS > val` fails at 30-100 (0.0469 vs
+  0.0481). Both are marginal (~2%) and unremarkable next to the row contrast above.
+
+Per-depth held-out ubRMSE (station-equal), for the record:
+
+| split | 0-10 | 10-30 | 30-100 | n (0-10) |
+|---|---|---|---|---|
+| val | 0.0507 | 0.0482 | 0.0481 | 74 |
+| oos | 0.0509 | 0.0487 | 0.0469 | 193 |
+| oot | 0.0434 | 0.0384 | 0.0377 | 396 |
+| oost | 0.0500 | 0.0432 | 0.0495 | 101 |
+
+NSE is negative everywhere (−0.7 to −50) while NSE-anomaly is near zero and Pearson r² is
+0.45–0.64: the model tracks the *shape* and misses the *level*, which is §20.1 unchanged by
+the 3-layer capacity increase.
+
+**By land cover** (`box_ubrmse_by_igbp_macro.png`, OOS medians at 0-10): Shrub-Savanna 0.0366
+(n=16), Other 0.0368 (n=11), Grass-Crop 0.0472 (n=91), **Forest 0.0563 (n=75)**. Forest is
+the worst class at every depth and every split — the canopy blocks the surface signal, so the
+S2/S1 tokens carry vegetation rather than soil. Dropped for n < 8 and logged: BSV (5), WAT
+(3), WET (2), DNF (1); climate A (1) and E (1) dropped at n < 5.
+
+The five worst val stations are **four SNOTEL sites plus one FMI** (ubRMSE 0.084–0.111) —
+seasonally snow-covered, where the surface retrieval is physically compromised. The five best
+are arid/semi-arid (NGARI SQ19 0.0196, SCAN MarbleCreek 0.0271).
+
+The six CR200-18-tile TxSON stations all plot, in `val`, ubRMSE 0.0339–0.0488 across a
+spread of only 0.015 — against an observed station-mean spread of 0.0601 at that tile
+(§29.1). The model is not resolving the within-tile variation; it is predicting nearly the
+same series six times. Consistent with §26.11's r = −0.175.
+
+**Next:** the statics ablation is now the obvious experiment — retrain with DEM/LULC dropped
+and see whether OOS r recovers toward OOT's. If station identity is entering through the
+statics prefix, that is where it is entering.
+### 35.33.7 Other changes
+
+* `plot_eval_timeseries.py` — `--select named --stations K1 K2 …` plots exactly the stations
+  asked for, in order, no ranking and no `min_n` filter, and **reports absent stations by
+  name** rather than silently dropping them. Used for the six CR200-18-tile TxSON stations,
+  all of which sit in `val` with their own tiles. This is NOT the §26 within-tile six-token
+  readout — that needs the §28.9 token gather, which `eval_predict.py` still rejects for
+  patchwise checkpoints.
+* `eval_predict.py` — `EXPECTED_STATIONS` reworded from a WARNING to a NOTE. It is a dated
+  §22.2 probe, and `station_splits.csv` has been rewritten since (§35.27, §35.29), so drift is
+  expected as often as it is a fault. This run: oos 193 against the probe's 180.
+* `plot_loss_curves.py` — per-batch train loss from the log, and two fixes in §35.34.
+
+### 35.33.8 Open
+
+`cfg["arch"]` is absent from `pw_stage2a_L3`'s checkpoint, so `cfg.get("arch") == "patchwise"`
+is False and the `--pixel-csv` guard at `eval_predict.py` does not fire for it. Harmless for
+the splits above, but `slurm/eval_txson.sh` would produce a wrongly-shaped answer instead of
+refusing. Fix before anyone uses that route.
+
+---
+
+## §36 The ECOSTRESS DTR census — theory, data, filtering, implementation (Session 35, 2026-09-15)
+
+**STATUS: PLANNED 2026-09-15. Nothing built.** Scope is **measurement only** — no model code,
+no thermal head, no training change. Whether the DTR signal is real is deliberately **out of
+scope** and deferred to §36.21.
+
+`pw_stage2a_L3` returned **memorisation** (§35.33.6). The structural cause is supervision
+geometry: the SM label is one pixel out of 112x112, and the LE label — when `labels/le` is
+wired — will also be one pixel. Nothing teaches the decoder *spatial pattern*. LST is the only
+label that arrives as a **dense 2-D field**, which is why §33.7/§34.6 reserve a thermal head. NOTE §35.33.6 diagnoses the failure as station-identity memorisation entering through the STATICS, and queues a statics ablation to test it — a dense auxiliary target does not address that, and the ablation is cheaper. Run it first or say why not.
+
+§29 built the Landsat arm and answered with a **no**: daytime LST does not track SM
+(within-station r = -0.077, §29.13), because the daytime field is 0.967-coherent across
+seasons (§29.15) — a static landscape property. §29.2, §30.6 and §32 all record the day/night
+**diurnal temperature range** as the one arm that could still recover a direct LST-SM link,
+and `open_items.md` D1 names the unmeasured number that sizes it: *"how many dates carry both
+a DAY and a NIGHT granule after cloud filtering."*
+
+`census_lst_sources.py` was specified in §29.3 and **never written**. This section specifies
+it, as `census_ecostress.py`.
+
+### 36.0a SEQUENCING — the kill test runs FIRST, ahead of the census
+
+The first draft put the cheapest arm-killing test last, behind the 880-station census *and*
+the Tier 2 image pull, while labelling it "cheapest test, run it first" — first only within
+§36.21, i.e. last overall. That is backwards.
+
+**§29.15 ran the analogous test on ONE tile with 246 scenes.** TxSON holds ~150 in-window
+ECOSTRESS granules. So the question *"is the within-tile DTR field dynamic, or static like
+the daytime field?"* is answerable **at one station, for hours of work**. If it comes back
+near §29.15's 0.967, everything in Parts II-IV is wasted effort.
+
+```
+STEP 0   one station (CR200-18 tile), pull LST for its in-window granules,
+         compute the DTR field's seasonal coherence          <- §36.21(i)
+STEP 1   only if STEP 0 passes: TIER 1, the census           <- §36.13-36.16
+STEP 2   only if TIER 1 passes: TIER 2, the image pull       <- §36.15c
+```
+
+This also reverses the first draft's other sequencing error: §36.16's failure branch was
+*"a failed census defers the thermal arm"*, so a pass licensed a large pull and a fail
+licensed waiting — no census outcome changed the plan. With STEP 0 in front, there is an
+outcome that ends the arm cheaply.
+
+### 36.0b Measured 2026-09-15 — facts that override the spec below
+
+From `census_ecostress.py --probe` against real granules. Each of these contradicts something
+the first draft assumed.
+
+* **The QC accuracy threshold in §36.12 was one notch too strict and rejected 100% of valid
+  pixels.** Granule 16576 (TxSON, 2021-06-08) returns `bits 15&14 == 01` for every pixel —
+  ECOSTRESS's delivered LST accuracy here is *"1.5-2 K, marginal"*. The original filter
+  demanded `>= 10` (<=1.5 K, "good"), giving `clear_frac = 0.000` network-wide while looking
+  like a cloud problem. **Require `>= 01` (<=2 K).** After the fix the same granule set gives
+  clear=1.000 on a pristine scene and 0.000 on a 100%-cloud scene, i.e. it discriminates.
+* **An all-zero QC word means UNPOPULATED, not "every field at its worst".** Granule 00375
+  (2018-07-30, three weeks post-launch) returns a single distinct value `0x0000` over the
+  whole window, which would decode as slow convergence / warm humid air / silicate rocks /
+  poor accuracy for 100% of a Texas rangeland tile. Treat `qc == 0` as unknown.
+* **Not every populated QC field is trustworthy either.** The same 2021 granule reports
+  emissivity accuracy `00` (">0.02, poor") for 100% of the window while MMD varies spatially
+  across three bins. Use bits 1&0, 3&2 and 15&14; do not build on the others.
+* **`view_zenith` is frequently empty.** All-NaN over the station window on 2 of 3 probed
+  granules, including the 2021 one, while QC/cloud/water/LST all carry data at the same
+  pixels. A grid check confirms all five layers share an identical transform
+  (1568x1568, origin 499980.0/3400020.0, 70 m), so this is a data property, not a windowing
+  bug. **§36.15's VZA study may not be executable as written.** The census reports VZA
+  availability as a first-class number. If it is too sparse, VZA is computable from ISS
+  ephemeris plus the station coordinate — and the granules that do carry it validate that
+  calculation. `ECO_L1CT_RAD` (tiled) does NOT carry geometry; `ECO_L1B_GEO` does but is
+  swath HDF5 requiring reprojection.
+* **The latitude cut was wrong.** The catalogue *page* says 52 deg in prose; the collection
+  metadata declares `N=54 S=-54`. The prose figure dropped **38 stations** in the 52-54 band,
+  one a flux tower. `--controls` now sweeps 50-62 deg to locate the real edge from data.
+
+---
+
+### PART I — THEORETICAL BASIS
+
+### 36.1 Why thermal inertia, not instantaneous LST
+
+**REVISED 2026-09-15 after adversarial review. The first draft of this subsection argued
+that a near-static target is memorisable and therefore harmful, cited a non-existent "§29
+caveat iv", and used that single claim to refuse the already-costed global Landsat pull.
+§29.9 and §29.15 say the OPPOSITE and the reversal was never acknowledged. Corrected below.**
+
+Soil thermal inertia is `P = sqrt(k * rho * c)`. Water raises both terms sharply — heat
+capacity ~4.2 J/g/K against ~0.8 for dry mineral soil, conductivity climbing steeply with
+saturation. High inertia means a small diurnal swing:
+
+```
+large day-night swing  ->  dry
+small day-night swing  ->  wet
+```
+
+**What DTR genuinely buys, stated precisely.** Day minus night at the SAME pixel cancels the
+*retrieval* nuisances: emissivity error (the dominant LST uncertainty, and stable over 12 h),
+sensor calibration offset, the static part of the atmospheric correction, and the elevation
+lapse offset. Those are exactly what forced §29's absolute-LST work to fight a 1-2 K noise
+floor. That cancellation is real and is the honest case for the arm.
+
+**The second honest argument, which the first draft missed.** §29.13 named the leading
+physical explanation for its own negative: *"The skin/5 cm decoupling is unaddressed and is
+the most likely physical explanation — LST sees the top millimetres, TxSON sensors sit at
+5 cm, and a dry crust over moist soil breaks the chain."* The diurnal wave senses the damping
+depth (~5-15 cm), which is far closer to the label depth than the instantaneous skin is. DTR
+is better matched to what ISMN measures. (The day half still sees the crust — this helps, it
+does not eliminate.)
+
+**What the first draft got wrong about static targets.** §29.15 line 6360, verbatim: *"It
+also flips the sign of the argument for §29.9. For LST-as-input ... a static field is nearly
+worthless ... But for LST-as-auxiliary-dense-target, **stability is a virtue** ... §29.9
+survives this negative result better than it entered it."* And `logs.txt`: *"Static vs dynamic
+is NOT either/or ... use two loss terms with separate weights ... Strictly better than the
+current all-or-nothing wiring."* A memorisable target is not automatically a harmful one —
+the head is deleted at inference (§36.5), so it cannot leak a memorised map into the product,
+and §34.6 already controls the gradient-competition channel by setting `lam` from gradient
+norms. **The static-target objection is withdrawn as a reason to prefer ECOSTRESS over
+Landsat.** The sensor choice now rests only on day+night availability, which is a fact rather
+than an argument.
+
+**SNR — corrected.** The first draft quoted *"10-25 K against ~3 K paired retrieval noise"*
+from `logs.txt`. That figure is for the **absolute** DTR of a land surface. The *within-tile*
+quantity this arm supervises is far smaller: §29.13 measured single-date within-tile spread
+at **2.26 K median against a ~2 K noise floor**, and §36.12's own arithmetic gives ~2.1-2.8 K
+of paired DTR uncertainty. So the honest figure for the target is **SNR of order 1**, not 3-8.
+Partial mitigation, unmeasured: emissivity and atmospheric error largely cancel within a tile
+and again in a same-pixel difference, so 2.1 K is likely conservative. Neither the signal nor
+the noise for the actual target has been measured. **§36.21(ii) exists to measure it, and no
+number from this paragraph may be quoted as though it had been.**
+
+### 36.2 The target is DTR itself — no centring
+
+**REVISED 2026-09-15. The first draft mandated subtracting the tile mean per scene. That was
+wrong, and it contradicted §36.1: the day-to-day variation §36.1 offers as DTR's advantage
+lives mostly in the tile-mean magnitude, which centring deletes. Both of its "independent"
+derivations also fail on inspection.**
+
+```
+target = LST_day - LST_night,  same pixel,  RAW
+```
+
+**Why no centring.** DTR is *already* a difference. Taking day minus night at the same pixel
+has already removed what the centring existed to remove — the absolute level, the ~30 K
+seasonal swing, the static emissivity and atmospheric bias. Subtracting the tile mean on top
+is a second differencing of an already-differenced quantity, and it costs real signal:
+
+1. **The tile-mean DTR carries tile-mean thermal inertia**, i.e. tile-mean soil moisture. That
+   is precisely the *level* information §35.33.6 says the model is missing — NSE negative
+   everywhere (-0.7 to -50) while NSE-anomaly is ~0 and Pearson r-squared is 0.45-0.64: tracks
+   shape, misses level. Centring deletes the component that addresses the measured failure.
+2. **A uniformly-wet and a uniformly-dry scene produce identical centred targets.** The
+   dominant mode of SM variance is temporal and tile-wide.
+3. **Absolute DTR is the thermal-inertia observable.** `P = sqrt(k rho c)` maps to the
+   *magnitude* of the swing. A centred anomaly is blind to it.
+
+**Why the two old derivations do not hold.**
+
+*(a) "ERA5 supplies the level, so the head gets it free."* True but not harmful. ERA5 does
+carry `skt_min`/`skt_max` (`dataset.py:61`), so a tile-level DTR is available to the driver
+memory. But a component that is easy and quickly fitted does not permanently starve the rest —
+it is solved early and the residual gradient is then the pattern. And two pathways agreeing on
+tile-mean wetness is a mild consistency constraint, not a cost. The concern was overstated.
+
+*(b) "A daily model cannot predict an instantaneous field."* That objection was aimed at
+absolute LST and does not transfer. **DTR is not instantaneous — it is a property of one
+diurnal cycle, which is a daily quantity.** It matches `up3_feat`'s timescale natively in a
+way a single overpass never does. This is an argument FOR DTR that the first draft inverted
+into an argument for centring.
+
+**Loss form: one term.** `L_therm = huber(DTR_pred, DTR_obs)` over the valid cells. No split,
+no separate weights. **Diagnostics only:** log the tile-mean error and the within-tile pattern
+error separately every epoch. They change nothing, cost nothing, and are the only way to
+notice if the pattern is being ignored. If it is, that is the moment to reconsider — not
+before.
+
+**What centring was right about, and is preserved.** Supervising *absolute LST* would let the
+head satisfy the loss from `skt` alone (`patchwise_math.md` §2.4: one 9 km ERA5 cell covers
+the whole 2.24 km tile, so *"if patch A is wetter than patch B on day D, `m` cannot be the
+reason"*). That hazard is real — and the day-minus-night difference already removes the
+seasonal and absolute-level terms that made it acute.
+
+### 36.3 Three nuisances that move the target while SM stands still
+
+**(a) Solar phase.** ECOSTRESS rides the ISS, which is **not** sun-synchronous; the orbit plane
+precesses so overpass time walks the diurnal cycle (§29.3 measured a flat local-hour
+histogram). LST swings 10-25 K a day, so "LST" with no stated hour is not a quantity — a head
+trained on unlabelled-phase granules converges to `E[LST | station, date]` over whatever hours
+the ISS sampled, and precession differs per station, so it is not even the same quantity at
+two stations.
+
+*Resolution:* bin by **solar geometry**, and exploit the fact that the **anomaly** is far more
+phase-tolerant than the absolute temperature. The wet-dry gap grows through the morning, peaks
+in the early afternoon and is **flat near its peak**, so a 3-hour day window costs little.
+Overnight the gap decays monotonically, so the night window must be narrower.
+
+*The crossover:* near sunrise/sunset the gap passes through zero — wet and dry soil sit at the
+same temperature, so a perfectly clear granule carries no moisture signal. Excluding `elev` in
+[-5, +10] deg costs ~20% of granules, against ~2/3 for hard 4-hour day/night binning.
+
+**(b) View geometry.** Wide swath, no fixed ground track, so VZA at a station is effectively
+random per pass, 0-60+ deg.
+
+* *Footprint growth* — ~38 x 69 m at nadir stretches by ~1/cos(VZA) across-track, doubling at
+  60 deg, plus Earth curvature. A 140 m target grid stops meaning what it claims.
+* *Atmospheric path* roughly doubles at 60 deg, inflating correction error (partly captured by
+  QC bits 15&14).
+* *Thermal anisotropy — the one that matters.* A canopy is a 3-D mix of sunlit leaf, shaded
+  leaf, sunlit soil, shaded soil, differing 10-20 K at midday. Nadir sees between the rows
+  (hot bare soil); oblique sees the canopy close up (cool leaf).
+
+**Centring does not remove it.** VZA is near-constant across a 2.24 km tile so it shifts the
+tile mean — but anisotropy *strength* depends on each pixel's own structure (dense forest
+near-isotropic; row crop and sparse shrub strongly anisotropic). VZA therefore changes the
+contrast *between* pixel types even after the mean is subtracted: the same field at the same
+moisture, viewed at 5 and 55 deg, yields two different anomaly patterns from one input.
+
+*Resolution, preferred order:* (1) **measure** the VZA distribution and empirical
+anomaly-vs-VZA, then set any cut from evidence; (2) VZA-match the pair so the difference
+partly cancels; (3) condition the head on VZA — which survives the objection that rules out
+conditioning on solar phase, because **VZA is a property of the observation operator, not the
+geophysical state**, so it does not ask a daily representation to carry sub-daily information.
+
+**(c) Cloud.** Thermal cannot see through cloud, and cloud is **not randomly distributed in
+time** — convective cloud builds in the afternoon, precisely where the day window sits. QC
+therefore preferentially destroys the most valuable acquisitions, so survival must be measured
+**as a function of solar hour**, which requires solar geometry on the *rejects* too.
+`open_items.md` C3 records the companion bias: clear-scene count is set by climate, not
+effort, so supervision is thinnest where soil moisture is highest. Stratify by Koppen.
+
+Two things the first draft got wrong here. The *"~20% of granules"* cost of the crossover
+exclusion was asserted, and is roughly 2x high — the time with solar elevation inside a 15 deg
+band straddling the horizon is set by dElev/dt ~ 15*cos(lat) deg/hr, giving ~10% at lat 30 and
+~13% at lat 50, latitude- and season-dependent rather than one number. And the framing of the
+crossover as the cheap alternative to hard binning contradicts §36.14, which imposes hard
+binning anyway (3 h day + 4 h night = 7 of 24 hours). Inside those windows `elev` in
+[-5, +10] barely occurs, so **the crossover exclusion is close to a no-op as specified.** Keep
+it as a safety net; do not claim it as a saving.
+
+Cloud persistence also breaks §36.12's independence assumption: day and night cloud over
+12-36 h are synoptically correlated, so the *"70% per image -> ~49% of pairs"* figure is not
+a valid multiplication. Report the measured joint rate, not the product.
+
+### 36.3a Confounds on DTR itself — added 2026-09-15, absent from the first draft
+
+These are not biases riding on DTR that a difference removes. **They ARE DTR**, and none was
+mentioned in the first draft.
+
+* **Vegetation fraction — the largest, and it lands where the model is already worst.** DTR
+  magnitude over land is set first by fractional cover, not by soil thermal inertia. A closed
+  canopy has near-zero thermal mass, is well coupled aerodynamically, and transpires; its
+  radiometric DTR is small and nearly independent of root-zone moisture. So the DTR field over
+  a heterogeneous tile approximates a **map of vegetation cover** — static or seasonally
+  cyclic. §35.33.6: *"Forest 0.0563 (n=75) — worst class at every depth and every split."*
+  DTR supervision would be least informative exactly where the model fails most. §29.7
+  required an NDVI/TVDI partial as control (4); §29.13 records it was never run. **Run it.**
+* **Soil texture and bulk density.** `P = sqrt(k rho c)` depends on texture independently of
+  theta, so two pixels at identical moisture give different DTR. This is the static covariate
+  §29.14 warned about — and the model holds `soil_patch (21,74,74)` as a static input that
+  supplies it, so the head could fit the DTR field from texture with no moisture content at
+  all.
+* **Latent vs sensible partitioning.** The DTR suppression of a wet surface is dominated by
+  evaporative cooling, not by the inertia term, which makes the DTR-SM relation
+  state-dependent and non-monotone: energy-limited conditions saturate it; a dry crust over
+  wet soil collapses LE and gives high DTR at high theta. Note §29.1 justified daytime LST in
+  identical language (*"a direct thermodynamic consequence of soil moisture rather than a
+  correlate"*) and then returned r = -0.077. **The same rhetorical move has already failed
+  once in this runbook.**
+* **Solar-azimuth terrain shading — and it would PASS the §36.21(i) kill test.** §36.11
+  measures 338 of 880 in-range stations above 2 km. Low-sun shadowing gives 5-15 K within-tile
+  anomalies that **rotate with solar azimuth**, and because the ISS precesses, azimuth at a
+  given station varies pass to pass. That is a *dynamic*, moisture-uncorrelated pattern — it
+  sails through a static-vs-dynamic test. §36.14 computes declination, equation of time, TST,
+  hour angle and elevation and **never computes azimuth**. It must, and slope/aspect partials
+  (§29.7 control 5) must be run before any positive result is believed.
+* **Dew/frost, irrigation, roughness.** Nocturnal condensation raises night T on wet surfaces
+  (same sign, different physics, different depth sensitivity). Irrigation applies water on a
+  schedule uncorrelated with weather at a large fraction of ISMN cropland sites. Aerodynamic
+  roughness sets the daytime rise more strongly than `P` does at vegetated sites — which
+  matters because §33.10 names *"differential surface roughness after rain"* as the very thing
+  thermal was supposed to disambiguate.
+
+### 36.4 Pairing is the binding constraint, not granule count
+
+Day and night passes are **different orbits, usually different dates** — DTR can never be read
+from one acquisition. Two consequences:
+
+* Marginal day and night counts say nothing about pair availability. This is why §29.3's
+  granule census did not answer D1.
+* **Same-date pairing is stricter than the physics requires.** Drydown runs on a timescale of
+  days, so a day pass on *t* and a night pass on *t+1* bracket essentially the same moisture
+  state. Requiring same-date is what makes D1 look forbidding; +/-1 day may not.
+
+This makes **D4** (`--night-assign same` vs `prev`) a real decision: a pre-dawn pass reflects
+overnight cooling driven by the *previous* afternoon. Report every headline both ways.
+
+### 36.5 The head is auxiliary — SM remains the only product
+
+At inference `head_sm(up3_feat)` produces the (3, 112, 112) daily field; `head_therm` is
+**deleted** (§34.6). No thermal map delivered, no granule needed, no phase needed. The head
+*is* predicted during training — a loss term requires a prediction — but its output is
+discarded. Its job is to shape `up3_feat` so spatial structure is real rather than invented.
+
+LST is never an **input** (§33.7, *"S1 is input only, LST is target only"*) because per §29.9
+LST exists on only ~20-40% of days. A proxy-consistency loss is DISFAVOURED per §21.5, whose
+actual words are *"prefer a multi-task LST head over a proxy-consistency loss — LST is a real
+measurement and not a model input"* — a preference on different grounds than the first draft
+claimed. The reasoning below is this section's own, not §21.5's — it
+hard-codes the SM-DTR relation and injects error where that relation is weak, whereas a head
+that fails merely fails to help.
+
+### 36.6 Sensor choice
+
+| | Landsat 8/9 | **ECOSTRESS** | MODIS Terra+Aqua |
+|---|---|---|---|
+| real resolution | 100 m (TIRS; 30 m delivery is resampling) | **70 m** | 1 km — ~2 px/tile |
+| phase | fixed ~11:00 | flat across 24 h | fixed 10:30/13:30, 22:30/01:30 |
+| day + night | **no** (C2 L2 ST is daytime-only) | **yes** | yes |
+| coverage | global, full window | 52N-52S, 2018-07 on | global, 2000/2002 on |
+
+MODIS is temporally perfect and spatially useless — at 1 km it cannot resolve within-tile
+pattern, the head's only purpose. Landsat is spatially fine and phase-stable but physically
+cannot give a diurnal range. **ECOSTRESS is the only sub-km day+night sensor.**
+
+*One legitimate MODIS use:* TxSON is ~33 x 33 MODIS cells and Terra+Aqua give four fixed
+phases, enough to measure empirically how much the spatial anomaly changes between 10:30 and
+13:30 — calibrating window width with data. Validates at 1 km; downscale transfer is an
+assumption to state.
+
+---
+
+### PART II — THE DATA
+
+### 36.7 Collections, verified from CMR
+
+```
+ECO_L2T_LSTE  v002   C2076090826-LPCLOUD     <- USE THIS
+ECO_L2T_LSTE  v003   C3998139651-LPCLOUD
+ECO_L2G_CLOUD v002   C2076113561-LPCLOUD     (gridded, HDF5 - escalation path only)
+ECO_L2G_CLOUD v003   C3998139427-LPCLOUD
+ECO_L2_CLOUD  v002   C2076115306-LPCLOUD     (swath)
+```
+
+**There is no tiled cloud product.** `ECO_L2T_CLOUD` does not exist — confirmed by collection
+search. Cloud confidence is only in the gridded/swath products.
+
+Also present and worth knowing as *comparison* datasets, never inputs: `ECO_L3T_SM` (soil
+moisture), `ECO_L3T_JET` (ET), `ECO_L4T_ESI`. These are other algorithms' outputs.
+
+### 36.8 v002 vs v003 — use v002, measured not assumed
+
+v003 (published 2026-04-23) has a materially better cloud mask: single-channel Bayesian LUT,
+GEOS5 grid 1 deg -> 0.5 deg, GEOS5 skin temperature used directly — *"improved discrimination
+of low, warm clouds from land"*, exactly the night-half failure mode. **But it has not been
+back-processed.**
+
+```
+TxSON granules/yr   L2T_v002   L2T_v003   L2G_v003
+2018                      21          0          -
+2019                     212          1          1
+2020                     327          0          0
+2021                     236          0          0
+2022                     252          0          0
+2023                     419          0          0
+2025                     226         41         13
+2026                     161        291        187
+
+GLOBAL, 2021:   L2T v002 = 1,831,339    L2T v003 = 0    L2G v003 = 0
+GLOBAL, 2026:                            L2T v003 = 3,426,945
+```
+
+**Trap worth recording.** Both v003 catalogue pages advertise *"2018-07-09 to Present"*. That
+is the collection's **declared temporal extent** — the span it is defined to cover once
+complete — **not an inventory of existing granules**. CMR collection metadata states intent;
+only granule queries report reality, and the page gives no hint of the difference.
+
+So the entire 2016-2022 label window exists in **v002 alone**. Watch item: revisit if LP DAAC
+back-processes, since the v003 mask would directly improve pair survival.
+
+### 36.9 Granule structure
+
+```
+ECOv002_L2T_LSTE_{orbit}_{scene}_{tile}_{YYYYMMDDTHHMMSS}_{build}_{ver}
+                   ^field 4        ^MGRS
+```
+
+**Every layer is a separate COG**, which is what makes the windowed tier cheap:
+
+```
+..._LST.tif  ..._LST_err.tif  ..._QC.tif  ..._cloud.tif
+..._water.tif  ..._view_zenith.tif  ..._height.tif  ..._EmisWB.tif
+```
+
+Access, both listed per granule:
+
+```
+HTTPS  https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/ECO_L2T_LSTE.002/...
+S3     s3://lp-prod-protected/ECO_L2T_LSTE.002/...   region us-west-2
+       creds: https://data.lpdaac.earthdatacloud.nasa.gov/s3credentials
+```
+
+**Use HTTPS + `/vsicurl/`, not S3.** Snellius is in Europe; S3 direct access is in-region only
+(us-west-2) and would be cross-region, slow, and needs refreshing temporary credentials.
+
+`ECO_L2G_CLOUD` is delivered as a **single `.h5`**, so no windowed reads — but its `GranuleUR`
+shares orbit and scene with L2T (`ECOv002_L2G_CLOUD_16576_003_...` matches
+`ECOv002_L2T_LSTE_16576_003_14RNU_...`), so joining is trivial by ID with no temporal matching.
+
+**Orbit deduplication — corrects §29.3.** Measured at TxSON 2021: **236 granules -> 178 unique
+overpasses**. ECOSTRESS emits consecutive *scenes* from one orbit over the same tile (orbit
+16576 scenes 003 and 004, 52 s apart, both `14RNU`) — one acquisition. §29.3's "1984 granules,
+DAY 944 / NIGHT 1040" counts scenes; the real independent count is ~75% of that.
+
+---
+
+### PART III — FILTERING
+
+### 36.10 QC bit table — verified IDENTICAL in v002 and v003
+
+Both guides extracted locally with ghostscript (`-sDEVICE=txtwrite`; the LP DAAC PDFs are not
+fetcher-readable and there is no poppler on this machine) and compared line by line.
+
+* **v002** — LP DAAC doc **1574**, `ECOL2_User_Guide_V2.pdf`, title page *"JPL D-103137 ...
+  Level 2 Product User Guide **v002**, 19 August 2024, Glynn Hulley, Robert Freepartner"*;
+  internal revision 4.2 (2024-08-12), Table 6. That revision's note is *"Corrections to QC
+  description of bit masks to account for cloud information not getting propagated to the QC
+  bit mask in Collection 2"* — which is exactly the `10 = not set` and `5&4 = Not set` entries.
+  Internally confirmed by Table 1 (*"...products in Collection 2"*) and §5.1 (*"In Collection 2
+  (build 7.*) the cloud mask algorithm has been completely revamped"*).
+* **v003** — doc 2301, `ECOL2_User_Guide_V3.pdf`, revision 5 (2025-12-10). Identical table.
+
+```
+Bits    Field               Values
+1 & 0   Mandatory QA        00 = Pixel produced by TES
+                            01 = Produced, but one or more of:
+                                   1. Emissivity bands 4 AND 5 < 0.95 (possible cloud)
+                                   2. Transmissivity < 0.4 (high water vapour)
+                                   3. Missing scan line bands 1&5, neural-net filled
+                            10 = not set
+                            11 = Not produced (missing/bad data, or TES divergence)
+3 & 2   Data quality        00 good L1B | 01 missing stripe bands 1&5 | 10 not set
+                            | 11 missing/bad L1B
+5 & 4   Cloud/Ocean         NOT SET -- "check ECOSTRESS GEO and CLOUD products"
+7 & 6   Iterations          00 slow | 01,10 nominal | 11 fast
+9 & 8   Atmospheric opacity 00 >=3 | 01 0.2-0.3 | 10 0.1-0.2 | 11 <0.1
+11 & 10 MMD                 00 >0.15 | 01 0.1-0.15 | 10 0.03-0.1 | 11 <0.03
+13 & 12 Emissivity accuracy 00 >0.02 | 01 0.015-0.02 | 10 0.01-0.015 | 11 <0.01
+15 & 14 LST ACCURACY        00 >2 K | 01 1.5-2 K | 10 1-1.5 K | 11 <1 K
+```
+
+**The trap, verbatim (§4.3):** *"A value for bits 1&0 = 00 in the QC bit flags indicates that
+the LST and emissivity was retrieved, **but the pixel may or may not be cloudy**."* A
+best-quality filter alone keeps cloudy pixels. Both tests are required; bits 5&4 are not set.
+
+*Two source corrections.* NASA's VITALS tutorial is right that bits 1&0 are a **joint** 2-bit
+field — the GEE catalogue table splits them into independent flags and is **wrong** (it also
+lists bit 3 = Sky Condition and bit 7 = Land/Water when `cloud` and `water` are separate
+layers, and bit 2 = "LST Temporal Interpolation", meaningless for an instantaneous product).
+But VITALS is itself outdated in saying `10 = cloud detected`; per revision 4.2 it is not set.
+
+*Cosmetic:* the v002 caption reads *"...in the **MxD21_L2** product"* — a leftover from the
+guide being drafted from MODIS heritage. V3 corrected it. Same table, stale label.
+
+### 36.11 The cloud layer is BINARY, not a bitfield
+
+The v001 bitmask vocabulary ("Cloud Mask Flag determined", "Final Cloud Plus Region-growing",
+"no Final Cloud, either one of bits 2, 3, or 4 set") **does not apply to v002/v003.** User
+Guide §5.1: *"The L2 cloud mask product will contain binary layers instead of a bitmask in
+Collection 2/3 for ease of use."* The catalogue confirms `cloud` is `uint8`, valid 0-1, fill
+255.
+
+**Decoding "bits 2, 3, or 4" from a 0/1 layer means those bits are always zero, every test
+reads "no cloud", and every cloudy pixel passes** — no error, no warning, a fully broken mask.
+The recipe's intent is `cloud == 0`.
+
+**`Cloud_final` uses an elevation-dependent rule:**
+
+```
+Cloud_confidence:  0 confident clear | 1 probably clear | 2 probably cloudy | 3 confident cloudy
+
+elevation < 2 km :  cloud=1 if confidence in {2,3}   ->  cloud==0 admits {0,1}
+elevation > 2 km :  cloud=1 if confidence == 3       ->  cloud==0 admits {0,1,2}
+```
+
+**Above 2 km, `cloud == 0` admits "probably cloudy" — and that is 38% of the network:**
+
+```
+stations inside +/-52 deg            880
+  above 2000 m                       338   (38.4%)   <- looser rule
+  of those, flux towers               10
+network mean elevation              1284 m;  326 stations in the 2000-3500 m band
+```
+
+Not merely permissive but **inconsistent**: the same test means different things at different
+stations, so supervision would be systematically noisier at high elevation — a
+station-dependent bias in the target, which is what feeds memorisation. The guide anticipates
+it: *"If the user has zero tolerance for any nearby or possible cloud, then only confident
+clear pixels should be used."*
+
+**But confidence is not available in tiled form** (§36.7). Escalation path, not default:
+
+1. **Default** — use L2T's own `cloud == 0` (COG, windowed read, free).
+2. **Escalate only if warranted** — if Tier 1 shows anomalous survival at high-elevation
+   stations, pull `ECO_L2G_CLOUD` (.h5, whole-granule) for those ~338 stations and apply a
+   uniform `Cloud_confidence == 0`. Join by orbit+scene from `GranuleUR`.
+
+### 36.12 The filter
+
+```python
+# QC is uint16.  Bit 0 = least significant.
+mand    =  QC        & 0b11      # bits 1&0
+dataq   = (QC >>  2) & 0b11      # bits 3&2
+lst_acc = (QC >> 14) & 0b11      # bits 15&14
+
+keep = (  np.isin(mand, [0, 1])        # produced | produced-degraded
+        & (dataq   == 0)               # good L1B only
+        & (lst_acc >= 2)               # LST accuracy <= 1.5 K
+        & (cloud   == 0)               # cloud LAYER, never QC
+        & (water   == 0)
+        & (np.abs(view_zenith) < 30))  # optional; MEASURE the cost first
+```
+
+Two additions beyond the original recipe, both task-specific:
+
+* **`dataq == 0`** drops code `01`, a missing scan line filled by a spatial neural net.
+  Harmless generally; not here — the head is supervised on *spatial pattern*, and synthetic
+  fill can inject structure that is not real and would never be detected downstream.
+* **`lst_acc >= 2`** matters most for DTR. Differencing two LSTs adds errors in quadrature:
+  two "poor" pixels (>2 K each) give ~2.8 K of DTR uncertainty against a 10-25 K signal;
+  <=1.5 K brings it to ~2.1 K. Histogram bits 15&14 before locking the threshold.
+
+**Keep `mand == 01`, but watch it.** It contains exactly the humid cases — emissivity <0.95
+("possible cloud contamination") and transmissivity <0.4 (high water vapour). Dropping it
+biases supervision dry *on top of* the cloud bias already doing the same. Report the `00`/`01`
+split by wetness tercile.
+
+**Three levels, kept separate:**
+
+```
+PIXEL   the mask above
+IMAGE   keep if clear_fraction >= 0.5
+        - over the 2.24 km STATION WINDOW, not the 110 km granule.  A granule 60% cloudy
+          overall can be clear over the station, and the reverse.
+        - store the fraction; 0.5 is a swept parameter (0.5 / 0.7 / 0.9), per §29.5:
+          "store the clear fraction so the decision is auditable and re-runnable"
+PAIR    keep if BOTH halves pass IMAGE
+        - multiplicative: 70% per image -> ~49% of pairs survive.  Report the compounding.
+```
+
+---
+
+### PART IV — IMPLEMENTATION
+
+### 36.13 Two tiers — one qualifying pass, then the images
+
+```
+TIER 1   ONE PASS, EDL required, staged 1a -> 1b
+         CMR metadata + solar geometry + windowed reads of _QC _cloud _water _view_zenith
+         + QA/cloud filtering + pairing
+         -> the definitive per-station QUALITY-PAIR inventory
+TIER 2   actual LST image download, scoped by what Tier 1 qualified
+```
+
+**Everything that decides *whether* an acquisition is usable happens in Tier 1, together.**
+Metadata, solar angle, QC, cloud, view zenith, filtering and pairing are one pass over one
+list of granules — there is no separate metadata-only stage. Tier 2 is only the bulk image
+pull, and it is scoped by Tier 1's output rather than run blind.
+
+**`_LST.tif` is NOT read in Tier 1.** Tier 1 needs masks and angles, not temperatures. The
+LST pixels are the Tier 2 product.
+
+**Consequence: Earthdata Login is a hard prerequisite to starting.** QC, cloud and
+view_zenith are pixels inside the granule, not catalogue fields, so there is no longer an
+unblocked first step. Do the registration in §36.15 before anything else. (The CMR half alone
+would need no credentials — verified, HTTP 200 with no `~/.netrc` entry — but splitting the
+run to exploit that was considered and rejected: it produces a partial answer that has to be
+re-joined later.)
+
+**This section answers availability only.** Whether the DTR signal is real is out of scope and
+deferred to §36.21.
+
+**Stage it.** COG internal tiling means the minimum read is one block (typically 512x512), not
+the 32 x 32 window, so per-read cost is set by block size. Across ~880 stations x ~150
+in-window acquisitions x 4 layers that is ~530k reads — a real job, not a free one. Hence 1a
+before 1b.
+
+### 36.14 TIER 1, part A — the granule list and solar geometry
+
+The CMR half of the single pass. Runs first inside the same job, feeding the windowed reads in
+§36.15. Uses plain `requests`; no `earthaccess` needed anywhere in §36.
+
+```
+https://cmr.earthdata.nasa.gov/search/granules.umm_json
+  ?collection_concept_id=C2076090826-LPCLOUD
+  &point={lon},{lat}
+  &temporal=2018-07-09T00:00:00Z,{station_end_date}
+  &page_size=2000
+```
+
+Five choices that matter:
+
+* **`collection_concept_id`**, not `short_name`+`version` — unambiguous, immune to a v003
+  default changing under us.
+* **`umm_json`, not `json`** — UMM-G exposes `DataGranule.DayNightFlag` and `TemporalExtent`
+  in a stable schema, avoiding §29.3's trap that *"CMR link entries do not all carry a `title`
+  key."*
+* **`point=`, not `bounding_box=`** — §29.3's bbox pulled in tile `14RMU` and ~995 redundant
+  granules clipping a western sliver.
+* **Page with `search-after`** (the CMR cursor header); `page_num` is deprecated for deep
+  paging. `page_size=0` returns `hits` alone for a cheap counts-only first pass.
+* **`temporal` ends at each station's `end_date`** from `station_splits.csv`.
+
+**Stations.** Use **+/-52.0 deg**, the limit NASA states, not the 51.6 deg ISS inclination:
+
+```
+total stations                     993
+outside +/-52.0 deg (OFFICIAL)     113  (11.4%)
+outside +/-51.6 deg                118  (11.9%)
+has_flux outside the band           17          -- same under either limit
+```
+
+Skip them, but **query 5 as a control** and assert zero granules. Throttle to **~8 concurrent
+requests** — this is the one place the house `Pool(64)` rule does not apply, since 64
+concurrent requests to CMR will be throttled; the SLURM allocation still follows the rule.
+Resume-safe via a checkpoint CSV keyed on `station_id` (the `landsat_st_download_log.csv`
+idiom).
+
+**Measured cost:** ~880 in-range stations, ~1,060 granules each (one 2000-item page), ~1.5 s
+per query, so **4-10 min wall-clock**, ~930k rows, ~140 MB CSV.
+
+**Deduplicate twice, counting each drop separately:** by **orbit** (~25%, §36.9) and by
+reprocessing (same `(tile, BeginningDateTime)`, different production date — keep newest).
+
+**Solar geometry — for EVERY granule, before any QC:**
+
+```
+N     = day of year
+decl  = 23.45 * sin(360 * (284 + N) / 365)
+B     = 360 * (N - 81) / 364
+E     = 9.87*sin(2B) - 7.53*cos(B) - 1.5*sin(B)        equation of time, minutes
+TST   = UTC_hours + lon/15 + E/60                      true solar time
+H     = 15 * (TST - 12)                                hour angle, degrees
+sin(elev) = sin(lat)*sin(decl) + cos(lat)*cos(decl)*cos(H)
+```
+
+Include the equation of time — omitting it gives *mean* solar time, off by +/-16 min; harmless
+for 3 h bins, not for the empirical window curve.
+
+Store `TST`, `hours_from_solar_noon`, `elev` on every row **including granules that later fail
+QC** — it costs nothing (no pixel data) and is the only way to measure the afternoon cloud
+bias. A `passed_qc` column is filled by Tier 1.
+
+`DayNightFlag` is a **cross-check only**, never the binning mechanism — it describes
+scene-centre illumination and a scene spans hundreds of km. Probed at TxSON it is clean (Day
+05:00-18:00, Night 17:00-06:00, overlapping only at dusk), but one 07:00 granule was
+Night-flagged, which is the scene-centre effect showing through.
+
+**Windows and pairing:**
+
+```
+DAY    solar noon + 0.5 h  ->  + 3.5 h    placed after noon: surface temp lags forcing
+NIGHT  solar midnight - 2 h ->  + 2 h
+DROP   elev in [-5, +10] deg              the crossover, ~20% of granules
+```
+
+**One-to-one greedy matching**, nearest in time. Report a **sensitivity grid**, not one number:
+
+| axis | values |
+|---|---|
+| dt tolerance | <18 h (same night), <36 h (+/-1 day), <60 h (+/-2 days) |
+| day window half-width | +/-1.5 h, +/-2.5 h, +/-3.5 h |
+| night window half-width | +/-1 h, +/-2 h, +/-3 h |
+
+Every headline under both **D4** assignments (`same` and `prev`).
+
+**Measured yield, TxSON 2021:** ~44 day and ~49 night granules in-window per year, ~33 each
+after orbit-dedup. TxSON is dry, clear central Texas — an optimistic bound, not typical.
+
+**Tier-0 quality checks:**
+
+1. `DayNightFlag` vocabulary — flag any `Both`/`Unspecified`.
+2. Both dedup counts reported separately.
+3. Granule polygon contains the station (L2T is gridded — verify, don't trust).
+4. Latitude cutoff confirmed from data against +/-52 deg.
+5. No granules before 2018-07-09.
+6. Per-year counts per station, so instrument gaps stay visible.
+7. **Overlap with SM labels — the headline.** A pair is useless without a label on that date.
+   Join pair dates against `labels/dates`. Report **pairs-with-label**, never raw pairs.
+
+### 36.15 TIER 1, part B — masks, QC and VZA by windowed read
+
+**PREREQUISITE — ~3 min of user action, and it gates the whole of Tier 1** (§29.6): register at
+`urs.earthdata.nasa.gov`; Applications -> Authorized Apps -> approve **"LP DAAC Data Pool"**
+and **"LP DAAC Cumulus (LPCLOUD)"** (403s without this even with valid credentials);
+**append** a `machine urs.earthdata.nasa.gov` block to `~/.netrc` — *the existing
+`api.wandb.ai` entry must survive* — and `chmod 600`.
+
+**Script:** `census_ecostress.py`, env `soilmoisture`. **No new dependency:** the env already
+has `rasterio` 1.4.3, `rioxarray` and `requests` (verified 2026-09-15). `earthaccess` is NOT
+needed — granule URLs come from CMR in part A, and GDAL follows the EDL redirect using
+`~/.netrc` plus `GDAL_HTTP_COOKIEFILE`/`GDAL_HTTP_COOKIEJAR`.
+
+```python
+LAYERS = ["QC", "cloud", "water", "view_zenith"]     # NOT LST -- that is Tier 2
+with rasterio.open(f"/vsicurl/{url}") as src:
+    win = rasterio.windows.from_bounds(*station_bounds_utm, src.transform)
+    arr = src.read(1, window=win)          # HTTP range requests only
+```
+
+A 2.24 km window is 32 x 32 px out of a ~110 km MGRS tile (~1500 x 1500). Restrict to the
+granules part A already placed inside a day or night window, which cuts the work several-fold.
+
+**Read scale/offset/nodata from the COG** and cross-check the guide, per §29.6 — never
+hardcode beyond LST's 0.02 K.
+
+**Stage 1a — validation sample, ~20 stations.** Chosen to span `kg_macro` (arid to humid),
+elevation (above and below 2 km), and part-A pair density. **Must include the CR200-18 TxSON
+tile**, which holds six stations (§29.1). Measure and report before scaling:
+
+* **bytes and wall-clock per windowed read**, per layer — COG block size sets this, not window
+  size. This is the number that decides whether 1b is feasible as designed.
+* clear-fraction survival per Koppen class, and per elevation band (the §36.11 2 km split)
+* VZA distribution and the cost of candidate cuts
+* QC value histogram, for the bit-layout verification below
+
+If `/vsicurl/` against LPCLOUD proves slow or unreliable, fall back to whole-layer downloads
+**for the sample only** and re-scope 1b.
+
+**Stage 1b — full network.** Same code, all ~880 in-range stations, restricted to in-window
+granules, launched once 1a's measured per-read cost confirms the run is affordable.
+
+**VZA study — what the filter actually costs.** Report **before** imposing any cut:
+
+* VZA distribution per station and pooled; fraction lost at 20 / 30 / 40 deg
+* **pair survival vs VZA cut** — it applies to both halves and compounds
+* VZA difference within surviving pairs — input to the "VZA-match the pair" option
+* *(Tier 2)* empirical **anomaly amplitude vs VZA**, stratified by land cover — the thing that
+  actually decides whether to filter, match, or condition. Needs LST pixels, so it waits for
+  Tier 2. Until then the VZA cut stays a reported cost, not an imposed filter.
+
+**Bit-layout verification — do not skip.** **Histogram the unique QC values** over one tile and
+confirm the bits-1&0 distribution is sensible under the joint-2-bit reading. Then **render the
+derived mask beside the LST field for one visibly cloudy granule** — masked regions must land
+on the cold patches. Bit errors are obvious visually and invisible numerically.
+
+### 36.15c TIER 2 — the actual image download
+
+Runs **only after Tier 1 reports and §36.16 passes**, and is scoped by Tier 1's output: the
+qualifying stations, and for each the specific day/night pairs that survived filtering. No
+blind pull.
+
+**Script:** `download_ecostress_lste.py` — specified in §29.6 and still never built. Fetches
+`_LST.tif` (and `_LST_err.tif` for the error estimate) for the qualified pairs only. LST is
+uint16, **scale 0.02 K, fill 0** — the only factor safe to hardcode; read everything else from
+the COG.
+
+Two things Tier 1 determines that Tier 2 depends on: which stations clear the §36.16 floors,
+and the measured bytes/read that sets whether a full-tile pull or a windowed pull is the right
+shape. Keep `--workers 8` — LP DAAC throttles above that.
+
+Everything in §36.21 runs on this output.
+
+### 36.16 Go/no-go — fixed before the numbers arrive
+
+Availability criteria only. Modelled on §33.9 gate 5 (n >= 20 floor, n >= 50 comfortable):
+
+* **>= 20 quality pairs per station** for that station to enter the thermal loss
+* **>= 150 stations** clearing that floor — fewer and the arm trains on too narrow a geography
+* **>= 3 years spanned** per qualifying station, else the pairs are seasonally aliased
+* **non-degenerate hour coverage** — a station whose passes cluster near the crossover
+  contributes nothing
+
+**If it fails, the fallback is not Landsat-daytime.** Per §36.1 a near-static target risks
+reinforcing the memorisation failure. A failed census **defers** the thermal arm.
+
+Per §29.10, stratify any negative before believing it, and per `open_items.md` D8 a *fail* at
+this scale is ambiguous between "no signal" and "wrong scale" while a *pass* is strong.
+
+### 36.17 Outputs
+
+```
+csvs/ecostress_census_granules.csv   per granule: station, tile, orbit, scene, UTC, TST,
+                                     hours_from_solar_noon, elev, day/night flag, size,
+                                     passed_qc, clear_frac, vza
+csvs/ecostress_census_stations.csv   per station: lat, lon, elevation_m, koppen, kg_macro,
+                                     n_day, n_night, candidate + quality pairs at each grid
+                                     point, median TST day/night, years spanned,
+                                     pairs_with_label
+csvs/ecostress_census_summary.json   totals, sensitivity grid, control result, both dedup
+                                     counts, D4 both ways
+```
+
+**Figures** (`plot_ecostress_census.py`, env `terramind`):
+
+* pooled local-solar-hour histogram, day vs night — §29.3's TxSON finding generalised
+* pairs-per-station-per-year as a map with +/-52 deg coverage lines
+* **sensitivity curve**: pairs vs dt tolerance, one line per window width — the figure that
+  makes the binning decision instead of arguing it
+* **survival vs solar hour** — exposes the afternoon convective-cloud bias
+* VZA distribution and pair-survival-vs-VZA-cut
+* per-station acquisition-time spread
+
+### 36.18 SLURM
+
+Two jobs minimum. §29.3 makes it a hard constraint: *"never combine download and analysis in
+one job"* — `soilmoisture` has the download APIs, `terramind` the analysis stack.
+
+```
+slurm/ecostress_census.sh          conda run -n soilmoisture  census_ecostress.py     # TIER 1
+slurm/ecostress_download.sh        conda run -n soilmoisture  download_ecostress_lste.py  # TIER 2
+slurm/ecostress_census_analyze.sh  conda run -n terramind     plot_ecostress_census.py
+```
+
+`census_ecostress.py` is ONE script doing both halves of Tier 1 — CMR query and solar geometry
+(part A), then the windowed mask reads, filtering and pairing (part B). Splitting them into
+two jobs was considered and rejected: part B needs part A's granule list, and a split produces
+a partial answer that has to be re-joined.
+
+Following `slurm/landsat_st.sh`: `--partition=rome`, `--mem=32G`,
+`--output=/gpfs/work3/0/prjs1968/soilMoisture/logs/%x_%j.out`, `set -eo pipefail`,
+`export PYTHONUNBUFFERED=1`, `ulimit -n 65536`, and mandatory `--mail-type=BEGIN,END,FAIL`
+`--mail-user=ktm.prajwalkhanal@gmail.com`. `--cpus-per-task=64` on the analysis job per the
+house rule; fetch jobs keep 16 (network-bound, HTTP concurrency 8). Nothing on the login node.
+
+### 36.19 Risks
+
+1. **CMR exposes no cloud information** — verified, `CloudCover` absent from the UMM record.
+   This is why Tier 1 exists and is not optional.
+2. **Tier 1 range-reads are unproven here, and merging LST in raises the stakes.** COG block
+   size, not window size, sets per-read cost, and ~880 stations x ~150 acquisitions x 4 layers
+   is ~530k reads. Stage 1a exists precisely to measure bytes and wall-clock per read before
+   1b is launched.
+3. **Compute-node network reach.** `slurm/landsat_st.sh` already reaches Planetary Computer
+   from `rome`, but CMR and LPCLOUD are different hosts — connectivity check at job start.
+4. **~11% of stations unreachable; 2018-07 is a hard start.** Known going in.
+5. **Snow.** 338 stations above 2 km will carry seasonal snow, which breaks thermal inertia
+   entirely — a snow-covered pixel's swing describes the snowpack, not the soil. No usable
+   snow flag exists in the QC table (bits 11&10 `11` lumps "vegetation, snow, water, ice"). A
+   seasonal mask is needed but is downstream of this census.
+
+### 36.20 Verification
+
+* The 5 control stations above 52 deg return **zero** granules.
+* Re-running the fetch is idempotent — a second run adds no rows.
+* **TxSON reproduces the probe:** 2021 returns **236 granules / 178 unique overpasses**, Day
+  107 / Night 129, local-solar-hour histogram matching §36.14. Tighter than comparing against
+  §29.3's bbox numbers, which used a different query and counted scenes.
+* Orbit-dedup drop rate lands near 25%; much less means the orbit field is parsed from the
+  wrong position in `GranuleUR`.
+* Pair counts fall **monotonically** as dt tightens and windows narrow. Non-monotonicity means
+  the greedy matcher is double-counting.
+* Per-year v002 counts at TxSON match §36.8.
+
+### 36.21 Deferred — the signal tests, and everything after
+
+This section measures **availability only**. Whether the DTR signal is real is a separate
+question, deliberately out of scope. These tests run on **Tier 2** output — they need LST
+pixels, which Tier 1 does not fetch. Three tests, in the order that kills the arm cheapest:
+
+**(i) Is the DTR field dynamic, or static like the daytime field?** §29.15 killed the daytime
+arm by showing the pattern was +0.967 spatially coherent against the annual mean in all twelve
+months — *"a static field cannot track a dynamic variable"* — and per §36.1 a static target is
+one the model can memorise. A DTR field that is also ~0.967-coherent kills the arm regardless
+of how many pairs exist. Cheapest test, run it first.
+
+**(ii) Does the within-tile DTR anomaly clear retrieval noise?** The DTR analogue of
+`open_items.md` C1 gate 6: lag-1 ACF of the centred DTR field between consecutive pairs against
+a location-shuffled control. §33.12(f) transfers directly — if it is mostly noise the decoder
+would be trained to fit noise cells, *"actively harmful, not merely useless."* DTR's advantage
+going in is SNR: 10-25 K signal against ~3 K paired retrieval noise, versus `d_LST`'s residual
+fighting 1-2 K.
+
+**(iii) Does DTR track station-to-station soil moisture?** The test §29.13 ran for daytime LST
+and failed at within-station r = -0.077. The CR200-18 tile holds **six** TxSON stations —
+CR200-18 at centre, CR200-25 at 405 m, CR1000-2 at 684 m, CR200-24 at 865 m, CR200-15 at
+925 m, CR200-6 at 936 m — observed mean SM spanning 0.1197-0.2865, **spread 0.0601** (§29.1).
+Honour §29's statistics: **within-station, never pooled** (§29.13's pooled +0.167 was a
+Simpson's-paradox artefact), and per §29.10 *"n = 6 per date gives a 95% CI of roughly +/-0.7
+on a single-date r"* — power comes from aggregating hundreds of dates plus the sign test, and
+**no single impressive r may be quoted.** Report under both D4 assignments.
+
+Further out: the empirical anomaly-vs-solar-hour and anomaly-vs-VZA curves (which would replace
+the assumed window boundaries and VZA cut with measured ones), the thermal head itself (§34.6
+step 3), and the `labels/le` wiring. A full-tile LST pull is needed only once the head is being
+trained, scoped by which stations cleared §36.16.
