@@ -31,6 +31,7 @@ from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import SoilMoistureModel
 from train import CudaPrefetcher
 from ckpt_utils import load_checkpoint
+from shm_preload import preload_l12_to_shm         # §35.33 parallel L12 staging
 from ablation import AblationDataset, MODALITIES     # §24 modality shuffling
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
@@ -52,8 +53,11 @@ EVAL_SPLITS = {
                     years=list(range(2016, 2023))),
 }
 
-# Expected station counts from the zarr probe (§22.2).  A large miss means the
-# zarr or the year gating changed and the numbers must not be trusted.
+# Station counts measured by the §22.2 zarr probe.  This is a DATED REFERENCE, not an
+# invariant: station_splits.csv has been rewritten since (the §35.27 driver-stats fix and
+# the §35.29 tile-pair holdout both moved stations), so a mismatch here is expected drift
+# as often as it is a fault.  Treat it as "compare against the probe", not "something
+# broke" -- and re-measure it rather than editing the numbers to match a run.
 EXPECTED_STATIONS = {"oos": 180, "oot": 399, "oost": 98, "val": 74}
 
 
@@ -71,7 +75,12 @@ def _make_key(r) -> str:
 @torch.no_grad()
 def run_split(model, loader, device) -> dict:
     """Collect station-pixel predictions, targets and sample identity."""
-    srow, scol = SoilMoistureModel.STATION_ROW, SoilMoistureModel.STATION_COL
+    # STATION_ROW/COL are the U-Net-era 224x224 map centre (112, 112). The patchwise model
+    # emits (B, K, n_depths) and never uses them, and it dropped the attributes — so resolve
+    # them lazily instead of at function entry, where a missing attribute killed every
+    # patchwise eval before the first batch.
+    srow = getattr(SoilMoistureModel, "STATION_ROW", None)
+    scol = getattr(SoilMoistureModel, "STATION_COL", None)
     preds, targets, keys, years, doys = [], [], [], [], []
 
     t0, n_batches = time.time(), len(loader)
@@ -80,7 +89,14 @@ def run_split(model, loader, device) -> dict:
             mu = model(batch)
         # --arch patchwise emits (B, K, n_depths): the value IS the prediction and the dataset
         # already selected the station patch. No map, nothing to index. §35.20.
-        _p = mu[:, 0, :] if mu.ndim == 3 else mu[:, :, srow, scol]
+        if mu.ndim == 3:
+            _p = mu[:, 0, :]
+        elif srow is None:
+            raise RuntimeError(
+                f"model emitted {tuple(mu.shape)} (a pixel map) but "
+                f"{type(model).__name__} has no STATION_ROW/STATION_COL to index it with")
+        else:
+            _p = mu[:, :, srow, scol]
         preds.append(_p.float().cpu().numpy())
         targets.append(batch["label"].float().cpu().numpy())
         keys.extend(batch["station_key"])
@@ -285,6 +301,15 @@ def main():
     p.add_argument("--max-stations", type=int, default=None,
                    help="Cap stations per split (smoke-test mode)")
     p.add_argument("--out-dir",      default=str(OUT_DIR))
+    p.add_argument("--no-shm",       action="store_true",
+                   help="skip the parallel /dev/shm L12 preload and let the dataset read "
+                        "zarr per station on one core (the pre-§35.33 behaviour; ~8 min "
+                        "per 74 stations). Use only to isolate a preload bug.")
+    # Defaults to the job's own core allocation rather than a hardcoded 64: over-forking
+    # past --cpus-per-task just makes the workers contend for the same cores.
+    p.add_argument("--shm-workers",  type=int,
+                   default=int(os.environ.get("SLURM_CPUS_PER_TASK", 16)),
+                   help="processes for the preload (default: $SLURM_CPUS_PER_TASK)")
     # Station chunking -- same pattern as precompute_terramind.py.  The dataset
     # preloads L12 into RAM, so OOT (774 stations, ~156 GB) spends ~65 min in
     # init.  Splitting it across parallel jobs cuts both peak RAM and wall time
@@ -353,13 +378,13 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
-    if device.type != "cuda":
-        raise SystemExit("CUDA required -- CudaPrefetcher and autocast assume a GPU")
-
+    # The checkpoint is loaded onto the CPU FIRST, deliberately. The shm preload below
+    # forks a 64-process Pool, and forking a process that already holds a CUDA context is
+    # unsafe; `torch.cuda.is_available()` is enough to initialise one. Loading on CPU here
+    # and moving to the GPU afterwards keeps the fork clean without reading the 527 MB
+    # checkpoint twice just to recover token_sel.
     ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
-    model, cfg, epoch = load_checkpoint(ckpt_path, device)
+    model, cfg, epoch = load_checkpoint(ckpt_path, torch.device("cpu"))
 
     # --arch patchwise predicts on the 14x14 token grid, not a 224x224 pixel map, so the
     # PixelMap gather in run_split_pixels indexes an axis that does not exist. Reject rather
@@ -369,6 +394,42 @@ def main():
             "--pixel-csv is a 224x224-map feature and is meaningless for --arch patchwise: "
             "the model emits one value per 160 m token. Use token indices instead (§28.9)."
         )
+
+    # ── L12 → /dev/shm, in parallel (§35.33) ──────────────────────────────────
+    # Without this the dataset falls back to `zg["s2/l12"][:, tsl, :]` per station on ONE
+    # core inside __init__, once per split. Measured on job 26091958: the VAL split spent
+    # ~8 min building the dataset and ~46 s running the model, and OOT is 5x larger.
+    # train.py has had the parallel path since §35.31 (2733 s -> 47.4 s); eval never did.
+    #
+    # Staged ONCE for every split up front, not per split: OOS and OOST are the same
+    # stations, and OOT is train+val, so per-split staging would re-read most of them.
+    shm_dir = None
+    if not args.no_shm and args.splits and args.splits != ["network"]:
+        shm_dir = Path(f"/dev/shm/sm_l12_eval_{os.environ.get('SLURM_JOB_ID', os.getpid())}")
+        shm_dir.mkdir(parents=True, exist_ok=True)
+        import atexit, shutil
+        atexit.register(lambda: shutil.rmtree(shm_dir, ignore_errors=True))
+        t_shm = time.perf_counter()
+        preload_l12_to_shm(
+            splits_csv      = str(SPLITS_CSV),
+            category_filter = cfg.get("category_filter", ["sm_only"]),
+            shm_dir         = shm_dir,
+            # Every split's station pool, deduplicated inside the preloader. Caps are None:
+            # evaluation never subsets, and --max-stations is a smoke-test flag whose extra
+            # staging costs seconds.
+            split_caps      = [(EVAL_SPLITS[s]["split_filter"], None) for s in args.splits],
+            token_sel       = cfg.get("token_sel", "station"),
+            workers         = args.shm_workers,
+            label           = "SHM",
+        )
+        print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s  ({shm_dir})")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+    if device.type != "cuda":
+        raise SystemExit("CUDA required -- CudaPrefetcher and autocast assume a GPU")
+    model = model.to(device)
+
     # token_sel='all' restores the ~30 MB/sample IPC payload that _cpu_pyramid_pool was written
     # to eliminate (its docstring records a ~437 GB queue and epoch-boundary OOM kills). At the
     # default batch size of 128 across 8 workers that is several GB per prefetched batch.
@@ -462,8 +523,10 @@ def main():
             category_filter = cfg.get("category_filter", ["sm_only"]),
             split_filter    = scfg["split_filter"],
             training        = False,
-            use_mmap        = True,
             max_stations    = args.max_stations,
+            # Staged above for every split at once. None falls back to the serial
+            # per-station zarr read inside __init__ (see the preload comment).
+            shm_dir         = shm_dir,
             # Recovered from the checkpoint, never re-specified on the CLI: a mismatch here
             # would feed pooled keys to a patchwise model (KeyError) or the reverse.
             token_sel       = cfg.get("token_sel"),
@@ -472,11 +535,13 @@ def main():
         expected   = EXPECTED_STATIONS.get(split_name)
         chunked    = args.csv_start_idx is not None or args.csv_end_idx is not None
         print(f"  {len(ds):,} samples | {n_stations} stations "
-              f"(expected ~{expected})")
+              f"(§22.2 probe: {expected})")
         if (args.max_stations is None and not chunked
                 and expected and abs(n_stations - expected) > 5):
-            print(f"  WARNING -- station count differs from the §22.2 probe by "
-                  f"{n_stations - expected:+d}. Investigate before trusting metrics.")
+            print(f"  NOTE -- {n_stations - expected:+d} vs the §22.2 probe. That probe "
+                  f"is a dated reference, not an invariant: station_splits.csv has been "
+                  f"rewritten since. Confirm the delta is a known split change before "
+                  f"reading the metrics; do not assume either way.")
 
         if len(ds) == 0:
             print("  No samples -- skipping")

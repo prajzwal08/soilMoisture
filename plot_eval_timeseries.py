@@ -8,20 +8,26 @@ which rebuilds the dataset and re-runs GPU inference for every station.)
 One figure per station: 3 stacked panels, one per depth.
     observed = black dots, predicted = coloured line (depth colour, §13.3)
 
-Two selection modes:
+Three selection modes:
     --select extremes  best-n and worst-n by ubRMSE at 0-10 cm (default)
     --select median    n random stations either side of the split median --
                        typical cases rather than tails, all three depths present
+    --select named     exactly the stations given by --stations, in that order,
+                       with no ranking and no min-n filter
 
 Outputs:
     eval_output/timeseries/{split}/{BEST|WORST}_{NN}_{station}.png
     eval_output/timeseries/contact_{split}.pdf     -- multi-page contact sheet
     eval_output/timeseries/median_sample/{split}/{BELOW|ABOVE}_{NN}_{station}.png
     eval_output/timeseries/median_sample/selected_median_sample.csv
+    eval_output/timeseries/named/{split}/NAMED_{NN}_{station}.png
+    eval_output/timeseries/named/selected_named.csv
 
 Usage:
     python plot_eval_timeseries.py [--n 10] [--splits oos oot oost] [--min-n 100]
     python plot_eval_timeseries.py --select median --n-each 2 [--seed 0]
+    python plot_eval_timeseries.py --select named --splits val \\
+        --stations ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25
 """
 import argparse
 from pathlib import Path
@@ -133,6 +139,34 @@ def select_around_median(df: pd.DataFrame, n_each: int, min_n: int,
     return out
 
 
+def select_named(df: pd.DataFrame, stations: list[str], min_n: int,
+                 rank_metric: str, rank_depth: str):
+    """Exactly the stations asked for, in the order given.
+
+    No ranking and no min_n filter: the caller named these, so a short record is
+    still the record they wanted to see.  A station absent from the split is
+    reported by name rather than silently dropped -- "I asked for six and got
+    four" must be visible in the log, not inferred from the file count.
+    """
+    g = df[df["depth"] == rank_depth]
+    present = set(df["station_key"].unique())
+    out = []
+    for i, station in enumerate(stations, start=1):
+        if station not in present:
+            print(f"    NOT IN SPLIT: {station}")
+            continue
+        s = g[g["station_key"] == station]
+        m = (metrics_from_arrays(s["pred"].to_numpy(np.float64),
+                                 s["obs"].to_numpy(np.float64))
+             if not s.empty else {"n": 0, rank_metric: float("nan")})
+        if m["n"] < min_n:
+            print(f"    n={m['n']} < {min_n} at {rank_depth} (plotting anyway): "
+                  f"{station}")
+        out.append({"station_key": station, "rank": "NAMED", "rank_idx": i,
+                    rank_metric: float(m[rank_metric]), "n": int(m["n"])})
+    return out
+
+
 def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
                  n_total: int) -> plt.Figure:
     """3 stacked depth panels for one station."""
@@ -213,9 +247,13 @@ def main():
                    choices=["ubRMSE", "RMSE", "MAE", "NSE", "R2_pearson"])
     p.add_argument("--per-page",    type=int, default=6)
     p.add_argument("--select",      default="extremes",
-                   choices=["extremes", "median"],
+                   choices=["extremes", "median", "named"],
                    help="extremes: best-n and worst-n; "
-                        "median: n random stations either side of the median")
+                        "median: n random stations either side of the median; "
+                        "named: exactly the --stations given, in that order")
+    p.add_argument("--stations",    nargs="+", default=None,
+                   help="--select named: station_key values to plot, e.g. "
+                        "ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25")
     p.add_argument("--n-each",      type=int, default=2,
                    help="--select median: stations per side per split")
     p.add_argument("--rank-depth",  default=RANK_DEPTH, choices=SM_DEPTHS,
@@ -223,6 +261,8 @@ def main():
     p.add_argument("--seed",        type=int, default=0,
                    help="--select median: seed for the random draw")
     args = p.parse_args()
+    if args.select == "named" and not args.stations:
+        p.error("--select named requires --stations")
 
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
 
@@ -255,6 +295,11 @@ def main():
                                             args.seed)
             n_total, split_dir = args.n_each, out_dir / "median_sample" / split
             pdf_path = out_dir / "median_sample" / f"contact_median_{split}.pdf"
+        elif args.select == "named":
+            selected = select_named(df_rank, args.stations, args.min_n,
+                                    args.rank_metric, args.rank_depth)
+            n_total, split_dir = len(args.stations), out_dir / "named" / split
+            pdf_path = out_dir / "named" / f"contact_named_{split}.pdf"
         else:
             selected = select_stations(df, args.n, args.min_n, args.rank_metric,
                                        args.rank_depth)
@@ -293,6 +338,11 @@ def main():
         csv_path = out_dir / "median_sample" / "selected_median_sample.csv"
         pd.DataFrame(picked).to_csv(csv_path, index=False)
         print(f"\n→ {csv_path}  ({len(picked)} stations)")
+    if picked and args.select == "named":
+        csv_path = out_dir / "named" / "selected_named.csv"
+        pd.DataFrame(picked).to_csv(csv_path, index=False)
+        print(f"\n→ {csv_path}  ({len(picked)} of "
+              f"{len(args.stations) * len(args.splits)} requested station-splits)")
 
 
 if __name__ == "__main__":

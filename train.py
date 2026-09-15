@@ -228,74 +228,10 @@ class CudaPrefetcher:
 
 # ── /dev/shm L12 preloader ────────────────────────────────────────────────────
 
-def _preload_one_station(task) -> int:
-    """One station → up to three /dev/shm memmaps. Returns 1 if any key was present.
-
-    Runs in a Pool worker, so it is module level (picklable) and opens its own zarr
-    handle rather than inheriting one across the fork.  `task` is
-    (cat, dir_name, shm_dir, tsl); tsl is a plain slice or None, both picklable.
-    """
-    cat, dir_name, shm_dir, tsl = task
-    import zarr
-    from dataset import ZARR_ROOT
-
-    # Parallelism is at the PROCESS level here, so every nested thread pool is pure
-    # oversubscription: blosc defaults to one decompression thread per core, which
-    # across 64 forked workers is 64x64 threads fighting for 64 cores. Pin them to 1.
-    try:
-        import numcodecs.blosc as _blosc
-        _blosc.set_nthreads(1)
-    except Exception:
-        pass
-
-    zarr_path = ZARR_ROOT / cat / dir_name
-    if not (zarr_path / ".complete").exists():
-        return 0
-    try:
-        zg = zarr.open_consolidated(str(zarr_path), mode="r")
-    except Exception:
-        try:
-            zg = zarr.open_group(str(zarr_path), mode="r")
-        except Exception:
-            return 0
-
-    wrote_any = False
-    for key in ("s2", "s1_asc", "s1_desc"):
-        if f"{key}/l12" not in zg:
-            continue
-        bin_path  = shm_dir / f"{dir_name}__{key}.bin"
-        meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
-        # The resume check MUST come before the read.  `zg[...][:]` pulls the whole
-        # L12 array off GPFS, and the old order did that read and then discarded it
-        # because the .bin already existed.  Every requeue of this --requeue/120 h job
-        # therefore paid the entire preload (worst observed: 1901 s) to produce nothing.
-        if bin_path.exists() and meta_path.exists():
-            wrote_any = True
-            continue
-        # NARROWED (§35.31).  This used to be `zg[f"{key}/l12"][:]` — the full
-        # (N,196,768) fp16 slab, measured at 153.6 GB of tmpfs across the 647 train+val
-        # stations, of which training reads exactly ONE of the 196 columns
-        # (token_sel="station" → patch 105; train.py refuses to train on anything else).
-        # dataset.py's own fallback path has narrowed since §35.24 item 12 and its
-        # docstring said outright that this side had not.  tmpfs is resident RAM, so
-        # that was 153 GB of node memory, not lazily-faulted pages.
-        #
-        # Chunking is (32,196,768): the token axis is ONE chunk, so GPFS still
-        # decompresses all 196 to yield 1.  This buys memory, not startup time —
-        # startup comes from the Pool in the caller.
-        arr = (zg[f"{key}/l12"][:, tsl, :] if tsl is not None
-               else zg[f"{key}/l12"][:])
-        mm = np.memmap(bin_path, dtype=arr.dtype, mode="w+", shape=arr.shape)
-        mm[:] = arr
-        del mm                       # flush to tmpfs
-        # `narrowed` travels WITH the array.  A stale full-width bin from an older run
-        # carries no such key, defaults False, and is read at full width — widths are
-        # resolved per key on the consumer side and never assumed.
-        meta_path.write_text(json.dumps({"shape": list(arr.shape),
-                                         "dtype": str(arr.dtype),
-                                         "narrowed": tsl is not None}))
-        wrote_any = True
-    return 1 if wrote_any else 0
+# Moved to shm_preload.py (§35.33) so train and eval stage tokens through ONE
+# implementation. Re-exported under the old name: it was module level only so a fork
+# Pool could pickle it, and nothing else ever called it.
+from shm_preload import preload_one_station as _preload_one_station
 
 
 def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
@@ -303,105 +239,26 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
                         max_val_stations:   int | None = None,
                         token_sel: str = "station",
                         workers: int = 64) -> None:
-    """LOCAL rank 0 (one process per NODE): zarr L12 tokens → /dev/shm tmpfs memmaps.
+    """Thin wrapper over shm_preload.preload_l12_to_shm (§35.33).
 
-    All ranks on that node then open the same files via numpy.memmap(mode='r') so the
-    OS serves one shared physical copy — cuts node RAM by ~400 GB on the full run.
-    Only train+val splits are preloaded: OOS/test stations are never touched during
-    training, so preloading them wastes /dev/shm.
-
-    Station capping mirrors SoilMoistureDataset EXACTLY (dataset.py, the
-    `len(self._zarr_groups) >= max_stations` break).  Two properties matter and the
-    old implementation had neither:
-
-      * the caps are PER SPLIT.  train and val are separate SoilMoistureDataset
-        instances, each with its own cap (max_stations and max_stations//5).  Walking
-        train+val interleaved in CSV order against a single train-sized budget meant a
-        smoke run's val stations were usually never reached, so val silently fell back
-        to per-rank GPFS reads while train ran off shm — a confounded A/B.
-      * a station counts against the cap as soon as it is SEEN (passes the category and
-        soil_patch_ok filters), not when it is successfully written.  The dataset
-        increments its dict before it knows whether the store opened, so a missing or
-        incomplete store consumes a slot there.  Skipping it here without counting
-        walked further down the CSV than the dataset ever will.
+    The body moved to shm_preload.py so eval_predict.py gets the same parallel staging;
+    it was duplicated-or-nothing before, and eval had nothing. Only train+val are staged:
+    OOS/test stations are never touched during training, so preloading them wastes
+    /dev/shm. The per-split caps are preserved exactly — see that module's docstring for
+    why they are load-bearing.
     """
-    # zarr / ZARR_ROOT now live in _preload_one_station: the parent only selects.
-    import pandas as pd
+    from shm_preload import preload_l12_to_shm
+    preload_l12_to_shm(
+        splits_csv      = splits_csv,
+        category_filter = category_filter,
+        shm_dir         = shm_dir,
+        split_caps      = [("train", max_train_stations), ("val", max_val_stations)],
+        token_sel       = token_sel,
+        workers         = workers,
+        label           = "SHM",
+    )
 
-    splits = pd.read_csv(splits_csv)
-    if category_filter:
-        def _cat(r):
-            sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-            fl = str(r.get("has_flux",          "False")).lower() == "true"
-            return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
-        splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
 
-    # The token slice, resolved the same way the dataset resolves it so the two can
-    # never disagree about which column patch 105 is.  A non-contiguous selection
-    # yields None and the preload falls back to full width, which is always safe.
-    from dataset import _token_slice, STATION_TOKEN, N_TOKENS
-    _sel = (np.array([STATION_TOKEN], dtype=np.int64) if token_sel == "station"
-            else np.arange(N_TOKENS, dtype=np.int64))
-    tsl  = _token_slice(_sel)
-
-    # ── Phase 1: SELECTION, strictly serial ───────────────────────────────────
-    # This loop stays single-threaded on purpose.  It is pure CSV iteration (fast),
-    # and its per-split cap semantics are load-bearing — see the docstring.  Walking
-    # it out of order, or in parallel, would break the "counts as SEEN, not as
-    # WRITTEN" property that keeps this in lockstep with the dataset.
-    n_seen_total = 0
-    targets: list[tuple[str, str]] = []
-    for split_name, cap in (("train", max_train_stations), ("val", max_val_stations)):
-        sub  = splits[splits["split"] == split_name]
-        seen = set()                     # (cat, dir_name) — mirrors dataset's sat_dir key
-        for _, r in sub.iterrows():
-            if not bool(r.get("soil_patch_ok", True)):
-                continue
-            has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-            has_fl = str(r.get("has_flux",          "False")).lower() == "true"
-            cat    = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
-            if str(r["source_network"]) == "ISMN":
-                dir_name = f"ISMN_{r['network']}_{r['station_name']}"
-            else:
-                dir_name = f"{r['source_network']}_{r['station_id']}"
-
-            key_seen = (cat, dir_name)
-            if key_seen in seen:
-                continue                 # dataset caches per sat_dir; extra rows are free
-            if cap is not None and len(seen) >= cap:
-                break                    # same break point the dataset takes
-            seen.add(key_seen)
-            n_seen_total += 1
-            targets.append((cat, dir_name))
-
-    # ── Phase 2: READ + WRITE, fanned out ─────────────────────────────────────
-    # Measured serial: 2733 s for 647 stations, one process averaging 10.6% CPU at
-    # 56 MB/s aggregate — blocked on GPFS, not computing (the data is barely
-    # compressible: 91.3 MB on disk for 99.3 MB raw, so there is no decompression
-    # cost to blame).  Stations are independent, the job already asks for
-    # --cpus-per-task=64, and nothing here touches CUDA, so a fork Pool is safe
-    # this early in main() (before setup_ddp, before any CUDA context exists).
-    workers = max(1, min(workers, len(targets) or 1))
-    t0 = time.perf_counter()
-    print(f"[SHM] Preloading {len(targets)} stations with {workers} workers "
-          f"(token_sel={token_sel!r}, narrowed={tsl is not None}) ...", flush=True)
-
-    tasks = [(cat, dir_name, shm_dir, tsl) for cat, dir_name in targets]
-    n_written = 0
-    ctx = mp.get_context("fork")
-    with ctx.Pool(workers) as pool:
-        # imap_unordered so progress reflects completions, not submission order.
-        for i, got in enumerate(pool.imap_unordered(_preload_one_station, tasks,
-                                                    chunksize=1), start=1):
-            n_written += got
-            if i % 100 == 0 or i == len(tasks):
-                el = time.perf_counter() - t0
-                print(f"[SHM]   {i}/{len(tasks)} stations  {el:6.1f}s  "
-                      f"({i/max(el, 1e-6):.1f} st/s)", flush=True)
-
-    print(f"[SHM] L12 preloaded for {n_written} stations "
-          f"({n_seen_total} scanned; caps train={max_train_stations} "
-          f"val={max_val_stations}) → {shm_dir}")
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -1152,7 +1009,11 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         if is_main and (n_batches == 1 or log_every <= 1 or n_batches % log_every == 0):
             step_ms = 1000 * (data_time + compute_time) / n_batches
             _l, _g = loss.item(), gnorm.item()
-            print(f"  batch {skip_batches + n_batches:04d}  loss={_l:.4f}"
+            # `.3e`, not `.4f`: on pw_stage2a_L3 the train loss fell to 5e-5, and `.4f`
+            # printed 467 of 902 logged batches as exactly "0.0001" and 73 as "0.0000".
+            # The log is the only per-batch record that survives without W&B, and at
+            # `.4f` most of a converged run is quantised into a flat floor.
+            print(f"  batch {skip_batches + n_batches:04d}  loss={_l:.3e}"
                   f"  gnorm={_g:.3f}  lr={optimizer.param_groups[0]['lr']:.3e}"
                   f"  wu={lr_factor:.2f}  step={step_ms:.0f}ms")
             # Step-level W&B (§35.31). Everything logged here was ALREADY synced to host

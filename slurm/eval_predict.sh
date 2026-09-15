@@ -2,6 +2,10 @@
 #SBATCH --job-name=eval_predict
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+# 16, deliberately NOT 64. The §35.33 shm preload fans out across a fork Pool, so more
+# cores are faster -- but a gpu_h100 node is 64 cores / 4 GPUs shared by up to 4 jobs, and
+# asking for all 64 takes the whole node and bills FOUR GPUs. 16 workers already cuts the
+# preload from ~90 min to ~6, which is the win; the last 4x is not worth 2x the SBUs.
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus=1
 #SBATCH --mem=300G

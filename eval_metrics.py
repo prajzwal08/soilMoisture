@@ -40,7 +40,12 @@ META_COLS = [
     "start_date", "end_date", "split",
 ]
 
-# §21.8 -- val ubRMSE at epoch 16.  The §22.6 gate reproduces these.
+# §21.8 -- val ubRMSE at epoch 16 OF cls_depth_star_reg.  The §22.6 gate reproduces
+# these, and ONLY for that run: the gate answers "does this metric code agree with
+# train.py:compute_metrics", and it can only answer it against the run the reference
+# was measured on.  Any other run has different val ubRMSE by construction, so
+# checking it here would report a model difference as a code failure.
+VAL_REFERENCE_RUN = "cls_depth_star_reg"
 VAL_REFERENCE = {"0-10": 0.0539, "10-30": 0.0500, "30-100": 0.0552}
 
 
@@ -180,13 +185,38 @@ def summarise(ps: pd.DataFrame, df: pd.DataFrame, split_name: str) -> list:
     return rows
 
 
-def check_val_gate(summary: pd.DataFrame) -> bool:
-    """§22.6 hard gate: reproduce val ubRMSE 0.0539 / 0.0500 / 0.0552."""
+def check_val_gate(summary: pd.DataFrame, run_name: str | None = None) -> bool | None:
+    """§22.6 hard gate: reproduce val ubRMSE 0.0539 / 0.0500 / 0.0552.
+
+    Returns True/False when the gate applied, None when it did not.  It applies only
+    to VAL_REFERENCE_RUN -- see the comment on that constant.  For any other run the
+    val numbers are printed as this run's own reference instead, because a "FAIL"
+    against another model's ubRMSE says nothing about the metric code and reads as a
+    real failure to anyone skimming the log.
+    """
     val = summary[summary["split"] == "val"]
     if val.empty:
         print("\n[GATE] val split not present -- run "
               "`eval_predict.py --splits val` before trusting held-out numbers.")
         return False
+
+    # An UNKNOWN run is treated like a different run, not like the reference run. The
+    # manifest is written by eval_predict.py only after its last split, so running this
+    # against a partially-finished eval_output/ leaves run_name None -- and defaulting to
+    # "apply" there printed a full GATE FAILED against another model's ubRMSE, which is
+    # exactly the false alarm this branch exists to prevent.
+    if run_name != VAL_REFERENCE_RUN:
+        print("\n" + "=" * 66)
+        print(f"§22.6 gate NOT APPLICABLE -- reference is {VAL_REFERENCE_RUN}, "
+              f"this is {run_name}")
+        print("=" * 66)
+        for _, r in val.iterrows():
+            got = r.get("ubRMSE_pool", np.nan)
+            print(f"  {r['depth']:>7s}  val ubRMSE (pool) {got:.4f}"
+                  f"   <-- this run's reference, for the next comparison")
+        print("  Cross-check these against the run's own training log "
+              "(`SELECT val_ubrmse_depth_mean=`) before reading any held-out number.")
+        return None
 
     print("\n" + "=" * 66)
     print("§22.6 HARD GATE -- reproduce train.py val ubRMSE (epoch 16)")
@@ -318,12 +348,29 @@ def main():
     summary.to_csv(summary_path, index=False)
     print(f"\nSummary → {summary_path}")
 
-    gate_ok = check_val_gate(summary)
+    # Which run produced these predictions.  eval_predict.py writes it into the
+    # manifest alongside the parquets, so the gate does not have to be told twice.
+    run_name = None
+    manifest_path = in_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            run_name = json.loads(manifest_path.read_text()).get("run_name")
+        except json.JSONDecodeError:
+            print(f"  WARNING -- unreadable {manifest_path}; gate cannot tell which "
+                  f"run these predictions came from")
+    else:
+        print(f"  WARNING -- no {manifest_path}; gate cannot tell which run these "
+              f"predictions came from")
+
+    gate_ok = check_val_gate(summary, run_name)
     check_sanity(summary)
 
     with open(out_dir / "gate.json", "w") as f:
-        json.dump({"val_gate_passed": bool(gate_ok),
-                   "reference": VAL_REFERENCE}, f, indent=2)
+        json.dump({"run_name":         run_name,
+                   "val_gate_applied": gate_ok is not None,
+                   "val_gate_passed":  bool(gate_ok) if gate_ok is not None else None,
+                   "reference_run":    VAL_REFERENCE_RUN,
+                   "reference":        VAL_REFERENCE}, f, indent=2)
 
 
 if __name__ == "__main__":

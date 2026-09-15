@@ -97,6 +97,9 @@ def load_checkpoint(ckpt_path: Path, device):
     model.load_state_dict(remap_checkpoint_keys(ckpt["model"]), strict=True)
 
     model.eval()
+    # cfg.get, not a bare `arch`: this module only ever builds the patchwise model (the
+    # U-Net is rejected above), and older checkpoints predate the key entirely.
+    arch = cfg.get("arch", "patchwise")
     print(f"  arch={arch}  epoch {ckpt['epoch']}  "
           f"best_val_loss={ckpt.get('best_val_loss','N/A')}  sha={cfg.get('git_sha','?')[:8]}")
     return model, cfg, ckpt["epoch"]
