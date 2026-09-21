@@ -6425,3 +6425,116 @@ architecture change, so branch on day one and leave feat/ecostress-dtr frozen.
 
 Commits: 2d229b7 (§39), eff178f (§38 + log), 2cfb9e7 (§38.12 closed), and the §38 chain
 5001919 / 171476e / 308a451 / c71d0ad / d10711e / 314c9af / dbde7ff / 3d7e5f8.
+
+================================================================================
+2026-09-21 (session 38) -- two more sensors closed, and the S1 reference window
+================================================================================
+
+No code run. A decision session, written up as §40.
+
+STARTED as a question about COSMOS-Europe (Bogena et al., ESSD 14, 1125-1151, 2022):
+could a European CRNS network give spatial supervision? NO, and for a structural
+reason rather than a practical one. A cosmic-ray neutron sensor integrates the neutron
+field over R86 = 130-240 m and returns ONE number; that integration is exactly what
+destroys within-footprint structure. Rovers and dense clusters -- the CRNS deployments
+that would carry structure -- are explicitly excluded from the dataset. It changes the
+SUPPORT of a label, not its dimensionality. Also D86 = 15-55 cm and moves with wetness,
+so there is no fixed-depth CRNS value to put in the 0-10 / 10-30 / 30-100 bins.
+
+Found along the way, and left OPEN: 42 stations in station_splits.csv already sit at
+CRNS sites via ISMN -- COSMOS-UK 29 (20 train / 3 val / 6 oos), HOBE 5, TERENO 4,
+FR_Aqui 3, COSMOS 1. process_station() bins by depth_to and averages all sensors in a
+bin, so it is UNVERIFIED whether a footprint-average has been averaged into a point
+label at those stations. Cheap to check, not blocking.
+
+SMAPVEX also closed: PALS ~450 m (2016) against a 1600 m nominal, UAVSAR retrieved SM
+at ~800 m (the 5 m layer is backscatter only), campaigns ~6 weeks over one or two
+regions, none overlapping the station set. A validation snapshot, not a trainable
+series.
+
+So: thermal closed (§38), CRNS closed, SMAPVEX closed. S1 is the arm.
+
+THEN MEASURED WHAT THE BUILD ACTUALLY FACES, and it reframes §39.4(2).
+
+model.py HAS NO DECODER. It predicts directly at 160 m -- forward() returns
+mu (B, K, n_depths), K=1 training / 196 full map (model.py:853); FiLM was removed from
+this arm (model.py:576-583). UNetDecoder with up1-up4 lives only in model_unet.py, the
+legacy arm behind baseline-unet-temporal. §34.5 STEP 2 is unwritten.
+
+And that legacy decoder has NEVER had a fine input: skip_L3/L6/L9 are all 14x14,
+bilinearly interpolated up to each stage -- 16x by up3 (model_unet.py:265-271). DEM and
+LULC never reach it at all. So the worry is not that the architecture averages signal
+away; it is that nothing finer than 160 m has ever entered it. S1 c/d/w would be first.
+
+Which makes a coincidence worth noticing: §39's measured spatial optimum was 210 m,
+beating 70 m and 450 m. That sits essentially at the patchwise model's native 160 m
+output. Feeding c/d/w at l=14 into model.py would use the signal at the scale it was
+measured, with no decoder built. Fork between that and the full §34.5 decoder left OPEN,
+to be decided against the passes-per-group numbers.
+
+DATA CHECK. The per-pass imagery is on disk permanently:
+  /projects/prjs1968/satellite_zarr/{station}.zarr/s1_asc|s1_desc/data
+  [N,2,224,224] float16 dB 10 m, VV+VH, NO block averaging on disk -> any l computable
+  993 stations ASC (251,310 passes, mean 253), 910 DESC. ~70 GB.
+  /projects/prjs1968 is the same inode as /gpfs/work3/0/prjs1968.
+The source GeoTIFFs are PURGED -- the zarr is the only surviving copy. Same exposure
+class as the checkpoint-backup gap.
+
+THE STING: relative orbit number was never stored. metadata.json -> S1RTC is empty in
+994 of 998 stores, and where populated holds only ascending/descending, never the track.
+Time-of-day unrecoverable for 989/993. So the §7 mod-12 proxy is not a convenience, it
+is the ONLY option, and the +/-6 split-half merge test is the sole guard against residue
+collision. It must be RUN, not assumed.
+
+DECISION TAKEN AT SIGN-OFF. c, mu, rho-bar and s are computed from AT LEAST TWO YEARS,
+and NEVER from any pass inside OOT. OOT begins 2023 (train.py:280), so the window lies
+inside 2016-01-01 -> 2022-12-31. Window is calendar-defined not split-defined (an OOS
+station was never in training, so "its training dates" has no meaning). Same rule at
+train and eval, or the feature distribution shifts between them and reads as poor
+generalisation rather than as a bug. ONE fixed reference, computed once and reused --
+preferred over leave-one-year-out because it reproduces deployment and keeps d
+comparable across years and splits.
+
+Not a new invention: §35.27 already regenerated era5_stats.json from whole-record to
+train-years-only, recorded at train.py:1499 as "the OOT-leak fix". A full-archive c
+would put the pipeline in contradiction with itself. And the scar attached to that fix
+carries over -- overwriting era5_stats.json in place "silently invalidated every
+checkpoint trained before it". So the S1 reference bundle gets SHA'd into CONFIG like
+era5_stats/driver_stats (train.py:1505-1512) and is never regenerated in place.
+
+Leakage is confined to c/mu/w by construction: T and r both come from p*, the most
+recent valid pass AT OR BEFORE the label date. Also recorded honestly -- the per-pass
+influence is exactly -1/N (0.5% at N=200), but a held-out span worth 20% of the archive
+contributes 20% of c, so "bounded" was never an adequate defence on its own. Hence a
+window rule rather than an argument.
+
+STILL OPEN: two years or seven. The trade runs both ways -- longer is less noisy
+(SE(c) = sigma_T/sqrt(N): 22% at N=20, 10% at 100, 5% at 400, against d_VV carrying
+r~0.07), shorter is fresher (a 2016-2022 mean is centred ~2019 and four years stale at
+OOT; 2021-2022 is one year stale). Speckle is already dead by N=20 -- the block
+averaging does it -- so the 20-pass floor protects against the wrong thing. The binding
+unknown is passes PER GROUP inside the window: mean 253 is across all tracks and the
+whole archive, so 2016-2022 split across 2-6 residues may be 50-150 per group, and two
+years 15-40. Dump that before fixing the window. Trap: Dec 2021 is a discontinuity
+(S1B failed), so 2021-2022 straddles it and 2020-2021 does not.
+
+CORRECTIONS MADE THIS SESSION:
+  - T and T-r are NOT orbit-comparable. T carries the incidence-angle level; T-r removes
+    the level but not the geometry-dependent spatial pattern. Only full d is poolable
+    (§7.7). A cheap "just feed the image" stage must restrict to the dominant group.
+  - §39.3's tile-pair sign test IS written and run (17,072 trials). Notes calling it
+    unwritten are stale. Still unusable until the sub-500 m anti-agreement is explained.
+  - Self-inclusion: with a fixed window, p* is outside it for OOT samples but inside for
+    training samples, where d is shrunk by (1-1/N). Leave-one-out is free from the
+    stored sum. Decide once N is known.
+  - The §39.4(2) expressivity check was DROPPED BY DECISION, not by argument. Replaced
+    by instrumentation in the build: log spatial std of the output per tile from epoch 1
+    (§23 scale 0.09-0.52; the Tier-1 0.0065 is obsolete), and run the valid=0 control at
+    eval -- that path already exists, so it costs no new code and gives expressivity plus
+    attribution in one pass.
+
+NEXT SESSION starts with the §40.6 job: passes per (station, mod-12 group) inside
+candidate windows, the +/-6 merge test, split-half r(c) as the static-pattern premise,
+the saturation curve over 1-7 year windows, and the drift rate against 2023. One
+64-core rome job, read-only, no labels needed so all 993 stations qualify. Fold in the
+ERA5 frozen/snow exclusion while the data is open.

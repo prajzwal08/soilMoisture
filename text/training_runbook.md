@@ -13056,3 +13056,247 @@ analyse_s1_spatial_broad.py   all 878 stations: temporal, clusters, pair sign te
 slurm/s1_cv.sh, slurm/s1_full.sh, slurm/s1_orb.sh, slurm/s1_broad.sh
 csvs/s1_temporal_r.csv, s1_spatial_groups.csv, s1_pair_sign_test.csv
 ```
+
+---
+
+## §40 The S1 reference window — what `c` is computed from (Session 38, 2026-09-21)
+
+§39 closed with a decision to build S1 into the decoder and two prerequisites. This session
+ran no code. It closed two more candidate sensors, measured what the build actually faces in
+the code and on disk, and settled the one design question that had stayed OPEN since §33.12:
+what archive `c_k` is computed from.
+
+### 40.1 Two more sensors closed
+
+**COSMOS-Europe CRNS** (Bogena et al., ESSD 14, 1125–1151, 2022; DOI 10.34731/x9s3-kr48).
+66 sites, 12 countries, mean record 5.7 ± 2.8 yr, hourly aggregated to a 24 h moving average,
+θ in m3/m3 already corrected for lattice water and soil organic carbon, CC-BY-4.0 behind a
+token form on the Jülich TEODOOR portal. COSMOS-UK (51 sites, 2013–2024) is the same data on
+the CEH EIDC catalogue with plain wget, and it ships co-located point probes as well.
+
+**Rejected for spatial supervision, on structure not practicality.** A CRNS integrates the
+neutron field over R86 = 130–240 m and returns ONE number. That integration is exactly the
+operation that destroys within-footprint structure. Rover surveys and dense clusters — the
+CRNS deployments that would carry structure — are explicitly excluded from the dataset. It
+changes the *support* of a label, not its dimensionality.
+
+Two secondary findings kept:
+
+- D86 is 15–55 cm and MOVES WITH WETNESS (shallow when wet, deep when dry). There is no
+  fixed-depth CRNS value, so it cannot be slotted into the 0-10 / 10-30 / 30-100 bins.
+- **42 stations in `station_splits.csv` already sit at CRNS sites** via ISMN — COSMOS-UK 29
+  (20 train / 3 val / 6 oos), HOBE 5, TERENO 4, FR_Aqui 3, COSMOS 1. `process_station()` bins
+  by `depth_to` and averages all sensors in a bin, so it is UNVERIFIED whether a
+  footprint-average has been averaged into a point label at those stations. Open, cheap to
+  check, not blocking. §1928 of this runbook already noted the footprint mismatch in passing.
+
+**SMAPVEX** rejected: its soil moisture products are coarser than this model's own patch —
+PALS ~450 m (2016) against a 1600 m nominal, UAVSAR retrieved SM at ~800 m field scale, the
+5 m layer being backscatter only — and the campaigns are ~6 weeks over one or two regions,
+none overlapping the station set. It is a spatial-pattern snapshot for validation, not a
+trainable series.
+
+**Standing position after §38, §39 and this section: the thermal arm is closed, CRNS and
+SMAPVEX are closed, S1 is the arm.** §39.3's tile-pair sign test remains the only fine-scale
+spatial readout in the project, and it stays unusable until the sub-500 m anti-agreement is
+explained.
+
+### 40.2 The architecture gap this build actually faces
+
+Measured this session, and it reframes §39.4(2):
+
+- **`model.py` has no decoder.** It predicts directly at 160 m — `forward()` returns
+  `mu (B, K, n_depths)` with K=1 in training and 196 for a full map (`model.py:853`), and FiLM
+  was removed from this arm (`model.py:576-583`). The `UNetDecoder` with up1–up4 exists only
+  in `model_unet.py`, the legacy arm behind tag `baseline-unet-temporal`. §34.5 STEP 2 is
+  unwritten: grep for `up3`, `lst_head` or `100 m` in `model.py` returns nothing.
+- **The legacy decoder has never had a fine input.** Its only spatially-varying inputs are
+  `skip_L3/L6/L9`, all 14×14, bilinearly interpolated up to each stage — a 16× interpolation
+  by up3 (`model_unet.py:265-271`). Everything it emits below 160 m is interpolation artefact.
+  DEM and LULC never reach the decoder at all; they enter the transformer sequence as pooled
+  pyramid tokens.
+
+So the expressivity worry is sharper than §39.4 stated it. It is not that the architecture
+averages the signal away — it is that **nothing finer than 160 m has ever entered it**. The
+S1 `c/d/w` channels would be the first.
+
+This also means §39's measured spatial optimum of **210 m**, which beat both 70 m and 450 m,
+sits essentially at the patchwise model's native 160 m output. Feeding `c/d/w` at ℓ=14 into
+`model.py` would use the signal at the scale it was actually measured, with no decoder built
+at all. The fork between that and the full §34.5 decoder is LEFT OPEN here, to be decided
+against the passes-per-group numbers of §40.5.
+
+### 40.3 The data is on disk; the orbit metadata is not
+
+```
+/projects/prjs1968/satellite_zarr/{station}.zarr/s1_asc|s1_desc/data
+    [N, 2, 224, 224]  float16  dB  10 m  bands ["VV","VH"]
+    NO block averaging on disk -> any ℓ is computable
+    993 stations ASC (251,310 passes; mean 253, min 5, max 958)
+    910 stations DESC (245,525 passes)
+    ~70 GB of the 247 GB store
+```
+
+`/projects/prjs1968` is the same inode as `/gpfs/work3/0/prjs1968` — permanent, no purge risk.
+Dates live in `s1_asc/dates` as `|S8` YYYYMMDD, sorted, aligned 1:1 with the data axis.
+
+**The source GeoTIFFs are purged; the zarr is the only surviving copy.** Root `.zattrs`
+records `"source": /gpfs/scratch1/shared/pkhanal/satellite/<station>` and that path is gone.
+Same exposure class as the checkpoint-backup gap.
+
+**Relative orbit number was never stored.** The downloader's `metadata.json → S1RTC` block is
+empty in 994 of 998 stores, and where populated it holds only `ascending`/`descending`, never
+the track number. Acquisition time-of-day is unrecoverable for 989 of 993 — it lived only in
+the GeoTIFF datetime tag.
+
+Consequence: **the §7 mod-12 proxy is not a convenience, it is the only option available**,
+and the ±6 split-half merge test is the sole guard against residue collision. It must be run,
+never assumed.
+
+Cost of a full-archive scan is already known: `slurm/s1_broad.sh` read the entire 224×224 ASC
+stack for all 993 stations at `--cpus-per-task=64 --mem=224G` inside a 1.5 h rome allocation.
+
+### 40.4 DECISION — the reference window
+
+**`c`, `μ`, `ρ̄` and `s` are computed from at least two years, and never from any pass inside
+the OOT period.** OOT begins 2023 (`train.py:280`: `"years": list(range(2016, 2023))`), so the
+reference window lies inside 2016-01-01 → 2022-12-31.
+
+Rules that travel with it:
+
+1. **Calendar-defined, not split-defined.** The window is a date range applied uniformly at
+   every station. "Dates when this station was in training" has no meaning at an OOS station,
+   which was never in training at all.
+2. **The same rule at train and at eval.** A causal reference at eval against a full-archive
+   reference at training shifts the feature distribution between them, and would present as
+   poor generalisation rather than as a bug.
+3. **One fixed reference, computed once and reused.** Preferred over leave-one-year-out on two
+   grounds: it reproduces deployment, where a fixed historical reference is applied to new
+   dates as they arrive; and it keeps `d` directly comparable across every year and split,
+   which a per-year norm does not (with N ≈ 200 and ~30 passes a year, a LOYO norm moves by
+   ~15% of that year's deviation).
+4. **This is existing project policy, not a new invention.** §35.27 regenerated
+   `era5_stats.json` from whole-record to train-years-only, recorded at `train.py:1499` as
+   "the OOT-leak fix". A full-archive `c` would put the pipeline in contradiction with itself.
+5. **The reference bundle is part of the model contract.** SHA it into `CONFIG` exactly as
+   `era5_stats` and `driver_stats` are (`train.py:1505-1512`), and never regenerate in place.
+   §35.27 overwrote `era5_stats.json` in place and "silently invalidated every checkpoint
+   trained before it: eval_predict.py would feed such a model differently normalised inputs
+   and report quietly degraded numbers with no error anywhere." A later change to the window,
+   the 20-pass floor or the ±6 merge rule would do exactly the same thing.
+
+Why the leakage is confined to this term at all: `T` and `r` are both computed from `p*`, the
+most recent valid pass AT OR BEFORE the label date — causal by construction, no leakage. Only
+`c`, `μ` and the `w` standardisation constants average over the archive. With the window held
+inside 2016–2022, the exposure is zero.
+
+Note on how large the exposure would have been without the rule. The influence of a single
+future pass on a single feature is algebraically exact, `∂d(p*,k)/∂T(p_f,k) = −1/N`, i.e. 0.5%
+at N = 200. But the evaluation period is not one pass: a held-out span worth 20% of the archive
+contributes 20% of `c`. The per-pass bound is real and the aggregate is not small, so "bounded"
+was never an adequate defence on its own — which is why the window rule exists rather than an
+argument.
+
+### 40.5 What the window length trades, and what must be measured
+
+Not yet decided between two years and the full seven. The trade runs in both directions:
+
+- **Longer is less noisy.** Reference noise enters every `d` at `SE(c) = σ_T/√N`, i.e. 1/√N of
+  a pass's own temporal spread: N=20 → 22%, N=100 → 10%, N=400 → 5%. Against `d_VV` carrying
+  r ≈ 0.07 that is not free. Note that speckle is already dead by N=20 — the block averaging
+  does it, ℓ=14 being 256 px × ENL 4.4 ≈ 1126 looks ≈ 0.13 dB — so the 20-pass floor of §7.5
+  is protecting against the wrong thing. Treat 20 as "do not crash" and expect real work at
+  100+.
+- **Shorter is fresher.** A 2016–2022 mean is centred on ~2019, four years stale at OOT; a
+  2021–2022 window is one year stale. If `c` drifts at all, the shorter recent window is the
+  MORE accurate reference. Longer is not automatically better.
+- **Two years covers the seasonal cycle twice**, so a flat `c` is not seasonally biased either
+  way.
+
+**The binding unknown is passes per group inside the window.** The mean of 253 ASC passes is
+across the whole archive and all tracks. Restricted to 2016–2022 that is ~200, and split across
+the 2–6 residues that see one 2.24 km tile it may be 50–150 per group before any ±6 merge. Two
+years would then give 15–40, straddling the floor. DUMP THIS BEFORE FIXING THE WINDOW.
+
+**Trap: December 2021 is a discontinuity.** S1B failed then, so a track contributes two
+residues before it and one after. A 2021–2022 window straddles the break — uneven sampling and
+different ±6 merge behaviour across the window. 2020–2021 sits entirely in the dual-satellite
+era.
+
+### 40.6 The job to run first
+
+One 64-core rome job over the zarr, read-only. It needs no labels, so all 993 stations qualify
+rather than the 878 that survived the label join in §39.
+
+1. **Passes per (station, mod-12 group)** inside each candidate window; how many fall under 20
+   and under 100.
+2. **The ±6 merge test** (§7.5): within-group split-half r(c) as the ceiling, between-group r
+   for `|g1−g2| ≡ 6 (mod 12)` pairs only, merge iff at ceiling. This is the only available
+   check on the proxy, per §40.3.
+3. **Split-half r(c) — the static-pattern premise.** First half against second half within the
+   window. Not a side diagnostic: if `c` is static, the look-ahead question is moot and window
+   choice barely matters; if it is not, the `c` term fails on its own merits before leakage is
+   even the issue. Use split-half, never single-date-against-mean — the G0 attenuation trap.
+4. **Saturation curve**: r(c) built from 1, 2, … 7 year windows against a held-out reference.
+   Gives the noise floor and so the shortest defensible window.
+5. **Drift**: r(c_window, c_2023). How fast the reference goes stale, which is the standing
+   cost of a fixed window.
+
+Fold in cheaply while the data is open: exclude frozen and snow-covered passes from `c` using
+ERA5-Land soil temperature and SWE. Freeze collapses backscatter by several dB; TU Wien masks
+these explicitly, and ERA5-Land is already in the pipeline.
+
+### 40.7 How this differs from TU Wien change detection
+
+Worth stating once, because it is the obvious reviewer question.
+
+| | TU Wien (ASCAT / S1 SSM) | §33.12 |
+|---|---|---|
+| reference statistic | per-pixel dry/wet EXTREMES | per-pixel MEAN |
+| output | relative saturation 0–100%, a retrieval | dB anomaly, a decoder feature |
+| spatial term | NONE — each pixel independent | double-centring removes the tile-wide daily level |
+| vegetation | incidence-angle slope/curvature cycle | cross-ratio VH−VV as a channel |
+| incidence angle | normalised to 40° via fitted slope | sidestepped by per-orbit-group computation |
+| scale | 1 km | 210 m measured optimum; 160 m native output |
+
+The load-bearing row is the third. TU Wien conflates "the whole region got wet" with "this
+pixel got wetter than its neighbours" — both land in the same per-pixel saturation number. The
+double-centring separates them explicitly, and the separated term is what §39 measured. Against
+us: TU Wien's extremes give a physically bounded, transferable 0–100%, where `d` gives no
+absolute level at all and relies on ERA5/S2 to supply it; and theirs is a validated operational
+product where this is unvalidated feature engineering resting on one network.
+
+### 40.8 Corrections recorded
+
+- **`T` and `T − r` are NOT orbit-comparable.** A staged build that feeds the multilooked image
+  before the references exist is weaker than it first looks: `T` carries the incidence-angle
+  level, and `T − r` removes the level but not the geometry-dependent spatial pattern, since
+  local incidence varies with terrain. Only the full `d` is poolable across groups (§7.7). Any
+  cheap first stage must restrict itself to each station's dominant group.
+- **§39.3's tile-pair sign test is written and run** — 108 pairs, 91 usable, 17,072 trials.
+  Notes elsewhere calling it unwritten are stale. It remains unusable as a readout until the
+  sub-500 m anti-agreement is explained.
+- **Self-inclusion.** With a fixed 2016–2022 window, `p*` falls outside the window for every
+  OOT sample but inside it for training samples, where `d` is shrunk by exactly (1 − 1/N).
+  Leave-one-out is exact and free from the stored sum, `c_{-p} = (N·c − T_p)/(N−1)`. Apply it
+  for training samples or accept a known 1/N shrinkage — decide once N is known.
+- **The expressivity check of §39.4(2) was dropped by decision, not by argument.** Replaced by
+  instrumentation inside the build: log the spatial std of the output per tile from the first
+  epoch (§23 reference scale 0.09–0.52; the Tier-1 figure of 0.0065 is obsolete), and run the
+  `valid = 0` control at eval. That path already exists in the design — it forces
+  `d_VV = d_CR = 0`, `w = 0` — so it costs no new code and returns expressivity and attribution
+  from one inference pass.
+- **`cfg["arch"]` does not exist as a CONFIG key.** It is only read defensively
+  (`ckpt_utils.py:90`, `:102`). The patchwise loader is `strict=True` and hard-raises if decoder
+  keys are present, so any new input channels must thread through argparse → CONFIG →
+  `ckpt_utils`, exactly as `use_input_norm` does (`train.py:1488-1492`). `ckpt_utils_unet.py`
+  is `strict=False`.
+
+### 40.9 Files
+
+```
+text/s1processing.md      §7 grouping, §8 rationale, §9 the exact arithmetic
+/projects/prjs1968/satellite_zarr/{station}.zarr/s1_asc|s1_desc    the imagery
+csvs/s1_temporal_r.csv, s1_spatial_groups.csv, s1_pair_sign_test.csv    §39 outputs
+slurm/s1_broad.sh         the 64-core / 224 GB / 1.5 h precedent for a full-archive scan
+```
