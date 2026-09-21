@@ -85,9 +85,27 @@ CROSSOVER_HI         = 10.0
 # the thermal peak sits after solar noon; a night pass is best near the pre-dawn minimum.
 THERMAL_PEAK_LAG_H     = 2.0    # hours after solar noon where the day half is ideal
 WELL_PHASED_DAY_H      = 2.5    # day half within this of the peak
-WELL_PHASED_NIGHT_TST  = 2.0    # night half at or after this local solar hour (pre-dawn)
+# BUG FIXED 2026-09-16: this was `n_tst >= 2.0`, one-sided on a quantity that WRAPS at
+# 24, so a 20:30 pass (tst 20.5) satisfied "at or after 02:00" and 79% of well-phased
+# pairs had an EVENING night half.  The discriminator has to break the symmetry of the
+# night, and solar elevation cannot: the sun is at -15 deg both at 20:30 and at 04:30,
+# while the surface is near its hottest at one and its coldest at the other.  Signed
+# offset from solar MIDNIGHT does break it, and stays in solar geometry:
+#     night_offset = tst        if tst < 12   (after midnight  -> positive, pre-dawn)
+#                    tst - 24   otherwise     (before midnight -> negative, evening)
+# No upper bound is needed: classify_phase already guarantees elev < CROSSOVER_LO, so
+# "still dark" is enforced by geometry rather than by a fixed hour that would be wrong at
+# high latitude anyway.
+WELL_PHASED_NIGHT_MIN  = 2.0    # hours AFTER solar midnight the night half must reach
 
 # §36.12 -- image-level floor; swept in analysis, this is only the default headline
+# view_zenith is RECORDED but never enters passed_qc: clear_frac is built from QC +
+# cloud + water alone.  Measured 2026-09-16 (job 26798022): every COG open costs ~2.1 s
+# of LP DAAC redirect latency regardless of connection reuse, so the open COUNT is the
+# only lever that works.  A fourth open costs 25% of the run for a diagnostic column, so
+# it is off by default and vza_* come back NaN -- never 0, which would read as nadir.
+READ_VZA             = False
+
 CLEAR_FRAC_MIN       = 0.5
 
 # The window we expect over a 2.24 km box at ECOSTRESS's 70 m grid.  Used to DETECT the
@@ -127,7 +145,7 @@ GRAN_COLS = [
 ]
 PAIR_COLS = [
     "station_id", "day_ur", "night_ur", "day_utc", "night_utc", "dt_hours",
-    "day_tst", "night_tst", "day_elev", "night_elev", "elev_drop",
+    "day_tst", "night_tst", "night_offset", "day_elev", "night_elev", "elev_drop",
     "day_solar_date", "night_solar_date", "well_phased",
     "day_clear", "night_clear", "quality",
 ]
@@ -331,6 +349,10 @@ def configure_gdal():
     os.environ["GDAL_HTTP_RETRY_DELAY"] = "3"
     os.environ["VSI_CACHE"] = "TRUE"
     os.environ["VSI_CACHE_SIZE"] = "33554432"
+    # HTTP/2 + multiplexing + a 64 KB header prefetch were TRIED and REVERTED: measured
+    # 2.56 gran/s against 2.76 without (job 26798022).  Noted so they are not re-proposed
+    # as an obvious win -- the bottleneck is per-request latency at LP DAAC, which no
+    # client-side transport setting reaches.
 
 
 # ============================================================
@@ -462,6 +484,23 @@ def decode_qc(qc: np.ndarray):
     return mand, dataq, lst_acc, keep_qc
 
 
+# GDAL caches curl handles PER THREAD.  A ThreadPoolExecutor created and destroyed inside
+# read_station_window therefore throws its warm connections away with every granule: 55k
+# granules x 3 layers = 165k TLS handshakes to a host we never stop talking to, and the
+# handshake CPU is what made 96 workers slower than 32 on a 4-core allocation.  One
+# long-lived pool keeps the handles alive across granules.  Sized from the caller, since
+# the outer workers block on it and it must not become the bottleneck.
+_LAYER_POOL: ThreadPoolExecutor | None = None
+
+
+def layer_pool(outer_workers: int = 8) -> ThreadPoolExecutor:
+    global _LAYER_POOL
+    if _LAYER_POOL is None:
+        _LAYER_POOL = ThreadPoolExecutor(max_workers=max(3, min(3 * outer_workers, 384)),
+                                         thread_name_prefix="layer")
+    return _LAYER_POOL
+
+
 def read_station_window(ur: str, lon: float, lat: float):
     """Windowed read of the mask layers over the 2.24 km station box.
 
@@ -519,9 +558,9 @@ def read_station_window(ur: str, lon: float, lat: float):
                 return (lyr, src.read(1, window=win), src.nodata,
                         (src.scales[0] if src.scales else 1.0))
 
-        with ThreadPoolExecutor(max_workers=3) as lp:
-            for lyr, arr, nd, sc in lp.map(_read_layer, ("cloud", "water", "view_zenith")):
-                bands[lyr], nodata[lyr], scales[lyr] = arr, nd, sc
+        _layers = ("cloud", "water", "view_zenith") if READ_VZA else ("cloud", "water")
+        for lyr, arr, nd, sc in layer_pool().map(_read_layer, _layers):
+            bands[lyr], nodata[lyr], scales[lyr] = arr, nd, sc
 
         mand, dataq, lst_acc, keep_qc = decode_qc(qc)
         cloud = bands["cloud"]
@@ -531,11 +570,14 @@ def read_station_window(ur: str, lon: float, lat: float):
         # take the ABSOLUTE angle -- VZA is signed to indicate side of nadir, so a raw
         # mean would let a downstream `vza_mean < 30` pass every west-side granule
         # however oblique (-55 < 30 is True).
-        vza = bands["view_zenith"].astype("float64") * float(scales["view_zenith"] or 1.0)
-        vmask = np.isfinite(vza)
-        if nodata["view_zenith"] is not None:
-            vmask &= (vza != float(nodata["view_zenith"]) * float(scales["view_zenith"] or 1.0))
-        vza_abs = np.abs(vza[vmask])
+        if "view_zenith" in bands:
+            vza = bands["view_zenith"].astype("float64") * float(scales["view_zenith"] or 1.0)
+            vmask = np.isfinite(vza)
+            if nodata["view_zenith"] is not None:
+                vmask &= (vza != float(nodata["view_zenith"]) * float(scales["view_zenith"] or 1.0))
+            vza_abs = np.abs(vza[vmask])
+        else:
+            vza_abs = np.array([])            # not read -> vza_* stay NaN, never 0
 
         cloud_fill = 255 if nodata["cloud"] is None else int(nodata["cloud"])
         water_fill = 255 if nodata["water"] is None else int(nodata["water"])
@@ -568,7 +610,8 @@ def read_station_window(ur: str, lon: float, lat: float):
 # PART C -- pairing
 # ============================================================
 
-def pair_station(rows: list[dict], station_id: str, lon: float) -> list[dict]:
+def pair_station(rows: list[dict], station_id: str, lon: float,
+                 pixels: bool = True) -> list[dict]:
     """Pair each day pass with a night pass from THE NIGHT THAT FOLLOWS IT.
 
     The rule, stated the way it was specified: a 10:30 day acquisition may pair with a
@@ -596,9 +639,12 @@ def pair_station(rows: list[dict], station_id: str, lon: float) -> list[dict]:
         day_elev, night_elev   solar elevation of each half
         elev_drop              day_elev - night_elev, the illumination contrast
         dt_hours               separation
+        night_offset           signed hours from solar midnight: negative = evening
+                               (surface still shedding heat), positive = pre-dawn
         well_phased            1 if the day half is within WELL_PHASED_DAY_H of the
-                               thermal peak AND the night half is in the pre-dawn
-                               approach; these are the pairs where DTR means one thing
+                               thermal peak AND the night half is at least
+                               WELL_PHASED_NIGHT_MIN hours PAST solar midnight; these are
+                               the pairs where DTR means one thing
     """
     days   = [r for r in rows if r["phase"] == "day"]
     nights = [r for r in rows if r["phase"] == "night"]
@@ -629,7 +675,8 @@ def pair_station(rows: list[dict], station_id: str, lon: float) -> list[dict]:
         n_elev = float(best.get("solar_elev", float("nan")))
         d_off  = abs(float(d.get("hours_from_solar_noon", 0.0)) - THERMAL_PEAK_LAG_H)
         n_tst  = float(best.get("tst", 0.0))
-        well   = int(d_off <= WELL_PHASED_DAY_H and n_tst >= WELL_PHASED_NIGHT_TST)
+        n_off  = n_tst if n_tst < 12.0 else n_tst - 24.0     # signed hours from solar midnight
+        well   = int(d_off <= WELL_PHASED_DAY_H and n_off >= WELL_PHASED_NIGHT_MIN)
 
         out.append({
             "station_id": station_id,
@@ -638,15 +685,20 @@ def pair_station(rows: list[dict], station_id: str, lon: float) -> list[dict]:
             "dt_hours": round(best_dt, 3),
             "day_tst": round(float(d.get("tst", float("nan"))), 3),
             "night_tst": round(n_tst, 3),
+            "night_offset": round(n_off, 3),
             "day_elev": round(d_elev, 2),
             "night_elev": round(n_elev, 2),
             "elev_drop": round(d_elev - n_elev, 2),
             "day_solar_date": str(dsd.date()),
             "night_solar_date": str(best["solar_date"].date()),
             "well_phased": well,
-            "day_clear": d.get("clear_frac"),
-            "night_clear": best.get("clear_frac"),
-            "quality": int(bool(d.get("passed_qc")) and bool(best.get("passed_qc"))),
+            # With pixels=False no mask was read, so cloud state is UNKNOWN, not clean.
+            # Writing 0 would be indistinguishable from "measured, and cloudy" and would
+            # silently understate the pair inventory; write empty so it reads as missing.
+            "day_clear": d.get("clear_frac") if pixels else "",
+            "night_clear": best.get("clear_frac") if pixels else "",
+            "quality": int(bool(d.get("passed_qc")) and bool(best.get("passed_qc")))
+                       if pixels else "",
         })
     return out
 
@@ -875,6 +927,11 @@ def main():
                     help=">52 deg stations; MUST return zero granules (§36.20)")
     ap.add_argument("--workers", type=int, default=HTTP_WORKERS)
     ap.add_argument("--fresh", action="store_true", help="ignore the checkpoint")
+    ap.add_argument("--out-tag", type=str, default="",
+                    help="suffix the output CSVs, e.g. --out-tag stats writes "
+                         "ecostress_census_granules.stats.csv. Use for any run whose rows "
+                         "must NOT land in the headline CSVs -- a --dry-run in particular, "
+                         "whose pixel columns are empty.")
     ap.add_argument("--start-idx", type=int, default=-1,
                     help="SLURM array slice: first station row (inclusive)")
     ap.add_argument("--end-idx", type=int, default=-1,
@@ -889,8 +946,12 @@ def main():
     # corrupt it -- csv.DictWriter gives no atomicity across processes.  Merge afterwards
     # with slurm/ecostress_census_array.sh merge.
     global OUT_GRAN, OUT_PAIRS, LOG_FILE
+    tag = ""
+    if args.out_tag:
+        tag += f".{args.out_tag}"
     if args.start_idx >= 0:
-        tag = f".{args.start_idx:05d}_{args.end_idx:05d}"
+        tag += f".{args.start_idx:05d}_{args.end_idx:05d}"
+    if tag:
         OUT_GRAN  = OUT_GRAN.with_suffix(f"{tag}.csv")
         OUT_PAIRS = OUT_PAIRS.with_suffix(f"{tag}.csv")
         LOG_FILE  = LOG_FILE.with_suffix(f"{tag}.csv")
@@ -938,6 +999,13 @@ def main():
         end = iso_end_date(row.get("end_date"))
         start = iso_end_date(row.get("actual_start_date") or row.get("start_date"))
         start = max(start, MISSION_START[:10])
+        # A station whose record ends before ECOSTRESS launched produces an INVERTED
+        # temporal range; CMR answers HTTP 400, and 400 is in _NO_RETRY_HTTP, so the
+        # station logs as a network 'error' when in truth it simply has no possible
+        # overlap.  Decide that here, with no request, and say so.
+        if end < start:
+            return sid, [], [], [], 0, 0, 0, (
+                f"no overlap: record ends {end}, before mission start {MISSION_START[:10]}")
         try:
             items = cmr_granules(session, meta["lon"], meta["lat"],
                                  f"{end}T23:59:59Z", start=f"{start}T00:00:00Z")
@@ -968,7 +1036,12 @@ def main():
                             alt_res["granule_ur_used"] = alt
                             res = alt_res
                     r.update(res)
-            pairs = [] if args.dry_run else pair_station(inwin, sid, meta["lon"])
+            # Pairing needs NO pixels -- only UTC, solar date and phase, all of which are
+            # computed from the granule name plus the station coordinate.  So a --dry-run
+            # still yields the full candidate-pair inventory; only the cloud state of each
+            # half is left unknown.  That inventory is what sizes the pixel pass: the
+            # census currently reads ~12x more granules than ever enter a pair.
+            pairs = pair_station(inwin, sid, meta["lon"], pixels=not args.dry_run)
             return sid, rows, inwin, pairs, len(items), n_reproc, n_orbit, None
         except Exception as exc:                                    # noqa: BLE001
             return sid, [], [], [], 0, 0, 0, f"{type(exc).__name__}: {exc}"

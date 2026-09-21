@@ -1,0 +1,329 @@
+;
+
+/* ------------------------------------------------------------------ */
+const K   = DATA.constants;
+const IDS = Object.keys(DATA.stations);
+const fmt = n => (n === null || n === undefined || Number.isNaN(n)) ? "—" : n.toLocaleString();
+const f2  = n => (n === null || n === undefined || Number.isNaN(n)) ? "—" : n.toFixed(2);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+let SID  = "BodieHills";
+let YKEY = "elev";
+let stageSel = 5;
+
+/* ---- derive UTC hour and mean local time; the CSV carries only the timestamp ----
+   local = UTC + lon/15, i.e. mean solar time at the station's meridian.  It differs
+   from the census's TST by the equation of time alone (±15 min), so showing both makes
+   that correction visible instead of implied.  Neither is a civil clock: no time zone
+   and no daylight saving is applied, because the filters care about the sun, not the
+   calendar people keep. */
+const hhmm = h => h == null ? "—"
+  : String(Math.floor(h)).padStart(2, "0") + ":" +
+    String(Math.round((h % 1) * 60) % 60).padStart(2, "0");
+for (const id of IDS) {
+  const lon = DATA.stations[id].funnel.lon;
+  for (const g of DATA.stations[id].granules) {
+    const t = g.utc ? g.utc.slice(11, 19).split(":") : null;
+    g.utc_h = t ? (+t[0]) + (+t[1]) / 60 + (+t[2]) / 3600 : null;
+    g.local_h = g.utc_h == null ? null : (((g.utc_h + lon / 15) % 24) + 24) % 24;
+    g.t = g.utc ? Date.parse(g.utc) : null;
+  }
+}
+
+/* ---- stage counts. Stages 7-10 are not separately recorded; say so. ---- */
+function stageCounts(f) {
+  return {
+    0:  {alive: null},
+    1:  {alive: f.n_hits},
+    2:  {alive: f.n_hits},
+    3:  {alive: f.n_hits - f.n_dupe_reproc, drop: f.n_dupe_reproc},
+    4:  {alive: f.n_overpasses,             drop: f.n_dupe_orbit},
+    5:  {alive: f.n_overpasses},
+    6:  {alive: f.n_inwindow,               drop: f.n_crossover},
+    7:  {alive: f.n_read_ok,                drop: f.n_inwindow - f.n_read_ok},
+    8:  {alive: null}, 9: {alive: null}, 10: {alive: null},
+    11: {alive: f.n_passed,                 drop: f.n_read_ok - f.n_passed},
+    12: {alive: f.n_pairs},
+    13: {alive: f.n_pairs_well_phased},
+  };
+}
+
+/* ---- station switcher ---- */
+const stnBox = document.getElementById("stations");
+IDS.forEach(id => {
+  const f = DATA.stations[id].funnel;
+  const b = document.createElement("button");
+  b.className = "stn"; b.type = "button"; b.dataset.id = id;
+  b.setAttribute("aria-pressed", String(id === SID));
+  b.innerHTML = `${id}<span class="wp">${f.n_pairs_well_phased} well-phased</span>`;
+  b.onclick = () => { SID = id; renderAll(); };
+  stnBox.appendChild(b);
+});
+
+/* ---- the rail ---- */
+const rail = document.getElementById("rail");
+DATA.stages.forEach(s => {
+  const b = document.createElement("button");
+  b.className = "stage" + (s.block ? "" : " passive")
+              + (s.lane === "fork" ? " fork" : "") + (s.lane === "join" ? " join" : "");
+  b.type = "button"; b.dataset.n = s.n;
+  b.innerHTML = `<span class="bar"></span><span class="row">
+    <span class="n">${s.n}</span><span class="nm">${s.name}</span>
+    <span class="ct"></span></span>`;
+  b.onclick = () => { stageSel = s.n; renderRail(); renderDetail(); };
+  rail.appendChild(b);
+});
+
+function renderRail() {
+  const f = DATA.stations[SID].funnel;
+  const C = stageCounts(f);
+  [...rail.children].forEach(b => {
+    const n = +b.dataset.n, c = C[n];
+    b.setAttribute("aria-pressed", String(n === stageSel));
+    const bar = b.querySelector(".bar"), ct = b.querySelector(".ct");
+    const pct = (c.alive == null) ? null : Math.max(c.alive / f.n_hits * 100, 0.4);
+    bar.style.width = pct == null ? "0%" : pct + "%";
+    if (c.drop)            { ct.textContent = "−" + fmt(c.drop); ct.className = "ct drop"; }
+    else if (c.alive != null) { ct.textContent = fmt(c.alive);   ct.className = "ct"; }
+    else                   { ct.textContent = "";                ct.className = "ct"; }
+  });
+}
+
+function renderDetail() {
+  const s = DATA.stages.find(x => x.n === stageSel);
+  document.getElementById("detail").innerHTML =
+    `<h3 style="margin-bottom:4px">Stage ${s.n} &middot; ${s.name}</h3>
+     <code class="gate">${s.gate.replace(/</g, "&lt;")}</code>
+     ${s.note ? `<p class="note" style="margin:6px 0 4px">${s.note}</p>` : ""}
+     <span class="loc">census_ecostress.py${s.loc}${s.block ? "" : "  ·  does not remove anything"}</span>`;
+}
+
+/* ---- the two lanes ---- */
+function renderLanes() {
+  const f = DATA.stations[SID].funnel;
+  const box = document.getElementById("lanes");
+  box.innerHTML = ["day", "night"].map(ln => {
+    const nin = f["n_" + ln], rd = f["n_" + ln + "_read_ok"], ps = f["n_" + ln + "_passed"];
+    const rows = [
+      ["in-window", nin, null],
+      ["read succeeded", rd, nin - rd],
+      [`clear_frac ≥ ${K.CLEAR_FRAC_MIN}`, ps, rd - ps],
+      ["entered a pair", f.n_pairs, f["n_" + ln + "_unpaired"]],
+    ];
+    return `<div class="lane ${ln}"><h4>${ln} lane</h4>` + rows.map(([l, v, d]) =>
+      `<div class="step"><span class="lbl">${l}</span>
+       <span><span class="v">${fmt(v)}</span>${d ? ` <span class="d">−${fmt(d)}</span>` : ""}</span>
+       </div>`).join("") + `</div>`;
+  }).join("");
+}
+
+/* ---- date coincidence + true ordering ---- */
+function renderLoss() {
+  const S = DATA.stations[SID], f = S.funnel, c = S.coincidence;
+  const tot = Math.max(c.n_dates, 1);
+  const seg = [["day only", c.day_only, "var(--day-soft)"],
+               ["night only", c.night_only, "var(--night-soft)"],
+               ["both → pairable", c.both, "var(--keep)"]];
+  document.getElementById("coin").innerHTML = seg.map(([, v, col]) =>
+    `<span style="width:${v / tot * 100}%; background:${col}"></span>`).join("");
+  document.getElementById("coinkey").innerHTML = seg.map(([l, v, col]) =>
+    `<span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;
+     background:${col};margin-right:6px;vertical-align:-1px"></i>${l} <b class="num">${fmt(v)}</b></span>`)
+    .join("") + `<span style="color:var(--ink-3)">of ${fmt(c.n_dates)} dates</span>`;
+
+  const steps = [
+    ["in-window", f.n_inwindow, null, ""],
+    ["candidate pairs", f.n_pairs, "orbital coincidence", "var(--night)"],
+    ["both halves clear", f.n_pairs_quality, "cloud", "var(--night)"],
+    ["well-phased", f.n_pairs_well_phased, "phase geometry", "var(--keep)"],
+  ];
+  document.getElementById("ordering").innerHTML = steps.map(([l, v, why], i) => {
+    const prev = i ? steps[i - 1][1] : null;
+    const drop = prev ? Math.round((1 - v / prev) * 100) : null;
+    const col = i === 0 ? "var(--drop)" : steps[i][3];
+    return `<div class="ord${why ? " spaced" : ""}">
+      <span class="lbl">${l}</span>
+      <span class="track"><span class="fill" style="width:${Math.max(v / f.n_inwindow * 100, 0.5)}%;
+        background:${col}"></span>${why ? `<span class="tag">−${drop}% ${why}</span>` : ""}</span>
+      <span class="v">${fmt(v)}</span></div>`;
+  }).join("");
+
+  document.getElementById("derivedcallout").innerHTML =
+    `<p><strong>${fmt(f.n_day_unpaired)} day passes and ${fmt(f.n_night_unpaired)} night passes
+     found no partner</strong> &mdash; ${Math.round(f.n_day_unpaired / Math.max(f.n_day, 1) * 100)}%
+     of this station&rsquo;s day passes. Both numbers are <em>derived</em>
+     (<code>n_phase − n_pairs</code>): <code>census_ecostress.py:625</code> drops an unpaired day
+     pass with a bare <code>continue</code>, writing neither a row nor a counter. The single
+     largest loss in the chain is the one thing the census does not record.</p>
+     <p>Which is why loosening <code>CLEAR_FRAC_MIN</code> or the QC bits cannot raise the pair
+     count: the ceiling is orbital and is reached before QC is consulted.</p>`;
+}
+
+/* ---- canvas scatter ---- */
+const cv = document.getElementById("plot"), ctx = cv.getContext("2d");
+const tip = document.getElementById("tip");
+const PAD = {l: 54, r: 14, t: 14, b: 30};
+let pts = [];
+
+const AXES = {
+  elev: {key: "solar_elev", lo: -90, hi: 90, label: "solar elevation (deg)",
+         ticks: [-90, -45, 0, 45, 90]},
+  tst:  {key: "tst",  lo: 0, hi: 24, label: "true solar time (h)", ticks: [0, 6, 12, 18, 24]},
+  utc:  {key: "utc_h", lo: 0, hi: 24, label: "UTC hour of acquisition", ticks: [0, 6, 12, 18, 24]},
+};
+
+function draw() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const G = DATA.stations[SID].granules.filter(g => g.t != null);
+  if (!G.length) return;
+  const A = AXES[YKEY];
+  const t0 = Math.min(...G.map(g => g.t)), t1 = Math.max(...G.map(g => g.t));
+  const X = t => PAD.l + (t - t0) / (t1 - t0 || 1) * (w - PAD.l - PAD.r);
+  const Y = v => PAD.t + (A.hi - v) / (A.hi - A.lo) * (h - PAD.t - PAD.b);
+
+  const line = css("--line"), ink3 = css("--ink-3");
+
+  // the crossover band, only meaningful on the elevation axis
+  if (YKEY === "elev") {
+    ctx.fillStyle = css("--drop") + "33";
+    ctx.fillRect(PAD.l, Y(K.CROSSOVER_HI), w - PAD.l - PAD.r, Y(K.CROSSOVER_LO) - Y(K.CROSSOVER_HI));
+  }
+
+  ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.font = "11px Archivo, sans-serif";
+  ctx.fillStyle = ink3;
+  A.ticks.forEach(v => {
+    const y = Math.round(Y(v)) + .5;
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(w - PAD.r, y); ctx.stroke();
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(String(v), PAD.l - 8, y);
+  });
+  const y0 = new Date(t0).getUTCFullYear(), y1 = new Date(t1).getUTCFullYear();
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let y = y0; y <= y1; y++) {
+    const t = Date.UTC(y, 0, 1); if (t < t0 || t > t1) continue;
+    const x = Math.round(X(t)) + .5;
+    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, h - PAD.b); ctx.stroke();
+    ctx.fillText(String(y), x, h - PAD.b + 6);
+  }
+
+  const showCross = document.getElementById("showCross").checked;
+  const showFail  = document.getElementById("showFail").checked;
+  const COL = {day: css("--day"), night: css("--night"), crossover: css("--drop"),
+               off: css("--drop")};
+  pts = [];
+  for (const g of G) {
+    if (g.phase === "crossover" && !showCross) continue;
+    const v = g[A.key]; if (v == null || Number.isNaN(v)) continue;
+    const failed = g.phase !== "crossover" && g.passed_qc !== 1;
+    if (failed && !showFail) continue;
+    const x = X(g.t), y = Y(v);
+    pts.push({x, y, g});
+    ctx.beginPath(); ctx.arc(x, y, failed ? 2.6 : 2.3, 0, 6.2832);
+    if (failed) { ctx.strokeStyle = COL[g.phase] || ink3; ctx.lineWidth = .9; ctx.stroke(); }
+    else        { ctx.fillStyle = COL[g.phase] || ink3; ctx.fill(); }
+  }
+
+  ctx.save();
+  ctx.translate(13, (h - PAD.b + PAD.t) / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = css("--ink-2"); ctx.font = "12px Archivo, sans-serif";
+  ctx.fillText(A.label, 0, 0);
+  ctx.restore();
+}
+
+cv.addEventListener("pointermove", e => {
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = null, bd = 144;
+  for (const p of pts) {
+    const d = (p.x - mx) ** 2 + (p.y - my) ** 2;
+    if (d < bd) { bd = d; best = p; }
+  }
+  if (!best) { tip.style.opacity = 0; return; }
+  const g = best.g;
+  const why = g.phase === "crossover"
+      ? `<span style="color:#ff9">dropped &mdash; inside the crossover band</span>`
+      : g.read_ok !== 1 ? `<span style="color:#ff9">read failed &mdash; ${g.error || "?"}</span>`
+      : g.passed_qc !== 1 ? `<span style="color:#ff9">clear_frac below ${K.CLEAR_FRAC_MIN}</span>`
+      : `<span style="color:#9f9">passed every filter</span>`;
+  tip.innerHTML =
+    `<b>${g.utc ? g.utc.slice(0, 19).replace("T", "  ") : "—"}</b> UTC<br>
+     <span class="k">local</span> ${hhmm(g.local_h)} &nbsp;
+     <span class="k">TST</span> ${f2(g.tst)} h &nbsp;
+     <span class="k">elev</span> ${f2(g.solar_elev)}° &nbsp;
+     <span class="k">phase</span> ${g.phase}<br>
+     <span class="k">clear</span> ${f2(g.clear_frac)} &nbsp;
+     <span class="k">cloud</span> ${f2(g.frac_cloud)} &nbsp;
+     <span class="k">water</span> ${f2(g.frac_water)}<br>
+     <span class="k">${(g.granule_ur || "").slice(0, 42)}</span><br>${why}`;
+  tip.style.opacity = 1;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.min(Math.max(best.x + 14, 4), cv.clientWidth - tw - 4) + "px";
+  tip.style.top  = Math.max(best.y - th - 12, 4) + "px";
+});
+cv.addEventListener("pointerleave", () => { tip.style.opacity = 0; });
+
+document.querySelectorAll(".seg [data-y]").forEach(b => b.onclick = () => {
+  YKEY = b.dataset.y;
+  document.querySelectorAll(".seg [data-y]").forEach(o =>
+    o.setAttribute("aria-pressed", String(o === b)));
+  draw(); renderAxisNote();
+});
+document.getElementById("showCross").onchange = draw;
+document.getElementById("showFail").onchange = draw;
+
+function renderAxisNote() {
+  const f = DATA.stations[SID].funnel;
+  const off = f.lon / 15;
+  const notes = {
+    elev: `Classification uses this axis alone. Anything inside [${K.CROSSOVER_LO}, ${K.CROSSOVER_HI}]° is crossover and is never read.`,
+    tst:  `TST = UTC + lon/15 + equation of time. At ${f.lon.toFixed(3)}° the longitude term is ${off >= 0 ? "+" : ""}${off.toFixed(2)} h.`,
+    utc:  Math.abs(off) < 0.5
+      ? `This station sits near the prime meridian, so UTC and solar time already agree — the conversion buys almost nothing here.`
+      : `At ${f.lon.toFixed(3)}° the same UTC hour lands in daylight or darkness depending on the date. Compare this axis with true solar time.`,
+  };
+  document.getElementById("axisnote").textContent = notes[YKEY];
+}
+
+/* ---- table ---- */
+let sortK = "utc", sortAsc = true;
+function renderTable() {
+  const rows = DATA.stations[SID].granules.slice().sort((a, b) => {
+    const x = a[sortK], y = b[sortK];
+    if (x == null) return 1; if (y == null) return -1;
+    return (x > y ? 1 : x < y ? -1 : 0) * (sortAsc ? 1 : -1);
+  });
+  document.querySelector("#tab tbody").innerHTML = rows.map(g => `<tr>
+    <td>${g.utc ? g.utc.slice(0, 19).replace("T", " ") : "—"}</td>
+    <td>${hhmm(g.local_h)}</td>
+    <td>${f2(g.tst)}</td><td>${f2(g.solar_elev)}</td><td>${g.phase}</td>
+    <td>${f2(g.clear_frac)}</td><td>${f2(g.frac_cloud)}</td>
+    <td>${g.phase === "crossover" ? "—" : (g.passed_qc === 1 ? "yes" : "no")}</td>
+    <td>${(g.granule_ur || "").slice(0, 46)}</td></tr>`).join("");
+  document.getElementById("tabsum").textContent =
+    `Show the table (${fmt(rows.length)} overpasses)`;
+}
+document.querySelectorAll("#tab th").forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  sortAsc = (k === sortK) ? !sortAsc : true; sortK = k; renderTable();
+});
+
+/* ---- ---- */
+function renderAll() {
+  document.querySelectorAll(".stn").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.id === SID)));
+  const f = DATA.stations[SID].funnel;
+  document.getElementById("stnmeta").textContent =
+    `${f.network}  ·  lat ${f.lat.toFixed(3)}  lon ${f.lon.toFixed(3)}  ·  ${Math.round(f.elevation_m)} m`
+    + `  ·  Köppen ${f.kg_macro}  ·  ${fmt(f.n_hits)} CMR hits  →  ${fmt(f.n_pairs_well_phased)} well-phased pairs`;
+  renderRail(); renderDetail(); renderLanes(); renderLoss();
+  renderAxisNote(); renderTable(); draw();
+}
+window.addEventListener("resize", draw);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+renderAll();
+</script>

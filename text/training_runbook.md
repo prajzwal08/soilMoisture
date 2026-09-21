@@ -11983,3 +11983,120 @@ Further out: the empirical anomaly-vs-solar-hour and anomaly-vs-VZA curves (whic
 the assumed window boundaries and VZA cut with measured ones), the thermal head itself (§34.6
 step 3), and the `labels/le` wiring. A full-tile LST pull is needed only once the head is being
 trained, scoped by which stations cleared §36.16.
+
+
+---
+
+## §36.22 Drawing the filter chain — and the pairing ceiling it exposed
+
+**STATUS: DONE 2026-09-16.** `plot_ecostress_census.py` + `slurm/ecostress_census_analyze.sh`,
+figures in `fig/ecostress_filter_viz/` (PNG + vector PDF, 300 dpi, scienceplots
+`science`+`no-latex`). Analysis only — no census re-run, no downloads, no model change.
+
+§36.17 specified `plot_ecostress_census.py` and it was never built, so the three merged CSVs
+from job 26742514 had sat unread. This section is that script, plus the one substantive finding
+that fell out of drawing the funnel honestly.
+
+### 36.22.1 The finding: pair yield is capped by orbital geometry, before QC is consulted
+
+The census log invites the reading `n_passed → n_pairs`. **That subtraction is meaningless.**
+`census_ecostress.py:956` builds `inwin` by phase alone; `pair_station` re-filters on phase
+(`:605-606`) and never reads `passed_qc`. `quality` is attached afterwards at `:649` as a label
+on an already-formed pair. The chain **forks at stage 5 and rejoins at stage 12** — `n_passed`
+and the pair count sit on different branches. Any single-column funnel drawing of this census
+is wrong, and F2 is drawn fork-and-join for that reason.
+
+The true ordering, at BodieHills (the best station in the census):
+
+```
+1850 in-window  (931 day + 919 night)
+  ->  216 candidate pairs   orbital coincidence   -88%    <- the binding constraint
+  ->  193 both halves clear cloud                 -11%
+  ->   91 well-phased       phase geometry        -53%
+```
+
+Why −88%: the ISS overpass local time precesses through 24 h in ~60 days, so a solar date
+usually catches a station in only one half of the cycle. Measured:
+
+| station | lat | dates w/ any overpass | **both day+night** | % | cand. pairs |
+|---|---|---|---|---|---|
+| BodieHills | 38.3 | 1083 | **184** | 17.0 | 216 |
+| Rothamsted | 51.8 | 1010 | **16** | 1.6 | 26 |
+| PSA2Tiergarten | 52.5 | 632 | **12** | 1.9 | 17 |
+| Banizoumbou | 13.5 | 12 | **0** | 0 | 0 |
+
+Even across BodieHills' 184 both-dates, `sum(min(n_day, n_night))` = 207: 35 day passes are
+starved by one-to-one consumption (`used`, `:625`). Actual 216 exceeds that same-date cap only
+because 128 of the 216 pair to a night on the *next* solar date — the 22:00–04:00 window
+straddles solar midnight; just 88 are same-date. **715 of 931 day passes (77%) and 703 night
+passes find no partner, and `:625` records neither a row nor a counter** — the figures derive
+those numbers and label them as derived.
+
+Corroboration: `dt_hours` at BodieHills is **bimodally quantised with a hard gap** — 78 pairs at
+6–9 h, 138 at 15–18 h, zero elsewhere. Two discrete orbital configurations, not a continuum, so
+no threshold can be widened into the gap.
+
+**Consequence for §36.16, and it is a real constraint on the go/no-go.** Raising
+`CLEAR_FRAC_MIN` or loosening the QC bits **cannot materially increase pair yield** — the
+ceiling is geometric and is reached before QC applies. If the ≥150-station floor is missed, the
+levers are more stations or a looser *pairing* rule. Note `DT_TOLERANCES_H` and
+`NEXT_DAY_MODES` are declared at `:110-112` and are **dead code** — `pair_station` implements a
+single fixed rule and the sensitivity grid §36.14 promised was never swept. That grid is the
+lever §36.16 would actually need, and it does not exist yet.
+
+### 36.22.2 Two record-keeping gaps, worth closing before the remaining 754 stations run
+
+1. **Dedupe drops leave no row.** Stages 3–4 discard 28.1% + ~9% of CMR hits; only the aggregate
+   `n_dupe_reproc` / `n_dupe_orbit` survive. The individual URs are gone.
+2. **Unpaired passes leave nothing at all** — `:625`, bare `continue`. This is the single largest
+   loss in the chain and it is completely unrecorded.
+
+Both are cheap to fix (a reason column, a counter) and both would have to be reconstructed by
+inference otherwise.
+
+### 36.22.3 Anti-drift measures in the plotting script
+
+- Constants are **AST-parsed out of `census_ecostress.py`**, never retyped, including the
+  computed `N_PX_EXPECTED = int(round(TILE_M / PIXEL_M)) ** 2`. A restricted evaluator resolves
+  names/BinOp/int()/round() against already-parsed values. No import, so no `requests`/`rasterio`
+  dependency and no side effects.
+- Every station's funnel is **reconciled against its own log row** — eight equalities, and the
+  script `sys.exit`s rather than draw a funnel that does not balance. All four reconcile exactly.
+- `well_phased` is **re-derived** from the granule CSV and checked against the pairs CSV. The
+  rule is `abs(hfsn − 2.0) <= 2.5`, i.e. `hfsn ∈ [−0.5, +4.5]` — **signed and asymmetric**,
+  afternoon-biased by the thermal lag. Taking `abs(hfsn)` first would wrongly admit **88 morning
+  pairs at BodieHills alone**; the script reports that count so the trap stays visible.
+- An assertion that `n_pairs <= min(n_day, n_night)` catches any future refactor that makes
+  pairing QC-gated.
+
+### 36.22.4 The figures
+
+`F1` flowchart (all 13 stages, gate + constant + live counts, non-blocking stages dashed,
+per-station variants) · `F2` fork-and-join waterfall · **`F3` the whole record**: solar elevation,
+true solar time, and the pair rug on one time axis, with the crossover band shaded across both
+· **`F3c` UTC → TST → elevation**, one panel per conversion step plus a worked table ·
+`F3b`/`F4` phase space, by phase and by `clear_frac` · `F5` QC attribution · `F6` clear-fraction
+sweep · `F7` pairs formed · **`F7b` the pairing-loss figure** (date-coincidence calendar, the
+fork-join Sankey, the true ordering) · `F8` per-year funnel · `F9` network context vs §36.16.
+
+`--emit-json` writes `viz_data.json` (2.8 MB) for the interactive page.
+
+**On F3c and why longitude decides whether the conversion matters.** Rothamsted sits at
+longitude −0.378° — effectively Greenwich — so UTC and true solar time already agree there
+(median `|TST − UTC|` = 0.11 h, which is just the equation of time) and the conversion looks
+like a no-op. BodieHills at −119.126° is where it earns its keep (median 8.01 h):
+
+```
+2020-09-27T23:31 UTC  ->  TST 15.76 h  ->  elev +23.6 deg  ->  DAY
+2021-09-07T07:09 UTC  ->  TST 23.26 h  ->  elev -45.1 deg  ->  NIGHT
+```
+
+A 07:09 UTC acquisition is local midnight; a 23:31 UTC one is mid-afternoon. Classifying on the
+UTC hour would invert both. This is the concrete argument for §36.14's decision to compute solar
+geometry for every granule before any filtering.
+
+### 36.22.5 What did NOT change
+
+The §36.16 floors, the census outputs, and every threshold are untouched. The STEP 0 coherence
+test (§36.0a) is still unrun and remains the go/no-go on the thermal arm; nothing here speaks to
+whether the DTR signal is real, only to how many pairs exist and why so few.
