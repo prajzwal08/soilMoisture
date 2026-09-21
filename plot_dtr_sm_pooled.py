@@ -65,10 +65,21 @@ def binned(x, y, nbins=14):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=str(ROOT / "csvs" / "ecostress_dtr_vs_sm_all.csv"))
+    ap.add_argument("--dt-lo", type=float, default=None)
+    ap.add_argument("--dt-hi", type=float, default=None)
+    ap.add_argument("--label", default="")
     ap.add_argument("--out", default=str(ROOT / "fig" / "dtr_txson" / "dtr_sm_pooled_surface.png"))
     args = ap.parse_args()
 
     d = pd.read_csv(args.csv)
+    if args.dt_lo is not None or args.dt_hi is not None:
+        if "dt_hours" not in d.columns:
+            raise SystemExit("dt_hours is not in the CSV -- rerun plot_dtr_vs_sm.py first")
+        lo = -np.inf if args.dt_lo is None else args.dt_lo
+        hi = np.inf if args.dt_hi is None else args.dt_hi
+        n0 = len(d)
+        d = d[(d.dt_hours >= lo) & (d.dt_hours < hi)]
+        print(f"dt band [{lo}, {hi}) h : {n0:,} -> {len(d):,} station-days")
     print(f"{len(d):,} station-days over {d['station_id'].nunique()} stations")
 
     fig, ax = plt.subplots(figsize=(8.6, 6.0))
@@ -103,7 +114,7 @@ def main():
     print("   binned medians:",
           ", ".join(f"{a:.2f}->{b:.1f}K" for a, b in zip(cx, med)))
 
-    fig.suptitle("ECOSTRESS DTR against same-day SURFACE (0-10 cm) soil moisture\n"
+    fig.suptitle(f"ECOSTRESS DTR vs same-day SURFACE (0-10 cm) soil moisture{args.label}\n"
                  f"all {d['station_id'].nunique()} stations pooled, {len(s):,} station-days"
                  f"     r = {r_all:+.3f}"
                  f"     within the plausible 0-40 K band: r = {r_bd:+.3f} (n = {n_bd:,})",

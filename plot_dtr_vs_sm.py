@@ -82,10 +82,24 @@ def one_station(job):
     val = z["valid"][ok].reshape(int(ok.sum()), -1).astype(bool)
     with np.errstate(invalid="ignore"):
         scene = np.array([d[v].mean() if v.any() else np.nan for d, v in zip(dtr, val)])
+        # day and night separately, on the SAME valid pixels, so DTR == day - night
+        # exactly and the three can be compared without a masking difference.
+        dayl = z["day_lst_k"][ok].reshape(int(ok.sum()), -1)
+        nigl = z["night_lst_k"][ok].reshape(int(ok.sum()), -1)
+        s_day = np.array([a[v].mean() if v.any() else np.nan for a, v in zip(dayl, val)])
+        s_nig = np.array([a[v].mean() if v.any() else np.nan for a, v in zip(nigl, val)])
     dates = pd.to_datetime([str(x.decode() if isinstance(x, bytes) else x)[:10]
                             for x in z["day_utc"][ok]]).normalize()
     df = pd.DataFrame({"date": dates, "dtr_k": scene,
-                       "n_valid_px": z["n_valid_px"][ok]}).dropna()
+                       "day_lst_k": s_day, "night_lst_k": s_nig,
+                       "n_valid_px": z["n_valid_px"][ok]})
+    # Carry the 36.24 phase covariates through, so the dt band and the solar hour can be
+    # conditioned on downstream instead of being averaged over.
+    for c in ("dt_hours", "day_tst", "night_tst", "well_phased"):
+        if c in z.files:
+            v = z[c][ok]
+            df[c] = v.astype(float) if v.dtype.kind in "fiub" else np.nan
+    df = df.dropna(subset=["dtr_k"])
 
     o = obs_for(folder, cat)
     if o is None or df.empty:
