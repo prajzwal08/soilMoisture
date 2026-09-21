@@ -12100,3 +12100,392 @@ geometry for every granule before any filtering.
 The §36.16 floors, the census outputs, and every threshold are untouched. The STEP 0 coherence
 test (§36.0a) is still unrun and remains the go/no-go on the thermal arm; nothing here speaks to
 whether the DTR signal is real, only to how many pairs exist and why so few.
+
+
+---
+
+## §36.23 The image QC pass — the usable inventory, measured (Session 36, 2026-09-16)
+
+**STATUS: DONE.** `qc_wellphased_pairs.py` + `slurm/ecostress_wp_qc_array.sh` +
+`slurm/ecostress_wp_report.sh`. Jobs 26790671 (dry-run census), 26799329 / 26800268 (QC arrays).
+No model change, no re-pairing, no CMR query repeated.
+
+### 36.23.1 The result
+
+**41,348 usable day/night pairs across 824 stations**, both halves at `clear_frac >= 0.5`.
+
+```
+1,687,708  CMR granules
+1,130,571  unique overpasses
+   60,461  candidate day/night pairs      (59,783 after dedupe + station join)
+   57,424  both halves readable           96.1%; the rest is MGRS tile-edge geometry
+   41,348  both halves clear              <- FINAL
+```
+
+Threshold sweep, because a single verdict would hide the shape of the cliff:
+42,555 @0.3 | **41,348 @0.5** | 39,883 @0.7 | 30,177 @0.9 | 20,754 @1.0 (perfectly clear).
+
+**Cloud is kinder than §36 assumed.** 83% of scenes clear at 0.5, mean cloud fraction 0.127 over
+the 2.24 km box. Pair survival *beats* the independence prediction at every threshold
+(41,348 vs 39,877) — day and night passes hours apart share weather, which is a small piece of
+evidence that the pairing is physically sensible rather than coincidental.
+
+### 36.23.2 Why this is not the census
+
+`census_ecostress.py` in its full form opens a COG for every in-window overpass: 988,065 of them.
+Only ~121k of those granules ever enter a candidate pair — the census reads **~17x more than the
+question needs**. Since `--dry-run` had already written the full pair inventory to disk, the
+cheap move was to read the masks for exactly the granules named in that file and join back:
+**119,566 reads instead of 988,065.**
+
+### 36.23.3 The `well_phased` bug
+
+The night test was `n_tst >= 2.0` — **one-sided on a quantity that wraps at 24**. A 20:30 pass
+has `tst` 20.5, which is `>= 2.0`, so it counted as "pre-dawn". **79% of flagged pairs had an
+EVENING night half.**
+
+Solar elevation cannot fix this: the sun is at −15° both at 20:30 and 04:30, while the surface is
+near its hottest at one and its coldest at the other. Fixed with a signed offset from solar
+*midnight* (`WELL_PHASED_NIGHT_MIN = 2.0`). `dt_hours >= 12` is an equivalent operational rule
+(99.98% agreement).
+
+**CAVEAT: the CSV still carries the OLD column.** The fix landed in `census_ecostress.py` but
+`csvs/ecostress_wp_pairs.wp.csv` predates it. Use `dt_hours`, or recompute.
+
+### 36.23.4 Phase is a COVARIATE, not a filter
+
+The thermal arm exists to give the decoder **spatial** structure inside the 2.24 km tile, not a
+temporal signal. Both halves of a pair share acquisition times, so the DTR map is internally
+consistent and phase mostly scales its amplitude. Filtering to true pre-dawn would leave ~4,100
+pairs / 498 stations — too sparse.
+
+So: keep all pairs, feed `dt_hours` / `day_tst` / `night_offset` as inputs, and normalise the DTR
+map per pair. Near-sunrise/sunset are already excluded by the crossover band in `classify_phase`.
+
+### 36.23.5 Throughput, measured — and the §36.15c claim it contradicts
+
+Jobs 26798022 / 26798662 / 26799329. Every COG open costs **~2.1 s of LP DAAC redirect latency**
+and ~90% of wall time is opening, not reading — the window is 32×32 px, about 4 KB.
+
+```
+shared long-lived layer pool (vs one per granule)   +10% only
+dropping the 4th layer (READ_VZA=False)             no wall gain, -25% requests
+HTTP/2 + multiplex + 64 KB prefetch                 WORSE, reverted
+sequential layer reads                              much worse
+SLURM array across 8 nodes                          ~38 reads/s, ~10x
+```
+
+**§36.15c says "keep `--workers 8` — LP DAAC throttles above that". That is wrong.** LP DAAC does
+not throttle: **1 error in 51k opens**. 16 workers gave 2.8 reads/s, 64 gave 4.0 — latency
+inflates to absorb concurrency rather than requests being rejected. **The ceiling is per client,
+so the way past it is more clients, not more threads.** 8 tasks × 32 workers is the
+demonstrated-safe operating point.
+
+Also measured: `--cpus-per-task=4 --mem=7G` saves **nothing** on rome. A node is shared by at most
+8 jobs, so 128/8 = 16 CPUs is the minimum billable slice. Ask for 16/28G.
+
+### 36.23.6 The sharding bug, found mid-run
+
+Shards sliced work as `todo[shard::nshards]` **after** reading the checkpoint. Each task starts at
+a different moment and so sees a different-length todo list — the slices then indexed different
+partitions and **7,785 of 119,566 reads fell between them** ("both halves read" came out 83.6%
+instead of 96.1%). Now sharded on a stable MD5 of the task key, so every task gives the same
+granule the same verdict regardless of start time.
+
+This is the general lesson: **any partitioning derived from a mutable work list is unstable under
+resume.** Hash the key, never the position.
+
+---
+
+## §36.24 Drawing the pair separation — and why no window exists between the modes
+
+**STATUS: DONE 2026-09-21.** `count_pairs_dt12.py`, `plot_dt_bands.py`,
+`slurm/count_pairs_dt12.sh`, `slurm/plot_dt_bands.sh`. Figures in `fig/ecostress_dt_bands/`.
+Analysis only.
+
+### 36.24.1 The question, and the reordering it tested
+
+The census pairs **before** cloud is known (`pair_station` never reads `passed_qc`; `quality` is
+attached afterwards as a label). The obvious objection is that a day pass whose greedy partner
+happens to be cloudy should be free to re-pair with a different, clear night. So: filter each
+granule on clarity **first**, then pair.
+
+**Measured: filtering first buys +0.8%** — 19,401 pairs vs 19,250 from post-hoc filtering at
+dt ≤ 12 h, and 41,585 vs 41,348 unrestricted. The defect is real but nearly costless, because the
+pairing is so starved by orbital coincidence (§36.22.1) that a day pass rarely *has* an
+alternative clear night to swap to.
+
+Method validated by reproducing the baseline rule exactly: 59,783 pairs, to the row.
+
+### 36.24.2 Separation is bimodal, with a hard empty gap
+
+```
+ 6- 7h   21557  ####################################
+ 8- 9h    4325  #######
+ 9-12h       3  <- the gap: 3 pairs out of 41,585, 0.01%
+15-16h    1430  ##
+16-17h   21291  ####################################
+18-19h    4937  ########
+```
+
+Two discrete ISS orbital configurations, ~6–9 h and ~15–19 h, with nothing between.
+**No threshold can be widened into that gap** — it is geometry, not QC. A request for "9–15 h"
+returns 21 pairs.
+
+### 36.24.3 dt ≤ 12 selects the wrong half of the diurnal cycle
+
+```
+dt <= 12 :  pre-dawn 1,192  |  evening 18,058   (93.8% evening)
+dt >  12 :  pre-dawn 19,653 |  evening  2,445   (88.9% pre-dawn)
+```
+
+A night half within 12 h of the day pass is almost always **before solar midnight** — the surface
+is still shedding heat and has not reached its diurnal minimum. This is the same wrap-at-24 trap
+as §36.23.3 wearing different clothes. Classical thermal inertia wants the amplitude between the
+~13:30 maximum and the pre-dawn minimum, so if a single band is wanted it is `dt >= 12`, not `<=`.
+
+### 36.24.4 The early band is a latitude cut in disguise
+
+The two orbital configurations **sort by latitude**, so picking one is not a neutral sample.
+
+```
+band          |lat|25-35  |lat|35-40  |lat|40-45  |lat|45+    K:B(arid)  K:C   K:D
+dt 6-9 h           +4.1       +11.2        -1.0     -14.0        +6.7   -3.0  -3.1
+dt >=12 h          -4.6        +7.2        -5.1      +2.6        -2.0   +2.0  -0.1
+```
+
+Stated as an absolute: **dt 6–9 h retains 0 of 116 stations at |φ| ≥ 45. Zero.** `dt >= 12`
+retains 112 of 116 (97%). Above ~45° that orbital configuration does not occur, so choosing it
+silently deletes Europe and the northern US, and over-samples arid Köppen B by 7 points.
+
+`fig3_global_maps` shows it directly: stations exclusive to 6–9 h sit in a southern belt at
+30–40°, stations exclusive to 12–24 h at 40–52°.
+
+### 36.24.5 DECISION — dt ∈ [6, 19) h
+
+The union of both configurations, since the gap between them is empty.
+
+| band | pairs | stations | window reads | night half |
+|---|---|---|---|---|
+| **dt [6,19)** | **39,428** | **746** | **78,856** | ~50/50 |
+| dt [6,9) | 17,973 | 549 | 35,946 | 93% evening |
+| dt [12,24) | 22,184 | 676 | 44,368 | 89% pre-dawn |
+| unrestricted | 41,585 | 829 | 83,170 | ~50/50 |
+
+**§36.16 passes with a 3.3x margin on this band: 489 stations clear both floors** (≥20 pairs AND
+≥3 years spanned) against a requirement of ≥150. 496 clear ≥20 pairs, 594 clear ≥3 years. Pairs
+span 2018–2025, peaking 2020 (9,367).
+
+**The cost of taking both bands, stated rather than hidden:** the sample is ~50/50 evening
+(19,230) and pre-dawn (20,198) night halves, which are two physically different quantities —
+partial evening cooling versus a full diurnal range. Phase therefore has to be a covariate, and
+the evening/pre-dawn split becomes a **falsification contrast**: a real thermal-inertia signal
+*must* be weaker in the evening band. If it is not, whatever is being fitted is not DTR physics.
+
+
+---
+
+## §37 TIER 2 — the LST pull, DTR, and the soil-moisture test (Session 36, 2026-09-21)
+
+**STATUS: SPECIFIED, building.** Everything before this section measures *availability*. This one
+fetches the pixels and asks whether the signal is real.
+
+### 37.1 Why now, and what has never been done
+
+**No ECOSTRESS LST pixel has ever been read in this project.** The census and §36.23's QC pass
+open `_QC`, `_cloud`, `_water` and (optionally) `_view_zenith` only — `census_ecostress.py:10`
+says so explicitly, and the single occurrence of `"LST"` in the Python is `probe_granule`'s grid
+check at `:765`, which reads transform/width/height/crs and never a pixel.
+
+So "does DTR track soil moisture?" is not a question the current data can answer. §36.21 defers it
+to Tier 2; this is Tier 2.
+
+The stakes: §29 killed the daytime Landsat arm because the within-tile pattern was **+0.967
+coherent against its own annual mean in all twelve months** — a static field cannot track a
+dynamic variable — and the within-station LST↔SM correlation was −0.077. DTR's entire claim is
+that **day minus night cancels the static emissivity/terrain pattern** that sank single-time LST.
+That claim is untested.
+
+### 37.2 Sequencing — a deliberate departure from §36.0a
+
+§36.0a sequences the arm-kill test *ahead* of the pull. That ordering was written when Tier 2 was
+assumed to be a multi-hour, multi-GB campaign (§29.6 budgeted "6–12 h, ~1.5 GB"). Measurement has
+since made it a **~45 min, ~240 MB** windowed read, so gating it buys little and costs a round
+trip.
+
+```
+SMOKE    ~200 pairs, one node    ->  tune workers + layer set, validate correctness   ~15 min
+FULL     39,428 pairs, 8 tasks   ->  every pair in the band, all 746 stations         ~45 min
+CONSOL   per-station .npz bundles
+ANALYSE  separate env, separate job  ->  the DTR-SM test and the gates below
+```
+
+The coherence test still runs and is still pre-registered — it moves into ANALYSE, where it gates
+**building the thermal head** rather than gating the download, and where it runs on all 746
+stations instead of one tile. If it fails, the wasted cost is one array job.
+
+**No station filter.** Download every pair in the band, not just the 489 clearing §36.16. Those
+floors decide which stations may enter the *thermal loss*, a training decision; withholding data
+from the analysis would only make the threshold unfalsifiable.
+
+### 37.3 What is read
+
+Windowed, not full-tile: the window is 32×32 px ≈ 4 KB and ~90% of wall is the COG *open*, so
+**open count is the entire cost model**. §36.21's full-tile pull waits until the head is trained.
+
+| layer | read | why |
+|---|---|---|
+| `_QC` | yes | anchors CRS/transform; bits 15&14 accuracy, 1&0 mandatory QA |
+| `_cloud` | yes | per-pixel masking — a granule-level `clear_frac` cannot mask pixels |
+| `_water` | yes | keeps the mask identical to §36.23, so `clear_frac` reconciles exactly |
+| `_LST` | yes | the measurement |
+| `_view_zenith` | no | §36.0b: all-NaN on 2 of 3 probed granules |
+| `_LST_err` | no | the noise floor is measured empirically by ACF-vs-shuffled-control |
+
+**4 opens per granule-half, 8 per pair.** `read_station_window` already opens three; LST joins the
+*same* pass over the *same* window. A separate LST-only reader would double the opens.
+
+Three constraints carried from §36.0b, not to be re-derived: `LST_ACC_MIN = 1` (demanding ≥2
+rejects every pixel network-wide and looks like a cloud problem); `qc == 0` means **unpopulated**,
+not worst-case; all layers share an identical transform.
+
+**New, and the existing code cannot express it: the clipping guard must gate the PAIR, not the
+half.** `rasterio` silently clamps a window that overruns the raster. A day window clipped to
+`window_frac` 0.8 and a night window at 1.0 are *different footprints* and their difference is not
+a DTR. Reject the pair if either half trips `WINDOW_FRAC_MIN`, and require both halves to share
+window shape and offset.
+
+**Precision trap.** LST is uint16, **scale 0.02 K, fill 0**. float16 has ~0.25 K spacing near
+300 K and cannot represent that quantisation — storing LST as float16 destroys more precision than
+the sensor noise. Store the raw uint16 DN plus the scale.
+
+### 37.4 Only pre-validated pairs are fetched
+
+The task list is `csvs/ecostress_wp_pairs.wp.csv` filtered to:
+
+```
+quality == 1        both halves cleared clear_frac >= 0.5 on QC + cloud + water   (§36.23)
+both_read == 1      both halves readable, not MGRS tile-edge geometry
+6 <= dt_hours < 19  the band                                                      (§36.24.5)
+                                                    ->  39,428 pairs / 746 stations
+```
+
+The 59,783 -> 39,428 funnel completes **before a single byte of LST is fetched**. Pairs are not
+re-derived — §36.24.1 measured the clear-first re-pairing at +0.8%, not worth a second pairing
+implementation in the download path. Drop duplicates on `[station_id, day_ur, night_ur]` first;
+223 exact duplicates were found last time.
+
+Two things not to overclaim: `clear_frac` is a *granule-level* verdict, which is why the per-pixel
+masks are re-read rather than assumed; and a pair can still die at read time on the pair-level
+clipping guard. Expect single-digit-percent attrition below 39,428, reported as a funnel.
+
+### 37.5 Storage — day and night are the primitives, DTR is derived
+
+Everything on `/gpfs/work3`. **Nothing on scratch**: the §35 Phase-0 purge deleted `.zarray`
+headers and `open_consolidated` then returned `fill_value` with no exception. The one existing LST
+precedent (`download_landsat_st_mpc.py:61`) is on scratch and is empty; do not follow it.
+
+```
+/gpfs/work3/0/prjs1968/data/{category}/{station_dir}/ECOSTRESS/
+    {station}_DTR_{start}_{end}.npz
+        lst_day_dn    uint16 [N,32,32]   raw DN @ 70 m, scale 0.02 K, 0 = fill
+        lst_night_dn  uint16 [N,32,32]
+        valid_day     bool   [N,32,32]   keep_qc & cloud==0 & water==0
+        valid_night   bool   [N,32,32]
+        day_ur, night_ur, day_utc, night_utc, day_solar_date   [N]
+        dt_hours, day_tst, night_offset, day_elev, night_elev  [N] float32
+        geo           dict   crs, transform, window bounds, n_px, window_frac
+```
+
+`category` / `station_dir` follow `dataset.py:1097-1110`. Note `download_s1_lulc_mpc.py:130-133`
+disagrees (uses `station_id` for ISMN); they coincide only because `station_id == station_name` on
+ISMN rows. Use the `dataset.py` form and `ls`-verify.
+
+**DTR is never the stored source of truth** (`open_items.md` D7). Storing it alone would discard
+the absolute temperature level — what separates a hot dry surface from a cool wet one independently
+of the range — make the per-pixel validity intersection irrecoverable, and foreclose the noise-floor
+test, which needs each half's own variability. The `dtr_*` columns in `csvs/ecostress_dtr_pairs.csv`
+are a convenience summary for plotting, not the data.
+
+**Native 70 m, aggregate on read.** `open_items.md` D6 fixes the model grid at 140 m — a 2×2 mean,
+matching `avg_pool2d(7,7)` on the 112×112 @ 20 m `up3` head. 32×32 @ 70 m partitions *exactly* into
+16×16 @ 140 m, so keeping the raw grid costs nothing and a future head change stays cheap.
+
+Size: 39,428 × 2 × (2 KB DN + 1 KB mask) ~ **240 MB**.
+
+### 37.6 The smoke test — measure, then commit 315k opens
+
+A `--smoke` mode of `read_ecostress_lst.py`, not a separate script, so what is measured is the code
+that runs. One node, ~15 min, four questions:
+
+1. **Worker sweep** — 16/32/64 × 50 pairs, reads/s and error count. §36.23.5 measured 2.8 -> 4.0
+   for a *3-open* read; this is a 4-open read, so the curve may shift.
+2. **Is `_water` worth its open?** 50 pairs with and without. It buys exact `clear_frac`
+   reconciliation; if it costs ~25% of wall (the arithmetic that turned `READ_VZA` off), keep it
+   for the smoke, reconcile once, then drop it for the full run and use the `frac_water` already
+   on disk. **Decide from the measurement.**
+3. **Bytes/read** — §36.15c makes this the windowed-vs-full-tile decider. If it comes back near a
+   full 1568×1568 tile, GDAL is not honouring the range request and the cost model is wrong.
+4. **Correctness before scale** — `clear_frac` matches §36.23's CSVs exactly; LST means in
+   240–340 K; `src.scales[0]`/`src.nodata` match 0.02/0; both halves share window shape and offset.
+
+The full run's `--workers` and layer set are taken from this table and recorded here, so the choice
+is traceable rather than folklore.
+
+**A silent-401 detector, which the mask-only pass could not have.** `COOKIE_JAR` is
+`$TMPDIR/edl_cookies.txt`, evaluated at import. If `TMPDIR` is missing or unwritable on a compute
+node, every `/vsicurl` open 401s, the bare except turns it into `read_ok=0`, and the run finishes
+*cleanly* with zero data — indistinguishable from total cloud. Assert `TMPDIR` is writable, log the
+resolved jar path, and **refuse to write a shard until one read has returned a plausible Kelvin
+value**.
+
+### 37.7 The science, and the gates fixed before the numbers arrive
+
+**Pre-registered sign: negative.** Wet soil has high thermal inertia and should damp the diurnal
+range.
+
+Reported in the order the statistics are allowed to be believed:
+
+1. Per-station Pearson r and OLS slope of DTR on SM(0–10 cm), with n.
+2. **Sign test over stations — the primary statistic.** Power comes from aggregating stations, not
+   from any single r; §29.10 puts a 6-station single-date r at ±0.7. **No single impressive r may
+   be quoted.**
+3. Between-station regression of station-mean DTR on station-mean SM, reported *alongside* (2) so
+   any Simpson reversal is visible. §29.13's pooled +0.167 reversed to −0.077 within-station; that
+   is the failure mode this ordering exists to prevent.
+4. Partial correlation controlling DOY, `day_tst`, `dt_hours`, `valid_frac`. DTR is driven by net
+   radiation first and soil moisture second — an uncontrolled seasonal cycle will manufacture a
+   correlation in either direction.
+
+| gate | test | kill condition |
+|---|---|---|
+| **G0** | DTR coherence vs its own annual mean | r >~ 0.9 -> static field, arm dies |
+| **G1** | lag-1 ACF of centred DTR vs location-shuffled control | indistinguishable -> the decoder would be trained to fit noise cells: actively harmful, not merely useless |
+| **G2** | within-station DTR-SM sign test | CI includes 0, or the sign is positive |
+| **G3** | pre-dawn vs evening | evening >= pre-dawn -> not thermal inertia |
+
+**Label hygiene, and the most dangerous shortcut available here:** the ISMN labels carry a QC flag
+where 0 = observed, 1 = gap-filled, 2 = missing. **Use `qc == 0` only.** The gap-fill is a
+month-day climatology and DTR has a strong seasonal cycle, so correlating against filled values
+would manufacture agreement. Also: depth order (0–10, 10–30, 30–100 cm) is load-bearing — assert
+`depth[0]` is the surface bin rather than trusting position — and `dataset.py:238` records a
+measured length misalignment (sm/dates 1095 vs qc 1825 at Banizoumbou), so align on `time`, never
+on positional index.
+
+### 37.8 Files
+
+```
+read_ecostress_lst.py               env soilmoisture   the pull + --smoke
+consolidate_dtr.py                  env soilmoisture   -> per-station .npz
+analyse_dtr_sm.py                   env terramind      the tests + figures
+slurm/ecostress_lst_smoke.sh        one node
+slurm/ecostress_lst_array.sh        8-task array
+slurm/ecostress_lst_report.sh       merge + funnel, no COG opens
+fig/ecostress_dtr/                  PDF + 600 dpi PNG
+```
+
+§36.18 is a hard constraint: **never combine download and analysis in one job** — `soilmoisture`
+has the download APIs, `terramind` has zarr/sklearn. While copying
+`slurm/ecostress_wp_qc_array.sh`, fix its latent bug: `NSHARDS=8` is hardcoded in the shell and
+must agree with `--array=0-7`; a mismatch silently drops work. Derive it from
+`$SLURM_ARRAY_TASK_COUNT`.
