@@ -69,13 +69,13 @@ def obs_for(station: str, category: str):
 
 
 def one_station(job):
-    path, sid, folder, cat = job
+    path, sid, folder, cat, min_usable = job
     try:
         z = np.load(path, allow_pickle=False)
     except Exception:                                      # noqa: BLE001
         return None
     ok = (z["grid_aligned"] == 1) & (z["n_valid_px"] > 0)
-    if ok.sum() < 5:
+    if ok.sum() < min_usable:
         return None
 
     dtr = z["dtr_k"][ok].reshape(int(ok.sum()), -1)
@@ -110,7 +110,9 @@ def rval(x, y):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bundles", default=str(ROOT / "csvs" / "ecostress_dtr_bundles.all.csv"))
-    ap.add_argument("--min-dates", type=int, default=8, help="paired days per station")
+    ap.add_argument("--min-dates", type=int, default=1, help="paired days per station")
+    ap.add_argument("--min-usable", type=int, default=1,
+                    help="usable DTR pairs a bundle needs before it is opened at all")
     ap.add_argument("--workers", type=int, default=64)
     ap.add_argument("--out-tag", default="dtr_vs_sm")
     args = ap.parse_args()
@@ -119,10 +121,10 @@ def main():
     log = logging.getLogger("dtrsm")
 
     b = pd.read_csv(args.bundles)
-    b = b[b["n_pairs_usable"] >= 5]
+    b = b[b["n_pairs_usable"] >= args.min_usable]
     log.info("bundles           : %d stations", len(b))
 
-    jobs = [(r["path"], r["station_id"], r["folder"], r["category"])
+    jobs = [(r["path"], r["station_id"], r["folder"], r["category"], args.min_usable)
             for _, r in b.iterrows()]
     with Pool(min(args.workers, max(len(jobs), 1))) as pool:
         parts = [p for p in pool.map(one_station, jobs, chunksize=4) if p is not None]

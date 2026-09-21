@@ -15,5 +15,5 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 echo "=== dtr_vs_sm job=$SLURM_JOB_ID host=$(hostname) $(date) ==="
 conda run -n terramind --no-capture-output python -c "
 import py_compile; py_compile.compile('plot_dtr_vs_sm.py', doraise=True); print('syntax OK')"
-conda run -n terramind --no-capture-output python plot_dtr_vs_sm.py --workers 64
+conda run -n terramind --no-capture-output python plot_dtr_vs_sm.py --workers 64 "$@"
 echo "=== done $(date) ==="
