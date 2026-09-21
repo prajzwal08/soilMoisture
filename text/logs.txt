@@ -6360,3 +6360,68 @@ already taken by §37's Files list -- §38 is authoritative).
 Commits, branch feat/ecostress-dtr: 5001919 (cookie fix), 171476e (consolidate +
 G0), 308a451 (DTR vs SM), c71d0ad (all stations), d10711e (pooled surface),
 314c9af (envelope + dt bands), dbde7ff (six-station tile), 3d7e5f8 (per-station r).
+
+--- 2026-09-21 continued: S1, and the decision to build on it ----------------------
+
+With the thermal arm closed, ran the same battery on Sentinel-1. Tokens were already on
+disk; §33.12's decoder design (text/s1processing.md) had never been started. Written up
+as runbook §39.
+
+d_VV is §33.12's double-centred anomaly -- each cell minus its own temporal norm, minus
+the whole-tile level that day. That is the structural reason to expect it to behave
+unlike DTR: the static landscape pattern is exactly what the temporal norm absorbs,
+whereas DTR's pattern IS the static one.
+
+THREE ERRORS MADE AND RECORDED so they are not repeated:
+  * correlating d (zero temporal mean per cell BY CONSTRUCTION) against ABSOLUTE SM
+    returns nothing whatever the sensor does. First run did this: r = -0.002.
+    Both sides must be anomalies from their own location's norm.
+  * location_group_id is NOT a co-located cluster -- the six TxSON probes inside one
+    window carry ids 744/742/739/735/736/746. Grouping on it found 7 groups and missed
+    every real cluster. Clusters must be built geographically.
+  * §38.10's 3.2% CV was SCENE MEANS over overlapping windows, near-identical by
+    construction. Everything in §39 is read at each station's OWN pixel, footprints
+    matched at ~70 m.
+
+Scale matters and 210 m is the optimum (70 m 54.9%, 210 m 60.9%, 450 m 53.8% on TxSON).
+A scale optimum is itself evidence the signal is real -- noise would not peak in the
+middle. No orbit confound: 182 of 184 ASC dates are on one 12-day cycle.
+
+A. TEMPORAL, 878 stations, median 218 dates:
+     d_VV  median r +0.067   58.4% POSITIVE   (chance 50%, SE 1.7% -> +4.9 SE)
+     d_CR  median r -0.003   49.1%            (null, as it should be)
+   Grass-Crop 61% beats Forest 57%; temperate 63%, arid 61%, continental 55%.
+
+B. SPATIAL, geographic clusters: only 4 with >=4 members, 2 usable, BOTH TxSON.
+     TxSON_6st  177 dates  mean r +0.192  66.7% positive  (+4.4 SE)
+     TxSON_7st  184 dates  mean r +0.093  60.9% positive  (+2.9 SE)
+   STRUCTURAL LIMIT, about the archive not the sensor: TxSON is the ONLY network with
+   >=4 probes inside one 2.24 km tile. Within-tile spatial skill can be validated at
+   exactly one place, for any sensor.
+
+C. PAIR SIGN TEST, 91 pairs, 17,072 trials. Overall agreement 46.53% -- BELOW chance --
+   while the mean r of the differences is +0.056, correct sign. Resolves on |dSM|:
+     pairs >= 0.5 km apart: agreement RISES with the real moisture difference,
+                            49.3 -> 53.1 -> 52.6 -> 52.9 -> 51.7 -> 57.0% (+4.3 SE)
+     pairs <  0.5 km apart: FALLS to ~42%, and drags the total below chance.
+   Sub-500 m probes are effectively co-located, so a large SM difference between them is
+   an instrument/depth artefact, not a gradient S1 could see -- but why that gives
+   systematic ANTI-agreement rather than chance is NOT EXPLAINED. One candidate tested
+   and rejected: recentring on the pair's shared dates moved it 46.63 -> 46.53, i.e. not
+   at all. Do NOT quote 46.5% against S1, and do NOT quote 57% without this.
+
+CONCLUSION OF THE SESSION. Sensor choice is now eliminated as the explanation. DTR is
+dead (three independent lines, complete data). S1 is real but weak -- the first signal in
+this project with any significant SPATIAL discrimination inside a tile, at r ~ 0.07
+temporal and ~0.14 spatial. The two things that actually bound the work are not sensors:
+the archive gives one validatable dense site, and §30.1's architecture cannot express
+spatial variation anyway (pooling destroys 97-98% of within-tile position variance; the
+time-series path arrives as ONE spatially constant FiLM vector; §35's pw_stage2a_L3 came
+back as memorisation).
+
+DECISION, taken at sign-off: build S1 into the decoder. §33.12 / text/s1processing.md is
+the design. Tagged `pre-s1-decoder` at this commit; per standing practice this is an
+architecture change, so branch on day one and leave feat/ecostress-dtr frozen.
+
+Commits: 2d229b7 (§39), eff178f (§38 + log), 2cfb9e7 (§38.12 closed), and the §38 chain
+5001919 / 171476e / 308a451 / c71d0ad / d10711e / 314c9af / dbde7ff / 3d7e5f8.
