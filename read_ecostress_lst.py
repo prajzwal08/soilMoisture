@@ -72,6 +72,7 @@ import pandas as pd
 sys.path.insert(0, "/gpfs/work3/0/prjs1968/soilMoisture")
 from census_ecostress import (  # noqa: E402
     ROOT, STATION_CSV, N_PX_EXPECTED, WINDOW_FRAC_MIN, CLEAR_FRAC_MIN, TILE_M,
+    thread_cookie_opts,
     append_rows, configure_gdal, decode_qc, layer_pool, layer_url, setup_logging,
 )
 
@@ -128,7 +129,8 @@ def read_station_lst(ur: str, lon: float, lat: float, read_water: bool = True):
     keep_canvas = np.zeros((SIDE, SIDE), dtype=bool)
 
     try:
-        with rasterio.open(f"/vsicurl/{layer_url(ur, 'QC')}") as src:
+        with rasterio.Env(**thread_cookie_opts()), \
+                rasterio.open(f"/vsicurl/{layer_url(ur, 'QC')}") as src:
             xs, ys = warp_transform("EPSG:4326", src.crs, [lon], [lat])
             cx, cy = xs[0], ys[0]
             half = TILE_M / 2.0
@@ -160,7 +162,8 @@ def read_station_lst(ur: str, lon: float, lat: float, read_water: bool = True):
         bands, nodata, scales = {}, {}, {}
 
         def _read_layer(lyr):
-            with rasterio.open(f"/vsicurl/{layer_url(ur, lyr)}") as s:
+            with rasterio.Env(**thread_cookie_opts()), \
+                    rasterio.open(f"/vsicurl/{layer_url(ur, lyr)}") as s:
                 # H4 / §36.15: fill and scale FROM THE COG, never assumed.
                 return (lyr, s.read(1, window=sub), s.nodata,
                         (s.scales[0] if s.scales else 1.0))
@@ -313,6 +316,40 @@ def preflight(log):
 
 
 # ------------------------------------------------------------------
+# §37.8 -- the transport-failure retry.  See census_ecostress.thread_cookie_opts for the
+# measurement that motivated it.
+MAX_READ_ATTEMPTS = 4
+RETRY_BACKOFF_S   = 2.0
+
+# Substrings that mark a read as worth retrying.  "not recognized as being in a supported
+# file format" is the important one: it is GDAL's message for an EDL login page arriving
+# where a TIFF should be, and it is indistinguishable from a genuinely corrupt file at
+# this level -- but a corrupt file is rare and a retry on it costs one open, whereas not
+# retrying the auth case cost 39.9% of array 26984229.
+_TRANSIENT_MARKS = (
+    "not recognized as being in a supported file format",
+    "HTTP response code",
+    "CURL error",
+    "Access Denied",
+    "does not exist in the file system",
+    "Connection",
+    "timed out",
+    "SSL",
+)
+
+
+def transient_error(err: str) -> bool:
+    """True for a transport failure, False for a geometric answer.
+
+    "empty window -- station outside the tile footprint" and "window clipped to N/M px"
+    are ANSWERS: the station is simply not on this tile, and a retry returns the same
+    thing after three more round trips.  Only transport failures are retried.
+    """
+    if not err:
+        return False
+    return any(m in err for m in _TRANSIENT_MARKS)
+
+
 def run_reads(todo, args, log, reads_csv, blob_path, read_water=True):
     """Execute the reads, appending index rows and fixed-size blob records together.
 
@@ -321,18 +358,30 @@ def run_reads(todo, args, log, reads_csv, blob_path, read_water=True):
     nothing.
     """
     blob_path.parent.mkdir(parents=True, exist_ok=True)
-    buf, t0, n_ok, n_err = [], time.time(), 0, 0
+    buf, t0, n_ok, n_err, n_retry = [], time.time(), 0, 0, 0
     armed = False          # the Kelvin tripwire: no shard is written until one read looks
 
     blob = open(blob_path, "ab")
     try:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             def work(t):
-                res, lst, keep = read_station_lst(t["granule_ur"], t["lon"], t["lat"],
-                                                  read_water=read_water)
-                return t, res, lst, keep
+                # RETRY IN PYTHON, not in GDAL.  GDAL_HTTP_MAX_RETRY only covers 429 and
+                # 5xx; the §37 failure mode is a 200 carrying an EDL login page, which
+                # GDAL reports as "not recognized as being in a supported file format"
+                # and never retries.  Geometric outcomes ("empty window", "window
+                # clipped") are NOT retried -- they are answers, not failures, and
+                # retrying them would triple the opens on every off-tile station.
+                for attempt in range(1, MAX_READ_ATTEMPTS + 1):
+                    res, lst, keep = read_station_lst(t["granule_ur"], t["lon"], t["lat"],
+                                                      read_water=read_water)
+                    if res["read_ok"] or not transient_error(res["error"]):
+                        break
+                    if attempt < MAX_READ_ATTEMPTS:
+                        time.sleep(RETRY_BACKOFF_S * attempt)
+                return t, res, lst, keep, attempt
 
-            for i, (t, res, lst, keep) in enumerate(pool.map(work, todo), 1):
+            for i, (t, res, lst, keep, n_try) in enumerate(pool.map(work, todo), 1):
+                n_retry += n_try - 1
                 if res["read_ok"]:
                     with _BLOB_LOCK:
                         res["blob_offset"] = blob.tell()
@@ -361,8 +410,8 @@ def run_reads(todo, args, log, reads_csv, blob_path, read_water=True):
                     buf = []
                 if i % 2000 == 0 or i == len(todo):
                     el = time.time() - t0
-                    log.info("%6d/%d  ok=%d err=%d  %.2f reads/s  eta %.0f min",
-                             i, len(todo), n_ok, n_err, i / max(el, 1e-9),
+                    log.info("%6d/%d  ok=%d err=%d retried=%d  %.2f reads/s  eta %.0f min",
+                             i, len(todo), n_ok, n_err, n_retry, i / max(el, 1e-9),
                              (len(todo) - i) / max(i / max(el, 1e-9), 1e-9) / 60.0)
         if buf:
             if not armed and n_ok:
@@ -374,7 +423,7 @@ def run_reads(todo, args, log, reads_csv, blob_path, read_water=True):
     finally:
         blob.close()
     el = time.time() - t0
-    return {"n": len(todo), "ok": n_ok, "err": n_err, "sec": el,
+    return {"n": len(todo), "ok": n_ok, "err": n_err, "retry": n_retry, "sec": el,
             "rate": len(todo) / max(el, 1e-9)}
 
 
@@ -478,6 +527,9 @@ def main():
     ap.add_argument("--nshards", type=int, default=1)
     ap.add_argument("--no-water", action="store_true",
                     help="skip _water (3 opens). clear_frac then does NOT reconcile.")
+    ap.add_argument("--retry-failed", action="store_true",
+                    help="treat read_ok=0 rows as not-yet-read, so a resubmit retries "
+                         "the transport failures instead of reporting nothing to do.")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--smoke-n", type=int, default=50)
     ap.add_argument("--smoke-workers", type=int, nargs="+", default=[16, 32, 64])
@@ -505,11 +557,24 @@ def main():
     # The checkpoint is EVERY shard file, so a restart with a different shard count never
     # re-reads what is already measured.
     done: set[tuple[str, str]] = set()
+    n_failed_rows = 0
     files = sorted(ROOT.glob(f"csvs/ecostress_lst_reads.{args.out_tag}*.csv"))
     for f in files:
-        prev = pd.read_csv(f, usecols=["station_id", "granule_ur"])
+        prev = pd.read_csv(f, usecols=["station_id", "granule_ur", "read_ok"])
+        if args.retry_failed:
+            # A read_ok=0 row records an ATTEMPT, not a measurement.  The default
+            # checkpoint counts it as done -- so a plain resubmit after array 26984229
+            # would have logged "nothing to do" and re-read none of its 31,329 failures.
+            # With this flag only successes count, and because a success is never
+            # retried there is still at most one read_ok=1 row per key: the blob offsets
+            # stay unique and any consumer that filters read_ok==1 sees no duplicates.
+            n_failed_rows += int((prev["read_ok"] != 1).sum())
+            prev = prev[prev["read_ok"] == 1]
         done |= set(zip(prev["station_id"], prev["granule_ur"]))
-    log.info("checkpoint        : %d reads on disk across %d file(s)", len(done), len(files))
+    log.info("checkpoint        : %d reads on disk across %d file(s)%s", len(done),
+             len(files),
+             f"  (+{n_failed_rows} failed rows ignored -- --retry-failed)"
+             if args.retry_failed else "")
 
     if args.nshards > 1:
         todo = [t for k, t in tasks.items()
@@ -529,8 +594,8 @@ def main():
     log.info("workers=%d  layers=%d  blob=%s", args.workers,
              3 if args.no_water else 4, blob)
     st = run_reads(todo, args, log, reads_csv, blob, read_water=not args.no_water)
-    log.info("DONE  %d reads  ok=%d err=%d  %.1f min  %.2f reads/s",
-             st["n"], st["ok"], st["err"], st["sec"] / 60.0, st["rate"])
+    log.info("DONE  %d reads  ok=%d err=%d retried=%d  %.1f min  %.2f reads/s",
+             st["n"], st["ok"], st["err"], st["retry"], st["sec"] / 60.0, st["rate"])
 
 
 if __name__ == "__main__":

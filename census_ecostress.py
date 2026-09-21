@@ -31,6 +31,7 @@ import math
 import re
 import os
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -331,6 +332,39 @@ def setup_logging(name: str):
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_DIR / f"{name}.log")],
     )
+
+
+_THREAD_JAR = threading.local()
+
+
+def thread_cookie_opts() -> dict:
+    """Per-thread EDL cookie jar, as GDAL config options for a rasterio.Env.
+
+    MEASURED 2026-09-21 on array 26984229: 64 outer workers feeding a 24-thread layer
+    pool all shared ONE cookie file, and 31,329 of 78,446 reads (39.9%) failed with
+    "not recognized as being in a supported file format" -- which is what GDAL says when
+    an EDL login page arrives where a TIFF should be.  Three things identify it as
+    contention rather than data:
+
+      * 8,777 granules both SUCCEEDED and FAILED, on different stations, same URL;
+      * the failure rate is flat across every product build (0710-0713: 0.39-0.44), so
+        it is not a product or asset-naming problem;
+      * only 13 HTTP error codes appeared in the entire run (1x502, 12x503), so
+        GDAL_HTTP_MAX_RETRY never fired -- it retries 429/5xx, and this is not one.
+
+    curl rewrites the file named by GDAL_HTTP_COOKIEJAR on every handle cleanup.  With
+    ~88 threads doing that to one path the jar is repeatedly truncated mid-read, the EDL
+    session cookie is lost, and the next redirect lands on the login page.  The §36.23
+    census never saw this because it ran few enough threads to mostly avoid the race.
+
+    One jar per thread removes the shared write target while keeping session reuse, so
+    the redirect is still paid once per thread rather than once per open.
+    """
+    jar = getattr(_THREAD_JAR, "path", None)
+    if jar is None:
+        jar = f"{COOKIE_JAR.with_suffix('')}.{os.getpid()}.{threading.get_ident()}.txt"
+        _THREAD_JAR.path = jar
+    return {"GDAL_HTTP_COOKIEFILE": jar, "GDAL_HTTP_COOKIEJAR": jar}
 
 
 def configure_gdal():
