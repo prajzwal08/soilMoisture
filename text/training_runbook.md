@@ -12915,3 +12915,144 @@ csvs/ecostress_dtr_vs_sm_all.csv, ecostress_dtr_sm_per_station_r{,_posdtr}.csv
 Commits: `5001919` (cookie fix), `171476e` (consolidate + G0), `308a451` (DTR vs SM),
 `c71d0ad` (all stations), `d10711e` (pooled surface), `314c9af` (envelope + dt bands),
 `dbde7ff` (six-station tile), `3d7e5f8` (per-station r). Branch `feat/ecostress-dtr`.
+
+
+---
+
+## §39 Sentinel-1 — does SAR resolve soil moisture inside a tile? (Session 37, 2026-09-21)
+
+§38 closed the thermal arm on three independent lines, the sharpest being §38.10: DTR
+carries 3.2% between-station contrast where SM carries 32.8%. This section runs the same
+question at S1, whose tokens were already on disk and whose §33.12 decoder design
+(`text/s1processing.md`) had never been started.
+
+`d_VV` throughout is §33.12's **double-centred anomaly** (`s1processing.md:562`): each cell
+minus its own temporal norm, minus the whole-tile level that day. The static landscape
+pattern is exactly what the temporal norm absorbs — the structural reason to expect
+different behaviour from DTR, whose pattern *is* the static one (§38.6, +0.816 against
+day LST).
+
+**Both sides must be anomalies.** `d` has zero temporal mean per cell by construction, so
+correlating it against absolute SM compares a deviation to a level and returns nothing
+whatever the sensor does. The first run of this test did exactly that and produced an
+uninterpretable null (r = −0.002); it is recorded here so it is not repeated.
+
+**Scale.** 210 m (21×21 at 10 m) throughout, measured on TxSON as a clear optimum over
+70 m and 450 m — and a scale optimum is itself evidence a signal is real, since noise
+would not peak in the middle.
+
+**No orbit-grouping confound.** 182 of 184 ASC dates on the TxSON tile fall on one 12-day
+cycle, i.e. a single relative orbit, so §33.12's "compute per group" requirement is
+already satisfied and incidence angle is not mixed in.
+
+### 39.1 TEMPORAL — does d_VV track a point's own wetness? YES, weakly, everywhere
+
+878 stations with S1, labels and ≥30 matched dates; median 218 dates each.
+
+```
+d_VV : median r +0.067   mean +0.063   58.4% POSITIVE   (chance 50%, SE 1.7% -> +4.9 SE)
+d_CR : median r -0.003                 49.1% positive   (null, as it should be)
+
+by Koppen   B arid +0.095 (61%)   C temperate +0.090 (63%)   D continental +0.045 (55%)
+by IGBP     Grass-Crop +0.093 (61%)  Shrub-Savanna +0.051 (55%)  Forest +0.051 (57%)
+```
+
+Correctly signed, highly significant, and small. The land-cover ordering repeats §38.11's
+— open vegetation beats forest — for the same physical reason.
+
+### 39.2 SPATIAL, multi-station groups — and the dataset's structural limit
+
+**`location_group_id` is NOT a co-located cluster.** The six TxSON probes inside one window
+carry ids 744/742/739/735/736/746. Grouping on it found 7 groups and missed every real
+cluster; the first run of this test did that and returned one unusable group. Clusters must
+be built **geographically** — stations linked when within 1.12 km (half a tile width, so
+the two windows overlap by at least half), then connected components.
+
+Done properly, across all 878 stations: **4 clusters with ≥4 members, 2 usable, and both
+are TxSON.**
+
+```
+group        n_st  extent_km  dates   mean_r   frac positive
+TxSON_6st       6       2.52    177   +0.192      66.7%   (+4.4 SE)
+TxSON_7st       7       2.53    184   +0.093      60.9%   (+2.9 SE)
+pooled         13              361    +0.142      63.8%
+```
+
+Both above chance, correctly signed — and both the same site. **This is a property of the
+archive, not of the sensor: TxSON is the only network with ≥4 probes inside one tile.**
+Any claim about within-tile spatial skill, for any sensor, can be validated at exactly one
+place. That bounds what this thesis can assert about spatial supervision.
+
+### 39.3 The pair sign test — more data, and a result that needs care
+
+A group of ≥4 is the rarest case. With a **pair** you cannot compute r, but you can ask
+what r stands for: on this date, is the station whose SM anomaly is higher also the one
+whose `d_VV` is higher? Every co-located pair contributes one binomial trial per shared
+date. 108 pairs within 2.24 km, 91 usable, **17,072 trials**.
+
+```
+OVERALL agreement 46.53%   (chance 50%, SE 0.38% -> -9.1 SE)     <- BELOW chance
+mean r of the differences +0.056                                  <- correct sign
+per-pair median 50.6%, 52% of pairs above chance
+
+by separation      0.00-0.50 km   27 pairs   6957 trials   37.99%
+                   0.50-1.12 km   22 pairs   3219 trials   57.01%
+                   1.12-2.24 km   42 pairs   6896 trials   50.26%
+```
+
+A positive r of the differences alongside below-chance sign agreement is a contradiction,
+and it resolves on stratifying by |ΔSM|:
+
+```
+ALL pairs                      >= 0.5 km apart only
+|dSM| 0.000-0.010  47.44%      49.34%  (-0.6 SE)
+      0.010-0.020  50.03%      53.07%  (+2.8 SE)
+      0.020-0.032  47.60%      52.58%  (+2.3 SE)
+      0.032-0.053  45.34%      52.88%  (+2.6 SE)
+      0.053-0.074  41.94%      51.66%  (+1.0 SE)
+      0.074-0.554  42.59%      57.01%  (+4.3 SE)
+```
+
+**For pairs ≥0.5 km apart, agreement rises monotonically with the size of the real
+moisture difference, reaching 57.0% (+4.3 SE) at the largest** — exactly the predicted
+physical behaviour, and the same 57% the 0.5–1.12 km band gives independently.
+
+**For pairs <0.5 km apart it does the opposite**, falling to ~42% at large |ΔSM|, and that
+is what drags the overall figure below chance. Two probes within 500 m are effectively at
+one location, so a *large* SM difference between them is an instrument, depth or
+soil-contrast artefact rather than a spatial gradient S1 could see — but why that produces
+systematic *anti*-agreement rather than chance is **NOT EXPLAINED**. One candidate was
+tested and rejected: recentring both series on the pair's shared dates, to remove a
+constant offset from unequal record coverage, moved the overall figure 46.63% -> 46.53%,
+i.e. not at all. **Do not quote the 46.5% as evidence against S1, and do not quote the
+57% without this paragraph.**
+
+### 39.4 Where this leaves S1
+
+S1 does what DTR could not: it shows a statistically significant, correctly-signed
+response to soil moisture both in time (878 stations, +4.9 SE) and in space (TxSON,
++2.9 to +4.4 SE; pairs ≥0.5 km apart, +4.3 SE at large ΔSM). DTR had no significant
+spatial signal at all.
+
+It is also weak — r ≈ 0.07 temporally, ≈ 0.14 spatially — and the spatial claim rests on
+one network plus a pair test with an unexplained sub-500 m anomaly. That is enough to
+justify §33.12 and the architecture work, and not enough to promise it will work.
+
+**Two things must happen before the full §33.12 build:**
+
+1. **Explain the <0.5 km anti-agreement**, or the pair test cannot be used as evidence
+   either way.
+2. **Confirm the model can express spatial variation at all** (§30.1: pooling destroys
+   97–98% of within-tile position variance; the time-series path reaches the decoder
+   through one spatially constant FiLM vector; §35's `pw_stage2a_L3` verdict was
+   memorisation). A signal of r ≈ 0.14 will not survive an architecture that averages it
+   away.
+
+### 39.5 Files
+
+```
+analyse_s1_spatial_cv.py      the six-probe TxSON tile, three scales
+analyse_s1_spatial_broad.py   all 878 stations: temporal, clusters, pair sign test
+slurm/s1_cv.sh, slurm/s1_full.sh, slurm/s1_orb.sh, slurm/s1_broad.sh
+csvs/s1_temporal_r.csv, s1_spatial_groups.csv, s1_pair_sign_test.csv
+```
