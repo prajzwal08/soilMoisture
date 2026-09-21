@@ -12553,3 +12553,354 @@ has the download APIs, `terramind` has zarr/sklearn. While copying
 `slurm/ecostress_wp_qc_array.sh`, fix its latent bug: `NSHARDS=8` is hardcoded in the shell and
 must agree with `--array=0-7`; a mismatch silently drops work. Derive it from
 `$SLURM_ARRAY_TASK_COUNT`.
+
+
+---
+
+## §38 The pull completed, and the signal tests run (Session 37, 2026-09-21)
+
+Everything §37 planned, executed in one session, plus the two §36.21 tests it deferred.
+**Numbering note:** commit messages from this session say §37.8/§37.9/§37.10; §37.8 was
+already taken by §37's *Files* list. The sections below are the authoritative numbers.
+
+### 38.1 The 39.9% read failure was cookie-jar contention, not LP DAAC
+
+Array 26984229 finished CLEAN, exit 0 on all eight tasks, and had lost **31,329 of 78,446
+reads (39.9%)** — every one to `RasterioIOError: ... not recognized as being in a
+supported file format`, which is what GDAL says when an EDL login page arrives where a
+TIFF should be.
+
+Three measurements identify it as contention rather than data:
+
+* **8,777 granules both succeeded AND failed**, on different stations, same URL.
+* The failure rate is **flat across every product build** (0710–0713: 0.39–0.44), so it is
+  not a product or asset-naming problem.
+* **Only 13 HTTP error codes in the entire run** (1×502, 12×503), so `GDAL_HTTP_MAX_RETRY`
+  never fired — it covers 429/5xx, and this is neither.
+
+Cause: curl rewrites the file named by `GDAL_HTTP_COOKIEJAR` on *every handle cleanup*,
+and 64 outer workers feeding a 192-thread layer pool all pointed at one path. The jar is
+truncated mid-read, the session cookie is lost, the next redirect lands on the login page.
+**This corrects §36.23.5's "LP DAAC does not throttle — 1 error in 51k opens".** That was
+true, and at low thread counts; the client-side ceiling is the cookie jar, not the server.
+
+Fix (`census_ecostress.thread_cookie_opts`, commit `5001919`): one jar per thread, applied
+through `rasterio.Env(...)` so the GDAL config option is thread-local, keeping session
+reuse so the redirect is paid once per thread rather than once per open. Plus a
+Python-level retry in `work()`, because GDAL will not retry this class, and which
+deliberately does NOT retry geometric outcomes ("empty window", "window clipped") — those
+are answers, and retrying them would triple the opens on every off-tile station.
+
+**A trap that would have wasted the fix.** The checkpoint counted a `read_ok=0` row as
+*done*, so the resume-safety noted in §37 does not extend to failures: a plain resubmit
+logs "nothing to do". `--retry-failed` counts only successes. Because a success is never
+retried there is still at most one `read_ok=1` row per key, so blob offsets stay unique
+and any consumer filtering `read_ok == 1` sees no duplicates.
+
+Measured: validation job 26987623, same 64 workers, on keys that had failed — **600/600
+ok, 0 errors**. Array 26987690 then cleared the remaining 30,729: **ok=30,729, err=0**,
+5 minutes, 12.6–13.0 reads/s per task. Throughput *rose*; the old 14.18 was mostly fast
+failures, and the real ok-rate before was 8.4/s.
+
+### 38.2 The pull, complete
+
+```
+reads    78,446 / 78,446    err = 0
+pairs    39,223 / 39,223    over 741 stations
+blob     401,643,520 B  =  78,446 records x 5120 B  (exact)
+```
+
+Pair-level survival, the number §37 was waiting for:
+
+```
+both halves READ            39,223  (100%)   741 stations
+both halves USABLE (>0 px)  11,676  (29.8%)  594 stations
+of those, grid-aligned      11,607  (29.6%)  594 stations
+```
+
+**§36.16 re-checked against the USABLE count, as §37 required.** The gate was 489 stations
+on the *clear* count; on the usable count it is **206** stations clearing ≥20 pairs and
+≥3 years. Well above the ~150 floor, so the availability gate still passes and the arm's
+scope is unchanged. The 29.8% sits almost exactly on the naive 0.601² independent
+estimate, so day and night swath coverage are near-independent rather than correlated —
+§37's warning that the halves might not be independent turned out not to bite.
+
+### 38.3 `consolidate_dtr.py` — and the two ways to be silently wrong
+
+Blobs + shard CSVs + the pairs file → one `.npz` per station at
+`{DATA_ROOT}/{cat}/{folder}/ECOSTRESS/{folder}_dtr_{start}_{end}.npz`. 741 stations in
+56 seconds. Two gates are enforced rather than assumed:
+
+* **DTR is only defined on a shared grid.** Each half's window is cut from its own
+  granule in its own MGRS tile's CRS. Measured over the 39,223 pairs: **36,547 (93.2%)
+  share both tile and window offsets; 2,676 (6.8%) sit on DIFFERENT MGRS tiles**, where
+  per-pixel subtraction compares different ground. Those are kept with both halves and
+  their tile ids, but `dtr` is NaN and `grid_aligned = 0`. Among *usable* pairs the loss
+  is only 69 of 11,676 (0.6%).
+* **Valid is an intersection twice over** — both halves pass QC/cloud/water AND both carry
+  a finite LST. The second half is not redundant: §37.7 measured LST absent over ~45% of
+  pixels QC calls clear, so a keep-mask intersection alone counts off-swath area as good.
+
+Consumers must filter `read_ok == 1`; the shard CSVs still carry the 31,329 stale rows.
+
+### 38.4 Looking at the field before testing it
+
+`plot_dtr_txson.py` → `fig/dtr_txson/dtr_panels_*.png`: five dates × [S2 RGB | day LST |
+night LST | DTR | DTR anomaly], **one colour scale shared down each column** so rows are
+comparable. RGB comes from `/projects/prjs1968/satellite_zarr/{station}.zarr/s2` —
+224×224 at 10 m, the same 2.24 km box as the LST window, so no re-download was needed.
+The two grids are co-located to within about half an LST pixel and are NOT resampled onto
+a common grid; good enough to see what is where, not to difference.
+
+An unplanned sanity check fell out: a water body at LCRA-3 reads cold by day and *warm* by
+night, so DTR collapses around a water-masked core — textbook high thermal inertia,
+recovered end-to-end from the blob with no tuning. Masking and sign convention are right.
+
+### 38.5 G0 — the method error its own control caught
+
+The first run of `gate_dtr_static.py` correlated each SINGLE date against a
+leave-one-out mean and returned **day LST at +0.337**. §29 requires the daytime control to
+come back ~+0.95, so the *statistic* was wrong, not the data.
+
+**Why.** §29.15 correlated a MONTHLY MEAN map against the ANNUAL MEAN map — both sides
+averaged over 10–20 scenes, denoised by ~√n *before* correlating, which is most of why its
+number was +0.967. Correlating one noisy date against a mean is a far more attenuated
+quantity and is not comparable. The leave-one-out correction was right in itself; dropping
+the pooling was not.
+
+Replaced with **split-half reliability**: dates split at random, each half averaged, the
+two mean maps correlated, 200 splits, Spearman-Brown stepped up to full n. Symmetric,
+denoised on both sides, honest at n ≈ 17. The location-shuffled control then lands at
+−0.000, as it must.
+
+**Carry a positive control whose answer is known.** The daytime field is that control here
+and it is the only reason the error was caught rather than published.
+
+### 38.6 G0 result — the DTR field is as static as the daytime field. FAIL.
+
+455 stations with ≥5 usable pairs, median 17 dates:
+
+```
+field                 r_half   r_full   median    p10     p90
+dtr_k                 +0.553   +0.661   +0.757  +0.201  +0.938
+day_lst_k             +0.571   +0.672   +0.777  +0.250  +0.951   <- the control
+night_lst_k           +0.533   +0.636   +0.726  +0.194  +0.937
+dtr_k (SHUFFLED)      +0.000   -0.000   -0.001  -0.058  +0.055
+```
+
+The gap to §29.15's +0.967 is sampling attenuation, not a real difference: at ≥30 dates
+(n=138) day is +0.861 and DTR +0.858 — still together, both still climbing.
+
+**The mechanism, in one number.** The DTR mean pattern correlates with the DAY pattern at
+**+0.816** (median +0.870), while DAY vs NIGHT is **+0.059**. Day and night do not share a
+static structure, so the subtraction has nothing to cancel — DTR simply inherits the
+daytime pattern §29 already killed. The thermal-inertia premise behind §36.21(i) fails
+empirically, not for lack of data.
+
+**What this does NOT show:** it measures the reliability of the MEAN pattern, not whether
+the residual carries moisture signal. That is §36.21(ii)/(iii).
+
+### 38.7 §36.21(iii) — DTR against observed soil moisture
+
+`plot_dtr_vs_sm.py`, labels from `/projects/prjs1968/zarr_tokens` per §37.7a, `qc==0` only.
+538 stations, 11,154 station-days.
+
+```
+                     depth-avg SM    0-10 cm SM
+  WITHIN-station        -0.073         -0.098
+  BETWEEN-station       -0.105         -0.131
+  POOLED                -0.076         -0.107
+```
+
+**No Simpson's reversal this time** — all three agree in sign, unlike §29.13 where pooled
++0.167 flipped to within-station −0.077.
+
+**The sign is right and it is not chance.** Thermal inertia predicts negative, and
+per-station within-r is negative at 62.5% of 464 stations, median −0.103, against a 50%
+coin flip. §29 could never test this: six stations, and by its own §29.10 a ±0.7 CI on a
+single-date r. This is the first time the prediction has been checked with power.
+
+**And it is far too small to carry an arm** — |r| ≈ 0.1 is ~1% of variance, the SAME
+magnitude as §29.13's daytime −0.077.
+
+Surface (0–10 cm) is the better variable and is used throughout after this: it is a fixed
+depth bin and the layer thermal senses, whereas the depth-averaged alternative is an
+unweighted mean over whatever bins pass `qc==0` that day, so the quantity is not constant
+between stations or between dates.
+
+### 38.8 The cloud is a one-sided constraint, not noise
+
+`analyse_dtr_envelope.py`, equal-count SM bins (n ≈ 930 each, so a narrowing cannot be a
+sampling artefact — the visual wedge in the pooled scatter partly *was*, since most
+station-days sit at low SM). Quantile slopes, K per 0.1 m³/m³:
+
+```
+p5 -0.44   p25 -0.60   p50 -0.89   p75 -1.31   p90 -1.98   p95 -2.32   IQR -0.71
+```
+
+The ceiling falls ~5× faster than the floor: p95 drops 30.5 → 22.8 K across the SM range
+while p5 sits flat near −4 K. Wet soil CANNOT swing much; dry soil MAY or may not,
+depending on cloud, canopy and insolation. That is the Ts–VI trapezoid structure, and it
+is why a Pearson r of −0.11 understates the physics. Holds in the 0–40 K band too
+(p95 −2.09 vs p5 −0.31).
+
+Pooled median DTR by SM bin also shows a **threshold, not a line**: flat ~10.8 K from
+SM 0.00 to 0.11, rising slightly to 11.7 K, then falling monotonically to 7.8 K. A linear
+r understates the wet-end slope and overstates the dry-end one. Untested cause —
+candidates are the low thermal conductivity of very dry soil, or a sparse-canopy confound
+in which the driest stations are also the barest.
+
+### 38.9 `dt_hours` is bimodal, and the night term subtracts signal
+
+**Neither mode is the diurnal extreme.** 5,084 station-days at 6–9 h and 6,065 at ≥15 h,
+with **five** in between. Measured solar times:
+
+```
+dt 6-9 h    day_tst 14.1 h (peak heating, right)   night_tst 20.5 h (evening, wrong)
+dt >=15 h   day_tst  9.7 h (pre-peak, wrong)       night_tst  3.2 h (pre-dawn, right)
+```
+
+ISS precession forbids getting both endpoints, so this "DTR" is never max−min, and the two
+bands are different instruments rather than two samples of one. The band that gets the
+DAYTIME endpoint right wins, by 3× within-station:
+
+```
+pooled r(surface SM, DTR):   ALL -0.107    6-9 h -0.139    >=15 h -0.086
+within-station:              ALL -0.098    6-9 h -0.174    >=15 h -0.050
+```
+
+**And DTR loses to day LST alone in every stratum** (within-station r):
+
+```
+subset      DTR      day LST   night LST
+ALL        -0.098    -0.156     -0.117
+6-9 h      -0.174    -0.204     -0.137
+>=15 h     -0.050    -0.127     -0.115
+```
+
+Subtracting the night term REMOVES signal. Combined with §38.6, the DTR framing looks
+misconceived for this data: what tracks moisture is daytime LST near peak heating, and
+§29 already measured that field as static.
+
+*Not a result yet:* stratifying by `day_tst` gives day LST −0.379 in the 15–18 h bin, but
+all three fields strengthen together there, which is the signature of station composition
+rather than a solar-hour effect. The strata are not matched on station, and within-station
+centring removes station means, not station-level slopes.
+
+### 38.10 The six-station tile — DTR is ONE number where SM is six
+
+`plot_txson_six.py` / `analyse_txson_six.py` on §36.21(iii)'s set: CR200-18 at centre,
+CR200-25 at 405 m, CR1000-2 at 684 m, CR200-24 at 865 m, CR200-15 at 925 m, CR200-6 at
+936 m — six probes inside one 2.24 km window.
+
+Every per-station r is negative: −0.38, −0.48, −0.47, −0.43, −0.46, −0.36; pooled −0.246
+over 78 station-days. Four times the global figure. **It is one observation, not six.** On
+the 7 dates where all six carry a usable DTR, the six DTR series correlate at
+**mean r = +0.9962** (min +0.9861) — they are the same series, because the windows overlap
+almost entirely.
+
+```
+between-station spread on those dates
+  DTR   SD 0.437 K  on a 13.8 K level   -> CV  3.2%
+  SM    SD 0.0629   on a 0.192 level    -> CV 32.8%
+
+station mean SM   0.117 -> 0.283  (factor 2.4)
+station mean DTR  13.64 -> 14.07  (3%)        between-station r = +0.444 (wrong sign, n=6)
+```
+
+So the −0.4 is a **temporal** signal, and a shared one: when this landscape dries its DTR
+rises and all six probes see the same rise. What DTR cannot do is tell the six apart —
+precisely the job §30.1 needs it for. Same conclusion as §38.6, reached from the opposite
+direction: G0 says the pattern does not move, this says the pattern has no useful contrast
+at sub-tile scale to begin with.
+
+TxSON pooled over all 40 stations: 481 station-days but only **31 distinct dates**
+(15.5 stations per date), so effective n on the DTR axis is ≈31 and r = −0.132 carries a
+95% interval of roughly (−0.47, +0.23). Consistent with the global number; establishes
+nothing on its own.
+
+### 38.11 Per-station r — the spread is mostly noise, the strata are not
+
+`analyse_dtr_sm_per_station.py`, one r per station against a shuffled null (SM permuted
+within station, 200×). Negative-DTR days dropped: 11,152 → 9,843 station-days, which
+barely matters — median r −0.131 → −0.121 and the fraction negative *rises* 68% → 72%.
+
+```
+                median      SD      % negative
+  observed      -0.121     0.278       72%
+  shuffled      -0.001     0.248       50%
+```
+
+The two boxes are nearly the same **width**; only the shift is real. Excess variance
+0.278² − 0.248² puts the TRUE between-station SD of r at about **0.13** against an apparent
+0.28, and the extremes all sit at low n hugging the ±1.96/√(n−3) band. "Station X is much
+better" is not readable at n ≈ 20.
+
+The strata ARE real (SE on a group median ≈ 0.03, so a 0.17 gap is not noise):
+
+```
+Koppen      C temperate -0.234   D continental -0.116   B arid   -0.066
+IGBP        Grass-Crop  -0.179   Shrub-Savanna -0.139   Forest   -0.090
+elevation   Low         -0.251   Mid           -0.229   High     -0.092
+```
+
+Both orderings are physically coherent: canopy decouples radiometric surface temperature
+from soil moisture, so Forest is weakest and Grass-Crop twice as strong; arid stations have
+little SM dynamic range to track, matching the flat TxSON median below ~0.17 m³/m³. Best
+case is temperate, low, open vegetation at r ≈ −0.25 — 6% of variance, on 77 of 356
+stations. **Caveat:** the three strata are not independent (forest and high elevation
+overlap heavily), so this is three views of possibly one effect, not three findings.
+
+### 38.12 OPEN — the deseasonalisation test, proposed and NOT run
+
+Both variables are strongly seasonal, and in most climates seasonally **anti-correlated for
+reasons unrelated to thermal inertia**: summer = high insolation = large DTR, and summer =
+dry season = low SM. That alone manufactures a negative r, so part or all of the −0.1 may
+be climatology. (Note the direction: DTR has a *large* climatic component — at LCRA-3 the
+scene mean runs 21.1 K in August against 10.7 K in December.)
+
+`analyse_dtr_sm_deseason.py` was written to fit two day-of-year harmonics per station to
+both series and correlate the residuals, with hemisphere alignment and a pooled-harmonic
+cross-check, but **was not run**. It is the single cheapest remaining test and it decides
+whether §38.7's result is physics or climatology. Nothing downstream should treat −0.1 as
+established until it has run.
+
+### 38.13 Where this leaves the thermal arm
+
+Three independent lines now agree, and none of them is a data-volume problem:
+
+1. **§38.6** — the DTR field is as static as the daytime field, and *is* the daytime field.
+2. **§38.9** — day LST alone beats DTR everywhere; the night term subtracts signal.
+3. **§38.10** — at sub-tile scale DTR has 3% contrast where SM has 33%, so it cannot
+   resolve the between-station spread §30.1 needs.
+
+The arm's best available version is **daytime LST in the 6–9 h pairing, at temperate, low,
+open-vegetation stations**, at within-station r ≈ −0.20 to −0.25 on a one-sided constraint.
+That is a real, correctly-signed, physically-coherent effect and it is not enough to build
+on. §36.21(ii), the noise floor, is now moot for the decision.
+
+### 38.14 Files
+
+```
+read_ecostress_lst.py               env soilmoisture   + --retry-failed
+census_ecostress.py                 thread_cookie_opts
+consolidate_dtr.py                  env soilmoisture   blobs -> per-station .npz
+plot_dtr_txson.py                   env terramind      RGB / day / night / DTR panels
+gate_dtr_static.py                  env terramind      G0, split-half
+plot_dtr_vs_sm.py                   env terramind      the join + 3-panel
+plot_dtr_sm_pooled.py               env terramind      pooled, n-adaptive marks
+analyse_dtr_envelope.py             env terramind      the quantile wedge
+plot_txson_six.py                   env terramind      the six-station tile
+analyse_txson_six.py                env terramind      its arithmetic
+analyse_dtr_sm_per_station.py       env terramind      per-station r + null
+analyse_dtr_sm_deseason.py          env terramind      WRITTEN, NOT RUN (§38.12)
+slurm/ecostress_lst_fixcheck.sh     the 600-read validation
+slurm/dtr_*.sh, slurm/txson_six.sh, slurm/six_stats.sh
+fig/dtr_txson/                      all figures from this session
+csvs/ecostress_dtr_bundles.{all,TxSON}.csv, ecostress_dtr_g0_v2.csv,
+csvs/ecostress_dtr_vs_sm_all.csv, ecostress_dtr_sm_per_station_r{,_posdtr}.csv
+```
+
+Commits: `5001919` (cookie fix), `171476e` (consolidate + G0), `308a451` (DTR vs SM),
+`c71d0ad` (all stations), `d10711e` (pooled surface), `314c9af` (envelope + dt bands),
+`dbde7ff` (six-station tile), `3d7e5f8` (per-station r). Branch `feat/ecostress-dtr`.
