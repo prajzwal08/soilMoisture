@@ -6172,3 +6172,38 @@ go/no-go on the thermal arm and it runs the moment consolidation finishes.
 consolidate_dtr.py and analyse_dtr_sm.py are not written yet.
 The soil-moisture labels must come from /projects/prjs1968/zarr_tokens --
 the scratch store at dataset.py:45 is GONE, 45,334 empty directories, 0 files.
+
+--- 2026-09-21 sign-off: the pull is mid-flight, not finished -------------------
+
+Array 26984229 was at 52,000 / 78,446 reads (66%), 260 MB, all 8 tasks RUNNING and
+healthy when the session ended. It finishes on its own; SLURM mails on END/FAIL.
+It is resume-safe -- `sbatch slurm/ecostress_lst_array.sh` picks up exactly where it
+stopped, because the checkpoint globs every shard CSV and sharding is a stable MD5 of
+the task key. DO NOT delete csvs/ecostress_lst_reads.dtr.s*.csv or the .bin blobs;
+they ARE the checkpoint.
+
+SWATH GEOMETRY, measured on shard 0 (3,839 reads) -- the LST loss is ALL-OR-NOTHING,
+not gradual:
+
+    46.2%  usable_frac == 0      station fully OFF-SWATH, zero LST pixels
+    27.7%  0 < usable_frac < 1   station on the swath EDGE, partial cover
+    26.1%  usable_frac >= 0.99   fully covered
+
+An ECO_L2T granule is a whole MGRS tile, but the ISS swath crosses only part of it.
+Off-swath the LST is NaN while QC reads all-zero, and §36.0b deliberately treats
+qc==0 as UNPOPULATED / do-not-veto -- so those pixels passed as "clear" in §36.23 and
+the 41,348-pair inventory counts empty sky as usable. Only ~26% of reads are chips we
+can use unreservedly; another ~28% are partial and need a minimum-coverage rule.
+
+FIRST THING NEXT SESSION, before anything else: compute PAIR-LEVEL survival (both
+halves usable_frac > 0, and decide the floor for the edge cases), then re-check
+§36.16's 489 stations against the USABLE count rather than the clear count. If it
+falls below ~150 stations the availability gate no longer passes.
+
+NOT WRITTEN YET: consolidate_dtr.py (blobs -> per-station .npz) and analyse_dtr_sm.py.
+Blob format: fixed 5120 B records at `blob_offset` from the CSV -- float32[32,32]
+Kelvin then uint8[32,32] mask.
+
+Branch feat/ecostress-dtr. Commits today: 9b8f662 (September backlog), 1dbe764
+(§36.23/§36.24/§37), 72f1117 (§37.7a label corrections), af2e70a (the LST reader),
+e81c58f (log).
