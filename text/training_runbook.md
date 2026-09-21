@@ -12464,13 +12464,77 @@ Reported in the order the statistics are allowed to be believed:
 | **G2** | within-station DTR-SM sign test | CI includes 0, or the sign is positive |
 | **G3** | pre-dawn vs evening | evening >= pre-dawn -> not thermal inertia |
 
-**Label hygiene, and the most dangerous shortcut available here:** the ISMN labels carry a QC flag
-where 0 = observed, 1 = gap-filled, 2 = missing. **Use `qc == 0` only.** The gap-fill is a
-month-day climatology and DTR has a strong seasonal cycle, so correlating against filled values
-would manufacture agreement. Also: depth order (0–10, 10–30, 30–100 cm) is load-bearing — assert
-`depth[0]` is the surface bin rather than trusting position — and `dataset.py:238` records a
-measured length misalignment (sm/dates 1095 vs qc 1825 at Banizoumbou), so align on `time`, never
-on positional index.
+### 37.7a Label access — measured, and it corrects four things
+
+**The scratch zarr store is GONE.** `dataset.py:45` points at `/gpfs/scratch1/shared/pkhanal/zarr`;
+the age-purge deleted every file and left **45,334 empty directories**. `find -type f` returns
+**0**. The directory tree still looks right, which is exactly the §35 Phase-0 trap — an `ls` of the
+category dirs succeeds and tells you nothing. `zarr.open_consolidated` raises
+`GroupNotFoundError`; `dataset._open_zarr` fails soft and returns `None`, so a naive run would
+report zero stations rather than an error.
+
+**Use the backup: `/projects/prjs1968/zarr_tokens`.** Verified intact — `.complete` sentinels
+842/842 `sm_only` and 48/48 `sm_and_flux`, `labels/sm/.zarray` present for all 890, chunks
+readable. It is `dr-xr-x` (deliberately `chmod a-w`), which is fine for reading. **890 stations
+carry SM labels**; `flux_only` has none by construction. Do *not* run `slurm/restore_zarr.sh`
+unless the 900 GB of tokens are needed for training — the labels alone are a few hundred MB.
+A third, authoritative source also survives: `/projects/prjs1968/level1_organised/*.nc`.
+
+**The array names are not what §36 assumed.** On disk:
+
+```
+labels/sm      (n_depths, n_days)             float32   NOT labels/soil_moisture
+labels/depths  (n_depths,)                    <U20      NOT labels/depth
+labels/dates   (n_days,)                      <U8       NOT labels/time; "YYYYMMDD" STRINGS
+labels/qc      (n_depths, n_days_untrimmed)   uint8
+```
+
+`dates` is neither epoch-days nor datetime64. `labels/sm` has `fill_value: 0.0`, so an unwritten
+chunk reads as **0.0, not NaN** — gate on QC, never on `isfinite` alone.
+
+**The depth axis is not a fixed 3-bin axis.** Each station carries only the bins it measured:
+
+```
+('0-10','10-30','30-100')  501     ('0-10','10-30')  155
+('0-10',)                  153     ('0-10','30-100')  33
+```
+
+All 842 contain `'0-10'` and it happens to land at index 0 in every observed combination — **by
+luck, not by construction**. The code-sanctioned access is a name lookup,
+`d_idx = depths.index("0-10")` (`dataset.py:1636-1640`). Never `sm[0]`.
+
+**QC has a fourth value: `255 = NO QC SOURCE`** (`dataset.py:122-123`), not just 0/1/2. It exists
+because the producer used to default qc to **all zeros** when the source NetCDF carried neither
+`soil_moisture_qc` nor `quality_flag` — making climatological gap-fill indistinguishable from a
+real measurement (§35.24 audit item 4). A station whose qc holds no `1`s or `2`s across a decade
+is suspicious; check `np.unique(qc)`.
+
+**Use `qc == 0` only.** The gap-fill is a month-day climatology and DTR has a strong seasonal
+cycle, so correlating against filled values would manufacture agreement. This is the single most
+dangerous shortcut available in this analysis.
+
+**The qc/sm length mismatch is the common case, not an edge case.** `trim_pre2016.py` trims
+`labels/sm` and `labels/dates` from the FRONT but leaves `labels/qc` untrimmed, so the aligned
+columns are the **trailing** `n_sm` of qc. Measured: **~53% of stations** (32 of a random 60), and
+§35.24 once silently dropped 362 of 587 train stations on this. `dataset._load_zarr_labels`
+(`dataset.py:226-296`) handles it, including the asymmetry that `n_qc < n_sm` is always fatal
+while `n_qc > n_sm` is recoverable only after verifying `dates` is a gapless daily span.
+
+**So: reuse `combine_network._obs_from_zarr` (`combine_network.py:47-74`), do not write a new
+extractor.** It already returns tidy `date, depth, obs` with `qc == 0` only, routed through
+`_load_zarr_labels`, so it inherits the realignment. The only change needed is pointing
+`ZARR_ROOT` at the backup. **Do NOT copy `gate_sm_vs_terrain.py:130-132`** — it applies qc only
+when the lengths already happen to match and otherwise silently keeps gap-filled values, so its
+"gap-fills excluded" docstring is false for about half its stations.
+
+**The join is clean.** ECOSTRESS `station_id` matches `station_splits.station_id` exactly —
+`set(eco) - set(splits)` is empty for both ECOSTRESS CSVs — and `station_id` is unique across all
+993 rows. For ISMN, `station_id == station_name` in 842/842 cases, so
+`dir_name = f"ISMN_{network}_{station_id}"` is safe for that branch and
+`f"{source_network}_{station_id}"` for ICOS/AmeriFlux. Note the lat/lon columns are
+`latitude`/`longitude` in `station_splits.csv` but `lat`/`lon` in the ECOSTRESS CSVs. Dates:
+`day_solar_date` is `YYYY-MM-DD`, `labels/dates` is `YYYYMMDD` — normalise both to
+`datetime64[D]`.
 
 ### 37.8 Files
 
