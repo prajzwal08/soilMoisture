@@ -6337,12 +6337,16 @@ the soil; arid sites have no SM dynamic range. Best case -- temperate, low, open
 vegetation -- is r ~ -0.25, 6% of variance, on 77 of 356 stations. The three
 strata are NOT independent, so it may be one effect seen three ways.
 
-OPEN, and it matters: analyse_dtr_sm_deseason.py is WRITTEN BUT NOT RUN. Both
-variables are strongly seasonal and in most climates seasonally ANTI-correlated
-for reasons unrelated to thermal inertia (summer = high insolation = big DTR =
-dry season = low SM). That alone manufactures a negative r. Until it runs,
-nothing downstream should treat -0.1 as established physics.
-
+DESEASONALISATION -- DECIDED AGAINST, same day. analyse_dtr_sm_deseason.py is
+written but WILL NOT be run. Both variables are strongly seasonal and in most
+climates seasonally anti-correlated for non-physical reasons, so part of the -0.1
+may be climatology -- but no outcome changes a decision. The arm is closed by the
+six-station contrast number (DTR 3.2% vs SM 32.8%), which is about CONTRAST, not
+correlation magnitude, and holds at any r. Deseasonalising could move -0.1 either
+way (in monsoon climates seasonality MASKS the physics rather than faking it) and
+neither reading revives an arm that cannot resolve space. Consequence for writing
+up: quote -0.098 as a RAW within-station correlation with a stated seasonal
+confound of unmeasured sign, never as a clean thermal-inertia coupling estimate.
 VERDICT ON THE ARM. Three independent lines agree, none a data-volume problem:
 the DTR field is as static as the daytime field and IS the daytime field; day LST
 alone beats DTR everywhere; and at sub-tile scale DTR has 3% contrast where SM has

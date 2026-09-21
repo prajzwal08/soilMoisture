@@ -12851,19 +12851,30 @@ case is temperate, low, open vegetation at r ≈ −0.25 — 6% of variance, on 
 stations. **Caveat:** the three strata are not independent (forest and high elevation
 overlap heavily), so this is three views of possibly one effect, not three findings.
 
-### 38.12 OPEN — the deseasonalisation test, proposed and NOT run
+### 38.12 CLOSED — the deseasonalisation test, and why it is NOT worth running
 
 Both variables are strongly seasonal, and in most climates seasonally **anti-correlated for
 reasons unrelated to thermal inertia**: summer = high insolation = large DTR, and summer =
-dry season = low SM. That alone manufactures a negative r, so part or all of the −0.1 may
-be climatology. (Note the direction: DTR has a *large* climatic component — at LCRA-3 the
+dry season = low SM. That alone manufactures a negative r, so part of §38.7's −0.1 may be
+climatology. (Note the direction: DTR has a *large* climatic component — at LCRA-3 the
 scene mean runs 21.1 K in August against 10.7 K in December.)
 
 `analyse_dtr_sm_deseason.py` was written to fit two day-of-year harmonics per station to
 both series and correlate the residuals, with hemisphere alignment and a pooled-harmonic
-cross-check, but **was not run**. It is the single cheapest remaining test and it decides
-whether §38.7's result is physics or climatology. Nothing downstream should treat −0.1 as
-established until it has run.
+cross-check. **DECIDED 2026-09-21: it will not be run. Do not reopen this.**
+
+The reason is not that the confound is absent — it is that **no outcome changes a
+decision.** The arm is closed by §38.10, where DTR carries 3.2% between-station contrast
+against soil moisture's 33% at 2.24 km. That argument is about *contrast*, not about
+correlation magnitude, so it holds at any value of r. Deseasonalising could only make
+§38.7's −0.1 smaller (if seasonality manufactured it) or larger (in monsoon climates,
+where summer brings both high insolation and high moisture, seasonality *masks* the
+physics) — and neither reading revives an arm that cannot resolve space.
+
+What this does mean for writing up: §38.7's −0.098 should be quoted as a **raw** within-station
+correlation with a stated seasonal confound of unmeasured sign, never as a clean estimate
+of thermal-inertia coupling. The script stays in the tree for anyone who needs that clean
+estimate for a different purpose.
 
 ### 38.13 Where this leaves the thermal arm
 
