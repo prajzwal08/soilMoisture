@@ -6087,3 +6087,88 @@ task gives the same granule the same verdict regardless of start time.
 
 NEXT. Optionally tighten the crossover band to -10/+20 (costs ~10% of night
 halves, ~21% of day halves). Then the §36.21 signal tests on the 41,348 pairs.
+
+================================================================================
+2026-09-21  S37 -- the dt band decision, and TIER 2: the first ECOSTRESS LST ever read
+================================================================================
+
+BAND DECIDED: dt in [6,19) h. 39,223 pairs / 741 stations / 78,446 window reads.
+Separations are bimodal with an EMPTY gap -- 3 pairs of 41,585 fall in 9-12 h --
+so this is the union of the two orbital configurations, not a compromise.
+489 stations clear both §36.16 floors (>=20 pairs AND >=3 years) against a
+requirement of >=150, so §36.16 passes 3.3x. Pairs span 2018-2025, peak 2020.
+
+WHY NOT THE EARLY BAND. dt 6-9 h retains 0 of 116 stations at |lat| >= 45. Zero.
+The two orbital configurations sort by latitude, so picking the early one is a
+latitude cut in disguise: +15.3 pp at |lat| 25-40, +6.7 pp Koppen B (arid), and
+Europe plus the northern US deleted. dt >= 12 stays within 2.6 pp on every axis.
+Also dt <= 12 is 93.8% EVENING night halves -- the surface is still shedding heat
+and has not reached its diurnal minimum -- which is the same wrap-at-24 trap as
+the well_phased bug wearing different clothes.
+
+FILTERING BEFORE PAIRING BUYS +0.8%. Re-pairing with cloud filtered first gives
+19,401 vs 19,250 post-hoc. The pairing is so starved by orbital coincidence that
+a day pass rarely HAS an alternative clear night to swap to. The defect is real
+and nearly costless.
+
+NEW CODE: read_ecostress_lst.py + slurm/ecostress_lst_{smoke,array}.sh.
+Array 26984229 launched, 8 tasks x 64 workers, ~30 min.
+
+THREE DEFECTS THE SMOKE TEST CAUGHT -- by running, not by reading.
+
+1. LST IS NOT uint16 x 0.02. §29.6 and §36.15c both call that "the only factor
+   safe to hardcode". It is the spec for ECO2LSTE v001, the SWATH product. The
+   TILED product we read, ECO_L2T_LSTE v002, delivers float32 Kelvin, NaN fill,
+   scale 1.0. Applying 0.02 gave 5.9 K instead of 295 K. The Kelvin tripwire
+   fired on the first run and refused to write the shard -- it existed precisely
+   because the mask-only pass had no way to notice a silent 401, and it caught a
+   different bug instead. The NASA catalogue page confirms the diagnosis by
+   omission: it says cloud/water/view_zenith "are not documented in this product
+   specification", because those layers exist only in the tiled product.
+
+2. THE FIRST SMOKE SWEEP MEASURED ITS OWN CACHE. All six configs re-read the
+   same 40 granules: 1.76 reads/s cold, then ~20 reads/s for every repeat, which
+   is GDAL's VSI cache and the OS page cache, not concurrency. Each config now
+   gets DISJOINT granules, and the sample is randomised across stations --
+   sorted(tasks) is station-ordered, so the head of the list is two or three
+   alphabetically-first stations, fine for latency and useless for availability.
+
+3. clear_frac MUST be computed BEFORE LST validity is folded in. The first
+   version ANDed lst_valid into the mask, turning a §36.23 clear_frac of 1.0
+   into 0.0 and breaking reconciliation. Split into clear_frac (the §36.23 mask
+   exactly) and usable_frac (that AND an LST retrieval exists). Reconciliation
+   is now EXACT: 360/360, max|diff| = 0. That is the strongest evidence
+   available that the window and the mask did not move between the two passes.
+
+OPERATING POINT, measured cold on a random cross-station sample:
+   16 workers -> 2.45 reads/s   32 -> 4.31   64 -> 5.60   (monotonic)
+Different curve from §36.23.5, which flattened at 4.0, because this is a 4-open
+read rather than 3. _water costs ~15% and is KEPT: it masks water pixels out of
+DTR, not merely reconciles. 8 tasks x 64 workers.
+
+THE FINDING THAT MAY MATTER MOST -- LST IS MISSING WHERE QC SAYS CLEAR.
+Random 720-read sample:
+   mean clear_frac   0.962     QC + cloud + water say clear
+   mean usable_frac  0.504     ...and an LST retrieval actually exists
+   mean lst_nan_frac 0.458
+   162 of 360 reads (45%) are clear but have ZERO LST pixels
+Structural cause: an L2T granule is a full MGRS tile but the ISS swath covers
+only part of it. Off-swath, LST is NaN while QC reads all-zero -- and §36.0b
+deliberately treats qc==0 as UNPOPULATED, do-not-veto, so those pixels pass as
+clear. So §36.23's 41,348 "usable pairs" counts off-swath area as clear.
+A pair needs both halves. If independent, 0.55^2 ~ 30% survival would take
+39,223 pairs to roughly 12,000 -- but the halves are NOT independent in swath
+coverage, so that estimate could be badly wrong in either direction. The full
+run measures it at the pair level, which is why it was left to finish rather
+than re-planned on an estimate. §36.16's 489 stations were computed on the
+CLEAR count and will need re-checking against the USABLE count.
+
+Also: ~0.5% of granules have a corrupt or missing layer ("not recognized as
+being in a supported file format"), caught and logged as read_ok=0.
+
+NEXT. Consolidate to per-station .npz, then G0: is the DTR field static like
+§29's daytime LST (+0.967 coherent against its own annual mean)? That is the
+go/no-go on the thermal arm and it runs the moment consolidation finishes.
+consolidate_dtr.py and analyse_dtr_sm.py are not written yet.
+The soil-moisture labels must come from /projects/prjs1968/zarr_tokens --
+the scratch store at dataset.py:45 is GONE, 45,334 empty directories, 0 files.
