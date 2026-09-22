@@ -10,7 +10,15 @@
 # they look permanently and wrongly wet to the model.  The mean/min/max variables
 # are a spatial+temporal statistic rather than wrong.
 #
-# NOT YET FIXED.  The fix is to re-fetch these 22 station-years' 19 columns with a
+# UPDATE 2026-09-22: the RADIATION columns are now correct for these stations --
+# download_era5_radiation.py pins each to the pixels valid year-round
+# (csvs/era5_buffer_pixels.json): Combate 3 px, Cape-Charles 5 px, Port Graham 8 px.
+# A pinned pixel is the nearest VALID LAND, not the station: Combate is pinned to cells
+# 13-24 km away.  These three have genuinely degraded meteorology; say so wherever their
+# numbers are reported.
+#
+# The 19 pre-§43.12 columns (tp_sum especially) are STILL inflated.  The fix is to
+# re-fetch these 22 station-years' 19 columns with a
 # groupby("time").mean() before aggregation -- a ~22-job run, unlike the
 # 993-station re-fetch §43.12 deliberately avoids.
 # download_era5_radiation.py already collapses per-timestamp, so ssrd_sum/strd_sum

@@ -14232,6 +14232,52 @@ those three look wrongly wet to the model.
 — **993 rows**, per `CLAUDE.md` and `create_token_zarr.py:45`. The new script uses the 993.
 `jobs/era5land_gee.sh:10` also carries the wrong `--mail-user`; `jobs/era5_radiation.sh` does not.
 
+#### The smoke found a real defect that the range checks passed (2026-09-22)
+
+The three STRATEGY_BUFFER stations were smoked first *because* they exercise the
+riskiest path.  `check_era5_radiation.py` passed them -- magnitude, seasonality and day
+counts all in range, latitude ordering correct.  **The plot did not.**
+`fig/era5_radiation/era5_radiation_smoke.png` showed a 16-day window in March where
+`ssrd_sum` halved, and a step in late September, **at the same day-of-year in all three
+stations, in every year**.  Sites at 18N, 37N and 59N cannot share a discontinuity on
+one calendar day.
+
+**Measured cause.** `getRegion` on a 25 km buffer returns one row per (pixel, hour), and
+which pixels carry data changes day to day.  Combate's buffer holds 17 pixels of which
+only **3 are valid year-round**; between Mar 5-20 another 4-6 blink on, and they are
+systematically darker.  Averaging "whatever is valid today" therefore tracked the
+ERA5-Land land mask rather than the weather.  **No hours were ever missing** -- every day
+returned all 24.
+
+**Fix: pin each buffer station to a footprint that does not move.**  Resolve the pixels
+valid in every hour of four seasonal probe months, once per station, persist to
+`csvs/era5_buffer_pixels.json`, and average only those for every year.  Verified against
+the pre-fix files (kept for the diff): days that were already correct return
+**bit-identical** (22.48, 21.43, 23.68, 23.72, 23.77) while the broken band is repaired
+(11.97, 12.20, 10.03 -> 22.32, 23.34, 24.23); month std 7.04 -> 1.70 MJ.  Footprints
+found: Combate 3 px, Cape-Charles 5 px, Port Graham 8 px.
+
+**Also `min_count=24` on the daily sums.**  A day missing any hour becomes NaN rather
+than a quiet partial sum that no range check can catch.  At load time such a day takes
+the same path as `dataset.py`'s existing 15% ERA5 dropout -- value 0, `doy` 0, treated as
+padding by the transformer.  The post-fix smoke reports **0 incomplete days**.
+
+**CONTROL, measured:** point-query stations cannot have this problem and demonstrably do
+not -- 24 rows/day, 24 hours, 0 NaN, exactly 1 valid pixel per hour at both probes.  Only
+3 of 993 stations were ever affected.  They are **kept, not dropped** (they sit in train,
+val and oos respectively, so dropping would move the station count and every eval
+reference).
+
+**Standing caveat, now visible rather than hidden.**  A pinned pixel is the nearest
+*valid land*, which is not the station.  Combate at (17.983, -67.167) is pinned to cells
+13-24 km away.  These three stations have genuinely degraded meteorology and that belongs
+in any table that reports them.  What changed is that the footprint is now fixed,
+recorded and auditable instead of drifting silently.
+
+**Method note worth generalising: the range check passed and the plot failed.**  The
+artefact was narrow enough not to move the annual mean, so magnitude and seasonality
+bounds could not see it.  Plot the smoke.
+
 #### Other decisions made in the build
 
 - **Strategy is resolved once per STATION, not per station-year.** The original sets
