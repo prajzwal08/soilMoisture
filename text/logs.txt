@@ -6804,3 +6804,41 @@ NEXT SESSION:
   4. ERA5 ssrd/strd: zarr rebuild, ERA5_VARS 19->25, re-run compute_era5_stats.py.
   5. Then dataset.py target + mask, model.py head_lst, train.py lambda with the lambda=0
      control in the FIRST run.
+
+--- 2026-09-22 SESSION 40, CONTINUED: THE PULL FINISHED AND IS VERIFIED ---
+
+993 / 993 BUNDLES.  993 pass, 0 fail (verify 27017767, exit 0).
+  253,334 scenes, 4.68 GB.  Per station: min 26 / median 220 / max 871 scenes,
+  min 0.2 / median 4.0 / max 16.4 MB.
+  clear px out of range 0.0000 | clear px saturated 0.0000 | nodata agreement 1.00000
+  LST median clear 299.29 K, raw 284.56 K | ST_QA median 4.02 K | CDIST 0.49 km
+  emis 0.9777 | clear fraction 0.4888
+  192 of 993 stations carry reprojected scenes -- 21,272 scenes in all.
+
+All 50 array tasks COMPLETED.  ONE station failed: US-Wkg, on a transient MPC outage
+  ({"error":"Service is unavailable."}).  A plain resubmit fixed it, which is the resume
+  logic working as designed -- `error` is deliberately not counted as done.
+
+ST_QA KEEPS RISING AS THE SAMPLE GROWS: 2.13 K at TxSON (§29.13) -> 3.120 K over 42
+  stations (Step 0) -> 4.02 K over all 993.  A `ST_QA <= 3 K` cut would now discard WELL
+  OVER HALF the archive.  Storing raw is what keeps that a decision instead of a fait
+  accompli, and it retroactively justifies the reversal made earlier in the session.
+
+THE FIRST VERIFY RUN FAILED 20 STATIONS.  Three causes, two of them mine:
+  (a) REAL DESERTS, 12 stations.  Stovepipe Wells (Death Valley) reaches 354.5 K, Yuma
+      345.4 K, Utah/Nevada/Texas sites 343-352 K.  Bare soil at midday genuinely exceeds
+      70 C.  My 340 K ceiling was flagging real data as broken.  Raised to 360 K.
+  (b) ST_CDIST > 200 km, 2 stations.  Documented range is 0-24000 DN x 0.01 = 0-240 km,
+      so 211 and 220 km are legal.  The guard only has to exclude metres.  Raised to 250.
+  (c) A GENUINE DATA FINDING, 3 stations.  Three SNOTEL sites reported a maximum of
+      exactly 373.000 K.  149.0 + 65535*0.00341802 = 372.99994 -- the uint16 CEILING, to
+      four decimals.  DN 65535 IS A SATURATION SENTINEL, NOT A TEMPERATURE, and consumers
+      must drop it alongside DN 0.  The verifier now counts saturated pixels and excludes
+      them BEFORE the range test, rather than lifting the ceiling to 373 K and going blind
+      to real divergence.  Across all 993 the saturated fraction is below reporting
+      precision, so this is a correctness note, not a yield problem.
+
+STILL OPEN, unchanged from the list above: the §41.5 falsification across all 993
+  (corr(median LST map, emis map) ran -0.18..-0.73 on the smoke 8 -- up to ~50% of the
+  static pattern shared with a static emissivity field), gate 6, the ERA5 ssrd/strd zarr
+  rebuild, then the two-head wiring with the lambda=0 control in the FIRST run.
