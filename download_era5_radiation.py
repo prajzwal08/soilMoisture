@@ -36,8 +36,11 @@ TWO DIFFERENCES FROM `download_era5land_gee.py`, both deliberate:
      `getRegion` on a 25 km buffer returns one row per (pixel, time).
      `download_era5land_gee.py` never groups by time, so its `.resample("1D").sum()`
      for `tp_sum` sums across pixels as well as hours -- inflating precipitation by
-     roughly the pixel count (~16 at 0.1 deg in a 25 km buffer) for the 22 stations
-     on STRATEGY_BUFFER.  That is a pre-existing bug in the stored `tp_sum`; it is
+     roughly the pixel count (~16 at 0.1 deg in a 25 km buffer).  Measured blast
+     radius: THREE stations -- PortGraham, Cape-Charles-5-ENE, Combate -- whose own
+     ERA5-Land cell is ocean-masked; the 22 log rows are station-YEARS.  Every other
+     station uses a point query on its own cell.  That is a pre-existing bug in the
+     stored `tp_sum` for those three; it is
      NOT fixed here (fixing it would mean re-fetching the other 15 columns), but it
      must not be inherited by the radiation sums.
 

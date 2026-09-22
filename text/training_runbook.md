@@ -14202,12 +14202,30 @@ store.
 a 25 km buffer returns one row per (pixel, time), and `process_station_year` (`:394-408`) never
 groups by time before `.resample("1D")`. For the mean/min/max variables that is a spatial-plus-
 temporal statistic — defensible. For **`tp_sum` it sums across pixels as well as hours**, inflating
-daily precipitation by roughly the pixel count (~16 at 0.1 deg inside a 25 km buffer). 22 rows in
-`era5land_gee_log.csv` carry `era5land_buffer_25km`. This is a **pre-existing defect in the stored
-`tp_sum`** for those stations. It is NOT fixed here — fixing it means re-fetching the other 16
-columns, which this change deliberately avoids — but `download_era5_radiation.py` collapses
-per-timestamp before aggregating so the radiation sums do not inherit it. Those 22 stations look
-permanently and wrongly wet to the model; decide separately whether that is worth a re-fetch.
+daily precipitation by roughly the pixel count (~16 at 0.1 deg inside a 25 km buffer).
+
+**Blast radius, measured: THREE stations, not 22.** The 22 rows in `era5land_gee_log.csv` carrying
+`era5land_buffer_25km` are station-YEARS:
+
+```
+ISMN_SNOTEL_PortGraham         (59.3507, -151.8477)  Alaska coast       9
+ISMN_USCRN_Cape-Charles-5-ENE  (37.2907,  -75.9270)  Virginia barrier   7
+ISMN_SCAN_Combate              (17.9833,  -67.1667)  Puerto Rico        6
+```
+
+— exactly the three coastal stations recorded at `text/logs.txt:537-570`. Every other station uses
+STRATEGY_POINT, i.e. the single ERA5-Land cell containing the coordinate, with no averaging. (That
+cell is ~11 km across, so "the station's pixel" was never finer than 0.1 deg — which is why §43
+treats the whole driver stack as tile-uniform.)
+
+These three need the buffer because ERA5-Land is land-masked and their own cell is ocean: every
+variable is NaN for every hour, so there is no station pixel to read at all.
+
+**At 22 station-years this is cheap to fix properly**, unlike the 993-station re-fetch this change
+exists to avoid. `download_era5_radiation.py` already collapses per-timestamp before aggregating,
+so the radiation sums do not inherit the defect; the stored `tp_sum` for those three does, and
+re-fetching their 19 columns with a `groupby("time").mean()` is a ~22-job run. Until that happens
+those three look wrongly wet to the model.
 
 **(b) It reads the wrong station list.** `download_era5land_gee.py:62` uses
 `{DATA_ROOT}/station_splits.csv` — **1010 rows**. The authoritative list is `csvs/station_splits.csv`
