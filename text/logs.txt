@@ -6939,3 +6939,114 @@ NEXT SESSION (unchanged, in order):
      and compute_era5_stats.py, re-run compute_era5_stats.py.
   4. dataset.py target + mask, model.py head_lst, train.py λ -- with the λ=0 control in
      the FIRST run.
+
+================================================================================
+SESSION 41 -- 2026-09-22.  §43 two-head build specified; §43.12 ERA5 drivers
+19 -> 18 BUILT and the radiation download launched.
+================================================================================
+
+TWO DESIGN QUESTIONS CLOSED (§43, written to the runbook).
+
+  ARCHITECTURE: the baseline-unet-temporal decoder, not the patchwise trunk.  Not
+  because patchwise lost -- it has one run and that verdict was memorisation, a
+  supervision-geometry failure both arms share -- but because the U-Net is the only
+  arm that emits a map, and a dense target needs somewhere to land.  What it could
+  not do was build that map from tile-pooled features (§27a.2: 97-98% of within-tile
+  variance destroyed).  So the decoder is KEPT and its INPUTS are replaced.
+
+  DECODER INPUTS: raw imagery, 19 ch at 112x112 @ 20 m, REPLACING the L9/L6/L3 skips
+  (not appended -- 19 channels against a 1024-wide input is 1.8%, which is §35.18's
+  concat objection in another form).  10 S2 bands + NDVI/NDWI/NBR computed at 10 m
+  THEN pooled + s2_valid + raw VV/VH + s1_age + s1_valid + orbit.  No DEM (absolute
+  elevation is a station fingerprint).  Both selections CAUSAL.  up4 dropped, so the
+  supervised pixel moves 112,112 -> 56,56.  LST head at 22x22 @ 100 m.
+
+  §34.5's premise -- "without raw S2 10 m bands the seven S1 channels are the ONLY
+  information doing the 160->20 m work" -- is FALSE.  /projects/prjs1968/satellite_zarr
+  survived the scratch purge: 998 stations, 247 GB, 12-band S2 + S1 + DEM + LULC at 10 m.
+
+  LST STAYS AUXILIARY (considered and rejected as a product).  It would be a temporal
+  gap-filling product, and claiming it means first beating ERA5_skt + a(t)*M_static on
+  a split-half -- strong by construction, since §29 measured the pattern as +0.967
+  static.  That baseline is step 1 if it is ever reopened.
+
+TWO BLOCKERS FOUND, NEITHER NEW CODE.
+  (a) dataset_unet.py:40 ZARR_ROOT points at purged scratch -- 24 MB, 0 .complete of
+      993.  The dataset builds ZERO samples today.  zarr_tokens is 1.4 TB (1.2 TB
+      sm_only) and is the ONLY copy, so REPOINT at /projects rather than re-stage;
+      §43 makes that cheap by removing the l369 memmap reads entirely.
+  (b) S2 +1000 DN harmonisation of satellite_zarr is UNDETERMINED.  The attrs string
+      is hardcoded and proves nothing.  Settle by reading pixels in a batch job.
+
+§43.12 ERA5 DRIVERS 19 -> 18, BUILT AND RUNNING.
+  Rule: state variables get mean/min/max, accumulations get a daily SUM.
+  skt OUT (a modelled diagnostic, and the ST target at 9 km), ssrd_sum/strd_sum IN.
+  DOWNWARDS not net: str contains the surface's own upward emission, i.e. the Landsat
+  target, and would reintroduce exactly the leakage dropping skt removed.
+  Sum not mean/min/max because a 24 h total survives the UTC-day boundary and a daily
+  max does not -- ERA5-Land days are UTC and cut the local diurnal cycle.
+
+  Never fetched: download_era5land_gee.py (the path that produced all 993) has 7 bands
+  and no radiation.  So: fetch TWO bands and splice, never re-fetch the other 16 --
+  that would resample a different GEE snapshot and move the SM model's inputs for
+  reasons unrelated to this change.  era5/values18 is written BESIDE era5/values.
+
+  Blocked first on a dead Earth Engine refresh token (invalid_grant; earthengine
+  authenticate needs --auth_mode=notebook, there is no gcloud on Snellius).
+
+THE DEFECT THE PLOT CAUGHT AND THE RANGE CHECK DID NOT.
+  Smoke 1 ran the three STRATEGY_BUFFER stations deliberately, as the riskiest path.
+  check_era5_radiation.py PASSED them -- magnitude, seasonality, day counts, latitude
+  ordering, all fine.  The plot showed a 16-day window in March where ssrd_sum halved,
+  and a September step, AT THE SAME DOY IN ALL THREE STATIONS IN EVERY YEAR.  Sites at
+  18N, 37N and 59N cannot share a discontinuity on one calendar day.
+
+  MEASURED CAUSE: getRegion on a 25 km buffer returns one row per (pixel, hour) and
+  WHICH PIXELS CARRY DATA CHANGES DAY TO DAY.  Combate's buffer holds 17 pixels, only 3
+  valid year-round; Mar 5-20 another 4-6 blink on and they are systematically darker.
+  Averaging "whatever is valid today" tracked the ERA5-Land mask, not the weather.
+  NO HOURS WERE EVER MISSING -- every day returned all 24.
+
+  FIX: pin each buffer station to the pixels valid in every hour of four seasonal probe
+  months, persisted to csvs/era5_buffer_pixels.json.  Verified against the kept pre-fix
+  files: already-correct days return BIT-IDENTICAL while the broken band is repaired
+  (11.97,12.20,10.03 -> 22.32,23.34,24.23); month std 7.04 -> 1.70 MJ.
+  Also min_count=24 so an incomplete day is NaN, not a quiet partial sum; at load it
+  takes dataset.py's existing 15% ERA5-dropout path (value 0, doy 0 = padding).
+
+  METHOD NOTE WORTH KEEPING: the artefact was narrow enough not to move the annual
+  mean, so no bounds check could see it.  PLOT THE SMOKE.  slurm/plot_era5_radiation.sh
+  is now step 2b of the run order and marked NOT OPTIONAL.
+
+THREE STATIONS EXCLUDED, 993 -> 990.
+  Combate (val), PortGraham (train), Cape-Charles-5-ENE (oos) sit on ocean-masked
+  ERA5-Land cells.  The pinning works, but a pinned pixel is the nearest VALID LAND --
+  Combate's is 13-24 km away, which is not the station's meteorology.
+  splits 993->990 (train 665, val 90, oos 234, dup 1); excluded 35->38.
+  The pinning CODE stays: correct, tested, and what any future buffer station needs.
+  NOT YET CHASED: eval_predict.py EXPECTED_STATIONS and every doc stating 993.
+
+SMOKE 2 AND THE FULL RUN.
+  Four point-query controls -- Oromo NZ 41S, Adams Ranch NM 32N, AAMU-JTG AL 35N,
+  Saariselka FI 68N.  27/27, 0 incomplete, all era5land_point 1 px.  PASS.
+  Three validations the code cannot fake (it knows neither hemisphere nor latitude):
+    Oromo ssrd peaks at DOY 352, the austral solstice; northern sites 135-180.
+    Saariselka reads EXACTLY 0.0 Nov to late Jan -- polar night at 68.33N.
+    ssrd_mean and seasonality both order by |latitude| across all seven tested.
+
+  FULL RUN LAUNCHED ~17:30: job 27030181, 990 stations, 6,705 station-years,
+  4.0 s/job at 6 workers -> ~7.5 h against a 24 h wall.  Resume is skip-if-exists.
+
+NEXT SESSION, in order:
+  1. Check job 27030181.  Then: check -> PLOT -> splice DRY RUN -> splice --execute ->
+     verify -> compute_era5_stats.py (-> csvs/era5_stats18.json, a NEW file so
+     ckpt_utils.py's SHA provenance check stays meaningful).
+  2. The two blockers: repoint ZARR_ROOT, settle the S2 harmonisation by reading pixels.
+  3. THEN §43 itself -- consolidate_landsat_st.py, dataset_lst.py, model_lst.py,
+     train_lst.py.  The _unet quartet is a FROZEN snapshot; copy, do not edit.
+  4. Before any GPU: §35.33.6's standing note -- the statics ablation is eval-only and
+     cheaper, and a dense aux target does not address memorisation entering through
+     the statics.  Run it first or say why not.
+  5. TRAP: train_unet.py:1307-1311 selects best.pt on val_loss = Huber+TV+boundary.
+     Adding lambda*L_lst contaminates selection and makes the lambda=0 control
+     meaningless.  Select on the SM-only component or port --select-metric ubrmse.

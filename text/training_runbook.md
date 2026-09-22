@@ -14325,12 +14325,50 @@ form the SMAP emissivity proxy `Tb/skt`. It now carries a local `ERA5_VARS_19` a
 imports the driver list. `check_dataset.py`, `test_patchwise_dataset.py`, `test_patchwise_model.py`
 and `plot_architecture.py` had hardcoded `(365, 19)` and were updated.
 
+#### OUTCOME of the first smokes (2026-09-22)
+
+**Smoke 1, the three STRATEGY_BUFFER stations.** Ran clean (19/19), passed every range
+check, and the PLOT failed -- see the defect section above.  After the pixel pinning
+repaired it, the three were **EXCLUDED anyway**: a pinned pixel is the nearest *valid
+land*, and Combate's is 13-24 km from the station.  Meteorology from 20 km away at a
+coastal site is not the station's meteorology.
+
+```
+csvs/station_splits.csv     993 -> 990   (train 665, val 90, oos 234, dup 1)
+csvs/excluded_stations.csv   35 ->  38   with the measured reason
+csvs/era5_buffer_stations.csv             kept as the full record
+```
+
+The pixel-pinning code STAYS in `download_era5_radiation.py`: it is correct, tested, and
+what any future buffer station will need.  No station currently uses it.
+**Downstream drift not yet chased: `eval_predict.py`'s `EXPECTED_STATIONS` and every doc
+stating 993.**
+
+**Smoke 2, four point-query controls** -- Oromo NZ 41S, Adams Ranch NM 32N, AAMU-JTG AL
+35N, Saariselka FI 68N.  27/27 files, 0 incomplete days, all `era5land_point, 1 px`.
+PASS.
+
+**Three validations the download code cannot fake**, since it knows neither hemisphere
+nor latitude:
+
+```
+Oromo (41S)        ssrd peaks at DOY 352      the austral solstice; northern sites 135-180
+Saariselka (68N)   ssrd is EXACTLY 0.0        Nov to late Jan -- polar night at 68.33N
+all seven tested   ssrd_mean and seasonality both order by |latitude|
+```
+
+**FULL RUN LAUNCHED** 2026-09-22 ~17:30, `sbatch jobs/era5_radiation.sh`, job **27030181**:
+990 stations, **6,705 station-years**, measured 4.0 s/job at 6 workers -> **~7.5 h** against
+the 24 h wall.  (The earlier ~28 h estimate came from the 7-band runs; two bands are
+faster.)  Resume is skip-if-exists, so a resubmit costs nothing if it runs long.
+
 #### Run order
 
 ```
 1. sbatch jobs/era5_radiation.sh --stations <5 incl. a coastal one>    SMOKE, then STOP
-2. sanity: ssrd_sum ~5-30 MJ m-2 and strongly seasonal; strd_sum ~20-35 MJ m-2 and flat.
-           A near-flat ssrd_sum means the ACCUMULATED band was fetched.
+2. sbatch slurm/check_era5_radiation.sh                                range checks
+2b. sbatch slurm/plot_era5_radiation.sh    <-- NOT OPTIONAL.  The range check passed the
+           shifting-pixel defect and the plot caught it in one look.
 3. sbatch jobs/era5_radiation.sh                                       full 993 (expect 2 submits)
 4. sbatch slurm/splice_era5_radiation.sh                               DRY RUN -- read the gaps
 5. sbatch slurm/splice_era5_radiation.sh --execute
