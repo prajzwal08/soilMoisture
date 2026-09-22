@@ -620,7 +620,7 @@ def test_happy_path_emits_the_contract(tmp_path, monkeypatch):
         "lulc_valid": ((1,), torch.bool),
         "token_idx": ((1,), torch.int64),
         "soil_patch": ((21, 74, 74), torch.float32),
-        "era5": ((365, 19), torch.float32),
+        "era5": ((365, 18), torch.float32),
         "era5_doys": ((365,), torch.int64),
         "era5_rel_pos": ((365,), torch.int64),
         "sif": ((MAX_SIF, 1), torch.float32),

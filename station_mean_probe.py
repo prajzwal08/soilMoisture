@@ -27,7 +27,20 @@ import zarr
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, str(Path(__file__).parent))
-from dataset import ERA5_VARS, SM_DEPTHS, ZARR_ROOT, _load_zarr_labels, fill_soil_nans  # noqa: E402
+from dataset import SM_DEPTHS, ZARR_ROOT, _load_zarr_labels, fill_soil_nans  # noqa: E402
+
+# §43.12 dropped `skt_*` from the driver stack (dataset.ERA5_VARS is now 18 and
+# dataset.ERA5_ARRAY points at "era5/values18").  This probe needs skin temperature
+# as a physical surface temperature, so it reads the ORIGINAL 19-column array, which
+# splice_era5_radiation.py deliberately leaves in place.
+ERA5_VARS_19 = [
+    "t2m_mean", "t2m_min", "t2m_max", "d2m_mean", "d2m_min", "d2m_max",
+    "skt_mean", "skt_min", "skt_max", "u10_mean", "u10_min", "u10_max",
+    "v10_mean", "v10_min", "v10_max", "sp_mean",  "sp_min",  "sp_max",
+    "tp_sum",
+]
+ERA5_ARRAY_19 = "era5/values"
+
 
 from sklearn.ensemble import HistGradientBoostingRegressor  # noqa: E402
 from sklearn.linear_model import RidgeCV  # noqa: E402
@@ -65,8 +78,8 @@ def _read_station(task):
     # Seasonal amplitude: spread of the daily series, a cheap proxy for seasonality
     # that needs no date handling (record lengths differ 1096-3653 days).
     out["seasonal"] = np.array([
-        era5[:, ERA5_VARS.index("t2m_mean")].std(),
-        era5[:, ERA5_VARS.index("tp_sum")].std(),
+        era5[:, ERA5_VARS_19.index("t2m_mean")].std(),
+        era5[:, ERA5_VARS_19.index("tp_sum")].std(),
     ], dtype=np.float32)
 
     lab = _load_zarr_labels(zg)   # handles the qc/sm length realign (403 of 661 stations)
@@ -90,7 +103,7 @@ def _read_station(task):
 
 def _derived(era5_means):
     """VPD, Hargreaves PET, aridity — from the 19 ERA5 means already in hand."""
-    i = ERA5_VARS.index
+    i = ERA5_VARS_19.index
     t2m = era5_means[:, i("t2m_mean")] - 273.15
     d2m = era5_means[:, i("d2m_mean")] - 273.15
     sat = lambda t: 0.6108 * np.exp(17.27 * t / (t + 237.3))   # noqa: E731  kPa
@@ -137,7 +150,7 @@ def _smap_blocks(meta, era5, smap_csv):
     if sm_am is None or tb_h is None or tb_v is None:
         return None, None, f"{p} lacks expected SMAP columns: {list(smap.columns)}"
 
-    skt = era5[:, ERA5_VARS.index("skt_mean")].astype(np.float64)   # Kelvin
+    skt = era5[:, ERA5_VARS_19.index("skt_mean")].astype(np.float64)   # Kelvin
     with np.errstate(invalid="ignore", divide="ignore"):
         emis_h = tb_h / skt
         emis_v = tb_v / skt
@@ -324,7 +337,7 @@ def main():
     names = (["soil_mean_%02d" % i for i in range(21)] + ["soil_std_%02d" % i for i in range(21)]
              + ["elev"] + [f"elevband_{i}" for i in range(meta["elevation_band"].nunique())]
              + [f"lc_{i}" for i in range(blocks[2][1].shape[1])]
-             + list(ERA5_VARS) + [f"koppen_{i}" for i in range(blocks[3][1].shape[1] - 19)]
+             + list(ERA5_VARS_19) + [f"koppen_{i}" for i in range(blocks[3][1].shape[1] - len(ERA5_VARS_19))]
              + ["vpd", "pet", "aridity", "seas_t2m", "seas_tp", "lat", "lon"]
              + ["smap_sm_am", "smap_sm_pm", "smap_missing"]
              + ["smap_emis_h", "smap_emis_v", "smap_pol_diff", "smap_npr",

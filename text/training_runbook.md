@@ -13740,3 +13740,567 @@ fig/landsat_st30_check/{inventory,stqa_vs_cdist,cdist_climate,cdist_partial,_sum
 `download_landsat_st_mpc.py` is deliberately left intact — `plot_gra_landsat.py` and the §41.6
 cluster analyses still consume its per-scene GeoTIFFs. The new script imports its `snap` and
 `bbox_wgs84` rather than duplicating them.
+
+---
+
+## §43 The two-head build — Landsat ST on the U-Net decoder (Session 41, 2026-09-22)
+
+**STATUS: SPECIFIED, NOTHING BUILT.** §41 chose the target and §42 pulled it. §43 is the
+architecture and the build order. Two questions were open at the start of the session — what the
+architecture is, and what feeds the decoder — and both are now closed.
+
+### 43.1 The decision
+
+**Architecture: the `baseline-unet-temporal` decoder, not the patchwise trunk with no decoder.**
+`head_lst` sits beside the SM head, the ST loss is taken on the pooled output, and the shared
+decoder is what the dense target actually trains.
+
+The reason is not that the patchwise arm lost a bake-off — `pw_stage2a_L3` is the only trained run
+and its verdict was memorisation (§35.33.6), which is a supervision-geometry failure both arms
+share. The reason is that **the U-Net is the only arm that emits a map at all**, and a dense target
+needs somewhere to land. What the U-Net cannot do is produce that map from tile-pooled features:
+§27a.2 measured `_cpu_pyramid_pool` destroying 97-98% of within-tile position variance, and the
+time-series path reaches its decoder through one spatially constant FiLM vector. So the decoder is
+kept and its *inputs* are replaced — which is §39.4's precondition 2 met directly.
+
+**Decoder inputs: raw Sentinel-2 and Sentinel-1 imagery, read straight from the permanent raw
+store, replacing the L9/L6/L3 skips.** §34.5's premise — that without raw 10 m bands the seven S1
+channels are the only information doing the 160 m to 20 m work — rested on that imagery being gone.
+It is not. `/projects/prjs1968/satellite_zarr/` survived the scratch purge with all 998 stations.
+
+### 43.2 What is on disk, measured 2026-09-22
+
+| thing | path | state |
+|---|---|---|
+| Landsat ST, raw 30 m | `{DATA_ROOT}/{cat}/{folder}/LANDSAT_ST/*_st30_*.npz` | **993/993**, 4.68 GB |
+| Landsat supervision mask | same dir, `*_st30mask_*.npz` | **993/993**, 22 MB |
+| mask index | `csvs/landsat_mask_index.csv` | 253,334 rows; **133,127 supervised (52.5%)**, 120,207 not |
+| raw imagery | `/projects/prjs1968/satellite_zarr/` | 998 stations, **247 GB**, permanent |
+| TerraMind tokens | `/projects/prjs1968/zarr_tokens/` | 993 `.complete` — authoritative |
+| TerraMind tokens | `/gpfs/scratch1/shared/pkhanal/zarr/` | **24 MB skeleton, 0 `.complete`** — purged |
+| SM labels | baked into the token store as `labels/{sm,qc,depths,dates}` | no NetCDF at train time |
+
+`/projects/prjs1968/satellite_zarr` and `/gpfs/work3/0/prjs1968/satellite_zarr` are the **same
+directory** (identical device+inode); scripts spell it both ways.
+
+Raw store layout, per station, one flat `{dir_name}.zarr`:
+
+```
+s2/data     [100, 12, 224, 224] int16  chunks [1,12,224,224] = 1.204 MB/date
+s1_asc/data [332,  2, 224, 224] f16    chunks [1, 2,224,224] = 200 KB/date
+s1_desc/                                present for 910 of 998 stations
+dem/data    [1, 224, 224] f32          lulc/data [4, 224, 224] u1, annual
+dates       |S8 BYTES  (the token store uses <U8 str — joins need a decode)
+```
+
+Two frictions: there is **no `.zmetadata`**, so `zarr.open_consolidated` raises and the fallback
+`open_group` directory-stats on every access; and the array names are `s2/data`, not `s2/l12`.
+
+### 43.3 Two blockers, neither of them new code
+
+**(a) The token store training reads from is empty.** `dataset_unet.py:40` is
+`ZARR_ROOT = /gpfs/scratch1/shared/pkhanal/zarr`, `_open_zarr`'s `.complete` gate
+(`dataset_unet.py:134`) fails for all 993, and the dataset builds **0 samples**. The analysis
+scripts have been monkey-patching `_ds.ZARR_ROOT` to `/projects/prjs1968/zarr_tokens` at runtime
+(`analyse_s1_spatial_cv.py`, `plot_dtr_vs_sm.py`, `plot_txson_six.py`, `analyse_txson_six.py`,
+`plot_gra_thermal.py`).
+
+**Measured: `zarr_tokens` is 1.4 TB, of which `sm_only` alone is 1.2 TB.** Re-staging that to
+scratch is hours of small-file copying for a tree that will simply be purged again. **Recommend
+repointing `ZARR_ROOT` at `/projects` instead**, which §43 makes cheap: replacing the L9/L6/L3
+skips with `fine` removes the `.npy` memmap reads that `--use-memmap` exists to serve, L12 already
+stages through `/dev/shm` (`train_unet.py:110-178`), and `cm/masks`, labels, ERA5, soil, DEM and
+LULC are read once at init and cached. What rises is job startup, and `shm_preload.py` already
+parallelises that across 64 processes (and fixes the read-before-resume-check bug
+`train_unet.py:161` still carries). The new raw-imagery read is GPFS either way — the raw store
+has always been on `/projects`.
+
+**(b) The S2 harmonisation state of the raw store is UNDETERMINED.** `harmonize_s2_pre2022.py`
+adds +1000 DN to pre-2022 tiles (ESA baseline 4.0, 2022-01-25) and operates on
+`SCRATCH_DIR = /gpfs/scratch1/shared/pkhanal/satellite` — the TIFs, which are gone.
+`convert_satellite_to_zarr.py:91` writes `units: DN [0,10000]` as a **hardcoded string**, not a
+measurement, so it is not evidence. Commit dates are suggestive but not proof (harmonise
+2026-05-28, zarr migration 2026-06-02, `zarr_creation_date` 2026-06-02). If the store is
+unharmonised there is a step change in every band at 2022-01-25. **Settle it by reading pixels in
+a batch job** before any training: the minimum valid DN of pre-2022 scenes is ~1000 if harmonised,
+~0 if not.
+
+### 43.4 Decoder inputs — 19 channels at 112x112 @ 20 m
+
+```
+fine (19 ch):
+  10   S2 bands          B01/B09 dropped (idx 0, 9)
+   3   NDVI, NDWI, NBR   computed at native 10 m, THEN pooled
+   1   s2_valid          per-pixel, cm/masks classes 3/4/5/255 -> 0
+   2   VV, VH            raw backscatter, no anomaly
+   1   s1_age            days since that pass
+   1   s1_valid          nodata (the zarr fill_value is 0.0, a plausible sigma0)
+   1   orbit             0 = ASC, 1 = DESC
+```
+
+Selection, both **causal — nearest PRECEDING acquisition, never a following one.** A pass from
+D+3 leaks the target; the loader's 365-day window already works this way
+(`rel_pos in [0,364]`, 364 = today), and `select_anchor_zarr` (`dataset_unet.py:490-493`) already
+implements "most recent fully clear, else most recent" — the same rule, reusable.
+
+```
+s2_idx = last t where date[t] <= D and clear_fraction(t) >= thresh
+s1_idx = last t where date[t] <= D                         (either orbit)
+```
+
+Decisions behind the set:
+
+- **Only B02/B03/B04/B08 are truly 10 m.** All 12 were bilinearly resampled to 10 m at download
+  (`download_s2_mpc.py:16`, `resolution=RES_M`, `Resampling.bilinear`). With `up4` dropped the
+  finest tier is 20 m, so all ten retained bands sit at or coarser than native and nothing is
+  invented. B01/B09 (60 m, aerosol and water vapour) would still be faking it, so they go.
+- **Indices at 10 m first.** NDVI of averaged bands is not the average of NDVI — the ratio does not
+  commute with pooling, and doing the division at native resolution keeps field-level contrast that
+  band-first pooling smears.
+- **Raw VV/VH, not `d_VV`.** The decoder needs within-tile *contrast*, not absolute moisture — the
+  bottleneck supplies the level — and S2 arrives at the same resolution to de-confound cover.
+  Decoder-only placement blocks the memorisation route: the trunk never sees S1, and a shared conv
+  with no positional encoding cannot easily store 993 per-station baselines. Costs accepted:
+  roughness is not optically observable, and single-date speckle is ~2.7 dB (ENL ~= 4.4) against a
+  moisture modulation of a few dB. The price is that **zeroing S1 is no longer a clean ablation** —
+  raw VV carries static structure too. Adding `mean_VV`/`mean_VH` as two static channels later
+  restores it, with the §40.4 reference discipline (>= 2 yr, never inside OOT).
+- **No DEM.** Static, already in the trunk as `dem_tok` at 160 m, and absolute elevation is close
+  to a unique station identifier across 993 sites — the §35.33.6 statics route. Expect the fine map
+  weakest where relief is real; if so, re-add as a tile-centred residual, never absolute metres.
+- **Per-pixel cloud, not per-patch.** `filter_cloudy_tiles.py:64` collapses the seven-class mask to
+  one flag per 16x16 patch and rejects a tile only above 50% invalid patches. Fine for tokens; at
+  20 m a passing scene can put cloud reflectance straight into the channels. Note `cm/masks` is
+  **not** Sentinel-2 SCL — classes 3/4/5 are thin cloud / thick cloud / shadow, and 255 nodata.
+- **No `s2_age`.** S2's contribution is static structure (§29: +0.967 coherence across months), so
+  staleness costs little. `s1_age` is kept because S1's entire value is dynamic contrast, and it
+  will be long-tailed — 88 of 998 stations are ASC-only.
+
+### 43.5 Decoder wiring
+
+Structure is `baseline-unet-temporal`. The trunk is untouched — drivers, soil encoder,
+`anchor_l12` -> `spatial_ctx` -> bottleneck `(B,768,14,14)` (`model_unet.py:732-735`) — and so are
+the `up1/up2/up3` ladder, the `_ConvBlock` widths `(512,256,128,64)` and the FiLM on each skip.
+
+**Replace the skips, do not append to them.** `fine` goes in where L9/L6/L3 came out, via new 1x1
+projections at the same widths:
+
+| stage | grid | cell | bottleneck path | skip slot | conv in_ch |
+|---|---|---|---|---|---|
+| bottleneck | 14x14 | 160 m | `bottle_proj(spatial_ctx)` 512 | — | — |
+| up1 -> conv1 | 28x28 | 80 m | x 512 | `Conv2d(19,512,1)(pool(fine,28))` | 1024, unchanged |
+| up2 -> conv2 | 56x56 | 40 m | x 256 | `Conv2d(19,256,1)(pool(fine,56))` | 512, unchanged |
+| up3 -> conv3 | 112x112 | 20 m | x 128 | `Conv2d(19,128,1)(fine)` | 256, unchanged |
+| up4, conv4 | 224x224 | 10 m | — | **dropped** | — |
+
+Appending instead would put 19 channels of measurement against a 1024-wide input — 1.8% of the
+stage-1 width. That is §35.18's concat objection in another form: a null could not be told apart
+from the optimiser never digging the signal out of a large constant background. Replacing costs
+nothing real, because all three skips are 14x14 stretched and carry nothing below 160 m (§34.9)
+while the bottleneck already supplies the 160 m per-position state.
+
+Keep the FiLM layers — identity-initialised, so free, and modulating real reflectance and
+backscatter by the temporal context is more meaningful than modulating tokens. It stays spatially
+constant: a standing limitation, not one this change introduces.
+
+Dropping `up4` is the one structural change beyond inputs, and it moves the supervised pixel:
+`STATION_ROW/COL = 112` (`model_unet.py:349-350`) becomes **56, 56**. Keeping `up4` would pay the
+decoder's most expensive conv for a 10 m field that nothing supervises and that has no
+time-varying input, since S1 does not resolve at 10 m.
+
+Replacing forfeits the bit-identical start, so §26's provenance gate does not apply. If it is
+wanted, do it in two steps: wire `fine` as an *appended*, zero-init slice, verify the forward pass
+is bit-identical to a `baseline-unet-temporal` checkpoint, then switch to replace.
+
+Heads, both on the final 112x112 @ 20 m map:
+
+- `head_sm` — unchanged `Conv2d(64, n_depths, 1)`, read at `(56,56)`.
+- `head_lst` — `Conv2d(64, 1, 1)` -> `(B,1,112,112)`, pooled to **22x22 @ 100 m** for the loss.
+
+### 43.6 The LST target and loss
+
+**Grid: 22x22 @ 100 m**, §33.12(d)'s existing default, so nothing is re-litigated. 100 m is where
+TIRS actually acquires; 484 supervised cells per clear scene against one SM pixel delivers §41's
+density argument in full. Model side is exact — `avg_pool 5` on the inner 110x110 of the 112x112
+output. Landsat side is not (100/30 = 3.33), so **precompute a sparse area-overlap matrix per
+station** mapping 76x76 @ 30 m onto 22x22 @ 100 m, store it beside the npz, apply per scene. A
+true area-average, one matmul, not a resample. Both sides then land on the same inner 2200 m.
+
+Grid alternatives, for the record: because the loss is applied after pooling, several reductions of
+the same 20 m map can coexist (160 m as a coarse check). **Not 60 m** — the only other grid where
+both sides pool by exact integers (/2 from Landsat, /3 from the model), but well inside TIRS's
+IFOV, so it fits USGS's 30 m resampling as much as thermal signal. **120 m** is the only fully
+exact option on both sides (4x30, 6x20) and is honestly coarser than the instrument — the fallback
+if area weighting proves a nuisance; it crops to 18x18 over 2160 m.
+
+**QC is already decided and built — do not re-derive it.** `build_landsat_mask.py` is the single
+source of truth: `qa_decode(qa_pixel30)` (bits 0-5 rejected, bit 6 not required, bit 7 water KEPT
+and flagged) AND `isfinite(lst30)` AND `250 K < lst30 < 360 K` AND `cdist30 > 1.0 km`.
+**No ST_QA gate**, and the reason is measured: ST_QA is very nearly a readout of distance to cloud
+(5.875 K adjacent, 1.625 K beyond 20 km), so gating on both double-charges, and ST_QA <= 3 K alone
+costs 107 of 993 stations while excluding only 5 scenes at its 8 K tail. The 360 K ceiling, not
+§29.5's 350, is because bare desert genuinely reads 354.5 K at Stovepipe Wells; it also excludes
+DN 65535 -> 372.99994 K, the uint16 saturation sentinel, which is not a temperature.
+
+Mask bundle keys: `mask`, `water`, `n_px`, `n_px_clear`, `dates`, `meta` — `np.packbits` over the
+flattened 76x76, 722 B/scene. Unpack with
+`np.unpackbits(m, axis=1, count=5776).reshape(-1,76,76).astype(bool)`.
+
+**Temporal activation.** A sample is (station, day D); Landsat exists only on overpass days.
+`L_lst` is masked at the *sample* level, not just per pixel — 133,127 of 253,334 station-dates
+carry supervision, and against ~2000 trainable days per station that is roughly 7-12% of samples.
+Effective thermal density is therefore ~0.1 x 484 ~= 58 cells per average sample, still ~58x the SM
+density. Either oversample Landsat days in the sampler or let lambda absorb it; decide from the
+measured per-station scene counts, not from this estimate.
+
+**What is regressed — not raw Kelvin.**
+
+```
+T'     = T - mean(T, valid)          # 22x22 centred field, valid pixels only
+That'  = That - mean(That, valid)    # SAME mask on both sides
+L_lst  = Huber(That', T') / sigma_ST   +   alpha * Huber(mean(That), mean(T))
+         |___ pattern term ___|           |___ level term ___|
+```
+
+The pattern term is where the trunk gradient should come from; raw Kelvin can be won by season
+detection, which is §42's own watch item. Keeping the level as a separate small scalar means
+nothing is discarded and the two are reportable apart. `sigma_ST` is a fixed global SD of the
+centred field, computed once into a stats JSON beside `era5_stats.json`, so the loss is O(1) and
+lambda stays interpretable — centred residuals run a few K against SM's 0-0.6 m3/m3 and cannot
+share `huber_delta = 0.05`.
+
+**lambda by gradient norm, taken at the shared feature map.** Not over parameters:
+
+```
+g_sm  = ||dL_sm  / dz|| ,  g_lst = ||dL_lst / dz|| ,  lambda <- EMA(g_sm / g_lst)
+z = the 64-channel 112x112 map both heads read
+```
+
+One tensor, exact, `torch.autograd.grad(..., retain_graph=True)` every ~50 steps, held fixed in
+between. There is **no gradient-norm machinery anywhere in the repo** — this is written from
+scratch — but the codebase has the right precedent: `train.py:1117-1168` (`input_grad_ratio`) is
+the only `torch.autograd.grad` in the tree and is documented at `:1128-1130` as deliberately taken
+w.r.t. inputs so nothing lands in `p.grad` and DDP's reducer never sees an unexpected gradient.
+Taking the norms at an activation follows that same shape. Note the step runs under bf16 autocast
+with no GradScaler (`train_unet.py:592`), so the norms are usable but low-precision.
+
+**Splits.** LST supervision follows the same station splits and the same OOT boundary — no thermal
+gradient from val/oos stations or from 2023+, or dense spatial structure leaks into the stations
+used for evaluation.
+
+**Reporting — the number that decides whether the head worked.** §29 measured the within-tile
+pattern as static (+0.967 across months), so a head predicting each station's time-mean anomaly map
+scores well while learning nothing dynamic. Report three, not one: per-scene pattern correlation;
+the same after subtracting each station's static mean map from both sides; and skill with `emis`
+regressed out (§41.5: corr(median LST, emis) is -0.18 to -0.73 at every station, so up to half the
+static variance is an emissivity field). **`emis30` is not fed to the decoder** — handing it over
+lets the head solve the task without the trunk.
+
+### 43.7 Data loading
+
+`dataset_unet.py` reads **one zarr group per station** for everything — tokens, `cm/masks`, labels,
+ERA5, SIF, TWSA, DEM, LULC, soil. The raw imagery store is a *second* store with a different
+layout, and adding it means a second handle per station.
+
+Emitted payload today is **2.95 MB/sample**; in-flight is `12 workers x prefetch 4 x batch 128 x
+2.95 MB ~= 18.1 GB/rank`, ~97 GB across 4 ranks. `train_unet.py:867-870` records that this IPC
+queue is exactly what caused the epoch-boundary OOM kills `_cpu_pyramid_pool` was written to fix.
+
+So: **pool and compute the indices in the worker, emit only `fine`.** The read is ~1.4 MB/sample
+(one s2 chunk + one s1 chunk, both single-chunk reads — the chunking is favourable), but the
+emitted tensor is `19 x 112 x 112` fp16 = **477 KB**, or +16% on the payload rather than +47%.
+That distinction is the difference between a comfortable change and a rerun of the OOM.
+
+Three further mechanics that will bite:
+
+- **Reads move from tmpfs to GPFS.** Steady state today is ~31 MB/sample from `/dev/shm` with
+  essentially zero GPFS traffic. `fine` adds one GPFS read per sample where there were none.
+- **Do not cache raw S2 per station the way L12 is cached.** Every cache in this dataset is
+  per-DDP-rank; `dataset.py:1295-1300` already records the arithmetic for `cm/masks` and lands at
+  ~40 GB of pure duplication across 1000 stations x 4 ranks.
+- **`cm/masks` is chunked `(N, 224, 224)` — the whole station's masks are one chunk.** A
+  single-date per-pixel read decompresses ~10 MB unless cached. Cache the per-pixel mask for the
+  selected dates at init, or restructure.
+
+Latent issues in the frozen loader worth fixing in the copy rather than inheriting:
+
+- `dataset_unet.py:309` — `s2_valid` is **only** `doys > 0`. It carries no cloud information; a
+  100%-cloudy acquisition yields an all-zero pooled row that `s2_valid` still reports True.
+- `dataset_unet.py:290-291` — a NaN S2 acquisition `continue`s without advancing `out_i`, leaving a
+  padding hole mid-array. The S1 path does not have this shape.
+- `dataset_unet.py:1039-1042` — label/ERA5/soil are read outside the `if zg is not None` block, so
+  a `None` group raises `UnboundLocalError` at return. Dead by luck (filters 5-6 drop those
+  stations first), not by construction.
+- `train_unet.py:161` vs `:164` — the `/dev/shm` resume check runs *after* the full GPFS read, the
+  bug `shm_preload.py` documents as costing up to 1901 s per requeue. But `dataset_unet.py:707-709`
+  ignores the `narrowed` key `shm_preload.py` writes, so adopting it naively hands the unet dataset
+  `(N,1,768)` arrays.
+
+### 43.8 Training changes, and one trap
+
+**The `_unet` quartet is a frozen snapshot** — `model_unet.py:1-7`, `train_unet.py:1-7`,
+`dataset_unet.py:1` all say *"FROZEN BASELINE SNAPSHOT — do not edit"*, and nothing else imports
+them. This is a copy to new files, not an edit; the rollback stays intact.
+
+**THE TRAP: model selection is silently contaminated.** `train_unet.py:1307-1311` selects `best.pt`
+on `val_loss`, which is the assembled `_compute_loss` scalar — Huber + TV + boundary. Add
+`lambda * L_lst` and `best.pt` is chosen partly on thermal skill, and the lambda=0 control is then
+compared against a checkpoint selected by a different criterion. `_loss_aggregates`' own docstring
+(`:424-427`) already warns `val_loss` is not cross-run comparable when the composition changes.
+**Select on the SM-only component, or port `--select-metric ubrmse` from the live `train.py`**
+(it was never back-ported).
+
+Other threading points:
+
+- The **boundary term is live** at `lambda_boundary = 0.1` (`train_unet.py:402-404`,
+  `F.relu(-pred) + F.relu(pred - 1)` over the whole map). It must be restricted to the SM head —
+  surface temperature in Kelvin is not in [0,1].
+- `masked_huber_loss` (`model_unet.py:752-820`) takes `station_row/col` as arguments — pass 56, 56.
+  `delta` is never passed by `_compute_loss` (`:392-396`), so it is always the 0.05 default.
+- There is **no `depth_weights` in this arm** (zero references); `per_depth=True` here means an
+  equal-weight mean over observed depths. The inverse-frequency vector is a live-`train.py` feature
+  only. Port it or accept the difference and say so.
+- `forward()` returns a single tensor (`model_unet.py:671`, `:747`); it must return two. That
+  widens ~20 call sites through `_compute_loss`, `train_one_epoch`, `evaluate`, the DDP reduce
+  block (`:1160-1176` — SUM for sums, AVG for scalars), three separate checkpoint dicts
+  (`:1088-1097`, `:1129-1142`, `:1313-1324`), the W&B `log_dict` (`:1240-1304`), CONFIG/argparse
+  (`:183-227`, `:732-788`), and `ckpt_utils_unet.py:64`'s `new_keys` whitelist.
+- **Resume breaks.** `train_unet.py:954-960` raises a fatal `RuntimeError` on an architecture
+  change. Expected — delete `last.pt`, and no `baseline-unet-temporal` checkpoint is resumable.
+- W&B config strips keys ending `_dir`, `_csv`, `_stats` (`:1056-1058`), so an `lst_stats` path key
+  is silently excluded from the logged config. Name it otherwise.
+- **Scope decision, to make deliberately rather than inherit:** `CONFIG["category_filter"]` is
+  `["sm_only"]` (842 of 993 on disk) over 2016-2022. The Landsat pull covers all 993 across three
+  categories, and splits are train 663 / val 90 / oos 233.
+
+### 43.9 Build order
+
+Each step gated; do not run the next until the previous prints what it should.
+
+```
+0.  Settle the S2 harmonisation question            batch job, reads pixels
+0b. Re-stage or repoint the token store             decision + data move
+1.  consolidate_landsat_st.py                       30 m -> 100 m area weights, .npy not .npz
+2.  dataset_lst.py                                  fine tensor + ST target/mask in the batch dict
+3.  model_lst.py                                    skip replacement, up4 dropped, head_lst
+4.  train_lst.py                                    lambda, grad-norm matching, SM-only selection
+5.  smoke: --max-stations --max-epochs, then STOP
+6.  first real run, lambda=0 control IN the same run
+```
+
+**Before spending GPU on any of it, §35.33.6's standing note applies to this plan directly:**
+
+> the failure is station-identity memorisation entering through the STATICS, and queues a statics
+> ablation to test it — a dense auxiliary target does not address that, and the ablation is
+> cheaper. Run it first or say why not.
+
+The statics ablation is eval-only on an existing checkpoint. If memorisation arrives through
+DEM/LULC/soil, a Landsat head gives a memorising trunk a second task to memorise.
+
+### 43.10 Verification
+
+1. **Zero-init check** — if the two-step route is taken, one forward pass against a
+   `baseline-unet-temporal` checkpoint must be bit-identical before Landsat is wired in.
+2. **Causality assert** — `s2_date <= D` and `s1_date <= D` for every sample in a full epoch. This
+   is the one bug that invalidates a published number (§33.12's `c_k` look-ahead, same shape).
+3. **Area-weight check** — pool a Landsat scene through both the sparse matrix and an independent
+   reprojection; they must agree to float precision. Include at least one of the 10,042 cross-zone
+   reprojected scenes.
+4. **Age and staleness distributions** — log `s1_age` and the S2 lookback over a full epoch before
+   reading anything into either modality's contribution.
+5. **Static-vs-dynamic decomposition** — vary only the S1 date across otherwise identical samples
+   and measure how much the fine map moves. With raw VV/VH the zeroing ablation is confounded.
+6. **IPC headroom** — watch peak RSS at the first epoch boundary; that is where the old OOM landed.
+7. SLURM: `--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhanal@gmail.com`; `Pool(64)` with
+   matching `--cpus-per-task=64` for scan/audit scripts. Nothing on the login node.
+
+### 43.11 Files
+
+```
+consolidate_landsat_st.py   NEW  30 m -> 22x22 @ 100 m area weights, per-pixel mask, dates
+dataset_lst.py              NEW  copy of dataset_unet.py + fine tensor + ST target
+model_lst.py                NEW  copy of model_unet.py + skip replacement + head_lst
+train_lst.py                NEW  copy of train_unet.py + lambda + SM-only selection
+csvs/landsat_mask_index.csv      EXISTS — what the dataset selects on
+build_landsat_mask.py            EXISTS — the QC rule, single source of truth
+```
+
+### 43.12 The ERA5 driver change — drop `skt`, add `ssrd_sum` + `strd_sum` (BUILT)
+
+**BUILT 2026-09-22, not yet run.** 19 features become **18**.
+
+**The rule: state variables get mean/min/max, accumulations get a daily sum.**
+
+```python
+ERA5_VARS = [
+    "t2m_mean", "t2m_min", "t2m_max",
+    "d2m_mean", "d2m_min", "d2m_max",
+    "u10_mean", "u10_min", "u10_max",
+    "v10_mean", "v10_min", "v10_max",
+    "sp_mean",  "sp_min",  "sp_max",
+    "tp_sum", "ssrd_sum", "strd_sum",
+]  # 18
+```
+
+**Why drop `skt`.** It is a *modelled diagnostic* in ERA5-Land, largely determined by `t2m` plus
+the radiation forcings now added — a derived quantity standing in for its own drivers. And for
+`head_lst` it is the target at 9 km; §43.6's spatially-centred loss means that is not strict
+leakage, but it makes the level term trivial to win.
+
+**Why sum, not mean/min/max.** Each `_hourly` value is already J m-2 over that hour, so 24 summed
+is the day's incoming energy and the mean is that over 24. `ssrd_min` is ~0 every night.
+Decisively: **a 24 h total survives the UTC-day boundary and a daily max does not.** ERA5-Land
+days are UTC, so for most stations a "day" cuts the local diurnal cycle; a total barely cares where
+the cut falls. That is already a quiet weakness in `t2m_min/max` and there was no reason to repeat
+it for the variable whose whole signal *is* the diurnal cycle.
+
+**VERIFIED against the GEE catalogue**: `ECMWF/ERA5_LAND/HOURLY` carries
+`surface_solar_radiation_downwards_hourly` and `surface_thermal_radiation_downwards_hourly`, both
+J/m2, both documented as "disaggregated from the original cumulative values into hourly values".
+`meteodata_ERA5land_GEE.md:159-160` already named both, marked "excluded for now".
+
+**`ssrd`/`strd` were never fetched.** Two ERA5 scripts exist: `download_era5land.py` (CDS) requests
+them; `download_era5land_gee.py` — the path that actually produced all 993 stations — has 7 bands
+and **no radiation** (`:85-96`), a list that is exactly the 19 in `ERA5_VARS`. Confirmed on
+`excluded_stations/ISMN_SCAN_Lindsay/ERA5Land/meteo_20140101_20171231.nc`: precisely those 19
+datasets. The active stations' `ERA5Land` dirs are gone (only 35 survive, all excluded), so the
+only surviving copy of the drivers is `era5/values` in the token store.
+
+#### The shape of the change: fetch TWO bands, then splice
+
+**Do not re-download all seven.** The other 16 columns already exist in `era5/values`. Re-fetching
+them would resample a different GEE snapshot with re-probed strategies and silently change the SM
+model's inputs for reasons unrelated to this change, for no benefit. So:
+
+```
+download_era5_radiation.py    2 bands -> {station}/ERA5Land/rad_{year}.nc     env: soilmoisture
+splice_era5_radiation.py      era5/values (19) + rad -> era5/values18 (18)    env: terramind
+verify_era5_18.py             reads it back and proves it                      env: terramind
+```
+
+**Column map**, asserted in the splice script itself — old indices 6,7,8 (`skt_*`) drop, the other
+16 carry over in order, the two sums append:
+
+```
+values18[:, 0:16] == values[:, [0,1,2,3,4,5, 9,10,11,12,13,14,15,16,17,18]]
+values18[:, 16]   == ssrd_sum
+values18[:, 17]   == strd_sum
+```
+
+**WRITE BESIDE, NEVER OVER.** `zarr_tokens` is 1.4 TB and the only copy. `era5/values` is (N,19)
+f32, ~277 KB per station and under 300 MB for all 993, so `era5/values18` + `era5/vars18` go in
+alongside and `era5/values`, `era5/date_ints`, `era5/doys` and `.complete` are untouched. Rollback
+is free and no prior run becomes unreproducible. The splice is modelled on `trim_pre2016.py`, this
+repo's working precedent for array-level in-place zarr patching (`mode="a"`,
+`zg.array(..., overwrite=True)` preserving dtype and compressor, then `consolidate_metadata`).
+**Not** `create_token_zarr.py`: its `convert_station` opens `mode="w"` (`:314`) and destroys the
+store.
+
+#### Two bugs found in `download_era5land_gee.py` while building this
+
+**(a) Buffer pixels are never collapsed, so `tp_sum` is inflated for 22 stations.** `getRegion` on
+a 25 km buffer returns one row per (pixel, time), and `process_station_year` (`:394-408`) never
+groups by time before `.resample("1D")`. For the mean/min/max variables that is a spatial-plus-
+temporal statistic — defensible. For **`tp_sum` it sums across pixels as well as hours**, inflating
+daily precipitation by roughly the pixel count (~16 at 0.1 deg inside a 25 km buffer). 22 rows in
+`era5land_gee_log.csv` carry `era5land_buffer_25km`. This is a **pre-existing defect in the stored
+`tp_sum`** for those stations. It is NOT fixed here — fixing it means re-fetching the other 16
+columns, which this change deliberately avoids — but `download_era5_radiation.py` collapses
+per-timestamp before aggregating so the radiation sums do not inherit it. Those 22 stations look
+permanently and wrongly wet to the model; decide separately whether that is worth a re-fetch.
+
+**(b) It reads the wrong station list.** `download_era5land_gee.py:62` uses
+`{DATA_ROOT}/station_splits.csv` — **1010 rows**. The authoritative list is `csvs/station_splits.csv`
+— **993 rows**, per `CLAUDE.md` and `create_token_zarr.py:45`. The new script uses the 993.
+`jobs/era5land_gee.sh:10` also carries the wrong `--mail-user`; `jobs/era5_radiation.sh` does not.
+
+#### Other decisions made in the build
+
+- **Strategy is resolved once per STATION, not per station-year.** The original sets
+  `job["strategy"] = None` for every job (`:211`) and re-probes inside `process_station_year`
+  (`:378-380`). Radiation must use the *same* strategy the original 19 used, or a coastal station
+  gets valid `t2m` and NaN radiation.
+- **STRATEGY_ERA5 raises rather than guessing.** `ECMWF/ERA5/HOURLY` carries only the ACCUMULATED
+  radiation bands, not the `_hourly` variants, so summing them would give a running total. Manual
+  de-accumulation is possible but has never been needed: `text/logs.txt:537-570` records all three
+  known coastal stations resolving via STRATEGY_BUFFER, and strategy 3 has never run in production.
+- **Gaps are reported, not filled.** A day in `era5/date_ints` with no radiation row would become
+  NaN, and the datasets z-score with no NaN handling — the model would train on `nan`. The splice
+  refuses any station with a gap by default; `--max-gap-days N` opts in after the dry-run
+  distribution has been read.
+- **Plain z-score, not `log1p`.** That flag exists for zero-inflated precipitation only
+  (`compute_era5_stats.py` hardcodes `log1p_precip=True`; `PRECIP_IDX` uses `.index("tp_sum")` and
+  self-adjusts to the new position). `ssrd`/`strd` are bounded and roughly seasonal-sinusoidal.
+- **New stats file, not a rewrite.** `csvs/era5_stats18.json`. `era5_stats.json` stays valid for
+  every existing checkpoint, and `ckpt_utils.py:41-70` SHA-256s the file against
+  `cfg["era5_stats_sha"]`, so a distinct name keeps that provenance check meaningful.
+- **Throughput.** Measured: 8049 station-years in 7 h 09 m at 16 workers; 4413 in 13 h 47 m at 6.
+  ~9,000 station-years at 6 workers is ~28 h against a 24 h wall. **Resubmit, do not raise
+  concurrency** — skip-if-exists makes a second submission free, and 429 is deliberately absent
+  from `_GEE_NO_RETRY` so rate limits ride the 2/4/8 backoff.
+
+#### Which files were changed, and which deliberately were not
+
+`ERA5_VARS` exists in **seven** copies. They do NOT all become 18, because they describe different
+things:
+
+| file | change | why |
+|---|---|---|
+| `dataset.py:58` | -> 18, plus `ERA5_ARRAY = "era5/values18"` | the live driver stack |
+| `model.py:402` | `Linear(19,256)` -> `Linear(18,256)` | matches it |
+| `compute_era5_stats.py` | -> 18, out -> `era5_stats18.json` | reads via `dataset._load_zarr_era5`, so it follows `ERA5_ARRAY` automatically |
+| `create_token_zarr.py:47` | **unchanged, annotated** | it writes `era5/values` from `meteo_*.nc`, which has 19 columns; 18 would make it look for variables the source lacks |
+| `retokenize_satellite_zarr.py:271` | **unchanged, annotated** | same reason — the seventh copy, a function-local `era5_vars` |
+| `audit_pretrain.py:35` | unchanged | membership test against the source NetCDFs, order-independent |
+| `verify_frozen_effect.py:37` | unchanged | reads `era5/values` directly with its own list; needs `skt_min` for frozen ground |
+| `dataset_unet.py:53`, `model_unet.py:370` | **unchanged** | FROZEN SNAPSHOT. §43 copies them to `{dataset,model,train}_lst.py`; the copies get 18 |
+
+`station_mean_probe.py` was made **self-consistent on the 19-column array** rather than migrated:
+it reads `era5/values` directly (`:76`) and needs `skt_mean` as a physical surface temperature to
+form the SMAP emissivity proxy `Tb/skt`. It now carries a local `ERA5_VARS_19` and no longer
+imports the driver list. `check_dataset.py`, `test_patchwise_dataset.py`, `test_patchwise_model.py`
+and `plot_architecture.py` had hardcoded `(365, 19)` and were updated.
+
+#### Run order
+
+```
+1. sbatch jobs/era5_radiation.sh --stations <5 incl. a coastal one>    SMOKE, then STOP
+2. sanity: ssrd_sum ~5-30 MJ m-2 and strongly seasonal; strd_sum ~20-35 MJ m-2 and flat.
+           A near-flat ssrd_sum means the ACCUMULATED band was fetched.
+3. sbatch jobs/era5_radiation.sh                                       full 993 (expect 2 submits)
+4. sbatch slurm/splice_era5_radiation.sh                               DRY RUN -- read the gaps
+5. sbatch slurm/splice_era5_radiation.sh --execute
+6. sbatch slurm/verify_era5_18.sh                                      six checks incl. bit-identity
+7. recompute csvs/era5_stats18.json; the 16 carried columns must match era5_stats.json
+```
+
+
+### 43.13 Settled: LST stays auxiliary
+
+Considered and **rejected this session**: promoting LST to a reported product.
+
+It would be a *temporal gap-filling* product, not a downscaling one — 100 m is Landsat's own
+resolution, and on any day Landsat observed, Landsat wins. The only thing the model offers the
+sensor does not is days the sensor missed (~250 usable scenes per station per decade becoming
+daily, at 10:30 local).
+
+That is a real capability, but claiming it means beating this baseline and reporting the number:
+
+```
+ST_hat(i,j,t) = ERA5_skt(t) + a(t) * M_static(i,j)
+```
+
+with `M_static` the station's time-mean centred Landsat map and `a(t)` fit from weather. §29
+measured the within-tile pattern as static (+0.967 across months), so that baseline is strong by
+construction — it is the exact analogue of the station-mean predictor that §35.33.6's memorisation
+verdict turned on. It is also computable today with no model at all (all 993 mask bundles and
+253,334 station-dates are on disk; split-half the scenes per station, build `M_static` from one
+half, score the other). **If the LST product is ever reopened, that split-half baseline is step 1.**
+
+Auxiliary framing keeps: `head_lst` is not called in the SM inference path, SM is the deliverable,
+and the lambda=0 control decides whether the head stays at all. Two notes that follow:
+
+- **Deleting the head does not delete its effect.** The decoder weights were shaped by the thermal
+  gradient — that is the point. "Deleted at inference" means not evaluated or reported.
+- **Keep the head's weights in the checkpoint.** §43.6's three diagnostic numbers need it alive on
+  held-out scenes, and those numbers are what decide keep-or-drop.

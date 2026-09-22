@@ -268,6 +268,12 @@ def _merge_nc(directory: Path, stem: str):
 
 
 def _write_era5(root, era5_dir):
+    # NOTE (§43.12): this list stays at 19 ON PURPOSE.  It mirrors the columns that
+    # exist in the source `meteo_*.nc`, and this writer produces `era5/values`.  The
+    # 18-column driver set (`skt_*` dropped, `ssrd_sum`/`strd_sum` appended) is a
+    # DERIVED array, `era5/values18`, written separately by splice_era5_radiation.py
+    # from these 19 plus rad_*.nc.  Changing this list to 18 would make the writer
+    # look for variables that the meteo files do not contain.
     era5_vars = [
         "t2m_mean","t2m_min","t2m_max","d2m_mean","d2m_min","d2m_max",
         "skt_mean","skt_min","skt_max","u10_mean","u10_min","u10_max",

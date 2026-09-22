@@ -2,7 +2,7 @@
 compute_era5_stats.py — per-variable ERA5-Land normalisation statistics
 =======================================================================
 
-Writes csvs/era5_stats.json, which dataset.py z-scores the (365, 19) ERA5
+Writes csvs/era5_stats18.json, which dataset.py z-scores the (365, 18) ERA5
 window with.  Companion to compute_driver_stats.py (SIF / TWSA / soil /
 label-mean); slurm/driver_stats.sh runs both.
 
@@ -80,16 +80,22 @@ from compute_driver_stats import admit_station, select_stations  # noqa: E402
 
 REPO       = Path("/gpfs/work3/0/prjs1968/soilMoisture")
 SPLITS_CSV = REPO / "csvs" / "station_splits.csv"
-OUT_PATH   = REPO / "csvs" / "era5_stats.json"
+# New filename, not a rewrite: era5_stats.json stays valid for every existing
+# checkpoint, and ckpt_utils.py SHA-256s this file against cfg["era5_stats_sha"],
+# so a distinct name keeps that provenance check meaningful.
+OUT_PATH   = REPO / "csvs" / "era5_stats18.json"
 
+# §43.12: 18 columns, matching dataset.ERA5_ARRAY ("era5/values18").  `skt_*` is
+# gone; `ssrd_sum`/`strd_sum` are appended.  `_load_zarr_era5` is imported from
+# dataset.py below, so it already reads the right array -- but this list must match
+# its width or scan_station()'s shape gate skips every station.
 ERA5_VARS = [
     "t2m_mean", "t2m_min", "t2m_max",
     "d2m_mean", "d2m_min", "d2m_max",
-    "skt_mean", "skt_min", "skt_max",
     "u10_mean", "u10_min", "u10_max",
     "v10_mean", "v10_min", "v10_max",
     "sp_mean",  "sp_min",  "sp_max",
-    "tp_sum",
+    "tp_sum", "ssrd_sum", "strd_sum",
 ]
 PRECIP_IDX = ERA5_VARS.index("tp_sum")
 
@@ -104,7 +110,7 @@ STD_FLOOR = 1e-12
 # ── Moment helpers (float64) ─────────────────────────────────────────────────
 
 def _moments_cols(arr: np.ndarray) -> list[tuple[int, float, float]]:
-    """(n, mean, M2) per column of a (rows, 19) array, ignoring non-finite entries."""
+    """(n, mean, M2) per column of a (rows, 18) array, ignoring non-finite entries."""
     out = []
     for j in range(arr.shape[1]):
         v = arr[:, j]
@@ -164,7 +170,7 @@ def scan_station(task: tuple) -> dict:
             return out
 
         values, date_ints, _ = entry
-        values    = np.asarray(values, dtype=np.float64)     # (N, 19)
+        values    = np.asarray(values, dtype=np.float64)     # (N, 18)
         date_ints = np.asarray(date_ints)                    # (N,) YYYYMMDD
         if values.ndim != 2 or values.shape[1] != len(ERA5_VARS):
             out["status"] = f"skip:era5-shape-{values.shape}"

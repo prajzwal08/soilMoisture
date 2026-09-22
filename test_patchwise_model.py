@@ -121,7 +121,7 @@ def fake_batch(B, K, seed=0, D=D_MODEL,
         "token_idx":      torch.full((B, K), 105),
         # tile-level drivers
         "soil_patch":     r(B, 21, 74, 74),
-        "era5":           r(B, 365, 19),
+        "era5":           r(B, 365, 18),
         "era5_doys":      era5_doys,
         "era5_rel_pos":   ri(365, (B, 365)),
         "sif":            r(B, MAX_SIF, 1),

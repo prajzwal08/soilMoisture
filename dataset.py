@@ -55,15 +55,27 @@ DISABLE_L12_CACHE = os.environ.get("DISABLE_L12_CACHE", "") == "1"
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+# §43.12: 19 -> 18.  `skt_{mean,min,max}` dropped -- it is a modelled diagnostic in
+# ERA5-Land, largely determined by t2m plus the radiation forcings now added, and it
+# is the Landsat ST target at 9 km, which makes the thermal head's level term trivial.
+# `ssrd_sum`/`strd_sum` added: accumulations get a daily SUM, not mean/min/max, because
+# each `_hourly` value is already J m-2 over that hour and because a 24 h total is
+# nearly insensitive to where the UTC day boundary cuts the local diurnal cycle.
 ERA5_VARS = [
     "t2m_mean",  "t2m_min",  "t2m_max",
     "d2m_mean",  "d2m_min",  "d2m_max",
-    "skt_mean",  "skt_min",  "skt_max",
     "u10_mean",  "u10_min",  "u10_max",
     "v10_mean",  "v10_min",  "v10_max",
     "sp_mean",   "sp_min",   "sp_max",
-    "tp_sum",
-]  # 19 features
+    "tp_sum", "ssrd_sum", "strd_sum",
+]  # 18 features
+
+# Which zarr array the 18 columns live in.  `splice_era5_radiation.py` writes
+# `era5/values18` BESIDE the original `era5/values` (19 cols, skt included) rather
+# than over it -- zarr_tokens is the only copy of the drivers.  Point this at
+# "era5/values" only to read the pre-§43.12 set, and then ERA5_VARS must be reverted
+# to match or every column is silently misnamed.
+ERA5_ARRAY = "era5/values18"
 
 SM_DEPTHS = ["0-10", "10-30", "30-100"]  # n_depths = 3
 
@@ -192,10 +204,10 @@ def _open_zarr(station_dir: Path, category: str) -> zarr.Group | None:
 
 def _load_zarr_era5(zg: zarr.Group):
     """Load ERA5 from zarr → same tuple format as _load_era5_nc()."""
-    if "era5/values" not in zg:
+    if ERA5_ARRAY not in zg:
         return None
     return (
-        zg["era5/values"][:],
+        zg[ERA5_ARRAY][:],
         zg["era5/date_ints"][:],
         zg["era5/doys"][:],
     )
@@ -706,7 +718,7 @@ def load_era5_rolling(cache_entry, year: int, target_doy: int):
     Slice pre-loaded ERA5 arrays for the 365-day rolling window.
 
     Args:
-        cache_entry: (values (N,19) float32, date_ints (N,) int32, doys (N,) int32) or None
+        cache_entry: (values (N,18) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
         era5    : (365, 19) float32 numpy array
         doys    : (365,) int64 numpy array — absolute DOY, 0 = padding
