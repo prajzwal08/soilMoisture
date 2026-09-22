@@ -6662,3 +6662,145 @@ NEXT SESSION:
   3. dataset.py emits the ST target + mask; model.py gains head_lst; train.py gains
      L = L_sm + lambda*L_lst with lambda by gradient-norm matching.
   4. The lambda=0 control runs as part of the FIRST run, not as a follow-up.
+
+================================================================================
+2026-09-22  SESSION 40 -- THE 993-STATION LANDSAT ST PULL, BUILT AND LAUNCHED
+================================================================================
+
+Delivered §41.7 step 1.  One decision reversed the stored form mid-session and one of
+my own diagnoses had to be retracted; both are recorded below because both changed the
+design.
+
+DECISION REVERSED: STORE RAW 30 m, NOT POOLED 100 m.
+  §41 had the target as 22x22 @ 100 m.  Pooling -- and masking before pooling -- is
+  IRREVERSIBLE with respect to the pixel mask: you cannot recover "mean of pixels with
+  ST_QA <= 2" from "mean of pixels with ST_QA <= 3".  That forced the 100 m design to
+  fix QC thresholds up front, carry a second "loose" pooling as insurance, and justify a
+  cell valid-fraction cut.  Storing raw at native 30 m deletes all three.  NO QC IS
+  APPLIED; every threshold is now a training-time sweep.
+  Step 0 showed this matters more than expected -- see below.
+  Cost: pooling still has to happen downstream (30 m is not reachable exactly from the
+  model's 112x112 @ 20 m map, ratio 1.5), and TIRS acquires at ~100 m so the 30 m grid
+  carries no finer thermal information.  It just happens where it can be changed.
+
+TARGET IS RAW ABSOLUTE KELVIN.  §41.4's `ST - ERA5_skt` residual and §33.12(e)'s
+  double-centring are both DROPPED as the stored form.  Nothing is lost -- the tile mean
+  is computable and wrs_path/row is stored -- and it removes a real phase mismatch,
+  since ERA5 skt is a DAILY aggregate while Landsat overpasses ~10:30 local.
+  WATCH: LST spans 280.9-332.0 K while within-tile spatial spread is ~2.3 K (§29.13), so
+  a raw-LST head can score well while learning no spatial structure.  Report its skill on
+  the spatially-centred residual alongside the raw loss in the first run.
+
+ERA5 RADIATION, decided but NOT built: add ssrd/strd (DOWNWARD, the atmospheric forcing),
+  not ssr/str.  `str = strd - eps*sigma*T_skin^4` is a function of ERA5 skin temperature,
+  so "remove skt, add net" puts skt back in disguised; `ssr = ssrd*(1-albedo)` embeds
+  ERA5-Land's MONTHLY ALBEDO CLIMATOLOGY, a static spatial field -- precisely the leak
+  §41.5 warns about.  download_era5land.py already fetches ssrd/strd into NetCDF, but the
+  training path reads a zarr whose era5/values is exactly 19 columns, so this needs a zarr
+  rebuild + ERA5_VARS 19->25 in BOTH dataset.py and compute_era5_stats.py + a stats re-run.
+  Training is from scratch, so the input-width change breaks nothing.
+
+STEP 0 -- QC YIELD CURVES (27016542, 22 s, 14,712 scenes, 42 stations)
+  DFCB CONFIRMED: confidence level 2 occurs ONLY in cloud confidence (2,730,846 px);
+    shadow/snow/cirrus are exactly zero.  So "<=1 vs <=2" is one field, worth +0.6%.
+  MASK VARIANTS BARELY DIFFER: legacy 0.4791, bit6 dropped 0.4798, water kept 0.4849.
+    Water is 0.52% of pixels -- keeping it was never about yield, it was about not
+    carving a STATIC hole in a static-pattern target.  Bit 6 fires on 62.5% against a
+    derived clear of 48%: looser AND redundant, so dropped.
+  ST_QA IS A SCENE GATE, NOT A PIXEL MASK: within-tile std 0.362 K vs between-scene
+    1.365 K, ratio 0.266.
+  TxSON IS NOT REPRESENTATIVE.  Global median ST_QA is 3.120 K, not §29.13's 2.13 K:
+        ST_QA <= 2 K  keeps 0.091      <- a 2 K cut would have been devastating
+        ST_QA <= 3 K  keeps 0.481
+        ST_QA <= 5 K  keeps 0.798
+    Since ST_QA is scene-level that is half the SCENES.  Against §33.12(e)'s ~6% gradient
+    density a 3 K cut gives ~3%.  All of this is now a consumer-side choice.
+  Climate bias modest: <=3 K spans 0.426 (D) to 0.539 (C).
+  §41.6's RELATIVE CLEAR RULE DOES NOT GENERALISE: ceilings are 1.000 at the median here
+    (TxSON's ~82% were swath-limited), so `ceiling - 0.03` collapses to an absolute 0.97.
+  ST_QA == -9999 and lwir11 == 0 agree to 1.00000.  One no-retrieval mask suffices.
+
+THREE BUGS FIXED, ALL MEASURED
+  1. assert_grid_invariants() raised SystemExit when a scene's CRS differed from the
+     station's UTM zone, killing 8 of 51 stations in job 27015709 (430 wrong-zone scenes
+     at CentraliaLake, 282 at Cascade#2, 254 at CamidelsNerets).  Landsat delivers scenes
+     in the SCENE CENTRE's zone.  The smoke measured 654 of 2,161 scenes -- 30% -- out of
+     zone, and at Cascade#2 EVERY scene.  Now recorded (native_epsg, reprojected), never
+     fatal.  31 UTM zones are spanned across the 993.
+  2. stackstac's default snap_bounds=True rounds bounds outward to multiples of the
+     resolution ANCHORED AT ZERO.  The Landsat lattice is offset 15 m, so a 76*30 m
+     request rendered 77x77 -- the true cause of the ragged 76/77 shapes on disk, which
+     the old aoi.json had only described as a symptom.  snap_bounds=False.
+  3. Positional slicing of a checkpoint-filtered station list does not tile the work when
+     tasks start at different times (read_ecostress_lst.py:579 -- 7,785 of 119,566 reads
+     unattempted on array 26800268).  Sharding is now md5(station_id), NSHARDS derived
+     from SLURM_ARRAY_TASK_COUNT so it cannot disagree with --array.
+
+RETRACTION -- I WAS WRONG ABOUT THE SAS TOKENS.
+  I claimed job 27015709's failures were expired SAS tokens, citing "25x401, 28x403,
+  25x429".  Those counts came from a bare grep -oE that matched the log's OWN PROGRESS
+  COUNTERS, [401/528].  A correct grep finds ZERO genuine HTTP auth or throttle errors.
+  §41.6's "one corrupt asset per cluster, server-side" was RIGHT.  The signature is a
+  tile-level read failure -- TIFFFillTile: got 0 bytes, expected 101395 -> "not recognized
+  as being in a supported file format" -- on ONE scene while others sharing the same SAS
+  signature succeed.  4 of 2,161 scenes in the smoke (0.19%), 36 distinct in the old job.
+  Such assets are now counted and SKIPPED, never retried: a dead tile is an answer, and
+  retrying cost 110 s per scene.
+
+SMOKE + ZONE REGRESSION (27016908): the same 8 stations the old assert killed, 6 UTM
+  zones.  8/8 done, 0 problems, 3.1 min, 2,155 of 2,161 scenes kept.
+VERIFY (27016976): 8/8 pass.  The FIRST verify run failed 6 of 8 on "LST min 150 K" --
+  that was the CHECK being wrong, not the data.  The arrays are raw, so cloud tops are in
+  them by design; the physical range only binds over pixels the decoder calls clear.
+  Rewritten that way it measures ZERO clear pixels outside [220,340] K, which doubles as
+  confirmation qa_decode() catches what it should.
+PREFLIGHT (27017069): 993/993 station dirs already exist -> no orphans; category routing
+  matches disk exactly (sm_only 842, sm_and_flux 48, flux_only 103); 0 grid failures.
+
+MAPS + THE CROSS-ZONE WARP (27017096 / 27017111), fig/landsat_st30_check/
+  Median LST, temporal SD and emis all mark the same features: at CentraliaLake a cool
+  corridor (292 vs 304 K) that is LOW temporal variance (11.5 vs 14.5 K, high thermal
+  inertia) and HIGH emissivity (0.99 vs 0.975).  Cloudiest scene reads 223-240 K raw with
+  an all-black decoded mask -- raw storage behaving exactly as designed.
+  SEASONALITY is textbook: ~280 K Jan -> ~315 K Jul -> ~280 K Dec, all 8 in phase.  A
+  wrong scale or broken mask could not produce that.
+  NO STATION HAS A PERMANENT NO-RETRIEVAL HOLE (hole_frac 0.000 at all 8), so §29.15's
+  18.2% at TxSON looks SITE-SPECIFIC, not general.
+  THE WARP COSTS NOTHING.  The naive test (median from reprojected vs from in-zone scenes)
+  gave r=0.63..0.94 with up to 2.4 K offset and a SPATIALLY ORGANISED difference -- but it
+  is CONFOUNDED: different scenes, different dates, and water has far lower seasonal
+  amplitude than land, so a seasonal imbalance alone produces a difference shaped like the
+  land-cover map.  Two clean tests settle it:
+    A  round trip through the neighbouring zone (DOUBLE warp, no confound):
+       r = 0.9965..0.9996, bias ~0.000 K, RMSE < 0.1 K, p95|d| = 0.000 K.
+    B  149 SAME-DATE pairs at CamidelsNerets -- WRS sidelap from the same orbit, solar-time
+       gap 0.007 h = 25 SECONDS, i.e. the same ground at the same instant read once
+       natively and once through the warp: r = 0.99494, bias +0.006 K.
+  Cross-zone scenes are usable without qualification.
+
+§41.5 PREVIEW, VISIBLE BEFORE ANY TRAINING: corr(median LST map, emis map) is NEGATIVE at
+  every station, -0.18 (Cascade#2) to -0.73 (CentraliaLake, Aniak).  Physically right --
+  high emissivity radiates efficiently and runs cooler -- but up to ~50% of the static
+  pattern's variance is shared with a STATIC emissivity field.  Run the falsification
+  early, not after a training run.
+
+LAUNCHED: array 27017190, all 993 stations, 0-49%12, md5 sharding, 8 workers.
+  ~45 stations/min, 0 errors in the first ~100.  Verifier 27017275 and the map check
+  27017276 are chained with --dependency=afterany, so they run themselves.
+
+MY MISTAKE, RECORDED: I deleted the smoke checkpoint and resubmitted while the FAILED
+  smoke job was still running.  It recreated the file and appended 6 stale
+  no_usable_scenes rows alongside the good run's 8.  No correctness impact --
+  no_usable_scenes is deliberately not counted as done, so those stations retry and hit
+  skip_exists -- but cancel the old job before resubmitting.
+
+NEXT SESSION:
+  1. CHECK THE WHOLE DOWNLOAD -- read verifier 27017275 and map check 27017276.  Expect
+     993/993 bundles, ~5 GB.  Resubmit slurm/landsat_all_stations.sh for any station left
+     as error/tripwire/no_usable_scenes; resume retries exactly those.
+  2. Run the §41.5 falsification across all 993, not just the 8 (median LST map vs emis).
+  3. Gate 6 (§33.12(f)): lag-1 ACF of d_LST between consecutive passes vs a
+     location-shuffled control, BEFORE the loss is wired.
+  4. ERA5 ssrd/strd: zarr rebuild, ERA5_VARS 19->25, re-run compute_era5_stats.py.
+  5. Then dataset.py target + mask, model.py head_lst, train.py lambda with the lambda=0
+     control in the FIRST run.
