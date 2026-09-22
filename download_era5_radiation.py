@@ -57,6 +57,7 @@ resubmit therefore costs nothing.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import threading
@@ -110,8 +111,16 @@ RAD_BANDS   = [
 RAD_SHORT   = ["ssrd", "strd"]
 RAD_OUT     = ["ssrd_sum", "strd_sum"]
 
-LOG_COLS = ["station_id", "year", "status", "strategy", "n_days",
-            "error_msg", "timestamp"]
+LOG_COLS = ["station_id", "year", "status", "strategy", "n_px", "n_days",
+            "n_nan_days", "error_msg", "timestamp"]
+
+# Pixels that STRATEGY_BUFFER stations are pinned to, resolved once per station and
+# persisted so every year of a station uses the identical footprint.
+PIXEL_JSON = REPO_ROOT / "csvs" / "era5_buffer_pixels.json"
+
+# Months probed when resolving that footprint -- one per season, so a pixel only
+# survives if it is populated year-round.
+PROBE_MONTHS = [(2021, 1), (2021, 4), (2021, 7), (2021, 10)]
 
 _log_lock = threading.Lock()
 
@@ -200,9 +209,81 @@ def build_job_list(df: pd.DataFrame) -> tuple[list[dict], int]:
 # FETCH
 # ============================================================
 
+def _getregion_with_pixels(collection, geometry, scale: int) -> pd.DataFrame:
+    """Like `_getregion_to_df` but KEEPS pixel identity.
+
+    `_getregion_to_df` drops longitude/latitude, which is fine for a point query
+    (one pixel) but destroys the information a buffer query needs: getRegion
+    returns one row per (pixel, hour), and which pixels carry data CHANGES DAY TO
+    DAY.  Averaging whatever is valid today makes the series track the ERA5-Land
+    mask rather than the weather -- measured at Combate, where the mid-March mean
+    halved because extra, darker pixels appeared for 16 days.
+    """
+    raw = _gee_getregion_with_retry(collection, geometry, scale)
+    if len(raw) <= 1:
+        return pd.DataFrame(columns=["time", "px"] + RAD_SHORT)
+    df = pd.DataFrame(raw[1:], columns=raw[0])
+    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
+    df["px"] = (df["longitude"].astype(float).round(4).astype(str) + ","
+                + df["latitude"].astype(float).round(4).astype(str))
+    df = df.rename(columns=dict(zip(RAD_BANDS, RAD_SHORT)))
+    for c in RAD_SHORT:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df[["time", "px"] + RAD_SHORT]
+
+
+def _buffer_collection(year: int, month: int):
+    return (ee.ImageCollection(GEE_COLLECTION)
+            .filterDate(_month_start(year, month), _month_end(year, month))
+            .select(RAD_BANDS))
+
+
+def resolve_buffer_pixels(folder: str, lat: float, lon: float) -> list[str]:
+    """The pixels inside the 25 km buffer that are valid in EVERY probed hour.
+
+    Intersected across four months spanning the seasons, so a pixel only survives
+    if it is populated year-round.  Persisted to csvs/era5_buffer_pixels.json so
+    every year of a station uses the identical footprint -- otherwise the pathology
+    returns as a step between years.
+    """
+    log = logging.getLogger(__name__)
+    cache = json.loads(PIXEL_JSON.read_text()) if PIXEL_JSON.exists() else {}
+    if folder in cache:
+        return cache[folder]["pixels"]
+
+    geom = ee.Geometry.Point([lon, lat]).buffer(ERA5_BUFFER_M)
+    keep: set[str] | None = None
+    seen = 0
+    for (y, m) in PROBE_MONTHS:
+        df = _getregion_with_pixels(_buffer_collection(y, m), geom, GEE_SCALE)
+        if df.empty:
+            continue
+        seen = max(seen, df["px"].nunique())
+        frac = df.groupby("px")[RAD_SHORT].apply(lambda g: g.notna().all(axis=1).mean())
+        good = set(frac[frac >= 1.0].index)
+        keep = good if keep is None else (keep & good)
+
+    pixels = sorted(keep or [])
+    log.info(f"  {folder}: {len(pixels)} of {seen} buffer pixels valid year-round")
+    if not pixels:
+        raise RuntimeError(
+            f"{folder}: no pixel in the 25 km buffer is valid across all probe "
+            f"months. This station has no stable ERA5-Land footprint and must be "
+            f"excluded rather than averaged over a shifting mask.")
+
+    cache[folder] = {"pixels": pixels, "n_candidates": seen,
+                     "probe_months": [f"{y}-{m:02d}" for y, m in PROBE_MONTHS],
+                     "lat": lat, "lon": lon}
+    PIXEL_JSON.write_text(json.dumps(cache, indent=2))
+    return pixels
+
+
 def _fetch_month_rad(lat: float, lon: float, year: int, month: int,
-                     strategy: str) -> pd.DataFrame:
-    """One month of hourly de-accumulated radiation at (lat, lon)."""
+                     strategy: str, pixels: list[str] | None = None) -> pd.DataFrame:
+    """One month of hourly de-accumulated radiation at (lat, lon).
+
+    Returns a time-indexed frame with pixels already collapsed to one row per hour.
+    """
     if strategy == STRATEGY_EXCLUDE:
         return pd.DataFrame(columns=["time"] + RAD_SHORT)
 
@@ -220,15 +301,17 @@ def _fetch_month_rad(lat: float, lon: float, year: int, month: int,
             "see download_era5_radiation.py for the reasoning."
         )
 
-    collection = (ee.ImageCollection(GEE_COLLECTION)
-                  .filterDate(_month_start(year, month), _month_end(year, month))
-                  .select(RAD_BANDS))
+    collection = _buffer_collection(year, month)
 
     if strategy == STRATEGY_BUFFER:
         geometry = ee.Geometry.Point([lon, lat]).buffer(ERA5_BUFFER_M)
-    else:
-        geometry = ee.Geometry.Point([lon, lat])
+        df = _getregion_with_pixels(collection, geometry, GEE_SCALE)
+        if pixels:
+            df = df[df["px"].isin(pixels)]
+        # Collapse the FIXED pixel set to one row per hour.
+        return df.groupby("time", as_index=False)[RAD_SHORT].mean()
 
+    geometry = ee.Geometry.Point([lon, lat])
     raw = _gee_getregion_with_retry(collection, geometry, GEE_SCALE)
     return _getregion_to_df(raw, RAD_BANDS, RAD_SHORT)
 
@@ -241,12 +324,14 @@ def _month_end(year: int, month: int) -> str:
     return f"{year + 1}-01-01" if month == 12 else f"{year}-{month + 1:02d}-01"
 
 
-def process_station_year(job: dict, strategy: str) -> dict:
+def process_station_year(job: dict, strategy: str,
+                         pixels: list[str] | None = None) -> dict:
     """Fetch, aggregate to daily sums, write rad_{year}.nc atomically."""
     log = logging.getLogger(__name__)
     out: Path = job["output_path"]
     result = {"station_id": job["folder"], "year": job["year"],
-              "strategy": strategy, "status": "error", "n_days": 0,
+              "strategy": strategy, "n_px": len(pixels) if pixels else 1,
+              "status": "error", "n_days": 0, "n_nan_days": 0,
               "error_msg": "", "timestamp": ""}
 
     tmp = out.with_suffix(".tmp.nc")
@@ -256,7 +341,8 @@ def process_station_year(job: dict, strategy: str) -> dict:
             result["error_msg"] = "all ERA5 strategies returned NaN - ocean pixel"
             return result
 
-        monthly = [_fetch_month_rad(job["lat"], job["lon"], job["year"], m, strategy)
+        monthly = [_fetch_month_rad(job["lat"], job["lon"], job["year"], m,
+                                    strategy, pixels)
                    for m in range(1, 13)]
         df = pd.concat(monthly, ignore_index=True).dropna(subset=["time"])
 
@@ -265,14 +351,20 @@ def process_station_year(job: dict, strategy: str) -> dict:
             result["error_msg"] = "no rows returned for any month"
             return result
 
-        # Collapse buffer pixels BEFORE aggregating.  With STRATEGY_BUFFER,
-        # getRegion returns one row per (pixel, time); summing without this step
-        # multiplies the daily total by the pixel count.  For a point query this
-        # is a no-op.
+        # Pixels are already collapsed inside _fetch_month_rad (to the PINNED set
+        # for buffer stations, trivially for a point query), so this is one row
+        # per hour.
         df = df.groupby("time", as_index=True)[RAD_SHORT].mean().sort_index()
 
+        # min_count=24: a day missing ANY hour becomes NaN rather than a quiet
+        # partial sum.  Without it `.sum()` skips absent hours and a half-day
+        # reads as a plausible half-value that no range check can catch.  A NaN
+        # day is picked up by the splice's gap policy, and at load time it takes
+        # the same path as dataset.py's existing 15% ERA5 dropout -- value 0 and
+        # doy 0, which the transformer treats as padding.
         daily = pd.concat(
-            [df[s].resample("1D").sum().rename(o) for s, o in zip(RAD_SHORT, RAD_OUT)],
+            [df[c].resample("1D").sum(min_count=24).rename(o)
+             for c, o in zip(RAD_SHORT, RAD_OUT)],
             axis=1,
         )
         daily = daily[daily.index.year == job["year"]]
@@ -301,9 +393,12 @@ def process_station_year(job: dict, strategy: str) -> dict:
         ds.to_netcdf(str(tmp))
         tmp.rename(out)          # atomic on POSIX
 
+        n_nan = int(daily[RAD_OUT].isna().any(axis=1).sum())
         result["status"] = "done"
         result["n_days"] = int(len(daily))
-        log.info(f"  {job['folder']} {job['year']}: {len(daily)} days [{strategy}]")
+        result["n_nan_days"] = n_nan
+        log.info(f"  {job['folder']} {job['year']}: {len(daily)} days "
+                 f"({n_nan} incomplete) [{strategy}, {result['n_px']} px]")
 
     except Exception as exc:
         result["error_msg"] = str(exc)[:300]
@@ -393,10 +488,22 @@ def main() -> int:
 
     strategies = resolve_strategies(jobs, args.workers)
 
+    # Pin every STRATEGY_BUFFER station to a footprint that does not move.
+    pixels: dict[str, list[str]] = {}
+    buffered = sorted({j["folder"] for j in jobs
+                       if strategies[j["folder"]] == STRATEGY_BUFFER})
+    if buffered:
+        log.info(f"Resolving a fixed pixel footprint for {len(buffered)} "
+                 f"buffer station(s)…")
+        for folder in buffered:
+            lat, lon = next((j["lat"], j["lon"]) for j in jobs if j["folder"] == folder)
+            pixels[folder] = resolve_buffer_pixels(folder, lat, lon)
+
     t0 = datetime.now(timezone.utc)
     done = errors = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(process_station_year, j, strategies[j["folder"]])
+        futs = [ex.submit(process_station_year, j, strategies[j["folder"]],
+                          pixels.get(j["folder"]))
                 for j in jobs]
         for i, fut in enumerate(as_completed(futs), 1):
             r = fut.result()

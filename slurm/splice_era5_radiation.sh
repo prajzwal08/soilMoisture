@@ -19,8 +19,8 @@
 # Read the gap report before executing.  zarr_tokens is the ONLY copy of the
 # drivers, so nothing here overwrites era5/values.
 
-set -euo pipefail
-source "$(conda info --base)/etc/profile.d/conda.sh"
+set -eo pipefail
+source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
 conda activate terramind
 cd /gpfs/work3/0/prjs1968/soilMoisture
 python splice_era5_radiation.py --workers 64 "$@"

@@ -24,12 +24,14 @@
 # picks up exactly where the first stopped and costs nothing.
 #
 # Smoke first:
-#   sbatch jobs/era5_radiation.sh --stations ISMN_SCAN_Combate,ISMN_TWENTE_Hupsel
+#   sbatch --time=01:00:00 jobs/era5_radiation.sh --stations \
+#     ISMN_SNOTEL_PortGraham,ISMN_USCRN_Cape-Charles-5-ENE,ISMN_SCAN_Combate
+#   (the three STRATEGY_BUFFER stations -- they exercise the riskiest path)
 # Full run only after the smoke output has been checked.
 
-set -euo pipefail
+set -eo pipefail
 
-source "$(conda info --base)/etc/profile.d/conda.sh"
+source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
 conda activate soilmoisture
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
