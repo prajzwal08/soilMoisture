@@ -13300,3 +13300,231 @@ text/s1processing.md      §7 grouping, §8 rationale, §9 the exact arithmetic
 csvs/s1_temporal_r.csv, s1_spatial_groups.csv, s1_pair_sign_test.csv    §39 outputs
 slurm/s1_broad.sh         the 64-core / 224 GB / 1.5 h precedent for a full-archive scan
 ```
+
+---
+
+## §41 Landsat LST at 100 m is the spatial supervision target (Session 39, 2026-09-22)
+
+**DECISION. The dense spatial supervision task is Landsat Collection-2 Level-2 Surface
+Temperature, pooled to 100 m.** Not ECOSTRESS, not MODIS. The head is auxiliary, deleted at
+inference, and sits beside the soil-moisture head on the shared patchwise trunk.
+
+This reverses nothing in §38 — the thermal arm as a *predictor of soil moisture* stays closed.
+What is being adopted is a different role: a dense, spatially-distributed **target** whose job is
+to put gradient on all 196 patches, which the single-point ISMN loss structurally cannot do.
+
+### 41.1 Why Landsat, against the two alternatives
+
+The decisive axis is resolution against the model's own output grid, which is 14×14 at 160 m.
+
+| | native | over a 2240 m tile | can it supervise at/below 160 m? |
+|---|---|---|---|
+| **Landsat C2 L2 ST** | 30 m | 22×22 at exactly 100 m (§33.12(e)) | **yes — finer than native** |
+| ECOSTRESS L2T LSTE | 70 m | 32×32 | yes, but see §41.2 |
+| MODIS MOD11A1 | 1 km | **2×2** | no. 2240/926.625 = 2.42 px per side |
+
+MODIS is disqualified by arithmetic alone: 4 pixels per tile against a 196-patch output. Its two
+genuine advantages — sun-synchronous 10:30 overpass, daily global coverage — solve problems that
+only matter once the target can supervise something.
+
+Landsat is also sun-synchronous at ~10:30, so it carries **none of the ECOSTRESS phase problem
+measured in §41.3**.
+
+### 41.2 ECOSTRESS is the noisier instrument for this purpose — measured
+
+`probe_dtr_phase_coherence.py`, 857 date-pairs over 9 colocated grassland clusters, pairs
+restricted to ≥75% valid pixels. Spatial anomaly correlation, single date against single date:
+
+```
+ECOSTRESS   day LST +0.231    night LST +0.219    DTR +0.223
+Landsat ST over the same windows, months and stations:  +0.19 to +0.93, median ~+0.75
+```
+
+Two things follow, and the first was a surprise:
+
+- **The day−night subtraction costs nothing.** Day, night and DTR are equally coherent. The
+  "DTR is a difference of two noisy retrievals so its noise is √2 higher" argument is WRONG and
+  should not be repeated.
+- **The gap is ECOSTRESS vs Landsat, not DTR vs ST.** Both are daytime thermal retrievals of the
+  same ground on the same grid footprint. ECOSTRESS day alone is +0.23 where Landsat is ~+0.75.
+
+Leading explanation, not yet tested: ECOSTRESS rides the ISS with no precise pointing, and its
+geolocation error is order 50 m — comparable to one 70 m pixel. `grid_aligned` guarantees the same
+*nominal* footprint between passes, not the same ground. Landsat is sub-pixel geolocated.
+
+### 41.3 ECOSTRESS overpass time varies, and it bites the day channel
+
+The question "how do you compute a DTR anomaly when acquisition time varies?" has a clean
+structural answer and a measured residual.
+
+**Structurally, level is not the problem.** A 2.24 km tile is imaged in one instant, so time of
+day shifts the whole scene uniformly, and the double-centring removes it exactly:
+
+```
+d(p,k) = T(p,k) − r(p) − c(k) + μ
+                  ^^^^ absorbs anything uniform over the tile, including overpass time
+```
+
+What survives is **amplitude** — the hot/cold contrast is larger at 13 h than at 9 h, so
+`d(p,k) ≈ a(t_p)·s(k)`. Pearson r is scale-invariant, so amplitude does not affect pattern
+correlations; it matters only when `d` is used as a feature or regressor, where the fix is to
+divide each scene's anomaly by its own spatial SD.
+
+**What does bite is shape.** Measured:
+
+```
+|Δtst_day|      n     r_day   r_night   r_dtr
+0-0.5 h        83     0.322     0.138    0.260
+0.5-1 h        95     0.272     0.166    0.246
+1-2 h         203     0.296     0.209    0.264
+2-4 h         276     0.238     0.215    0.223
+4-24 h        200     0.096     0.293    0.156
+corr(|Δtst_day|, r_day) = −0.215     corr(|Δtst_night|, r_dtr) = +0.066
+```
+
+Monotone decline in the **day** channel, flat-to-opposite at night — exactly the physical
+prediction, since a daytime field is driven by solar geometry and shadowing while night is
+radiative cooling. But it explains only part: even at |Δtst| < 0.5 h, ECOSTRESS day coherence is
++0.32, still far below Landsat.
+
+**Consequence: do not filter on phase.** Carry `day_tst` as a covariate (the `well_phased` flag
+had a wrap-at-24 bug), normalise each scene's anomaly by its spatial SD, and treat the residual
+decorrelation as a sensor noise floor rather than as physics.
+
+### 41.4 The design
+
+```
+                    shared patchwise trunk  (B, 196, 768)
+                     /                              \
+       head_sm -> (B,196,3) @ 160 m          head_lst -> (B,196,1)
+       supervised at the station's patch      area-pooled to the 100 m Landsat grid
+       on days with a label                   supervised every clear scene, all stations
+                                              DELETED at inference
+```
+
+Four conditions, none optional:
+
+1. **The target is the residual `Landsat_ST − ERA5_skt`, not absolute ST.** `dataset.py:58-61`
+   already feeds the model `t2m_mean/min/max` and `skt_mean/min/max`, so absolute ST is nearly
+   free — the model would score well and learn a season detector. The residual is the part the
+   reanalysis does not already carry.
+2. **λ by matching GRADIENT norms into the shared trunk, not loss values** (§34.6's own rule).
+3. **`head_lst` deleted at inference** — no Landsat needed to run the model.
+4. **SM metrics reported at λ=0 alongside**, so task interference is measured, not assumed.
+
+**Why this is worth doing, stated as the density argument it is:**
+
+```
+per station-year   patch-values receiving gradient
+soil moisture      ~365    always patch 105  <- and that IS §34.4's position-leakage problem
+Landsat ST         196 × ~30 clear scenes ≈ 5,900,  spread over ALL 196 positions
+```
+
+The second row is the point. A dense target supervises every token equally, which is the one
+thing the point loss cannot do, and it attacks position leakage directly rather than through
+translation augmentation alone.
+
+### 41.5 The standing risk, recorded rather than argued away
+
+§29 measured the Landsat within-tile ST pattern as **static** — r = +0.967 across months — and
+§32.10's sufficiency gate measured that the terrain/landscape pattern does **not** control
+within-tile soil moisture, with §29.13 giving pooled r = +0.167 against within-station −0.077.
+
+So this head supervises a pattern that is largely the static landscape. The hypothesis being
+bought is that learning to reproduce that pattern yields per-patch features useful to the SM head
+— **not** that ST tracks SM. If the λ=0 control shows no SM improvement, that hypothesis is
+falsified and the head should be dropped rather than retuned.
+
+Two further facts that constrain interpretation:
+
+- **18.2% of the TxSON tile has no ST retrieval at all** (§29), and that region contains the
+  wettest station. The missingness is not at random, so `head_lst` must be masked per pixel and
+  the masked fraction reported per station.
+- Landsat C2 L2 ST is **daytime only** (§29.2). There is no Landsat DTR and none is proposed.
+
+### 41.6 Built and measured this session
+
+**Colocated grassland inventory** — `make_gra_clusters.py`, `csvs/gra_thermal_clusters.csv`
+(144 rows), `csvs/gra_thermal_members.csv` (161 rows).
+
+- 161 GRA stations have a usable ECOSTRESS bundle; geographic clustering at 1.12 km (connected
+  components, **never** `location_group_id` — §39.2) gives **9 multi-station clusters**: two of
+  6 stations, seven of 2, plus 135 singles.
+- Pair separability computed from **patch indices, not distance**, over the 46 GRA pairs:
+  **30 pairs are both on different 160 m patches and >160 m apart** — the only ones a 160 m map
+  can honestly separate. Two are grid artifacts: `VairaRanch`/`US-Var` at **10 m** and the
+  Northstar pair at 58 m land in different patches only because a grid line falls between them.
+- Reason the crossing is needed: two points inside one 160 m patch can be up to 160·√2 ≈ 226 m
+  apart, so distance alone is ambiguous between 160 and 226 m — and, the other way, a 10 m pair
+  can straddle a boundary.
+
+**Registration, verified rather than asserted.** `read_ecostress_lst.py:136-138` builds the
+window from the station-centred 2240 m box and then `.round_offsets()` snaps it onto the
+ECOSTRESS grid, so the ECOSTRESS and S2 windows cover the same ground to within **half a 70 m
+pixel (≤35 m)**. Good enough to see what is where; not good enough to difference.
+
+**Landsat re-pull.** §29's rasters were on scratch and are **gone** — the directory tree survives
+with 0 `.tif` files, the same exposure class as §40.3's purged S1 GeoTIFFs. Re-downloaded for the
+9 clusters to **permanent** storage `/gpfs/work3/0/prjs1968/data/landsat_st/`: 4,358 scenes,
+136 MB, ~0.5 min per cluster. One corrupt asset per cluster, server-side, identical to the one
+§29 hit in both its runs. `download_landsat_st_mpc.py` gained `--extent cluster` and
+`--extent station`, and `OUT_ROOT` now points at permanent storage.
+
+**Figures**, `fig/gra_thermal/` — per colocated cluster:
+
+```
+combined_{cid}.png       RGB | ECO day | ECO night | ECO DTR | DTR anom | Landsat ST | ST anom
+                         one row per growing-season month, clearest scenes only,
+                         station markers annotated with observed SM, SM record below
+ecostress_{cid}.png      the ECOSTRESS-only version
+landsat_{cid}.png        the Landsat-only version
+sm_timeseries_{cid}.png  all depths, observed vs gap-filled, between-station SD trace
+dtr_vs_sm_{cid}.png      within-station | between-station | pooled, never pooled alone
+```
+
+Two numbers worth keeping from them:
+
+- At ARM (`Lamont-CF1/CF2`, 334 m apart) the **median between-station SD is 28% of the median
+  within-station temporal SD**. §34.4's ">35%" target for the model sits near the physical
+  ceiling for that pair.
+- `TxSON_6st_01`, 6 stations, n=62: DTR vs SM **within-station r = −0.437 [−0.577, −0.342]**,
+  correctly signed and CI excluding zero; **between-station r = +0.141 [−0.107, +0.358]**, null.
+  The temporal relation is real at one probe; the spatial one is not. That is §38.10 rendered at
+  a single site.
+
+**Selection rules that had to be learned:**
+
+- "Clear" must be **relative to each tile's own ceiling**. An absolute 99% cut discarded both
+  6-station clusters, because TxSON's Landsat clear fraction ceilings at ~82% permanently
+  (§29's 18.2% no-retrieval region). Threshold = `ceiling − 0.03`.
+- Month coverage is limited by **swath, not cloud**. `07:n=5,best=0.00` means all five July pairs
+  were entirely off-swath; no threshold recovers them. JJAS alone yields 2 columns at most TxSON
+  clusters, so the growing season is **May–Sep**.
+- S2 selection must use the cloud mask (`np.isin(cm,(3,4,5))`), never `cm != 0`, which counts
+  water and snow and marks every lakeside or winter station permanently cloudy.
+
+### 41.7 Next
+
+1. Pull Landsat ST for all 993 stations (`--extent station`, array; the 9-cluster run took
+   ~0.5 min each, so the full set is hours not days). **Cancelled mid-run this session** — restart
+   when the design is committed.
+2. `consolidate_landsat_st.py` — area-pool 30 m ST to the **100 m** grid per station, store
+   `[N, 22, 22]` plus a per-pixel valid mask and dates, mirroring `consolidate_dtr.py`. Expected
+   size is a few hundred MB, so the 450k GeoTIFFs need not be kept.
+3. `dataset.py` emits the ST target and its mask; `model.py` gains `head_lst`; `train.py` gains
+   `L = L_sm + λ·L_lst` with λ set by gradient-norm matching.
+4. The λ=0 control is part of the first run, not a follow-up.
+
+### 41.8 Files
+
+```
+make_gra_clusters.py  plot_gra_thermal.py  plot_gra_sm_timeseries.py
+plot_gra_dtr_vs_sm.py  plot_gra_landsat.py  plot_gra_combined.py
+probe_dtr_phase_coherence.py  check_eco_s2_registration.py  diag_gra_months.py
+slurm/gra_clusters.sh  slurm/gra_thermal.sh  slurm/gra_dtr_sm.sh
+slurm/gra_landsat_plot.sh  slurm/gra_combined.sh  slurm/dtr_phase.sh
+slurm/landsat_gra.sh  slurm/landsat_all_stations.sh
+csvs/gra_thermal_clusters.csv  csvs/gra_thermal_members.csv
+csvs/dtr_phase_coherence.csv   csvs/all_station_ids.txt
+/gpfs/work3/0/prjs1968/data/landsat_st/{cluster_id}/     4,358 scenes, PERMANENT
+```

@@ -6538,3 +6538,127 @@ candidate windows, the +/-6 merge test, split-half r(c) as the static-pattern pr
 the saturation curve over 1-7 year windows, and the drift rate against 2023. One
 64-core rome job, read-only, no labels needed so all 993 stations qualify. Fold in the
 ERA5 frozen/snow exclusion while the data is open.
+
+================================================================================
+2026-09-22  SESSION 39 -- LANDSAT LST AT 100 m IS THE SPATIAL SUPERVISION TARGET
+================================================================================
+
+DECISION TAKEN. The dense spatial supervision task is Landsat C2 L2 Surface
+Temperature pooled to 100 m, as a SECOND HEAD beside the soil-moisture head on the
+shared patchwise trunk. Not ECOSTRESS. Not MODIS. Written up as runbook 41.
+
+This does not reopen 38. The thermal arm stays closed as a PREDICTOR of soil
+moisture. What is adopted is a different role -- a dense TARGET whose job is to put
+gradient on all 196 patches, which the single-point ISMN loss structurally cannot.
+
+WHY LANDSAT, on resolution against the model's own 14x14 @ 160 m output:
+  Landsat  30 m -> 22x22 @ exactly 100 m over the 2240 m tile   FINER than native
+  ECOSTRESS 70 m -> 32x32                                        finer, but noisier
+  MODIS     1 km -> 2x2   (2240/926.625 = 2.42 px per side)      DISQUALIFIED
+MODIS's real advantages -- sun-synchronous 10:30, daily global -- solve problems
+that only matter once the target can supervise something. Landsat is ALSO
+sun-synchronous at ~10:30, so it carries none of the ECOSTRESS phase problem.
+
+THE DENSITY ARGUMENT, which is the actual case for doing this at all:
+  per station-year, patch-values receiving gradient
+    soil moisture   ~365,  ALWAYS patch 105   <- this IS 34.4's position leakage
+    Landsat ST      196 x ~30 clear scenes = ~5900, spread over ALL 196 positions
+
+DESIGN, four conditions, none optional:
+  1. target is the RESIDUAL Landsat_ST - ERA5_skt, not absolute ST. dataset.py:58-61
+     already feeds t2m_mean/min/max and skt_mean/min/max, so absolute ST is nearly
+     free and the model would just learn a season detector.
+  2. lambda by matching GRADIENT NORMS into the trunk, not loss values (34.6's rule).
+  3. head_lst DELETED at inference -- no Landsat needed to run the model.
+  4. SM metrics reported at lambda=0 alongside, so interference is measured.
+
+MEASURED THIS SESSION (all new):
+
+  ECOSTRESS vs Landsat coherence, 857 date-pairs, 9 colocated grassland clusters:
+    ECOSTRESS  day +0.231   night +0.219   DTR +0.223
+    Landsat over the SAME windows/months/stations:  +0.19 to +0.93, median ~+0.75
+  TWO CORRECTIONS FALL OUT.  The day-night subtraction costs NOTHING -- day, night
+  and DTR are equally coherent, so the "DTR is a difference so its noise is sqrt(2)
+  higher" argument is WRONG and must not be repeated. And the gap is ECOSTRESS vs
+  LANDSAT, not DTR vs ST. Leading untested explanation: ISS pointing gives ~50 m
+  geolocation error, comparable to one 70 m pixel; grid_aligned guarantees the same
+  NOMINAL footprint between passes, not the same ground.
+
+  PHASE, answering "how do you compute a DTR anomaly with variable overpass time":
+  LEVEL is not the problem -- a 2.24 km tile is imaged in one instant, so time of day
+  shifts the whole scene uniformly and the double-centring removes it exactly.
+  AMPLITUDE varies (contrast is larger at 13 h than 9 h) but Pearson r is
+  scale-invariant, so it only matters when d is used as a feature -- fix is to divide
+  each scene's anomaly by its own spatial SD.  SHAPE is what bites:
+    |dtst_day|  0-0.5h  0.5-1  1-2   2-4   4-24
+    r_day        0.322  0.272  0.296 0.238 0.096     corr = -0.215
+    r_night      0.138  0.166  0.209 0.215 0.293     (flat to OPPOSITE)
+  Monotone in the DAY channel only -- exactly the physical prediction, since daytime
+  is solar-geometry driven and night is radiative cooling. But partial: even at
+  |dtst| < 0.5 h ECOSTRESS day is +0.32, still far below Landsat. So DO NOT FILTER ON
+  PHASE -- carry day_tst as a covariate (well_phased had a wrap-at-24 bug) and treat
+  the residual decorrelation as a sensor noise floor, not physics.
+
+  REGISTRATION, verified not asserted. read_ecostress_lst.py:136-138 builds the window
+  from the station-centred 2240 m box then .round_offsets() snaps it onto the ECOSTRESS
+  grid, so ECOSTRESS and S2 cover the same ground to within HALF A 70 m PIXEL (<=35 m).
+  Good enough to see what is where; not good enough to difference.
+
+  COLOCATED GRASSLAND INVENTORY. 161 GRA stations have a usable ECOSTRESS bundle;
+  clustering geographically at 1.12 km (connected components, NEVER location_group_id)
+  gives 9 multi-station clusters -- two of 6 stations, seven of 2, 135 singles.
+  Pair separability computed from PATCH INDICES, not distance: 30 of 46 GRA pairs are
+  both on different 160 m patches AND >160 m apart. Two are grid artifacts --
+  VairaRanch/US-Var at 10 m and the Northstar pair at 58 m land in different patches
+  only because a grid line falls between them. Needed because two points in one 160 m
+  patch can be up to 160*sqrt(2) = 226 m apart, and a 10 m pair can straddle a boundary.
+
+  ARM (Lamont-CF1/CF2, 334 m apart): median between-station SD is 28% of the median
+  within-station temporal SD. 34.4's ">35%" model target sits near the PHYSICAL
+  CEILING for that pair.
+
+  TxSON_6st_01, 6 stations, n=62, DTR vs SM:
+    within-station  r = -0.437 [-0.577, -0.342]   correctly signed, CI excludes zero
+    between-station r = +0.141 [-0.107, +0.358]   null
+  Temporal relation real at one probe, spatial one absent. 38.10 at a single site.
+
+LANDSAT RE-PULL. 29's rasters were on SCRATCH and are GONE -- tree survives with 0
+.tif files, same exposure class as 40.3's purged S1 GeoTIFFs. Re-pulled for the 9
+clusters to PERMANENT /gpfs/work3/0/prjs1968/data/landsat_st/: 4358 scenes, 136 MB,
+~0.5 min per cluster. download_landsat_st_mpc.py gained --extent cluster and
+--extent station; OUT_ROOT now permanent.
+
+SELECTION RULES LEARNED:
+  - "Clear" must be relative to EACH TILE'S OWN CEILING. An absolute 99% cut discarded
+    both 6-station clusters, because TxSON's Landsat clear fraction ceilings at ~82%
+    permanently -- 29 measured 18.2% of that tile with no ST retrieval at all.
+  - Month coverage is limited by SWATH, not cloud. "07:n=5,best=0.00" means all five
+    July pairs were entirely off-swath; no threshold recovers them. JJAS gives 2
+    columns at most TxSON clusters, so the season used is MAY-SEP.
+  - S2 scene choice must use the cloud mask np.isin(cm,(3,4,5)), never cm != 0, which
+    counts water and snow and marks every lakeside or winter station permanently cloudy.
+
+STANDING RISK, recorded rather than argued away. 29 measured the Landsat within-tile
+pattern as STATIC (+0.967 across months) and 32.10's gate measured that the terrain /
+landscape pattern does NOT control within-tile SM (29.13: pooled +0.167 vs
+within-station -0.077). So this head supervises a largely static landscape pattern.
+The hypothesis bought is that reproducing it yields per-patch features useful to the
+SM head -- NOT that ST tracks SM. If the lambda=0 control shows no SM improvement,
+that hypothesis is falsified and the head is dropped, not retuned.
+Also: 18.2% of the TxSON tile has NO ST retrieval and that region holds the wettest
+station, so the loss must be masked per pixel and the masked fraction reported.
+And Landsat C2 L2 ST is DAYTIME ONLY -- no Landsat DTR exists and none is proposed.
+
+FIGURES PRODUCED, fig/gra_thermal/, per colocated cluster (36 files):
+  combined_{cid}.png   RGB | ECO day | ECO night | ECO DTR | DTR anom | Landsat ST |
+                       ST anom, one row per growing-season month, clearest scenes only,
+                       markers annotated with observed SM, SM record full width below
+  ecostress_{cid}.png  sm_timeseries_{cid}.png  dtr_vs_sm_{cid}.png  landsat_{cid}.png
+
+NEXT SESSION:
+  1. Restart the 993-station Landsat pull (--extent station; cancelled mid-run here).
+  2. consolidate_landsat_st.py -- area-pool 30 m ST to the 100 m grid per station,
+     store [N,22,22] + per-pixel valid + dates, mirroring consolidate_dtr.py.
+  3. dataset.py emits the ST target + mask; model.py gains head_lst; train.py gains
+     L = L_sm + lambda*L_lst with lambda by gradient-norm matching.
+  4. The lambda=0 control runs as part of the FIRST run, not as a follow-up.

@@ -1,0 +1,95 @@
+{
+  "run_name": "pw_stage2a_L3",
+  "checkpoint": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only/pw_stage2a_L3/best.pt",
+  "epoch": 2,
+  "best_val_loss": null,
+  "category_filter": [
+    "sm_only"
+  ],
+  "depths": [
+    "0-10",
+    "10-30",
+    "30-100"
+  ],
+  "generated": "2026-08-27T11:05:15",
+  "max_stations": null,
+  "splits": {
+    "val": {
+      "split_filter": [
+        "val"
+      ],
+      "years": [
+        2016,
+        2022
+      ],
+      "n_stations": 74,
+      "n_rows": 294911,
+      "n_samples": 127721,
+      "rows_by_depth": {
+        "0-10": 127622,
+        "10-30": 92908,
+        "30-100": 74381
+      },
+      "nan_pred": 0,
+      "minutes": 0.7
+    },
+    "oos": {
+      "split_filter": [
+        "oos"
+      ],
+      "years": [
+        2016,
+        2022
+      ],
+      "n_stations": 193,
+      "n_rows": 755161,
+      "n_samples": 341252,
+      "rows_by_depth": {
+        "0-10": 341055,
+        "10-30": 226449,
+        "30-100": 187657
+      },
+      "nan_pred": 0,
+      "minutes": 1.8
+    },
+    "oot": {
+      "split_filter": [
+        "train",
+        "val"
+      ],
+      "years": [
+        2023,
+        2023
+      ],
+      "n_stations": 396,
+      "n_rows": 355912,
+      "n_samples": 136723,
+      "rows_by_depth": {
+        "0-10": 136622,
+        "10-30": 119822,
+        "30-100": 99468
+      },
+      "nan_pred": 0,
+      "minutes": 0.8
+    },
+    "oost": {
+      "split_filter": [
+        "oos"
+      ],
+      "years": [
+        2023,
+        2023
+      ],
+      "n_stations": 101,
+      "n_rows": 88510,
+      "n_samples": 35379,
+      "rows_by_depth": {
+        "0-10": 35344,
+        "10-30": 29233,
+        "30-100": 23933
+      },
+      "nan_pred": 0,
+      "minutes": 0.2
+    }
+  }
+}

@@ -1,0 +1,109 @@
+==============================================================================
+LANDSAT ST -- QC YIELD CURVES  (Step 0, measured, no download)
+==============================================================================
+scenes read      : 14713
+  ok             : 14712
+  unreadable     : 1
+stations         : 42
+raster shapes    : [(76.0, 76.0), (76.0, 77.0), (77.0, 76.0), (77.0, 77.0)]
+
+------------------------------------------------------------------------------
+1. CONFIDENCE LEVELS -- does level 2 occur outside cloud confidence?
+------------------------------------------------------------------------------
+   DFCB says: cloud (8-9) uses 0/1/2/3; shadow, snow, cirrus use 0/1/3 (2 reserved).
+   If true, '<=1' vs '<=2' differs for CLOUD ONLY.
+
+   field                  L0             L1             L2             L3
+   ccloud          3,723,786     55,811,134      2,730,846     24,169,991
+   cshadow         3,723,786     75,481,422              0      7,230,549
+   csnow           3,723,786     75,311,792              0      7,400,179
+   ccirrus         3,723,786     68,973,077              0     13,738,894
+
+   -> CONFIRMED. Level 2 is unused outside cloud confidence.
+      The strictness dial is cloud confidence alone.
+
+------------------------------------------------------------------------------
+2. CLEAR-FRACTION YIELD BY MASK VARIANT  (mean over scenes)
+------------------------------------------------------------------------------
+   legacy  (bit6 required, water rejected, conf<=low)   0.4791  ( 100.0% of legacy)
+   bit6 dropped, water rejected                         0.4798  ( 100.1% of legacy)
+   bit6 dropped, water KEPT  <-- operating point        0.4849  ( 101.2% of legacy)
+   bit6 dropped, water kept, cloud conf<=medium         0.4876  ( 101.8% of legacy)
+
+   mean water fraction per tile : 0.0052
+   bit6 'Clear' vs derived      : bit6=0.6251
+
+------------------------------------------------------------------------------
+3. ST_QA -- IS IT A PIXEL MASK OR A SCENE GATE?
+------------------------------------------------------------------------------
+   median ST_QA over all scenes      : 3.120 K   (§29.13 measured 2.13 K at TxSON)
+   mean WITHIN-tile std              : 0.362 K
+   BETWEEN-scene std of tile medians : 1.365 K
+   ratio within/between              : 0.266
+
+   -> ST_QA is a SCENE-LEVEL quantity. A per-pixel threshold mostly keeps or
+      drops whole scenes. Inverse-variance weighting is the right use of it;
+      the 3 K cut should be read as a scene gate, not a pixel mask.
+
+   yield among clear pixels:
+     ST_QA <= 2 K : 0.0909
+     ST_QA <= 3 K : 0.4805
+     ST_QA <= 5 K : 0.7980
+
+   ST_QA < 1 K (propagation short-circuit?) : 0.00095
+   all-fill ST_QA scenes                    : 0
+   ST_QA/LST no-retrieval agreement         : 1.00000
+
+------------------------------------------------------------------------------
+4. YIELD BY KOPPEN MACRO-CLASS -- is the threshold climatically biased?
+------------------------------------------------------------------------------
+          n_scenes  n_stations  clear_water_kept  stqa_le2_frac  stqa_le3_frac  stqa_le5_frac
+kg_macro                                                                                     
+B             2483           8            0.4347         0.1109         0.4914         0.7873
+C             5293          16            0.5992         0.0895         0.5394         0.8420
+D             6936          18            0.4157         0.0852         0.4263         0.7642
+
+   ST_QA<=3 retention spans 0.426 (D) to 0.539 (C)
+   -> spread is modest; a fixed 3 K cut does not strongly re-weight by climate.
+
+------------------------------------------------------------------------------
+5. PER-STATION CLEAR CEILING  (§41.6: threshold = ceiling - 0.03)
+------------------------------------------------------------------------------
+   ceiling  min 0.991   p25 1.000   median 1.000   p75 1.000   max 1.000
+   stations with ceiling < 0.50 (swath-limited, not cloud-limited): 0 of 42
+   lowest 8:
+     CR200-15                     0.991
+     1.05                         1.000
+     2.01                         1.000
+     1.07                         1.000
+     Alcalde                      1.000
+     Anthony                      1.000
+     BE-Bra                       1.000
+     ALI01                        1.000
+
+------------------------------------------------------------------------------
+6. 100 m CELL VALID-CONTRIBUTING-FRACTION  (§33.12(d) cell mask)
+------------------------------------------------------------------------------
+   distribution across the 22x22 cells, at the operating point:
+     p10  of cells : 0.6066
+     p25  of cells : 0.6609
+     p50  of cells : 0.7279
+     p75  of cells : 0.7976
+     p90  of cells : 0.8531
+
+   cells retained per scene (of 484) at each cell-mask threshold:
+     >= 0.25 valid :   356.8  ( 73.7%)
+     >= 0.50 valid :   352.9  ( 72.9%)
+     >= 0.75 valid :   348.7  ( 72.0%)
+
+   -> pick the knee: the threshold that drops partial-coverage edge cells without
+      eating interior ones. 0.50 is the default unless this says otherwise.
+
+==============================================================================
+THRESHOLDS THIS SETS FOR THE PULL
+==============================================================================
+   ST_QA cut         : 3 K  (+ 1/sigma^2 weighting) -- confirm against section 3
+   cell valid-frac   : see section 6
+   CDIST px          : NOT MEASURABLE HERE -- cdist is not on these tifs.
+                       Comes from the Step-1 smoke. Provisional 300 m.
+==============================================================================
