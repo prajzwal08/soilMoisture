@@ -6930,11 +6930,10 @@ WHAT THE SURVIVING ARCHIVE LOOKS LIKE (fig/landsat_st30_check/inventory.png):
   the LST head by climate is not viable, and that is the ISMN network, not a threshold.
 
 NEXT SESSION (unchanged, in order):
-  1. §41.5 falsification across all 993 -- corr(median LST map, emis map) ran -0.18 to
-     -0.73 on the smoke 8, so up to ~50% of the static pattern is shared with a static
-     emissivity field.  Needs no training.  §41.5 already says drop the head rather than
-     retune it if the λ=0 control shows nothing; this says that is plausible enough to
-     test FIRST.
+  1. §41.5 FALSIFICATION DROPPED (decided this session).  The measurement stands on the
+     record -- corr(median LST map, emis map) was -0.18 to -0.73 on the smoke 8 -- but the
+     test will not be run.  CONSEQUENCE: the λ=0 control carries the whole burden of
+     deciding whether the head earns its place, so it must be in the FIRST run.
   2. Gate 6 (§33.12(f)) -- lag-1 ACF of d_LST vs a location-shuffled control.
   3. ERA5 ssrd/strd (DOWNWARD, not net): zarr rebuild, ERA5_VARS 19->25 in BOTH dataset.py
      and compute_era5_stats.py, re-run compute_era5_stats.py.

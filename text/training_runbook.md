@@ -13700,11 +13700,11 @@ Geography is US + Europe; ENF alone is 36% of scenes by IGBP class. Scenes per y
 
 ### §42.9 Next
 
-1. **§41.5 falsification across all 993** — `corr(median LST map, emis map)` ran **-0.18 to -0.73**
-   on the smoke 8. Up to ~50% of the static pattern's variance is shared with a static emissivity
-   field. §41.5 already says the head should be **dropped rather than retuned** if the λ=0 control
-   shows nothing; this says that outcome is plausible enough to test *before* a training run, and
-   it needs no training at all.
+1. **The §41.5 falsification is NOT run** (decided 2026-09-22). `corr(median LST map, emis map)`
+   measured -0.18 to -0.73 on the smoke 8, so up to ~50% of the static pattern shares variance
+   with a static emissivity field — that number stands on the record, but the test is dropped.
+   **Consequence: the λ=0 control carries the whole burden** of deciding whether the head earns
+   its place (§41.4 condition 4), so it must be in the FIRST run, not a follow-up.
 2. **Gate 6** (§33.12(f)) — lag-1 ACF of `d_LST` between consecutive passes vs a location-shuffled
    control, before the loss is wired.
 3. **ERA5 `ssrd`/`strd` as driver inputs** — DOWNWARD, not net. `str = strd - eps*sigma*T_skin^4`
