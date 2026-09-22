@@ -6842,3 +6842,101 @@ STILL OPEN, unchanged from the list above: the §41.5 falsification across all 9
   (corr(median LST map, emis map) ran -0.18..-0.73 on the smoke 8 -- up to ~50% of the
   static pattern shared with a static emissivity field), gate 6, the ERA5 ssrd/strd zarr
   rebuild, then the two-head wiring with the lambda=0 control in the FIRST run.
+
+--- 2026-09-22 SESSION 40, FINAL: THE QC DECIDED, AND THE MASK BUILT ---
+
+Written up as §42 in the runbook.  The archive was already down and verified (993/993,
+253,334 scenes, 4.68 GB).  This part is about what gets SUPERVISED out of it.
+
+THE FILTER CHAIN, in order:
+
+  STEP 0  scene selection at the STAC search       SERVER-SIDE, IRREVERSIBLE
+          landsat-c2-l2 ; Landsat 8 and 9 only ; Tier 1 ; eo:cloud_cover < 80 ;
+          all 5 assets present.
+          Landsat 7 excluded: its Scan Line Corrector broke in 2003, so every scene since
+          has diagonal gaps over ~22% of the image, and its thermal band is a different
+          file (`lwir`, not `lwir11`).  Tier 1 is the USGS geolocation grade -- pixels
+          placed within ~12 m, so the same pixel is the same ground across dates.
+          -> 253,334 scenes
+
+  STEP 1  at download, per scene                   IRREVERSIBLE
+          product nodata -> NaN, scale/offset from each item's raster:bands, never
+          hardcoded.  Corrupt server-side assets counted and skipped.  Per-station Kelvin
+          tripwire.
+          -> 253,334 scenes stored RAW, NO QC APPLIED
+
+  STEP 2  the supervision mask                     REBUILDABLE
+          2a  qa_decode(qa_pixel30): reject bits 0 Fill, 1 Dilated Cloud, 2 Cirrus,
+              3 Cloud, 4 Shadow, 5 Snow; cloud/shadow/cirrus confidence <= low.
+              Bit 6 NOT required (redundant: fires on 62.5% vs a derived clear of 48%).
+              Bit 7 water KEPT and flagged.
+          2b  isfinite(lst30)                      -> 180,832 scenes / 697,906,029 px
+          2c  250 K < lst30 < 360 K                -> removes 26,776 px (0.005%)
+          2d  cdist30 > 1.0 km                     -> 133,127 scenes / 522,675,116 px
+          NO ST_QA GATE.
+
+WHY NO ST_QA GATE -- measured over 697,906,029 clear pixels:
+  ST_QA IS VERY NEARLY A READOUT OF DISTANCE TO CLOUD.  Pixel median by CDIST bin, over
+  nine DISJOINT bins with barely overlapping distributions:
+      0-0.09 km 5.875 K | 0.3-0.5 4.375 | 1-2 3.125 | 5-10 2.125 | >20 km 1.625 K
+  so gating on both double-charges.  And:
+    * the cost is STATIONS and the pixel count hides it: ST_QA <= 3 K looks survivable at
+      64.1% of pixels but drops 107 OF 993 STATIONS below 20 scenes.  At 2 K it is 689.
+    * there is no pathological tail: at 8 K only 5 SCENES IN THE WHOLE ARCHIVE are cut.
+      p10 2.0, p47 3.0, p70 4.0, p96 6.0 K -- a smooth continuum.  The gate separates
+      nothing; it shaves the humid end.
+    * climate skew 2.98x at 3 K: B arid 0.725 vs A tropical 0.243, E polar 0.316.
+  CDIST > 1 km keeps MORE data (74.9% vs 64.1%) at LOWER resulting uncertainty (2.49 K)
+  for 7 stations instead of 107, and targets the cause rather than the symptom.
+  0.5 km (85.9%, skew 1.28x) was considered and rejected for the stricter choice.  Skew
+  rises LINEARLY with threshold -- there is no knee, so the data does not pick a value.
+
+  CDIST IS PER PIXEL, from each pixel's own location -- a 30 m raster of distance to the
+  nearest cloud, not a distance from the tile centre or the station.  Larger is further
+  from cloud, so > 1 km is the STRICT direction.
+
+  ACCEPTED COST: 28% of scenes are PARTIALLY masked (43.1% fully kept, 28.9% fully cut),
+  the partial fraction spread thinly across 0-1.  I had claimed "nearly all-or-nothing"
+  from 74.9% of pixels surviving against 73.7% of scenes; that match is coincidental and
+  the direct measurement says otherwise.  It is accepted because the masked direction
+  depends on which side the cloud was on and averages out over ~200 scenes, and where it
+  does not the effect is on supervision COUNT per cell, not on target values.
+  -> REPORT PER-CELL OBSERVATION COUNTS.
+
+THE MASK IS BUILT AND STORED (build_landsat_mask.py, job 27022056):
+  {folder}_st30mask_{start}_{end}.npz beside each bundle -- packbits `mask` and `water`,
+  993 files, 22 MB TOTAL against a 4.68 GB archive.
+  csvs/landsat_mask_index.csv, one row per (station, date), so sample selection never
+  touches the archive.
+  133,127 supervised scenes, 522,675,116 supervised pixels, 3,926 of 5,776 px per
+  supervised scene (68%).  Per station min 2 / median 110 / max 579; 7 below 20 scenes.
+
+THE 250-360 K GUARD, since it is easy to mistake for arbitrary: 360 not §29.5's 350
+  because bare desert genuinely reads 354.5 K at Stovepipe Wells and 345.4 K at Yuma --
+  350 flagged real data from 12 stations as broken.  360 still excludes DN 65535 ->
+  372.99994 K, the uint16 SATURATION SENTINEL, which three SNOTEL stations reported as
+  exactly 373.000 K.  Consumers must drop DN 65535 alongside DN 0.  After the cloud mask
+  the guard removes almost nothing (0.005% of pixels), which is itself evidence the cloud
+  mask works.
+
+WHAT THE SURVIVING ARCHIVE LOOKS LIKE (fig/landsat_st30_check/inventory.png):
+  per station min 2 / p10 42 / median 110 / p90 258 / max 579 supervised scenes.
+  Koppen: D 41.5%, C 30.8%, B 27.0%, A 0.4%, E 0.3%.
+  IGBP macro: Grass-Crop 43.7%, Forest 40.9%, Shrub-Savanna 9.9%, Other 5.4%.
+  ENF alone is 36% of scenes by IGBP class.  Geography is US + Europe.
+  Scenes per year jump ~12,000 (2016-2021) to 17,865 in 2022 -- Landsat 9 halving the
+  revisit.  Station count falls 809 (2020) to 390 (2025) as records end.
+  TROPICAL AND POLAR TOGETHER ARE 899 OF 133,127 SCENES, FROM 14 STATIONS.  Stratifying
+  the LST head by climate is not viable, and that is the ISMN network, not a threshold.
+
+NEXT SESSION (unchanged, in order):
+  1. §41.5 falsification across all 993 -- corr(median LST map, emis map) ran -0.18 to
+     -0.73 on the smoke 8, so up to ~50% of the static pattern is shared with a static
+     emissivity field.  Needs no training.  §41.5 already says drop the head rather than
+     retune it if the λ=0 control shows nothing; this says that is plausible enough to
+     test FIRST.
+  2. Gate 6 (§33.12(f)) -- lag-1 ACF of d_LST vs a location-shuffled control.
+  3. ERA5 ssrd/strd (DOWNWARD, not net): zarr rebuild, ERA5_VARS 19->25 in BOTH dataset.py
+     and compute_era5_stats.py, re-run compute_era5_stats.py.
+  4. dataset.py target + mask, model.py head_lst, train.py λ -- with the λ=0 control in
+     the FIRST run.

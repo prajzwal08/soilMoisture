@@ -13528,3 +13528,215 @@ csvs/gra_thermal_clusters.csv  csvs/gra_thermal_members.csv
 csvs/dtr_phase_coherence.csv   csvs/all_station_ids.txt
 /gpfs/work3/0/prjs1968/data/landsat_st/{cluster_id}/     4,358 scenes, PERMANENT
 ```
+
+## §42 The 993-station Landsat ST pull — raw 30 m, and the QC decided from it (Session 40, 2026-09-22)
+
+§41.7 step 1, delivered. Two things changed during the session and both are load-bearing: the
+target is stored at **native 30 m raw with no QC applied**, not pooled to 22x22 @ 100 m; and the
+QC that was specified in §29.5 was **measured and rejected** in favour of a cloud-distance filter.
+
+Full design, flowchart and every measurement: `text/landsat_st_download.md`.
+
+### §42.1 What exists
+
+993/993 bundles, **253,334 scenes, 4.68 GB**, verified by reading every array back (0 failures).
+
+`{DATA_ROOT}/{cat}/{folder}/LANDSAT_ST/{folder}_st30_{start}_{end}.npz` — 76x76 @ 30 m,
+station-centred on the Landsat lattice:
+
+| array | |
+|---|---|
+| `lst30` | float32 **absolute Kelvin**, NaN only where there is no retrieval |
+| `st_qa30` | float32 K, retrieval uncertainty |
+| `cdist30` | float32 km, distance from each pixel to the nearest cloud |
+| `qa_pixel30` | **uint16 RAW DN** — a bitfield; a decoded boolean throws the bits away |
+| `emis30` | float32 [76,76], station median, static |
+
+Plus `dates`, `item_ids`, `platform`, `wrs_path/row`, `native_epsg`, `reprojected`, and per-scene
+covariates (`day_tst`, `sun_elevation/azimuth`, `eo_cloud_cover`, `frac_onswath`, `clear_frac`,
+`water_frac`, `frac_in_range`, `median_st_qa`, `tile_min_cdist`, `tile_mean_k`). **Measured, not
+applied.** Phase is a covariate, never a filter (§41.3).
+
+### §42.2 Why raw, not pooled
+
+Pooling — and masking before pooling — is **irreversible with respect to the pixel mask**: you
+cannot recover "mean of pixels with ST_QA <= 2" from "mean of pixels with ST_QA <= 3". The 100 m
+design had to fix thresholds up front, carry a second "loose" pooling as insurance and justify a
+cell valid-fraction cut. Raw deletes all three.
+
+Vindicated by measurement: ST_QA's median rose **2.13 K** at TxSON (§29.13) -> **3.120 K** over 42
+stations -> **4.02 K** over all 993. §29.5's `ST_QA <= 3 K` would now discard well over half the
+archive. Baked in at pool time it would have been unrecoverable.
+
+Cost, stated: TIRS acquires at ~100 m so 30 m carries no finer thermal information (§31.6 caveat
+(i) already corrected §29.9's "5776 pixels per tile" to ~500), and 30 m is **not reachable
+exactly** from the model's 112x112 @ 20 m map (ratio 1.5). Pooling still happens — downstream,
+where it can be changed. Exact partitions: 22x22 @ 100 m (§33.12(d)), 56x56 @ 40 m, 28x28 @ 80 m,
+14x14 @ 160 m. Use `Resampling.average`, never `nearest`, never a non-integer ratio.
+
+### §42.3 Target is raw absolute Kelvin
+
+§41.4 condition 1's `Landsat_ST - ERA5_skt` and §33.12(e)'s double-centring are both **dropped as
+the stored form**. Nothing is lost — the tile mean is computable, `wrs_path/row` is stored, and
+`dataset.py:58-61` already feeds `skt_mean/min/max` — and it removes a real phase mismatch, since
+ERA5 `skt` is a DAILY aggregate while Landsat overpasses ~10:30 local.
+
+**Watch item.** LST spans 280.9-332.0 K while within-tile spatial spread is ~2.3 K (§29.13), so a
+raw-LST head can score well while learning no spatial structure. **Report its skill on the
+spatially-centred residual alongside the raw loss in the first run.**
+
+### §42.4 THE FILTER CHAIN
+
+**Step 0 — scene selection, at the STAC search (server-side, irreversible).**
+`landsat-c2-l2`; platform in {landsat-8, landsat-9}; `collection_category == T1`;
+`eo:cloud_cover < 80`; all 5 assets present. L7 excluded (SLC-off, exposes `lwir`).
+-> 253,334 scenes.
+
+**Step 1 — at download, per scene (irreversible).** Product nodata -> NaN, scale/offset from each
+item's `raster:bands` (never hardcoded). Corrupt server-side assets counted and skipped.
+Per-station Kelvin tripwire. -> 253,334 scenes stored RAW.
+
+**Step 2 — the supervision mask (`build_landsat_mask.py`, rebuildable).**
+
+| | filter | survives |
+|---|---|---|
+| 2a | `qa_decode(qa_pixel30)`: reject bits 0 Fill, 1 Dilated Cloud, 2 Cirrus, 3 Cloud, 4 Shadow, 5 Snow; cloud/shadow/cirrus confidence <= low. **Bit 6 not required** (redundant, fires on 62.5% vs a derived clear of 48%). **Bit 7 water kept and flagged** | |
+| 2b | `isfinite(lst30)` — no-retrieval | 180,832 scenes / 697,906,029 px |
+| 2c | `250 K < lst30 < 360 K` | removes 26,776 px (0.005%) |
+| 2d | **`cdist30 > 1.0 km`** | **133,127 scenes / 522,675,116 px** |
+
+**No ST_QA gate.** Output: `{folder}_st30mask_{start}_{end}.npz` (packbits `mask` + `water`, 993
+files, **22 MB total**) and `csvs/landsat_mask_index.csv`, one row per (station, date), so sample
+selection never touches the 4.68 GB archive.
+
+### §42.5 Why no ST_QA gate — measured, over 697,906,029 clear pixels
+
+**ST_QA is very nearly a readout of distance to cloud.** Pixel median by CDIST bin, monotonic over
+nine *disjoint* bins with barely overlapping distributions:
+
+| CDIST km | 0-0.09 | 0.09-0.3 | 0.3-0.5 | 0.5-1 | 1-2 | 2-5 | 5-10 | 10-20 | >20 |
+|---|---|---|---|---|---|---|---|---|---|
+| ST_QA K | **5.875** | 5.125 | 4.375 | 3.625 | 3.125 | 2.375 | 2.125 | 1.875 | **1.625** |
+
+So gating on both double-charges. Three further reasons the ST_QA gate loses:
+
+1. **The cost is STATIONS, and the pixel count hides it.** `ST_QA <= 3 K` looks survivable at
+   64.1% of pixels but drops **107 of 993 stations** below 20 scenes. At 2 K it is 689.
+2. **There is no pathological tail.** At T = 8 K only **5 scenes in the entire archive** are cut.
+   The distribution is a smooth continuum (p10 2.0, p47 3.0, p70 4.0, p96 6.0 K) — the gate
+   separates nothing, it shaves the humid end.
+3. **Climate skew 2.98x** at 3 K: 0.725 retention in arid (B) vs 0.243 tropical (A), 0.316 polar
+   (E) — the classes already least represented.
+
+`CDIST > 1 km` keeps **more** data (74.9% vs 64.1%) at lower resulting uncertainty (2.49 K), for
+**7 stations instead of 107**, and targets the physical cause rather than the symptom. 0.5 km
+(85.9%, skew 1.28x) was considered and rejected in favour of the stricter choice; skew rises
+linearly with threshold, there is **no knee**.
+
+CDIST is **per pixel, from each pixel's own location** — a 30 m raster of distance-to-nearest-
+cloud — not a distance from the tile centre or the station. Larger CDIST is further from cloud,
+so `> 1 km` is the strict direction.
+
+**Accepted cost: 28% of scenes are partially masked** (43.1% fully kept, 28.9% fully cut), the
+partial fraction spread thinly and near-uniformly across 0-1. The masked direction depends on
+which side the cloud was on and should average out over ~200 scenes; where it does not, the effect
+is on supervision **count per cell**, not on target values, which a masked loss already handles.
+**Report per-cell observation counts.**
+
+### §42.6 Three defects fixed, all measured
+
+1. **`assert_grid_invariants()` killed 8 of 51 stations** in job 27015709. Landsat delivers scenes
+   in the **scene centre's** UTM zone: 654 of 2,161 smoke scenes (**30%**) were out of zone, and at
+   Cascade#2 every single one. 31 UTM zones are spanned across the 993. Now recorded
+   (`native_epsg`, `reprojected`), never fatal.
+   **The warp costs nothing**: round-trip through the neighbouring zone gives r = 0.9965-0.9996,
+   RMSE < 0.1 K, p95|d| = 0.000 K; and 149 same-date WRS-sidelap pairs at CamidelsNerets — same
+   ground, solar-time gap **25 seconds** — agree to r = 0.995, bias +0.006 K.
+2. **`stackstac`'s default `snap_bounds=True`** rounds bounds outward to multiples of the
+   resolution **anchored at zero**. The Landsat lattice is offset 15 m, so a 76*30 m request
+   rendered 77x77 — the true cause of the ragged 76/77 shapes in job 27015709, which the old
+   `aoi.json` had only described as a symptom. `snap_bounds=False`.
+3. **Positional slicing of a checkpoint-filtered list does not tile the work** when tasks start at
+   different times (`read_ecostress_lst.py:579` — 7,785 of 119,566 reads unattempted on array
+   26800268). Sharding is `md5(station_id)`, `NSHARDS` derived from `SLURM_ARRAY_TASK_COUNT`.
+
+### §42.7 Corrections to the record
+
+- **§41.6's "one corrupt asset per cluster, server-side" was RIGHT.** An earlier claim this
+  session that the cause was expired SAS tokens came from a bare `grep -oE "401|403|429"` that
+  matched the log's own progress counters, `[401/528]`. There were **zero** genuine HTTP auth or
+  throttle errors. The real signature is a tile-level read failure on one scene while others
+  sharing the same SAS signature succeed — 4 of 2,161 in the smoke, 36 in the old job. Such assets
+  are counted and skipped, never retried: a dead tile is an answer.
+- **§41.6's relative clear rule does not generalise.** Ceilings are 1.000 at the median across the
+  993 (TxSON's ~82% were swath-limited), so `ceiling - 0.03` collapses to an absolute 0.97.
+- **§29.5's `250 < LST < 350 K` is too tight.** Bare desert genuinely reads **354.5 K** at
+  Stovepipe Wells and 345.4 K at Yuma; 350 flags real data from 12 stations as broken. 360 is the
+  guard, and it still excludes **DN 65535 -> 372.99994 K**, the uint16 saturation sentinel — three
+  SNOTEL stations reported a max of exactly 373.000 K. **Consumers must drop DN 65535 alongside
+  DN 0.**
+- **`ST_CDIST` is documented 0-24000 DN x 0.01 = 0-240 km**, so values above 200 km are legal.
+
+### §42.8 What the surviving archive looks like
+
+Map, histogram and breakdowns: `fig/landsat_st30_check/inventory.png`;
+`csvs/landsat_inventory{,_year}.csv`.
+
+Per station: min 2, p10 42, **median 110**, p90 258, max 579 supervised scenes. 7 stations below
+20, 138 below 50.
+
+| Köppen | stations | scenes | | IGBP macro | stations | scenes |
+|---|---|---|---|---|---|---|
+| D | 430 | 41.5% | | Grass-Crop | 420 | 43.7% |
+| C | 326 | 30.8% | | Forest | 426 | 40.9% |
+| B | 223 | 27.0% | | Shrub-Savanna | 80 | 9.9% |
+| A | 8 | **0.4%** | | Other | 67 | 5.4% |
+| E | 6 | **0.3%** | | | | |
+
+**Tropical and polar together are 899 of 133,127 scenes from 14 stations.** Stratifying the LST
+head by climate is not viable — that is a property of the ISMN network, not of any threshold.
+Geography is US + Europe; ENF alone is 36% of scenes by IGBP class. Scenes per year jump from
+~12,000 (2016-2021) to **17,865 in 2022** when Landsat 9 halved the revisit.
+
+### §42.9 Next
+
+1. **§41.5 falsification across all 993** — `corr(median LST map, emis map)` ran **-0.18 to -0.73**
+   on the smoke 8. Up to ~50% of the static pattern's variance is shared with a static emissivity
+   field. §41.5 already says the head should be **dropped rather than retuned** if the λ=0 control
+   shows nothing; this says that outcome is plausible enough to test *before* a training run, and
+   it needs no training at all.
+2. **Gate 6** (§33.12(f)) — lag-1 ACF of `d_LST` between consecutive passes vs a location-shuffled
+   control, before the loss is wired.
+3. **ERA5 `ssrd`/`strd` as driver inputs** — DOWNWARD, not net. `str = strd - eps*sigma*T_skin^4`
+   is a function of ERA5 skin temperature, so "remove skt, add net" reintroduces skt in disguise;
+   `ssr = ssrd*(1-albedo)` embeds ERA5-Land's **monthly albedo climatology**, a static spatial
+   field — precisely the §41.5 leak. `download_era5land.py:351-356` already fetches ssrd/strd into
+   NetCDF, but the training path reads a zarr whose `era5/values` is exactly 19 columns, so this
+   needs a zarr rebuild + `ERA5_VARS` 19->25 in **both** `dataset.py` and `compute_era5_stats.py`
+   + a stats re-run. Training is from scratch, so the width change breaks nothing.
+4. Then `dataset.py` emits the target and mask, `model.py` gains `head_lst`, `train.py` gains
+   `L = L_sm + λ·L_lst` with λ by gradient-norm matching — and the **λ=0 control in the FIRST
+   run**, not as a follow-up (§41.4 condition 4).
+
+### §42.10 Files
+
+```
+download_landsat_st30.py     the pull: search, range-read 5 assets, measure, write raw npz
+build_landsat_mask.py        THE SUPERVISION MASK -- single source of truth
+qc_landsat_yield.py          Step 0 QC yield curves
+verify_landsat_st.py         reads every bundle back; scale tripwires on emis and cdist
+preflight_landsat_st30.py    all 993 output paths before the pull
+probe_stqa_yield.py  probe_stqa_cdist.py  probe_cdist_climate.py  probe_cdist_partial.py
+probe_landsat_reproj.py      the cross-zone warp, round-trip + same-date pairs
+probe_landsat_inventory.py   where/when/climate/land-use of the surviving archive
+plot_landsat_st30_check.py   maps; per-station figures are OPT-IN (--stations/--all-stations)
+slurm/landsat_{qc_yield,smoke,all_stations,preflight,mask,inventory,...}.sh
+csvs/landsat_mask_index.csv          one row per (station,date) -- dataset.py selects on this
+csvs/landsat_st30_{log.*,verify}.csv  csvs/landsat_{qc_yield,stqa_yield,stqa_cdist,inventory}.csv
+fig/landsat_st30_check/{inventory,stqa_vs_cdist,cdist_climate,cdist_partial,_summary}.png
+{DATA_ROOT}/{cat}/{folder}/LANDSAT_ST/{folder}_st30{,mask}_{start}_{end}.npz   4.68 GB + 22 MB
+```
+
+`download_landsat_st_mpc.py` is deliberately left intact — `plot_gra_landsat.py` and the §41.6
+cluster analyses still consume its per-scene GeoTIFFs. The new script imports its `snap` and
+`bbox_wgs84` rather than duplicating them.
