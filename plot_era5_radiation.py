@@ -52,9 +52,10 @@ FIG       = Path("/gpfs/work3/0/prjs1968/soilMoisture/fig/era5_radiation")
 
 # Fixed order = increasing latitude.  Okabe-Ito blue / vermillion / bluish-green.
 STATIONS = [
-    ("ISMN_SCAN_Combate",             "Combate, PR  18°N",        "#0072B2"),
-    ("ISMN_USCRN_Cape-Charles-5-ENE", "Cape Charles, VA  37°N",   "#D55E00"),
-    ("ISMN_SNOTEL_PortGraham",        "Port Graham, AK  59°N",    "#009E73"),
+    ("ISMN_LAB-net_OromoCalibrationSite", "Oromo, NZ  41S",        "#0072B2"),
+    ("ISMN_SCAN_AdamsRanch#1",            "Adams Ranch, NM  32N",  "#D55E00"),
+    ("ISMN_SCAN_AAMU-JTG",                "AAMU-JTG, AL  35N",     "#009E73"),
+    ("ISMN_FMI_SAA111",                   "Saariselka, FI  68N",   "#CC79A7"),
 ]
 MJ = 1e6
 
