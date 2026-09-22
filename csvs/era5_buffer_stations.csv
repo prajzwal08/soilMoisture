@@ -1,0 +1,24 @@
+# The THREE stations whose ERA5 drivers came from STRATEGY_BUFFER (25 km mean of
+# nearby valid land cells) instead of a point query on their own 0.1 deg cell.
+# Their own ERA5-Land cell is ocean-masked -- every variable NaN every hour -- so
+# there is no station pixel to read.  All other 990 stations use STRATEGY_POINT.
+#
+# WHY THIS LIST EXISTS (runbook §43.12): download_era5land_gee.py never collapses
+# buffer pixels before `.resample("1D")`, so getRegion's one-row-per-(pixel,time)
+# response is summed across pixels as well as hours.  `tp_sum` for these three is
+# therefore inflated by roughly the pixel count (~16 at 0.1 deg in a 25 km buffer);
+# they look permanently and wrongly wet to the model.  The mean/min/max variables
+# are a spatial+temporal statistic rather than wrong.
+#
+# NOT YET FIXED.  The fix is to re-fetch these 22 station-years' 19 columns with a
+# groupby("time").mean() before aggregation -- a ~22-job run, unlike the
+# 993-station re-fetch §43.12 deliberately avoids.
+# download_era5_radiation.py already collapses per-timestamp, so ssrd_sum/strd_sum
+# do NOT inherit the defect.
+#
+# Source: 22 `era5land_buffer_25km` rows in data/logs/era5land_gee_log.csv,
+# cross-checked against text/logs.txt:537-570.  Recorded 2026-09-22.
+folder,latitude,longitude,split,n_years_buffered,years,note
+ISMN_SNOTEL_PortGraham,59.35065,-151.84768,train,9,2014-2022,Alaska coast (Kachemak Bay)
+ISMN_USCRN_Cape-Charles-5-ENE,37.2907,-75.927,oos,7,2015-2021,Virginia barrier island; ablation_oos=True
+ISMN_SCAN_Combate,17.98333,-67.16667,val,6,2019-2024,Puerto Rico coastal strip
