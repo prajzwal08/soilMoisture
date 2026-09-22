@@ -35,9 +35,15 @@ OUT_CSV   = REPO / "csvs" / "landsat_st30_verify.csv"
 CKPT_GLOB = "landsat_st30_log*.csv"
 
 GRID_N     = 76
-K_LO, K_HI = 220.0, 340.0
+K_LO, K_HI = 220.0, 360.0   # 360 not 340: bare desert soil is genuinely this hot -- Landsat
+                            # measured 354.5 K at Stovepipe Wells (Death Valley) and 345 K at
+                            # Yuma.  A 340 K ceiling flags real deserts as broken data.
+LST_SATURATED = 372.9999    # = DN 65535, the uint16 ceiling, exactly.  NOT a temperature:
+                            # three SNOTEL stations hit 373.000 to four decimals.  Consumers
+                            # must drop DN 65535 alongside DN 0.
 EMIS_LO, EMIS_HI = 0.70, 1.00      # ASTER GED emissivity; a scale error lands far outside
-CDIST_MAX_KM     = 200.0           # km, not metres: metres would be ~24000
+CDIST_MAX_KM     = 250.0           # ST_CDIST is documented 0-24000 DN x 0.01 = 0-240 km, so
+                                   # the guard only has to exclude metres (~24000)
 
 PER_SCENE = ["lst30", "st_qa30", "cdist30", "qa_pixel30", "dates", "item_ids", "platform",
              "wrs_path", "wrs_row", "native_epsg", "reprojected"]
@@ -111,6 +117,17 @@ def check(path_str: str) -> dict:
         fails.append("no clear pixel in the whole bundle")
     else:
         c = lst[ok]
+        # DN 65535 -> 372.99994 K exactly.  That is the uint16 ceiling, a saturation sentinel,
+        # not a temperature; it is counted and excluded before the range test rather than
+        # dragging the ceiling up to 373 K and blinding the test to real divergence.
+        sat = c >= LST_SATURATED
+        r["n_clear_saturated"] = int(sat.sum())
+        r["frac_clear_saturated"] = round(float(sat.mean()), 8)
+        c = c[~sat]
+        if c.size == 0:
+            fails.append("every clear pixel is saturated (DN 65535)")
+            return _finish(r, fails, path)
+
         r["lst_clear_min"], r["lst_clear_max"] = round(float(c.min()), 2), round(float(c.max()), 2)
         r["lst_clear_median"] = round(float(np.median(c)), 3)
         n_out = int(((c < K_LO) | (c > K_HI)).sum())
@@ -121,6 +138,10 @@ def check(path_str: str) -> dict:
         if n_out / c.size > 1e-4:
             fails.append(f"{n_out} clear pixels ({100*n_out/c.size:.3f}%) outside "
                          f"[{K_LO},{K_HI}] K: {c.min():.1f}..{c.max():.1f}")
+        # saturation should be vanishingly rare; if it is not, the station is in trouble
+        if r["frac_clear_saturated"] > 1e-3:
+            fails.append(f"{r['n_clear_saturated']} clear pixels "
+                         f"({100*r['frac_clear_saturated']:.3f}%) saturated at DN 65535")
 
     # ---- st_qa30
     q = z["st_qa30"]
@@ -222,6 +243,7 @@ def main():
                      ("lst_clear_median", "LST median, clear (K)"),
                      ("lst_raw_min", "LST raw min (K)"), ("lst_clear_min", "LST clear min (K)"),
                      ("frac_clear_out_of_range", "clear px out of range"),
+                     ("frac_clear_saturated", "clear px saturated"),
                      ("stqa_median", "ST_QA median (K)"),
                      ("cdist_median", "CDIST median (km)"), ("emis_median", "emis median"),
                      ("lst_valid_frac", "LST valid frac"), ("nodata_agree", "nodata agreement"),
