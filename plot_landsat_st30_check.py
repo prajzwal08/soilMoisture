@@ -25,10 +25,14 @@ plausible; this proves the PICTURES are.  Four things it is actually trying to c
 Runs in `soilmoisture` so it can import the REFERENCE decoder from download_landsat_st30 rather
 than keeping a second copy that can drift.  It downloads nothing.
 
-OUTPUT  fig/landsat_st30_check/{station}.png  and  _summary.png
+OUTPUT  fig/landsat_st30_check/_summary.png  -- always, an aggregate over every bundle
+        fig/landsat_st30_check/{station}.png  -- only with --stations or --all-stations.
+        Per-station figures are OPT-IN: a full run writes 993 PNGs / ~185 MB and buries the
+        three aggregate plots that are what actually get looked at.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import warnings
@@ -63,7 +67,10 @@ def masked_median(cube, mask):
     return np.nanmedian(out, axis=0), np.nanstd(out, axis=0), mask.sum(axis=0)
 
 
-def station_figure(path: Path) -> dict:
+def station_figure(path: Path, save: bool = True) -> dict:
+    """Per-station diagnostics.  `save` writes the six-panel PNG; the returned statistics feed
+    the summary either way, so the aggregate is always computed over EVERY bundle even when only
+    a handful of figures are written."""
     z = np.load(path, allow_pickle=False)
     meta = json.loads(str(z["meta"][0]))
     name = meta["station_id"]
@@ -123,9 +130,10 @@ def station_figure(path: Path) -> dict:
         ax.set_xticks([]); ax.set_yticks([])
         ax.set_title("reprojection check", fontsize=8)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
-    FIG.mkdir(parents=True, exist_ok=True)
-    fig.savefig(FIG / f"{name.replace('/', '_')}.png", dpi=115)
+    if save:
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        FIG.mkdir(parents=True, exist_ok=True)
+        fig.savefig(FIG / f"{name.replace(chr(47), chr(95))}.png", dpi=115)
     plt.close(fig)
 
     out.update(
@@ -150,12 +158,33 @@ def _corr(a, b):
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--stations", default="",
+                    help="comma-separated station_ids to write per-station figures for")
+    ap.add_argument("--all-stations", action="store_true",
+                    help="write a figure for EVERY station -- 993 PNGs, ~185 MB. Off by "
+                         "default: the aggregates are what get looked at, and a full run "
+                         "buries them.")
+    args = ap.parse_args()
+
     bundles = sorted(DATA_ROOT.glob("*/*/LANDSAT_ST/*_st30_*.npz"))
     print(f"{len(bundles)} bundles")
     if not bundles:
         raise SystemExit("no bundles")
 
-    res = [station_figure(p) for p in bundles]
+    want = {s.strip() for s in args.stations.split(",") if s.strip()}
+
+    def _save(p: Path) -> bool:
+        if args.all_stations:
+            return True
+        return bool(want) and p.parent.parent.name.split("_")[-1] in want
+
+    # every bundle is still READ -- the summary is an aggregate over all 993 either way.
+    res = [station_figure(p, save=_save(p)) for p in bundles]
+    n_fig = sum(1 for p in bundles if _save(p))
+    print(f"per-station figures written: {n_fig}"
+          f"{'  (use --stations or --all-stations for more)' if not n_fig else ''}")
 
     # ---- summary: seasonality is the cheapest sanity check there is
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
