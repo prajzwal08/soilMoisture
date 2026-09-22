@@ -41,7 +41,7 @@ FIG = Path("/gpfs/work3/0/prjs1968/soilMoisture/fig/landsat_st30_check")
 OUT = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/landsat_stqa_cdist.csv")
 
 # km.  0.09 = the 3-px dilated-cloud buffer QA_PIXEL already applies, i.e. "no extra reach".
-CD = [0.0, 0.09, 0.30, 0.50, 1.00, 2.00]
+CD = [0.0, 0.09, 0.30, 0.50, 0.60, 0.75, 0.90, 1.00, 1.25, 1.50, 2.00]
 CD_EDGES = np.array([0, .09, .3, .5, 1, 2, 5, 10, 20, 1e4])   # for the mechanism curve
 QA_EDGES = np.arange(0, 12.01, 0.25)
 MIN_SCENES = 20
