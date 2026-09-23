@@ -40,11 +40,46 @@ MODALITY_KEYS = {
 MODALITY_KEYS["sat"] = (MODALITY_KEYS["s2"] + MODALITY_KEYS["s1"]
                         + MODALITY_KEYS["dem"] + MODALITY_KEYS["lulc"])
 
+# ── The FROZEN U-NET ARM uses different key names ────────────────────────────────────────
+# The map above was rewritten for the patchwise arm and its comment claiming "both sets are
+# listed" is stale: dataset_unet.py emits s2_pyr/dem_pyr/lulc_pyr (:1086, :1098, :1099), never
+# s2_hist/dem_tok/lulc_tok. Running the patchwise map against the U-Net arm fails two ways, and
+# only one of them is loud:
+#     dem, lulc  -> no key matches       -> KeyError below.                   SAFE.
+#     s2, s1, sat-> s2_doys/s2_valid/s2_rel_pos exist on BOTH arms, so n_swapped > 0 and the
+#                   guard passes while s2_pyr -- the actual tokens -- never moves. The model
+#                   then gets a donor's timestamps stapled to its own imagery: INCOHERENCE,
+#                   not absence, which §24.2 says makes a shuffle result uninterpretable.
+# That silent case is why this map exists and why the U-Net arm is checked strictly (every
+# listed key must be present, not merely one).
+MODALITY_KEYS_UNET = {
+    "s2":     ["s2_pyr", "s2_doys", "s2_valid", "s2_rel_pos"],
+    "s1":     ["s1_pyr", "s1_doys", "s1_valid", "s1_rel_pos"],
+    "dem":    ["dem_pyr"],
+    "lulc":   ["lulc_pyr"],
+    "era5":   ["era5", "era5_doys"],
+    # Never tested before §24.13. Both are fed RAW (unnormalised) in this arm -- there is no
+    # _sif_mean/_twsa_mean anywhere in dataset_unet.py; the z-scoring at dataset.py:1030-1033
+    # was added later, for the patchwise arm.
+    "sif":    ["sif",  "sif_doys",  "sif_rel_pos",  "sif_valid"],
+    "twsa":   ["twsa", "twsa_doys", "twsa_rel_pos", "twsa_valid"],
+    # Only definable on this arm -- the patchwise trunk has no decoder skips. This is the
+    # `--ablate anchor` §24.11 caveat 1 asked for.
+    "anchor": ["anchor_l3", "anchor_l6", "anchor_l9", "anchor_l12",
+               "anchor_rel_pos", "anchor_orbit"],
+    "soil":   ["soil_patch"],
+}
+MODALITY_KEYS_UNET["sat"] = (MODALITY_KEYS_UNET["s2"] + MODALITY_KEYS_UNET["s1"]
+                             + MODALITY_KEYS_UNET["dem"] + MODALITY_KEYS_UNET["lulc"]
+                             + MODALITY_KEYS_UNET["anchor"])
+
+KEY_MAPS = {"patchwise": MODALITY_KEYS, "unet": MODALITY_KEYS_UNET}
+
 # Every modality must match at least one key in every sample. Silence means a stale key list,
 # which is a SILENT NO-OP ablation -- see AblationDataset.__getitem__.
 _OPTIONAL_MODALITIES: set[str] = set()
 
-MODALITIES = sorted(MODALITY_KEYS)
+MODALITIES = sorted(set(MODALITY_KEYS) | set(MODALITY_KEYS_UNET))
 
 
 def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
@@ -124,14 +159,21 @@ class AblationDataset(torch.utils.data.Dataset):
     while the run is labelled cross_station (runbook §24.3).
     """
 
-    def __init__(self, base, modality: str, mode: str, seed: int = 0, **kw):
-        if modality not in MODALITY_KEYS:
-            raise ValueError(f"modality must be one of {MODALITIES}, got {modality!r}")
+    def __init__(self, base, modality: str, mode: str, seed: int = 0,
+                 arm: str = "patchwise", **kw):
+        if arm not in KEY_MAPS:
+            raise ValueError(f"arm must be one of {sorted(KEY_MAPS)}, got {arm!r}")
+        keys_map = KEY_MAPS[arm]
+        if modality not in keys_map:
+            raise ValueError(f"modality {modality!r} is not defined for arm {arm!r}; "
+                             f"available: {sorted(keys_map)}")
         self.base = base
+        self.arm = arm
         self.modality = modality
-        self.keys = MODALITY_KEYS[modality]
+        self.keys = keys_map[modality]
         self.donor, self.stats = build_donor_map(base.samples, mode, seed, **kw)
         self.stats["modality"] = modality
+        self.stats["arm"] = arm
         self.stats["keys"] = list(self.keys)
 
     def __len__(self):
@@ -148,6 +190,19 @@ class AblationDataset(torch.utils.data.Dataset):
             if k in d:
                 item[k] = d[k]
                 n_swapped += 1
+        if self.arm == "unet" and n_swapped != len(self.keys):
+            # STRICT on the U-Net arm. `n_swapped == 0` catches a wholly stale key list but not
+            # a PARTIALLY stale one, and the partial case is the dangerous one: with the
+            # patchwise map, `s2` matches s2_doys/s2_valid/s2_rel_pos on this arm and passes the
+            # loose guard while `s2_pyr` -- the tokens themselves -- never moves. The model then
+            # sees a donor's timestamps on its own imagery, which is incoherence rather than
+            # absence and is uninterpretable (§24.2). A modality MOVES AS A WHOLE or not at all.
+            missing = [k for k in self.keys if k not in d]
+            raise KeyError(
+                f"ablation '{self.modality}' (arm={self.arm}) swapped {n_swapped} of "
+                f"{len(self.keys)} keys; missing {missing}. A partial swap is incoherence, "
+                f"not absence — refusing. Sample keys: {sorted(d)[:12]}..."
+            )
         if n_swapped == 0 and self.modality not in _OPTIONAL_MODALITIES:
             # This used to be a bare `if k in d` with no else, which made a stale key list a
             # SILENT NO-OP: report() still printed a healthy donor fraction while nothing was

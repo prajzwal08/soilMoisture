@@ -7481,3 +7481,124 @@ NEXT SESSION, in order:
      elevation.  Needs a dry/high formulation before the 95.9% is quoted as clean.
   5. THEN §43 proper -- consolidate_landsat_st.py, dataset_lst.py, model_lst.py,
      train_lst.py.  The _unet quartet is a FROZEN snapshot; copy, do not edit.
+
+
+SESSION 43 -- 2026-09-23  (planning only; §46 written and approved, no code)
+============================================================================
+
+STARTED from the §43 plan and one question: the decoder is about to be fed raw S1/S2/DEM, and
+  TerraMind normalisation constants already exist -- can we reuse them?
+
+ANSWER: YES, and they were already in the repo.  precompute_terramind.py:76-87 holds
+  _NORM_MEAN/_NORM_STD, lifted verbatim from terratorch's v1_pretraining_{mean,std}
+  (terramind_register.py:199, :254) and applied as (x-mean)/std at :136-141.  The backbone does
+  NOT normalise internally -- that is the whole contract.  S2 in DN, S1 in dB, DEM in metres:
+  the SAME units as satellite_zarr, so no conversion.  External corpus, so no split leakage.
+  And the replaced skips stay commensurable with the L12 bottleneck that produced them.
+    S2L2A mean [1390.458 ... 1857.648], std [2106.761 ... 1334.311]   (12 bands, DN)
+    S1RTC  mean [-10.93, -17.329]   std [4.391, 4.459]                (dB)
+    DEM    mean [670.665]           std [951.272]                     (m)
+    LULC   identity (v1_5 stats are mean 0 / std 1)
+
+THE REAL GAP was not the constants.  §43 specifies the channels, their dtype and their pooling
+  and specifies NO NORMALISATION FOR ANY OF THEM.  The stack mixes int16 DN, dB backscatter, a
+  day count, 0/1 flags and raw metres into one shared Conv2d.  patchwise_math.md:294-310 already
+  records this exact failure once (TWSA at +/- tens of cm and soil at ~1300 entering a stream
+  whose ERA5 tokens were N(0,1)).
+
+AND THE EXISTING BatchNorm DOES NOT COVER IT.  _ConvBlock (model_unet.py:173-186) is
+  Conv3x3(bias=False) -> BatchNorm2d -> ReLU, and skip_proj (:214-218) is a bare 1x1 with no norm.
+  BatchNorm normalises each OUTPUT channel AFTER the conv has summed across inputs, so a channel
+  entering at std 50 beside one at 0.3 owns ~99.6% of the sum and rescaling preserves that ratio
+  exactly.  BatchNorm fixes magnitude, never mixture.
+
+
+§43.3(b) IS CLOSED -- THE +1000 DN HARMONISATION DID HAPPEN, and the answer was in the logs
+-------------------------------------------------------------------------------------------
+The user said "I think we already correct for that 1000 DN right?"  They were right.
+  /gpfs/work3/0/prjs1968/data/logs/harmonize_s2_23183555_*:
+    array 23183555, 1028 tasks, 2026-05-28 ~15:54
+    978 tasks "Done."  -- 235,651 tiles rewritten, 20,394 already-done, 0 ERRORS
+    50 tasks crashed, ValueError: not enough values to unpack (expected 3, got 2) at :129.
+       COSMETIC: harmonize_station returns a 2-tuple on exactly its two no-op early exits
+       (:52 no S2L2A dir, :57 no tile with stem < 20220125) and a 3-tuple after doing work.
+       All 50 needed nothing.
+    convert_satellite_to_zarr.py:42 reads that same directory; :95 copies verbatim, no offset.
+    MEASURED: s2/data min = 1002 (AmeriFlux_CA-Cbo).
+  So the store is baseline-4.0: 1000 DN = 0.0 reflectance, 11000 = 1.0, 0 = nodata.
+
+  RESIDUAL RISK, kept as a free by-product of the fine_stats pixel pass: the idempotency guard
+  skips any tile whose min non-zero DN is already >= 1000, so an unharmonised BRIGHT ARID tile
+  could have been skipped.  Right test is per-band tile medians either side of 2022-01-25, not a
+  per-scene minimum -- it also catches partial harmonisation.
+
+  METHOD LESSON, and it cost a session of design: this sat on the blocker list as UNDETERMINED
+  while the answer was in the SLURM logs the whole time.  Check whether the job logs still exist
+  before designing a measurement.  Provenance beats inference -- again.
+
+
+WHAT ELSE THE SESSION FOUND
+---------------------------
+LULC MAY BE REMAPPED TWICE.  download_s1_lulc_mpc.py:404 writes already-remapped TerraMind
+  indices (its docstring says "uint8, TerraMind indices 0-9") and precompute_terramind.py:268 /
+  retokenize_satellite_zarr.py:203 apply _LULC_REMAP again.  The map is NOT idempotent
+  (4->3, 6->9, 3->9, 9->7), so a second pass relabels Crops->FloodedVeg and Rangeland->Snow/Ice.
+  This is why §46 takes LULC from the RAW raster and one-hots it: one-hot is agnostic to
+  labelling if it is consistent, where a learned embedding of scrambled classes is not.
+
+THE FROZEN _unet ARM NORMALISES ONLY ERA5.  No driver_stats at all (0 hits), so SIF, TWSA
+  (+/- tens of cm) and soil (bulk density ~1300, pH x10, clay %) go in unnormalised.  User chose
+  to PORT it.  The lambda=0 control inherits the change automatically (same dataset file), so
+  attribution to the aux head stays clean; what becomes a 3-variable diff is the comparison
+  against the OLD baseline checkpoint.
+
+STAR RESIDUAL AND use_cls_depth ARE THE SAME SWITCH in the baseline, default OFF.  With it on you
+  get depth_tokens + per-depth FiLM + heads[1:] zero-init as offsets from heads[0].  There is also
+  a live diagnostic (train_unet.py:1272-1291, §18.7/§19.4) watching whether the mechanism is INERT.
+
+
+§46 WRITTEN AND APPROVED -- decisions, all the user's
+-----------------------------------------------------
+  1. RE-STAGE the 1.4 TB token store to scratch, not repoint.  + stage satellite_zarr (247 GB).
+  2. SKIP the §41.5 emissivity falsification and the §35.33.6 statics ablation; build and train.
+  3. NO NDVI/NDWI/NBR  -> and with them the whole (DN-1000)/10000 reflectance branch disappears.
+  4. LULC = 10-ch ONE-HOT AREA FRACTION from the raw 10 m raster, NOT Conv2d(768,8,1) on tokens.
+     (L12 tokens are consumed unscaled at per-element std 4.64 with 77% of squared magnitude in
+      6 register dims -- 8 channels projected from them would arrive ~5x hot and mostly artefact.)
+  5. RAW IMAGERY ONLY -- a scale-matched hybrid (L9 embedding at 14x14, zero-init, as a free
+     ablation) was proposed and DECLINED.
+  6. PORT driver_stats so SIF/TWSA/soil are z-scored.
+  7. use_cls_depth ON, STAR RESIDUAL REMOVED -- three DISCONNECTED per-depth heads.
+  => 27 channels, superseding both §43.4's "24" and §43.14's "28".
+
+TWO THINGS THAT BECOME MANDATORY BECAUSE OF (7):
+  * per-depth label_mean bias init.  Without the residual, the old zeros_ init means "predict
+    ZERO moisture", not "same as surface".
+  * log n_stations per depth.  The >=95% coverage filter drops depths per station, so disconnected
+    heads for depths 2 and 3 train on strictly fewer stations and will be noisier.  That is the
+    accepted cost of (7), and the per-depth curves are uninterpretable without the counts.
+
+ON 20 m, STATED SO IT IS NOT OVERCLAIMED LATER: nothing in the loss supervises 20 m.  SM gives ONE
+  labelled pixel of 12,544; the LST target is 100 m.  And 100 m is not tightenable -- Landsat st30
+  is a 30 m deliverable but TIRS ACQUIRES at ~100 m, so dense thermal supervision is capped by the
+  sensor (ECOSTRESS at 70 m was the only finer option and that arm closed on G0).  Claim 100 m;
+  treat the 20 m stage as decoder capacity and the 20 m map as qualitative.
+
+SHIPPED (documentation only, no code):
+  text/training_runbook.md  -- §46 appended (§46.1 the 18-row table, §46.2 the 27 channels,
+    §46.3 why BatchNorm does not cover it + worker order, §46.4 pooling direction and the
+    resolution claim, §46.5 the 37-item code plan, §46.6 cost of disconnecting the depths,
+    §46.7 traps, §46.8 verification, §46.9 detection that remains, §46.10 §43.3(b) closed)
+  text/training_runbook.md  -- supersession notes at §43.3(b) and §43.4
+  text/open_items.md        -- "S2 is not to be used" marked REVERSED
+  memory                    -- training_blockers rewritten (b closed), next_session_plan rewritten,
+                               two_head_build given an AMENDED header, MEMORY.md index updated
+
+STILL TO DECIDE BEFORE THE FIRST EDIT: file layout.  §46.5 ASSUMES editing model_unet.py /
+  dataset_unet.py / train_unet.py in place on feat/landsat-st-100m behind flags rather than a third
+  *_lst.py copy -- main is frozen and tag baseline-unet-temporal is the rollback.  Flagged as an
+  assumption, NOT confirmed.  Canonical names are unavailable: model.py is the patchwise arm with
+  no decoder.
+
+NEXT SESSION: implementation, group A first (the re-stage).  Nothing trains until it is done --
+  today the dataset would build 0 samples and not raise.

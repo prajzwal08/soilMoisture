@@ -160,6 +160,11 @@ average out. Mixing **only attenuates, never manufactures** contrast, so a gate 
 ## E. Decisions taken 2026-08-25, recorded so they are not relitigated
 
 - **S2 is not to be used.** User decision.
+  → **REVERSED 2026-09-22/23 by §43.1 and §46.** The premise was that the raw imagery was gone with
+  the scratch purge; it survived at `/projects/prjs1968/satellite_zarr` (998 stations, 247 GB). Raw
+  S2 now supplies 10 of the 27 decoder channels. The `up4` conclusion below still stands, but on the
+  different ground given in §46.4 — S1 delivers ~20 m of true resolution on a 10 m grid, so the 10 m
+  stage has no input that resolves there.
 - **Therefore `up4` has no measured input.** Without S2's 10 m bands, the only 10 m sources are
   static WorldCover LULC and S1 gridded at 10 m — the latter one look per cell (ENL ≈ 4.4,
   ~2.7 dB speckle), far below the `d` signal. This independently re-derives §33.6's reason for

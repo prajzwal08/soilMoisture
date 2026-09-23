@@ -50,3 +50,15 @@ checkpoints/
 *.pt
 *.pth
 *.ckpt
+
+# Raw ISMN archive, re-downloaded 2026-09-23 — 9.6 GB, 9,060 .stm files.
+# Never commit: it exceeds GitHub's limits and it is input data, not source.
+ISMNsoilMoisture/
+*.stm
+
+# Derived analysis output — regenerable from the scripts that write them
+eval_output_unet/
+*.parquet
+
+# Transient lock state written by the era5 unlock/trap-relock template
+csvs/.era5_unlocked_dirs.txt
