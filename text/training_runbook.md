@@ -15215,3 +15215,63 @@ Deliverables: `csvs/station_elevation_check.csv`, `csvs/station_elevation_flags.
 `fig/era5_radiation/station_elevation_check.png` (metadata vs MERIT with the 32 outliers
 labelled; the two DEM-independent legs; and the separation panel, where bad metadata leaves the
 origin in BOTH axes while orography smoothing moves only x).
+
+### §45.14 §43.12 CLOSED — check aligned, spliced, verified, stats written
+
+Run order completed this session. Jobs 27048821 (check), 27048844 (splice dry), 27050666
+(guarded splice + verify), 27051233 (stats).
+
+**1. Check aligned and now PASSES.** `check_era5_radiation.py` constants moved to
+`verify_era5_18.py`'s — `SSRD 0/4.5e7`, `STRD 5.0e6/5.0e7` — because **a check stricter than
+the gate it feeds is a bug**, and both of this session's false alarms were exactly that.
+`SEASON_MIN` 0.15 -> 0.08 (measured Sahel minimum is 0.106; a genuinely constant series reads
+~0). The printed guidance was corrected: it advertised `strd_mean 20-35 MJ` while the test is on
+`strd_min`/`strd_max`. **PASS -- all 6734 files physical.**
+
+**And the accumulated-band question is now settled from PROVENANCE.** The check asserts
+`"_hourly" in ds.attrs["bands"]` on every file. `download_era5_radiation.py:107-112` requested
+the de-accumulated variants and `:380-390` stamps them into each file. One assertion, stronger
+and cheaper than every magnitude argument this session spent effort on. 6734/6734 pass.
+
+**2. Splice dry run: 990/990, `n_gap = 0` and `n_extra = 0` for every station**, 2,459,842
+station-days — the join is exact, nothing would be written NaN.
+
+**3. THE STORE IS CHMOD'D READ-ONLY, AND THE FIRST `--execute` FAILED ON IT.** All 990 errored
+with `KeyError: 'era5/values18/.zarray'` — baffling, and **nothing was written** (0 `values18`
+dirs). Cause: `zarr_tokens` is `dr-xr-x---` on all 993 station dirs, the data-safety lock on the
+only copy of the drivers. zarr swallowed the `PermissionError` and then failed READING BACK the
+array it could not create. `splice_era5_radiation.py` now pre-flights `os.access(W_OK)` and says
+`skip:read-only` instead.
+
+`slurm/splice_era5_guarded.sh` does unlock -> splice -> verify -> **re-lock from a TRAP**, so the
+lock is restored on success, failure or Ctrl-C. It grants `u+w` to exactly two dirs per station —
+`{station}/` (for `.zmetadata`) and `{station}/era5/` (for the new arrays) — 1,980 dirs total.
+`era5/values` keeps its read-only bit and is never written. It does NOT survive SIGKILL; re-lock
+by hand with `bash slurm/splice_era5_guarded.sh --relock-only`.
+
+**Result: splice 990/990 ok, verify PASS 990/990** (including bit-identity of the 16 carried
+columns), **re-lock VERIFIED — 0 writable dirs remaining.** `era5/values18` is `(N,18)`,
+`era5/vars18` alongside, `era5/values` untouched.
+
+**4. `compute_era5_stats.py` hit the ZARR_ROOT blocker and its guard held.** It imports
+`ZARR_ROOT` from `dataset.py:45`, which still points at `/gpfs/scratch1/shared/pkhanal/zarr` —
+**PURGED, 0 of 993 `.complete`** against 993/993 at `/projects/prjs1968/zarr_tokens`. Every
+station read `zarr-not-complete`, it admitted none, and it **refused to overwrite the stats
+file**. Fixed with the repo's established purge-fix pattern (`_ds.ZARR_ROOT = ...` before the
+helper import, as at `plot_dtr_vs_sm.py:39`).
+
+**Deliberately NOT fixed at source: `dataset.py:45` and `dataset_unet.py:40` still point at the
+purged scratch path.** Those are the TRAINING loaders; repointing them changes what training
+reads. It stays on the blocker list as its own decision.
+
+**`csvs/era5_stats18.json` written**: 572/572 train stations, **1,153,188 station-days**
+(2016-2022), 18 variables, no station skipped. Physical: `ssrd_sum` 1.739e7 +/- 8.39e6 J m-2
+(17.4 MJ/day, 201 W m-2), `strd_sum` 2.459e7 +/- 4.95e6 (24.6 MJ/day, 285 W m-2), `tp_sum`
+0.0020 m/day, `sp_mean` 85,395 Pa. A NEW filename, so `ckpt_utils.py`'s SHA provenance check
+stays meaningful.
+
+Cosmetic, unfixed: the summary line prints "min finite count over the 19 variables" while
+listing 18 — a stale label from the pre-§43.12 width.
+
+**Still blocking training**: the `dataset.py` / `dataset_unet.py` ZARR_ROOT repoint, and the
+undetermined S2 +1000 DN harmonisation.

@@ -66,9 +66,23 @@ from pathlib import Path
 
 import numpy as np
 
+# THE PURGE FIX (§43.12).  dataset.py:45 still points ZARR_ROOT at
+# /gpfs/scratch1/shared/pkhanal/zarr, which was PURGED -- it holds 0 of 993
+# `.complete` sentinels, so every station reads as "zarr-not-complete" and this
+# script scans 572 stations, admits none, and refuses to write. The live store is
+# /projects/prjs1968/zarr_tokens (993/993 complete). Overriding the module global
+# before importing the helpers is this repo's established pattern for it, see
+# plot_dtr_vs_sm.py:39, plot_txson_six.py:39, analyse_s1_spatial_cv.py:43.
+#
+# Deliberately NOT fixed at source here: dataset.py:45 and dataset_unet.py:40 are
+# the TRAINING loaders, and repointing them changes what training reads. That is a
+# separate, deliberate change -- it stays on the blocker list.
+import dataset as _ds                                        # noqa: E402
+_ds.ZARR_ROOT = Path("/projects/prjs1968/zarr_tokens")
+
 # Parity import: dataset.py owns the definition of "the ERA5 array the model
-# sees", including where the zarr store lives and how it is opened (the
-# .complete sentinel check).  Duplicating either here is how the two drift.
+# sees", including how the store is opened (the .complete sentinel check).
+# Duplicating either here is how the two drift.
 from dataset import ZARR_ROOT, _open_zarr, _load_zarr_era5  # noqa: E402
 
 # admit_station applies the dataset's soil / label-QC drops (§35.24 audit items

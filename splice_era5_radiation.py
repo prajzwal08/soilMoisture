@@ -52,6 +52,7 @@ Env: `terramind` (needs zarr 2.x).  The download half runs in `soilmoisture`.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from multiprocessing import Pool
 from pathlib import Path
@@ -137,6 +138,18 @@ def process(args) -> dict:
     try:
         if not (zpath / ".complete").exists():
             out["status"] = "skip:no-complete"
+            return out
+
+        # PRE-FLIGHT WRITABILITY.  zarr_tokens is deliberately chmod'd read-only
+        # (dr-xr-x---) as the data-safety lock on the only copy of the drivers.
+        # Without this check zarr swallows the PermissionError and then fails
+        # READING BACK the array it could not create, surfacing a baffling
+        # `KeyError: 'era5/values18/.zarray'` for every station.  Say what is
+        # actually wrong instead.
+        if execute and not os.access(zpath / "era5", os.W_OK):
+            out["status"] = "skip:read-only"
+            out["msg"] = (f"{zpath}/era5 is not writable -- the store is chmod'd "
+                          f"read-only on purpose. Unlock deliberately, then re-lock.")
             return out
 
         store = zarr.DirectoryStore(str(zpath))
