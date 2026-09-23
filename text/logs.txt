@@ -7384,3 +7384,100 @@ csvs/era5_stats18.json WRITTEN.  job 27051233.  572/572 train stations, 1,153,18
 
 STILL BLOCKING TRAINING: the dataset.py/dataset_unet.py ZARR_ROOT repoint, and the
   undetermined S2 +1000 DN harmonisation.
+
+
+SESSION 42 addendum 3 -- the ZARR_ROOT problem, measured properly (2026-09-23)
+-------------------------------------------------------------------------------
+
+Surfaced by compute_era5_stats.py refusing to write.  Investigated because "the
+ZARR_ROOT repoint" has sat on the blocker list as a one-line fix, and it is not one.
+
+THE SCRATCH STORE IS SKELETONS, AND EVERY STRUCTURAL CHECK PASSES.
+  /gpfs/scratch1/shared/pkhanal/zarr -- purge timestamps Sep 20 02:15-05:11.
+  All 993 station dirs EXIST.  era5/ exists.  era5/values/ exists.  s2/l3|l6|l9|l12
+  exist.  Every one of them is EMPTY: no chunk files, no .zarray.
+  MEASURED: 0 of 993 stations have an era5/values/0.0 chunk.
+  `du` reports 51 GB of allocated DIRECTORY BLOCKS, so a size check does not reveal
+  it either.  (An earlier note recorded 24 MB; both readings agree it is skeletons.)
+  Live store /projects/prjs1968/zarr_tokens: 993/993 .complete, 1.4 TB.
+
+  CONSEQUENCE, and this is the real problem: the .complete sentinel is not one guard
+  among several, it is the ONLY thing between a training run and a zero-data store.
+  It fails by returning None PER STATION (dataset.py:190, dataset_unet.py:134).
+  Nothing raises.  A run does not crash -- it builds 0 SAMPLES AND PROCEEDS.
+  compute_era5_stats.py survived only because it happens to carry an explicit
+  end-of-run guard ("FATAL: no station produced usable ERA5 statistics -- refusing to
+  overwrite era5_stats.json").  Without that it would have written a normalisation
+  file computed from nothing and every downstream z-score would be silently wrong.
+
+ZARR_ROOT IS ~40 HARDCODED COPIES, SPLIT 30 SCRATCH / 10 LIVE.  Not one constant.
+  Plus a STALE reference: create_token_zarr.py:43 comments "matches dataset.py
+  ZARR_ROOT_FAST" and no ZARR_ROOT_FAST exists anywhere in the repo.
+  Analysis scripts already work around it by monkey-patching after import --
+  plot_dtr_vs_sm.py:39, plot_txson_six.py:39, analyse_s1_spatial_cv.py:43,
+  analyse_txson_six.py, plot_gra_thermal.py, and now compute_era5_stats.py.
+
+WHY IT IS A DECISION, NOT A TYPO FIX.  Scratch was the fast SSD staging path.
+  Steady state is ~31 MB/sample served from /dev/shm, so repointing at /projects
+  moves training reads from SSD to GPFS -- a throughput question, not just a path.
+  Three options, genuinely different trades:
+    1. repoint to the live store        -- correct now, unknown throughput cost
+    2. re-stage 1.4 TB back to scratch  -- restores SSD, but scratch purged once
+                                           and will again
+    3. env var, live store as DEFAULT   -- one source of truth, and a re-stage
+                                           becomes SM_ZARR_ROOT=... not 40 edits
+
+RECOMMENDED, NOT APPLIED (repointing the training loaders is the user's call):
+    ZARR_ROOT = Path(os.environ.get("SM_ZARR_ROOT", "/projects/prjs1968/zarr_tokens"))
+  plus FAIL LOUD AT THE ROOT -- check once at dataset construction that the root holds
+  a non-zero count of .complete stations and raise if not.  Per-station None is correct
+  for ONE incomplete station; it must never be how a wholly-missing store is discovered.
+  This second half is worth doing regardless of which path wins, and it kills the whole
+  silent-zero-samples class.
+
+dataset.py and dataset_unet.py were NOT modified.
+
+
+SESSION 42 CLOSE -- 2026-09-23
+===============================
+
+SHIPPED:
+  37121ae  §45 all-station ERA5 driver QC + flag-never-replace elevation check
+  fef39e0  §43.12 closed: splice, verify, era5_stats18.json, the read-only store
+
+§43.12 IS CLOSED.  era5/values18 (N,18) for 990/990, verify PASS 990/990 incl.
+  bit-identity of the 16 carried columns, csvs/era5_stats18.json over 572 train
+  stations / 1,153,188 station-days.  The store was re-locked and the re-lock verified.
+
+§45 ALL-STATION QC IS CLEAN.  12/12 Tier-0 invariants pass on 990 stations.
+
+WHAT THE SESSION ACTUALLY FOUND (nothing wrong with the radiation download):
+  1. 18 REMEDHUS stations carry elevation_m = -99.9, a nodata sentinel; Baytik 0.0.
+     19 stations sit in the wrong elevation_band.  Root cause is an .isna() gate that
+     cannot see a sentinel.  FLAGGED, NOT REPLACED, by user policy.
+  2. The zarr store is chmod'd read-only and a write fails as a bogus KeyError.
+  3. The scratch ZARR_ROOT is skeletons and fails silently to 0 samples.
+  4. Only ONE station in the whole network is in the southern hemisphere.
+
+METHOD LESSONS WORTH KEEPING:
+  * A check must never be stricter than the gate it feeds.  Both of this session's
+    FAILs were that, not data.
+  * Probe the MAGNITUDE before believing a count.  966 "negative precipitation"
+    stations were 39-nanometre float noise.
+  * Provenance beats inference.  One attribute assertion ("_hourly" in attrs["bands"])
+    settled the accumulated-band question that cost most of a session in ratio,
+    month-boundary and Brutsaert arguments.
+  * My first polar-night fix made it WORSE.  Check the sign of a correction before
+    trusting it.
+
+NEXT SESSION, in order:
+  1. The ZARR_ROOT decision (3 options above) + the fail-loud root check.
+  2. The S2 +1000 DN harmonisation -- still undetermined, still blocking.
+  3. Coordinate-vs-elevation test for the 13 flagged stations (designed, not run):
+     search each station's own 25 km MERIT tile for a location matching the reported
+     elevation.  A wrong COORDINATE mis-centres the satellite tiles, the ERA5 pixel
+     AND the Landsat ST tile.
+  4. Ngari summer Brutsaert shortfall still OPEN -- not cold, not aridity, not
+     elevation.  Needs a dry/high formulation before the 95.9% is quoted as clean.
+  5. THEN §43 proper -- consolidate_landsat_st.py, dataset_lst.py, model_lst.py,
+     train_lst.py.  The _unet quartet is a FROZEN snapshot; copy, do not edit.
