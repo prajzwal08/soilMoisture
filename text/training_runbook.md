@@ -4700,8 +4700,177 @@ python compare_ablation.py eval_output/predictions_oos_sat_within_station_s0.par
 
 **§24 is closed as a question.** What remains from it is optional attribution
 (`--ablate s2 | s1 | anchor`, which also fixes the unmatched-perturbation problem of
-§24.11 caveat 1) and the §24.8 coupling to §23. Neither is on the critical path; the open
+§24.11 caveat 1 — §24.13 takes it up) and the §24.8 coupling to §23.
+Neither is on the critical path; the open
 gate is still §22's "is σ_station predictable?".
+
+### 24.13 Per-modality attribution on the U-Net arm — DEM, LULC, SIF, TWSA (PLANNED, Session 43, 2026-09-23)
+
+**STATUS: SPECIFIED, NOTHING RUN.** §24.11/§24.12 measured `era5` and `sat`, where `sat` is
+s2+s1+dem+lulc bundled as 16 keys. DEM and LULC were never separated out, SIF and TWSA were never
+in `MODALITY_KEYS` at all, and §24's own closing note left `--ablate s2 | s1 | anchor` open as
+"optional attribution". This section specifies all of it, plus the one missing cell of the 2x2.
+
+The arm is not in question. `eval_output/manifest.json` records the checkpoint as
+`cls_depth_star_reg/best.pt`, epoch 16 — the pooled U-Net (50,348,544 params, decoder present,
+§35.13 `:9744`). Every parquet in `eval_output/` predating the 2026-08-26 patchwise switch is
+U-Net arm; the only patchwise artefacts live in `eval_output/pw_stage2a_L3/`.
+
+**What broke.** `fe0dc2c` ("Patchwise-only: strip the U-Net path", 2026-08-26) repointed
+`eval_predict.py` at the live arm. It never imported `_unet` modules, because at §24 time the U-Net
+*was* the live arm — `dataset.py`/`model.py`/`ckpt_utils.py` are what the frozen quartet was copied
+from at `1dc43e7`. So the restoration is an import swap, not a rewrite.
+
+**Restore from the tag, do not reconstruct.** `baseline-unet-temporal` = `a46efaa4` is the newest
+commit with a working U-Net-arm eval, and §35.13 (`:9108-9118`) verified it holds the baseline
+training code plus eval tooling — *"leave it alone"*. `git show baseline-unet-temporal:ablation.py`
+already carries the pooled key names **and an `"anchor"` group**. `compare_ablation.py` is unchanged
+since that tag and is fully arm-agnostic (two parquets, pandas only, no model import).
+
+#### The silent half-ablation — the finding that makes this section necessary
+
+`MODALITY_KEYS` at HEAD was rewritten for the patchwise arm. Run against the U-Net arm it fails in
+two different ways, and only one of them is safe:
+
+| modality | HEAD keys | `dataset_unet.py` emits | outcome |
+|---|---|---|---|
+| `dem` | `dem_tok` | `dem_pyr` `:1098` | **raises** at `ablation.py:151-157` — safe |
+| `lulc` | `lulc_tok` | `lulc_pyr` `:1099` | **raises** — safe |
+| `s2` | `s2_hist, s2_hist_valid, s2_doys, s2_valid, s2_rel_pos` | `s2_pyr` `:1086` + the three others | **SILENT HALF-ABLATION** |
+| `s1` | same shape | `s1_pyr` `:1092` + three | **SILENT HALF-ABLATION** |
+| `sat` | union of the above | — | **SILENT HALF-ABLATION** |
+
+`s2_doys`/`s2_valid`/`s2_rel_pos` all exist on this arm, so `n_swapped > 0` and the `n_swapped == 0`
+guard passes — while `s2_pyr`, the actual tokens, is never swapped. The model receives a donor's
+timestamps stapled to its own imagery. That is **incoherence, not absence**, which §24.2 states is
+the one thing that makes a shuffle result uninterpretable. The guard added after §35.9 catches a
+fully stale key list; it does not catch a partially stale one. Nothing in the tree catches this
+today, and any `--ablate sat` run on the U-Net arm from HEAD's map would be silently invalid.
+
+Fix: restore the pooled map as a **second dict** in `ablation.py`, selected by a flag on
+`AblationDataset`, leaving the live map untouched.
+
+| modality | U-Net keys (`dataset_unet.py:1086-1126`) |
+|---|---|
+| `s2` | `s2_pyr, s2_doys, s2_valid, s2_rel_pos` |
+| `s1` | `s1_pyr, s1_doys, s1_valid, s1_rel_pos` |
+| `dem` | `dem_pyr` |
+| `lulc` | `lulc_pyr` |
+| `era5` | `era5, era5_doys` |
+| `sif` | `sif, sif_doys, sif_rel_pos, sif_valid` |
+| `twsa` | `twsa, twsa_doys, twsa_rel_pos, twsa_valid` |
+| `anchor` | `anchor_l3, anchor_l6, anchor_l9, anchor_l12, anchor_rel_pos, anchor_orbit` |
+| `soil` | `soil_patch` |
+| `sat` | `s2 + s1 + dem + lulc + anchor` |
+
+`anchor` is only *definable* on this arm — the patchwise trunk has no decoder skips — and it is
+exactly the `--ablate anchor` §24 left open against its own caveat 1.
+
+#### ERA5 stats provenance — CHECKED 2026-09-23, resolved without a re-run
+
+`ckpt_utils_unet.py` carries **no stats-provenance check**; the live `ckpt_utils.py` only gained the
+SHA256 gate on `era5_stats.json`/`driver_stats.json` in §35.28, after the snapshot was taken. And
+`csvs/era5_stats.json` was **overwritten in §35.27** (whole-record → train-years-only). So the
+question was whether the Aug-6/Aug-10 parquets are still pairable.
+
+**Measured.** `git show baseline-unet-temporal:csvs/era5_stats.json | diff - csvs/era5_stats.json`
+returns **two hunks — means (`:24-42`) and stds (`:45-63`)**. The shifts are small but nonzero:
+t2m mean 281.6338 → 281.6495 K, sp mean 85075.66 → 85420.89 Pa (+0.4%), tp_sum mean
+0.0019862 → 0.0020783 (+4.6%). Every prediction would move, so a naive re-run cannot reproduce
+§24.11 and cannot be paired against `predictions_oos.parquet`.
+
+**Resolved by pinning the file, not by regenerating the baseline.** `dataset_unet.py:750` takes
+`era5_stats_path` as a **constructor argument** (`train_unet.py:843` passes `CONFIG["era5_stats"]`),
+so the training-time stats can simply be handed back to it:
+
+```
+git show baseline-unet-temporal:csvs/era5_stats.json > csvs/era5_stats_unet.json
+```
+
+and `eval_predict_unet.py` points at that. Exact reproduction, the Aug-6 baseline stays pairable,
+no extra GPU. `csvs/era5_stats.json` is left alone for the live arm. **Never let the `_unet` eval
+default to the live stats file** — the snapshot has no SHA gate and will not warn.
+
+**No other modality is exposed.** Checked the same day:
+
+| modality | normalisation in the U-Net arm | provenance risk |
+|---|---|---|
+| `era5` | `era5_stats.json` via `dataset_unet.py:765` | **was the only one** — now pinned |
+| `dem`, `lulc` | none — raw TerraMind L12 tokens, pyramid-pooled (`:1098`, `:1099`) | none |
+| `sif`, `twsa` | none — `load_sif_rolling` (`:595`) returns raw values; there is no `_sif_mean`/`_twsa_mean` anywhere in `dataset_unet.py`. The z-scoring at `dataset.py:1030-1033` was added later, for the patchwise arm | none |
+| `anchor` | none — raw L3/L6/L9/L12 tokens | none |
+
+`csvs/driver_stats.json` **does not exist at the tag** and `dataset_unet.py` never reads it, so the
+frozen snapshot has no dependency on it at all.
+
+#### Build
+
+1. `eval_predict_unet.py` — HEAD's `eval_predict.py` (it carries the §35.33/§35.34 CPU-fault fixes)
+   with four imports repointed at `:30-34`: `dataset_unet`, `model_unet`, `ckpt_utils_unet`, and
+   `CudaPrefetcher` from `train_unet`. `ckpt_utils_unet.load_checkpoint` returns the same
+   `(model, cfg, epoch)` tuple, so it is a drop-in. The readout is already arm-agnostic —
+   `:82-83`/`:98-99` use `getattr(SoilMoistureModel, "STATION_ROW", None)` and `model_unet.py:349-350`
+   supplies 112/112. **Do not edit the frozen quartet.**
+2. The second modality map, above.
+3. Confirm the dataset is built with `training=False`. `dataset_unet.py` applies 50% spatial token
+   dropout (`:307`, `:398`) and SIF/TWSA modality dropout at p=0.5 (`:1065`, `:1072`) when training;
+   leaving those on would put the ablation signal in competition with augmentation noise, which is
+   fatal for the SIF/TWSA conditions specifically.
+4. Pin the stats: `git show baseline-unet-temporal:csvs/era5_stats.json > csvs/era5_stats_unet.json`
+   and pass that path on **every** run in this section. `eval_predict_unet.py` must not default to
+   `csvs/era5_stats.json` — the snapshot has no SHA gate and will fail silently.
+
+`train_unet.py:evaluate()` (`:649-725`) is **not** reusable: it collects `all_station_keys` but never
+`year`/`doy`, so `compare_ablation.py`'s four-key join on `station_key/year/doy/depth` is impossible,
+and the file is frozen in any case.
+
+#### Reproduction gate
+
+`--ablate era5 --ablate-mode cross_station --seed 0`, run against the pinned
+`csvs/era5_stats_unet.json`, must land within ~0.001 of §24.11: **+0.0227 / +0.0174 / +0.0117** at
+0-10 / 10-30 / 30-100. With the stats pinned this should be near-exact, so a miss means the
+restoration is wrong — stop, nothing downstream is interpretable. A miss on the scale of the §35.27
+stats shift specifically means the pin did not take and the eval fell through to the live stats file.
+
+#### The runs
+
+`cls_depth_star_reg/best.pt`, `--station-flag ablation_oos` (50 stations in
+`eval_output/_flag_oos_ablation_oos.csv`, of which 36 / 28 / 21 clear `compare_ablation.py`'s
+`len(g) >= 30` filter by depth), 2016-2022, seed 0, ~13 min each.
+
+| ablation | mode | why |
+|---|---|---|
+| `dem` | cross_station | separates terrain from the `sat` bundle |
+| `lulc` | cross_station | separates cover from the `sat` bundle |
+| `sif` | cross_station | never tested |
+| `twsa` | cross_station | never tested |
+| `anchor` | cross_station | closes §24.11 caveat 1 — 6 keys, not 16 |
+| `era5` | **within_station** | the missing 2x2 cell: ERA5's temporal share, directly comparable against the satellite's 39/27/12% |
+
+**No `within_station` for `dem`/`lulc`.** Both are static per station, so same-site/different-date
+returns an identical tensor. A null there is a no-op by construction, not a result. LULC is annual,
+and the donor rule only requires >60 days' separation, so a same-year donor is identical too.
+
+One SLURM GPU array over the six conditions, `--mail-type=BEGIN,END,FAIL`. ~2 GPU-h total.
+
+#### Reading the result
+
+- `AblationDataset.report()` prints the donor-fallback fraction; a large one silently weakens the
+  ablation, so check it per run.
+- A `KeyError` from `ablation.py:156` means a key name is wrong — that is the guard working. The
+  dangerous case is the opposite, above.
+- Absolute numbers on `ablation_oos` are **not** OOS performance (§24.12: baseline median NSE_anom at
+  30-100 is 0.004 there against 0.214 on the full 180-station pool). Only paired deltas are valid.
+- **Depth is the informative axis.** If the DEM/LULC deltas *grow* with depth they are acting as a
+  site fingerprint, matching §24.12's 39/27/12% temporal share and §20.14/§22.10 on level. If they
+  peak at 0-10 they are contributing something dynamic. Deltas at 30-100 rest on 21 stations —
+  indicative only.
+- **SIF/TWSA must be reported with their caveat.** Both were trained under p=0.5 modality dropout
+  (`dataset_unet.py:1065`, `:1072`), so the model was explicitly taught to run without them. A
+  near-null is the *expected* outcome and means "the dropout worked", not "the information is
+  useless". Testing the information itself needs a run trained without the dropout, which is out of
+  scope here.
+- Record which `era5_stats.json` produced each parquet alongside the numbers.
 
 ---
 
@@ -14406,3 +14575,643 @@ and the lambda=0 control decides whether the head stays at all. Two notes that f
   gradient — that is the point. "Deleted at inference" means not evaluated or reported.
 - **Keep the head's weights in the checkpoint.** §43.6's three diagnostic numbers need it alive on
   held-out scenes, and those numbers are what decide keep-or-drop.
+
+
+## §44 The in-situ target side — what the QC actually did, and what the splits inherit (Session 42, 2026-09-23)
+
+Every section from §29 onward has been about the *inputs* — thermal, S1, ERA5, Landsat ST. This
+one is about the **targets**: the ISMN level-1 soil moisture the model is trained against, and the
+station inventory the splits are drawn from. It opened as a question about which quality filters
+the preprocessing applies and turned into four findings, two of which change what can be claimed
+about the data.
+
+### §44.1 The quality filters, as actually coded
+
+`preprocessing_ISMN_soilMoisture.py`, in order. Sensor/observation level, in `process_station()`:
+
+1. **Flag whitelist** (`:100`) — keep `G`, or anything whose flag string starts with `D`.
+2. **Depth averaging** by `depth_to`, not `depth_from` (some stations report `depth_from=0` for
+   every sensor).
+3. **Drop all-NaN depths**; the station returns `None` if none survive.
+4. **≥ 6 valid sub-daily observations per day**, else the daily mean is masked (`:126`).
+5. **Depth binning** to 0-10 / 10-30 / 30-100 cm; sensors below 100 cm dropped.
+
+Station level, in `process_single_station()`:
+
+6. **Longest continuous run** with gaps ≤ 7 days bridged (`max_gap_days=7`); skip if the surface
+   bin has no run.
+7. **Trim to the surface valid window**, dropping other depths below **95 %** coverage inside it.
+8. **Duration filter** — currently `< 1095` days (3 years) is skipped (`:228`). See §44.4.
+9. **Climatological gap-fill** (month-day mean, Feb-29 -> Feb-28 -> Mar-01), then skip the station
+   if any NaN survives.
+
+### §44.2 The whitelist is a whitelist, and that is load-bearing
+
+There is no C filter. The mask keeps `G` or `D*` and everything else falls through to NaN, so
+`C01`-`C03` (below the physical minimum, above the maximum, above saturation) and `M` are excluded
+**by omission**. Two consequences:
+
+- **Keeping `D*` is deliberate and defensible, though the repo never wrote down why.** `D` codes
+  are heuristic detections driven largely by *ancillary* data — GLDAS soil temperature, a gridded
+  precipitation product — so `D01`-`D03` would delete whole frozen winters and `D04` fires on
+  convective rain the coarse product missed. And because filter 9 gap-fills, dropping a `D` day
+  does not leave a hole: it substitutes a fabricated climatological mean for a suspect-but-real
+  measurement, and inflates `n_gapfilled` so the QC flag stops meaning what it says.
+- **`str.startswith("D")` is order-sensitive on ISMN's comma-joined multi-code fields.** `"C01,D01"`
+  drops; `"D01,C01"` is **kept** — the same physically-impossible value, decided by string order.
+  Whether combined fields occur in this archive is now **unverifiable** (§44.3). The resolution is
+  therefore to reject on content, which is identical to today's rule when no field is combined and
+  strictly safer when one is:
+
+```python
+flags = station_data["soil_moisture_flag"].astype(str)
+has_C = flags.str.contains("C")
+keep  = (flags == "G") | (flags.str.contains("D") & ~has_C)
+```
+
+`audit_ismn_flags.py` + `slurm/audit_ismn_flags.sh` are written and sitting on disk to measure the
+C-and-D co-occurrence and the per-code data cost the day an archive exists. They take the archive
+path as their first argument.
+
+### §44.3 The raw archive is gone; the derived flag is not the ISMN flag
+
+`/home/khanalp` no longer exists — it predates the current `/home/pkhanal -> /gpfs/home5/pkhanal`.
+A search of `/gpfs/home5/pkhanal`, `/gpfs/scratch1/shared/pkhanal` and `/gpfs/work3/0/prjs1968`
+finds **zero `.stm` files**. Every hardcoded path in `preprocessing_ISMN_soilMoisture.py` (and in
+`compile_station_inventory.py`, `explore_depth_distribution.py`, and the module-level
+`os.chdir('/home/khanalp/code/PhD/soilMoisture/')`) points at dead storage.
+
+What survives, and it is more than first appeared:
+
+- **1324 level-1 NetCDFs** at `/gpfs/work3/0/prjs1968/raw_soil_moisture/`, plus 1048 in
+  `level1_organised/{sm_only,sm_and_flux,flux_only}/` and a 31 MB `level1_data.zip`. The two
+  directories use different naming and `links=1`, so they are genuine separate copies, not one
+  inode seen twice. The 1324 -> 1048 difference is the category split, not loss.
+- **`station_metadata.csv`** at `/gpfs/work3/0/prjs1968/raw_soil_moisture/` — the per-station
+  status record, 2393 rows, which recovers the skip provenance (§44.4).
+
+What does **not** survive is the ISMN code itself. `:238-281` writes a *derived* QC variable and
+summary attrs; the flag string is consumed by the mask at `:100` and discarded there:
+
+```
+soil_moisture_qc(depth, date_time)   # 0=observed, 1=gap-filled, 2=missing
+:n_observed_{d}  :n_gapfilled_{d}  :frac_observed_{d}
+:min_obs_per_day = 6  :max_gap_days = 7  :min_coverage_frac = 0.95
+```
+
+So `qc=0` means "passed the mask and had >= 6 obs that day" — a `G` day and a `D07` day are both 0,
+indistinguishable forever. **Level-1 is now an irreplaceable input, not an intermediate**, and
+belongs under the same no-only-copy discipline as `zarr_tokens` and the checkpoints.
+
+One incidental: in 4 of 5 sampled files the per-depth counts are *identical* across all three bins
+(992/992/992, 2526/2526/2526, 725/725/725, 4382/4382/4382), because the trim anchors every depth to
+the surface window and a missing day at a station is usually missing at all sensors. Fine as
+provenance; useless as a per-depth quality signal.
+
+### §44.4 `station_metadata.csv` is stale, but the inventory is clean — MEASURED
+
+`station_metadata.csv` tallies 1310 saved / 1068 skipped, and the skip reasons are:
+
+| n | remark |
+|---|---|
+| 525 | `<1 year of valid daily data` |
+| 432 | `no surface run for 0-10 after removing long gaps` |
+| 109 | `NaNs remain after gap-filling` |
+| 3 | `no valid data after process_station` |
+
+That `<1 year` string **does not exist in the current code** — `:228` now reads
+`<3 years of valid daily data` — which suggested the level-1 files predate the 1095-day threshold
+and that sub-3-year stations might have leaked into training. **They did not.** Job 27044035
+(`audit_station_duration.py`, reading `n_days` from each NetCDF, not from any CSV) resolved all 990
+active stations to a file and found:
+
+```
+stations under 1095 days : 0 / 990
+n_days: min 1095, 25% 1674, median 2507, 75% 3438, max 4382
+  < 1095 d:   0      < 1460 d: 152      < 1825 d: 283
+```
+
+**The minimum is exactly 1095** — a hard floor, so the 3-year rule was enforced on everything in the
+inventory. The surviving `station_metadata.csv` is therefore a record of an *earlier* 365-day run,
+kept alongside files that were later regenerated under the 1095-day rule; its 1310-saved count and
+its `<1 year` remarks describe a level-1 store that no longer exists. `CLAUDE.md`'s "at least 1 year
+(365 days)" is simply stale and should read 1095.
+
+Treat that file as provenance for the *skip categories* (which failure modes bite, and their rough
+proportions — 432 stations dying to the surface-run requirement is the striking one) and **not** as
+an inventory. The one open question it leaves: whether any level-1 NetCDF outside the 990 still
+carries a sub-1095 record, which would confirm regeneration-without-cleanup rather than a clean
+re-run. Cheap to settle by extending the audit over all 2372 files; nothing depends on it.
+
+### §44.5 RAAM was never downloaded, and the Netherlands is one network
+
+`station_metadata.csv` lists every station the pipeline ever *saw*, across 63 networks. **RAAM is
+not among them** — it was excluded at the ISMN download-selection step, not by any QC filter. What
+that selection was is no longer inspectable. If it is ever re-downloaded, note that RAAM ran roughly
+2016-2018 (~2.5 years), so the *current* 1095-day rule would drop it even then, while the 365-day
+rule that produced the existing files would keep it.
+
+Dutch coverage is therefore **TWENTE alone, 8 stations, 7 train / 1 OOS** (`ITCSM-07b`), 0 val, and
+none `oot_eligible` or `oost_eligible` — the network ends before the 2023 cut, so the Netherlands
+contributes nothing to any temporal holdout. The 8 span ~45 km, far outside `COLOC_THRESHOLD_KM=3`,
+so they were drawn as 8 independent groups; that is why 7 of 8 landed in train. **The lever for a
+Dutch holdout is `location_group_id`, not the split fractions.** ICOS `NL-Loo` and `NL-Hor` are
+absent from the inventory entirely and are worth chasing separately.
+
+### §44.6 The splits as they stand, and the coupling to fix before changing them
+
+`create_evaluation_splits.py` (the Stratified Environmental Split framework) produces:
+
+- `split` in {`train`, `val`, `oos`} — a **station-level** partition. Co-located stations (< 3 km,
+  union-find into `location_group_id`) move together; stratified by Koppen macro x IGBP macro x
+  elevation band, `MIN_CELL_SIZE=3`, seed 42.
+- **OOT and OOST are flags, not sets** (`:335-336`): `oot_eligible` is a *train* station with 2023+
+  data (>= 1 yr pre-2023, `n_years >= 3`), `oost_eligible` is an *oos* station with 2023+ data.
+- `OOT_CUT_DATE = 20230101`.
+
+**The cut date lives in two places and nothing ties them.** `create_evaluation_splits.py:27` sets
+`20230101`; `train_unet.py:192` independently sets `"years": list(range(2016, 2023))` with the
+comment "2023 held out for OOT/OOST evaluation". The dataset never reads `oot_eligible`. Move the
+cut in one file and OOT silently becomes contaminated or empty, with no error. Any change to the
+split definitions starts by collapsing that into a single source of truth.
+
+### §44.7 Plan
+
+1. ~~Count the sub-1095-day stations~~ **DONE** (job 27044035, §44.4): 0 / 990, minimum exactly
+   1095 days. The duration drift is a paper problem, not a data one — no station in the inventory
+   is too short to supply both a pre-2023 training span and a post-2023 evaluation span. Per-station
+   durations are now in `csvs/station_duration_audit.csv` for §44.6 to draw on; note 152 stations
+   are under 4 years and 283 under 5, which does constrain how much post-cut record OOT can claim.
+2. **Settle D/G**: apply the content-based C rejection of §44.2 and correct `CLAUDE.md`'s stale
+   365-day line to 1095. Code-only; it cannot be validated against data that no longer exists, and
+   it changes no existing output. Comment it as such.
+3. **Rework OOS / OOT / OOST** — the session's main intent. Precondition: single source of truth for
+   the cut date (§44.6). Open questions are the cut date itself, whether OOT/OOST stay flags or
+   become first-class splits, and whether `location_group_id` should bind networks rather than 3 km
+   neighbourhoods (§44.5).
+4. **Do not re-download ISMN now.** It would answer a question that changes no current result and
+   would produce targets subtly different from the ones every trained model has seen — worse than
+   not knowing.
+
+## §45 All-station driver QC — plotting 990 stations against a known answer (Session 42, 2026-09-23)
+
+§43.12's radiation download finished clean on paper: 6,734 `rad_*.nc` across 990 stations, zero
+NaN, zero wrong day counts, every one `era5land_point` with no buffer fallback. But the only test
+that has touched all 990 is `check_era5_radiation.py`, a min/max range test, and that is the
+weakest instrument in the box. It fired two FAIL flags this session and **both were thresholds set
+too tight, not data**. More to the point, §43.12's own buffer-pixel defect *passed* the range check
+and was caught only by a plot.
+
+Everything plotted so far — `plot_era5_flagged_temperature.py`, `plot_era5_flagged_daily.py` —
+covered the **35 stations that happened to trip a threshold**. The other 955 have had no
+plot-level check at all.
+
+There is a second and larger hole. The 16 carried driver columns (`t2m`, `d2m`, `u10`, `v10`, `sp`,
+`tp`) come from the *original* ERA5-Land download, predate §43.12 entirely, and have **never been
+QC-plotted either**. They are already being consumed by every training run to date. A defect there
+would reach results that have already been reported. Scope is therefore **all 19 columns**, not
+radiation alone.
+
+### §45.1 The method — do not plot 990 series
+
+990 figures is not a check; nobody reads them. The organising idea is to build quantities whose
+**correct value is derivable from first principles**, then put all 990 stations against that value
+in one image. A wrong station is then a point off a curve rather than something to hunt for.
+
+```
+                    csvs/station_splits.csv (990: lat, lon, elevation_m, koppen)
+                                     |
+             +-----------------------+------------------------+
+             |                                                |
+   zarr era5/values (N,19)                        data/*/ERA5Land/rad_*.nc
+             |                                                |
+             +----------------- join on YYYYMMDD -------------+
+                                     |
+                                     v
+                     era5_qc_all_stations.py   Pool(64)
+                                     |
+        +--------------+-------------+-------------+--------------+
+        |              |             |             |              |
+     TIER 0         TIER 1        TIER 2        TIER 3      per-station
+   invariants     predictors    population     artifact       scalars
+   (booleans)     (scatters)    (Hovmoller)     scans            |
+        |              |             |             |              |
+        +--------------+------+------+-------------+--------------+
+                              |
+                              v
+               csvs/era5_all_station_qc.csv   (990 rows, one per station)
+                              |
+                 +------------+------------+
+                 |                         |
+        fig/era5_radiation/        fig/era5_radiation/
+        era5_qc_overview.png       era5_qc_flagged.pdf
+        (all 990, one sheet)       (drill-down, FAILURES ONLY)
+```
+
+### §45.2 The centrepiece — top-of-atmosphere insolation
+
+Daily extraterrestrial irradiation on a horizontal surface, from latitude and day-of-year **alone**.
+Nothing in the download knows this, which is exactly what makes it evidence:
+
+```
+H0 = (86400/pi) * Gsc * E0 * (cos(phi)cos(dec)sin(ws) + ws*sin(phi)sin(dec))
+  Gsc = 1361 W m-2
+  E0  = 1 + 0.033*cos(2*pi*doy/365)
+  dec = declination(doy)
+  ws  = arccos(-tan(phi)*tan(dec))   clamped to [0, pi]
+```
+
+One formula, three independent tests:
+
+1. **`Kt = ssrd_sum / H0` must be <= 1.** Physically impossible to exceed. Hard violation at
+   `Kt > 1.05` (0.1 deg pixel vs point, plus ERA5's own radiation scheme, earn a little slack);
+   report the full distribution regardless.
+2. **`Kt` must be climatologically sensible** — ~0.7 arid, ~0.35-0.45 wet maritime. Plotted for 990
+   against Koppen class, an outlier is self-evident.
+3. **Polar night becomes an exact equality.** The `ws` clamp makes `H0` exactly 0 on polar-night
+   days, so `count(H0 == 0)` must equal `count(ssrd_sum == 0)`, per station. This upgrades the
+   latitude-ordering argument measured this session — Imnavait 68.61N = 45 zero days, Kelly
+   Station 67.93N = 37, Coldfoot 67.25N = 23, Gobblers Knob 66.75N = 14 — from a 4-point
+   coincidence into a per-station identity across all 990.
+
+**This code does not exist in the repo.** Grep finds zero hits for `extraterrestrial`,
+`solar_constant`, `1361`, `insolation`, `daylength`, `clearness`. But `plot_ecostress_census.py:224
+declination_deg(doy)` is a vectorised Cooper declination and `:229 tst_at_elevation()` already
+inverts `cosH = (sin(elev) - sin(phi)sin(dec)) / (cos(phi)cos(dec))`, which *is* the sunset hour
+angle. So `dec` and `ws` are both in hand and `H0` is ~6 lines on top. `Kt` is the shortwave twin of
+`plot_era5_flagged_temperature.py:110 brutsaert_clearsky_MJ()`, which is the longwave version of the
+same idea and the model to follow.
+
+### §45.3 Tier 0 — hard invariants
+
+A violation is proof, not a hint. Each reduces a station to a boolean; 990 becomes a table.
+
+| invariant | catches |
+|---|---|
+| `d2m <= t2m` every day | thermodynamically impossible; column swap or wrong pixel |
+| `min <= mean <= max` for all six triples | aggregation bug |
+| `tp_sum >= 0`, `ssrd_sum >= 0`, `strd_sum > 0` | sign / fill errors |
+| `Kt <= 1.05` | accumulated band, unit error, wrong pixel |
+| no NaN / inf | the datasets z-score with no NaN handling — one NaN trains on `nan` |
+| `date_ints` strictly increasing, no dupes, no missing days | concat / reindex errors |
+
+### §45.4 Tier 1 — first-principles predictors, one point per station
+
+- **`sp_mean` vs `elevation_m`** (barometric, `p = p0*exp(-z/8400)`). **The highest-value check
+  here**: it tests that each station got the RIGHT PIXEL, which is precisely the buffer-pixel defect
+  class, and nothing else in the pipeline tests it. `elevation_m` is 990/990 populated, range
+  -105.5 to 4695 m.
+- **peak `ssrd` DOY vs hemisphere** — northern ~172, southern ~355. A sign error lands points in the
+  wrong cluster instantly. §43.12's smoke already proved this on 7 stations (Oromo NZ peaks DOY 352);
+  extend to 990.
+- **`ssrd` seasonal amplitude vs |latitude|** — must increase monotonically.
+- **`t2m_mean` vs latitude and elevation** — lapse rate.
+- **`strd_mean` vs `t2m_mean`** — Stefan-Boltzmann family, should be tight.
+
+### §45.5 Tier 2 — population views, all 990 in one image
+
+- **Hovmoller heatmap**: x = day of year, y = station sorted by latitude, colour = `ssrd`
+  climatology. A correct archive is a smooth butterfly with a black polar-night wedge at the top; a
+  broken station is a horizontal stripe discontinuity. This is the single best "plot all stations"
+  image. Repeat for `strd`, `t2m`, `tp`.
+- **Spatial map** of each scalar (`Kt`, `ssrd_mean`, month-step ratio). Neighbouring stations must
+  agree; spatial incoherence flags a station. Reuse `make_map.py` — `draw_world(ax, xlim, ylim)` and
+  its Natural Earth `SHP` path; `plot_txson_map.py:148` is the exact scatter-coloured-by-metric
+  pattern.
+
+### §45.6 Tier 3 — artifact scans, 35 stations -> 990
+
+- **Month-boundary step ratio** — already written as `plot_era5_flagged_daily.py
+  month_boundary_ratio()`. Catches per-request de-accumulation from the monthly GEE concat. Measured
+  on the 35: strd median **1.018**, max 1.318.
+- **Longest constant run** per variable — flat fills, stuck values. On the 35 this returned only
+  polar night, and only in `ssrd`.
+- **Duplicate-year detection** — correlate year N against year N+1 at lag 0; a repeated fetch gives
+  r = 1.0.
+- **Co-located pixel identity.** Stations sharing an ERA5-Land 0.1 deg cell must be **bit-identical**;
+  already observed for ALI02/ALI03, US-ICs/US-ICt, Banizoumbou/Tondikiboro. Build groups from lat/lon
+  snapped to the 0.1 deg grid and assert identity within group. **Two-sided, and both sides are real
+  bugs**: identical-but-far-apart means a wrong-pixel assignment; different-but-same-cell means pixel
+  selection is not deterministic. This directly generalises the buffer-pixel defect.
+
+### §45.7 Build — what to reuse rather than rewrite
+
+| need | reuse | note |
+|---|---|---|
+| station list + lat/lon/elev/koppen | `download_era5_radiation.py:158 load_stations()` | **only** version keeping the metadata columns; imports `earthengine-api`, absent from `terramind`, so copy the 12-line body as `splice_era5_radiation.py:91-94` already documents |
+| zarr+rad join per station | `plot_era5_flagged_temperature.py:123 load_station()` | already returns `date_int, doy, t2m, d2m, skt, ssrd_MJ, strd_MJ, clearsky_MJ` |
+| month-boundary test | `plot_era5_flagged_daily.py month_boundary_ratio()` | |
+| per-station drill-down panel | `plot_era5_flagged_daily.py _panel()` + `PdfPages` | |
+| declination / hour angle | `plot_ecostress_census.py:224,229` | |
+| figure style + save | `plot_ecostress_census.py:55-140` — `style(dpi=300)`, `save(fig, outdir, name)`, `FORMATS=("png","pdf")`, `pdf.fonttype=42` | the repo's most complete style system; the ERA5 scripts hand-roll `_style(ax)` instead and should not be the model here |
+| map | `make_map.py` | |
+| all-station audit skeleton | `verify_zarr_store.py` | best-engineered precedent: `Pool(64)`, `chunksize=1`, per-array checks, degenerate-sample detection |
+
+**Gotcha, measured:** `koppen_geiger` has a case-inconsistency bug — both `BSk` (168) and `Bsk` (11),
+`BSh` (6) and `Bsh` (3). Normalise case before grouping or the Kt-by-climate panel splits classes in
+two. 6 rows are blank. And `station_name` contains embedded commas, so pandas only, never `awk -F,`.
+
+New files: `era5_qc_all_stations.py` (the scan, writes the CSV), `plot_era5_qc.py` (the figures),
+`slurm/era5_qc_all_stations.sh`, `slurm/plot_era5_qc.sh` — rome, `--cpus-per-task=64`,
+`--mail-type=BEGIN,END,FAIL --mail-user=ktm.prajwalkhanal@gmail.com`. **Read-only against the zarr;
+nothing is written into `zarr_tokens`.** Scale is trivial: 990 x ~2,500 days x 19 float32 ~= 190 MB,
+minutes on one node.
+
+### §45.8 Verification — the tool must re-detect what is already known
+
+A QC tool that finds nothing is indistinguishable from a QC tool that is broken. So it is gated on
+reproducing this session's measurements before any new flag is believed:
+
+1. 990/990 stations load; the CSV has 990 rows.
+2. **Positive controls** — the 4 polar-night stations return 45 / 37 / 23 / 14 zero-`ssrd` days and
+   those now equal their computed `H0 == 0` counts; the known co-located pairs come back
+   bit-identical; the 32 `strd < 10 MJ` stations reappear; the 3 Sahel low-season stations reappear;
+   the month-step ratio median lands near 1.018. **If these do not reproduce, the tool is wrong, not
+   the data.**
+3. **Negative controls** — inject synthetic faults into a *copy* of one station's arrays in the
+   scratchpad (multiply `ssrd` by 24, swap `t2m`/`d2m`, shift dates by a month) and confirm each is
+   caught by the invariant meant to catch it.
+4. Read the overview figure; the Hovmoller butterfly should be smooth and the polar-night wedge
+   where latitude says it should be.
+5. Only then act on genuine flags.
+
+### §45.9 Carried forward, not resolved here
+
+- **The check script is the outlier on thresholds.** `verify_era5_18.py` already uses
+  `STRD_LO = 5.0e6` / `SSRD_HI = 4.5e7`, looser than `check_era5_radiation.py`'s `1.0e7` / `3.5e7`,
+  so the downstream verify would never have flagged this session's 8.675 MJ minimum. Align the check
+  to the constants verify already uses rather than to a third invented number. Also fix its printed
+  guidance, which advertises `strd_mean 20-35 MJ` while the test is on `strd_min`/`strd_max` —
+  Ngari's `strd_mean` is 16.3 MJ, outside the printed range, untested, and fine.
+- **The Ngari summer shortfall is OPEN.** ALI01/02/03 sit below the Brutsaert clear-sky bound on
+  ~64% of days against 0.001-0.022 elsewhere. It is **summer-concentrated**, which kills the
+  "coldest driest days" reading, and elevation is dead too: ALI02 is 4267 m at 0.642 while SQ19 is
+  4647 m at 0.013 and NQMS 4583 m at 0.002 — Ali is the lowest and the worst, ~90 km from SQ in the
+  same arid basin. Needs a dry/high formulation (Dilley-O'Brien, or Brutsaert + Marks-Dozier
+  pressure correction) before the 95.9% figure is quoted as clean.
+- Splice, verify and `compute_era5_stats.py` remain separate steps. `era5/values18` does not exist yet.
+
+### §45.10 Measured layout facts the tool must be built around
+
+Surveyed this session; several change the design above.
+
+**THE ACCUMULATED-BAND QUESTION IS ANSWERABLE BY READING AN ATTRIBUTE, NOT BY INFERENCE.**
+`download_era5_radiation.py:380-390` writes provenance into every `rad_*.nc`: `source`
+(= `ECMWF/ERA5_LAND/HOURLY`), `bands`, `strategy`, `station_id`, `latitude`, `longitude`,
+`created`, plus per-variable `units = "J m**-2"`. The bands requested (`:107-112`) are
+`surface_solar_radiation_downwards_hourly` and `surface_thermal_radiation_downwards_hourly` —
+explicitly the **de-accumulated `_hourly` variants**. So `check_era5_radiation.py`'s
+"ACCUMULATED BAND?" FAIL message, which this session spent effort refuting from magnitudes, is
+settled directly by asserting `"_hourly" in ds.attrs["bands"]` across all 6,734 files. **Add this
+to Tier 0 (§45.3); it is stronger and cheaper than every magnitude argument.** Aggregation is
+`groupby("time").mean()` over pixels, then `resample("1D").sum(min_count=24)` — a daily SUM, with
+an incomplete day becoming NaN rather than a quiet partial.
+
+**993 stations in the zarr, but only 990 have radiation.** All 993 have `.complete` AND
+`era5/values` — no mismatch there. But three have an **empty** `ERA5Land/` directory:
+`ISMN_SCAN_Combate`, `ISMN_SNOTEL_PortGraham`, `ISMN_USCRN_Cape-Charles-5-ENE` — the three
+ocean-masked buffer stations excluded at 993 -> 990. They have pinned pixels in
+`csvs/era5_buffer_pixels.json` but the fetch never produced files, and zero rows in
+`csvs/era5_radiation_log.csv` (990 distinct stations logged). Their 6,941 days are exactly the gap
+between the zarr total 2,466,783 station-days and the downloaded 2,459,842. **This is the edge case
+the tool must handle**: it iterates 993 for the 16 carried columns and 990 for radiation, and must
+not silently report the difference as a failure.
+
+**N varies per station and there is no shared time axis.** N ∈ [1095, 3653], 13 distinct values
+clustering on whole-year boundaries; the largest single bucket is 226 stations at the full 10-year
+record (2016-01-01..2025-12-31). **Join on `date_ints`, never on positional index.**
+
+**The `era5/` group carries no variable-name metadata** — no `.zattrs`, just `values`, `date_ints`,
+`doys`. Import `ERA5_VARS` (19) from `dataset_unet.py:53-62` rather than duplicating the list a
+fourth time; `plot_era5_flagged_temperature.py:57-65` hardcodes its own `ERA5_VARS19` and is the
+precedent NOT to follow here.
+
+**The carried 16 columns cannot be re-derived from disk.** Only 35 `meteo_*.nc` survive, all under
+`data/excluded_stations/`, none for an active station. That raises the stakes on §45's scope
+decision: if the 16 columns are wrong, the fix is a re-download, not a re-read.
+
+Minor, recorded so it is not mistaken for corruption later: `values` is uniformly blosc/zstd-3, but
+`date_ints`/`doys` are **lz4-5 on some stations and zstd-3 on others** — harmless, but it means the
+store was written by more than one pass.
+
+### §45.11 Deliverables — including the write-back, which is not optional
+
+Listing only the CSV and the figures was an omission: a QC result that lives in `csvs/` and `fig/`
+and nowhere else is invisible to the thesis, and the next session starts by rediscovering it.
+The documentation write-back is a deliverable, not a courtesy.
+
+| # | deliverable | path |
+|---|---|---|
+| 1 | per-station QC table, one row per station, every Tier-0 boolean and Tier-1/3 scalar | `csvs/era5_all_station_qc.csv` |
+| 2 | overview sheet — Tier-1 scatters + Tier-2 Hovmollers, all 990/993 | `fig/era5_radiation/era5_qc_overview.png` |
+| 3 | drill-down, FAILURES ONLY | `fig/era5_radiation/era5_qc_flagged.pdf` |
+| 4 | the scan + the plotter + their two sbatch wrappers | `era5_qc_all_stations.py`, `plot_era5_qc.py`, `slurm/*.sh` |
+| 5 | **runbook write-back** — §45 updated in place with what was MEASURED: which invariants fired, how many stations, the positive controls reproduced (or not), and every threshold actually adopted. Replace the forward-looking prose; do not append a second §45. | `text/training_runbook.md` |
+| 6 | **session log entry** — dated narrative: what ran, job IDs, what was found, what was corrected, and the ordered NEXT SESSION list | `text/logs.txt` |
+| 7 | **commit + tag** — the scripts, the wrappers, the figures and the QC CSV. Still uncommitted from this session: `plot_era5_flagged_{temperature,daily}.py`, their wrappers, three figures, and the modified `csvs/era5_radiation_check.csv` | git |
+
+Steps 5 and 6 run **after** the tool has reproduced its positive controls (§45.8), so what gets
+written is measurement rather than intent. If a Tier-0 invariant fires on real data, the finding
+goes into §45 and `logs.txt` with the station list before anything is "fixed" — the §43.12
+buffer-pixel defect is the precedent for why the finding matters more than the patch.
+
+### §44.8 The Mead sites have soil moisture, and `has_swc=False` is a FLUXNET artifact — MEASURED
+
+Asked whether US-Ne1 / US-Ne2 / US-Ne3 (Mead, Nebraska — irrigated continuous maize, irrigated
+maize-soybean rotation, rainfed rotation) are in the data. Ne1 and Ne2 are, both `split=oos`,
+`oost_eligible=True`, `flux_only_eval=True`, and both filed under **`flux_only`** because
+`csvs/ameriflux_summary.csv` records `has_swc=False`. Ne3 is absent from the inventory entirely —
+not in the splits, not in `excluded_stations.csv`, not in the summary, no file anywhere on disk.
+
+That summary was built from the **FLUXNET** product. `download_ameriflux.py`'s own docstring warns
+the two products cover different populations ("not all sites with BASE data have FLUXNET data"), so
+job 27045319 downloaded BASE-BADM for all three and scanned for `SWC_*` (`check_mead_swc.py` +
+`slurm/check_mead_swc.sh`, downloads to `/gpfs/scratch1/shared/pkhanal/ameriflux_base`).
+
+| site | SWC columns | record | best coverage |
+|---|---|---|---|
+| US-Ne1 | 36 | 2001-06-12 -> 2025-12-31 | 8963 days |
+| US-Ne2 | 36 | 2001-06-20 -> 2025-12-31 | 8963 days |
+| US-Ne3 | 55 | 2001-06-15 -> 2025-12-31 | 8963 days |
+
+Core profiles are `SWC_1_1_1` ... `SWC_3_4_1` for Ne1/Ne2 (3 profiles x 4 depths) and
+`SWC_1_1_1` ... `SWC_4_5_1` for Ne3 (4 profiles x 5 depths, the fifth added 2004-06), at 85-98 %
+valid on an hourly file across ~24 years. Every site clears the 1095-day rule by a factor of eight.
+The `SWC_PI_F_*` columns are the PI-gap-filled versions (97-98 % valid); `SWC_PI_*_N` / `_SD` are
+replicate count and spread and sit at ~4 % valid, so they are summaries, not a fourth profile.
+
+Three consequences:
+
+- **`has_swc=False` is wrong as a statement about the site**, right only as a statement about
+  FLUXNET. Ne1 and Ne2 hold 24 years of four-depth soil moisture while the inventory calls them
+  flux-only.
+- **Ne3 was not excluded by data policy.** It downloaded cleanly under `CCBY4.0` beside the other
+  two, so `filter_sites`' `data_policy` mask is not the cause; the FLUXNET-years filter is the
+  remaining candidate, and the script logs no rejections.
+- **The scale is 79 sites, not 3.** `ameriflux_summary.csv` marks **79 of 91** AmeriFlux sites
+  `has_swc=False`, and `data/flux_only/` holds **78** AmeriFlux directories. If Mead is
+  representative, a large share of those are soil moisture stations misfiled as flux-only — against
+  a total active inventory of 990, and with co-located eddy-covariance flux that the `joint_eval`
+  path already wants.
+
+**Blocker: the sensor depths are unknown.** The BIF workbook carries them but `openpyxl` is in
+neither conda env, so the probe printed `BIF unreadable`. AmeriFlux's `SWC_H_V_R` naming gives the
+vertical *index* only, not centimetres, and §44.1 step 5 bins on 0-10 / 10-30 / 30-100 cm. Nothing
+here can be mapped to the three target bins until the BADM depths are read.
+
+**DECISION (2026-09-23): US-Ne1 / US-Ne2 / US-Ne3 are reserved for validation, not training.**
+Three co-located treatments (irrigated continuous, irrigated rotation, rainfed rotation) within
+~600 m, sharing one satellite tile, differing only in water management, is a controlled contrast
+for testing whether the model resolves irrigation-driven within-tile soil moisture differences —
+exactly the sub-tile claim §34/§41 are built to support. Spending them as training stations would
+waste that. Note they already sit in `oos`, and under `COLOC_THRESHOLD_KM=3` all three fall in one
+`location_group_id`, so the group moves together — which is the behaviour this use needs.
+
+Not done, and deliberately deferred: adding `openpyxl` and re-reading the BIF depths; censusing the
+other 79 `has_swc=False` sites for BASE SWC. Both change the station inventory, which is the object
+§44.6's split rework operates on, so they belong **before** OOS/OOT/OOST is redefined, not after.
+
+### §45.12 Cross-checking `elevation_m` against the DEM — Baytik, and the other 989
+
+`ISMN_ROMPS_Baytik` carries `elevation_m = 0.0` in `csvs/station_splits.csv` (row:
+`ISMN,ROMPS,Baytik,Baytik,42.64932,74.49644,0.0,...`). It is the ONLY station in the file with
+elevation 0 and the worst `sp`/ISA outlier at 0.825. Inverting the ISA profile on its measured
+`sp_mean = 83,620 Pa`:
+
+```
+z = (1 - (sp/101325)^(1/5.25588)) / 2.25577e-5   ->   ~1,591 m
+```
+
+That is ERA5-Land's model orography for the cell, smoothed at ~9 km, so it is not the station's
+true elevation — but it is emphatically not 0 m either. 74.50 E / 42.65 N is the Kyrgyz Ala-Too
+south of Bishkek.
+
+**Three independent numbers, answering different questions.** Keeping them distinct is the whole
+point; collapsing them is how a smoothing artefact gets mistaken for an error:
+
+| source | resolution | what it represents |
+|---|---|---|
+| `elevation_m` | — | station-reported metadata |
+| ERA5 `sp` -> ISA inverse | ~9 km | ERA5-Land model orography |
+| MERIT `elv` | ~90 m | actual terrain at the point |
+
+MERIT and the pressure estimate both landing near 1.5-1.7 km settles it: two independent sources
+against the metadata, and their agreement rules out coincidence. MERIT disagreeing with ERA5 while
+agreeing with the metadata would instead be ordinary orography smoothing — which is exactly what
+the high SNOTEL stations show (`sp`/ISA 1.12-1.17 at Wheeler Peak, Santa Fe, Cave Mountain, all
+above 3,000 m, where a 9 km cell cannot resolve the summit).
+
+**Where the elevation actually lives** (surveyed this session):
+
+- `MERIT/merit_hydro_25km.tif`, one per station, 993 present. GEE `MERIT/Hydro/v1_0_1`, EPSG:4326,
+  1/1200 deg (~90 m), 25 km window, float32, **NaN** nodata. `BANDS = ["upa","upg","hnd","elv","dir"]`
+  (`download_merit_hydro_gee.py:78`) so **`elv` is BAND 4 (numpy index 3)**, units m, and the tif
+  tags carry `station_lat`/`station_lon` so the sample point can be asserted inside the window.
+- **`terrain/terrain_tiles.npz` is NOT a shortcut** — its channels are `["TWI","HAND","valid_mask"]`.
+  HAND is height above nearest *drainage*, not elevation. No raw metres in the npz.
+- A genuinely independent second DEM exists: `data/terrain/region_{id:04d}/dem_glo30_30m.tif`,
+  **Copernicus GLO-30**, 30 m, LAEA, 353 regional files, with per-station LAEA x/y in
+  `csvs/station_dem_region.csv`. Different lineage from MERIT (TanDEM-X vs SRTM3/AW3D), so it is a
+  real fourth leg — but it is a **DSM** (canopy and buildings included), so MERIT `elv`
+  (hydrologically adjusted, closer to bare earth) is the better match to a reported station
+  elevation. Use GLO-30 only to adjudicate outliers.
+- The per-station 10 m `DEM/dem.tif` is **gone** from `data/` — only `MERIT/` and `terrain/` survive.
+- **No reader exists.** Nothing in the repo opens `merit_hydro_25km.tif`; the §32.6 MERIT gate was
+  specified and never run (`gate_sm_vs_terrain.py:34-35`). The point-sampling idiom to copy is
+  `extract_lst_timeseries.py:145-146` (`rowcol(T, x, y, op=math.floor)`), or simply
+  `ds.sample([(lon, lat)], indexes=[4])`.
+
+**THE CIRCULARITY CAVEAT, and it is real.** `elevation_m` is station-reported for the large
+majority — ISMN `python_metadata` (`compile_station_inventory.py:74-76`), ICOS NetCDF attrs
+(`:208,218`), AmeriFlux BIF `LOCATION_ELEV` (`:257`). **But `enrich_station_inventory.py:224`
+back-filled the NaN rows from SRTM `USGS/SRTMGL1_003` via GEE**, and that script's paths are stale
+and its history is one bulk commit, so which rows it touched is unrecorded. For that subset a MERIT
+check is quasi-circular (SRTM vs MERIT, itself SRTM3-derived). Mitigation: flag any station whose
+metadata matches MERIT to within ~1 m as *probably SRTM-filled* rather than *independently
+confirmed*, and report the two groups separately. Baytik is unaffected either way — a NaN back-fill
+from SRTM would have produced ~1,600 m, not 0.0, so its 0.0 is a genuine bad value and not a fill.
+
+**Build.** `check_station_elevation.py` + `slurm/check_station_elevation.sh` (rome,
+`--cpus-per-task=64`, mail flags). Pool over the 990 rows, reuse `station_rows()` from
+`era5_qc_all_stations.py:131-159` (it already returns `elevation_m` with `folder`/`cat`), sample
+MERIT band 4 at the station lon/lat, and also report the **3x3 neighbourhood min/max** — at 90 m in
+steep terrain a reported station elevation can differ by tens of metres from the exact-pixel value
+without either being wrong, so the point value alone would manufacture false positives. Join onto
+the existing `csvs/era5_all_station_qc.csv`, which already carries `elev_m`, `sp_mean`, `sp_isa`,
+`sp_ratio` per station.
+
+Deliverables: `csvs/station_elevation_check.csv`; a 3-panel figure (metadata vs MERIT with 1:1;
+MERIT vs ISA-inverted `sp`; residual vs `sp_ratio`, which should collapse the two outlier
+populations into "bad metadata" and "orography smoothing"); **and the §45.12 write-back plus the
+`logs.txt` entry**, per §45.11. `gdalinfo` and `rasterio` are in the `terramind` env, neither on the
+login PATH, so this runs as a batch job.
+
+### §45.13 §45.12 RESULT — measured, and the policy is FLAG, NEVER REPLACE
+
+Supersedes the forward-looking half of §45.12. Jobs 27047930 (`check_station_elevation.py`)
+and 27048477 (`flag_station_elevation.py`). 990/990 MERIT tiles sampled, 0 tooling failures,
+0 stations outside their own tile window.
+
+**`ISMN_ROMPS_Baytik` answered.** Metadata `0.0`; **MERIT `elv` = 1583.7 m** (3x3 range
+1578.3-1603.2); ERA5 `sp` inverted through ISA = 1590.6 m. Two independent sources agreeing
+within 7 m against a metadata value of zero.
+
+**THE BIGGER FIND — an entire network carries a nodata sentinel.** All **18 REMEDHUS stations
+have `elevation_m = -99.9`**, which is a missing-value code, not an elevation. True elevation
+is 669-879 m (Duero basin), confirmed independently by MERIT and by ERA5 pressure. **Three are
+in the `oos` split** (ConcejodelMonte, LasVacas, Zamarron).
+
+**ROOT CAUSE, traced.** `enrich_station_inventory.py:192` gates its SRTM back-fill on
+`df["elevation_m"].isna()`. **`-99.9` and `0.0` are not NaN**, so the fill skips them and the
+sentinel flows straight through `create_evaluation_splits.py:351-355` into `elevation_band`,
+where `elev_band(-99.9)` returns `"Low"`. Provenance of the column itself is station-reported
+metadata: ISMN `python_metadata` `("elevation","val")` (`compile_station_inventory.py:73-76`,
+the REMEDHUS path), ICOS `_val("elevation_m","fb_elev")` (`:208`), AmeriFlux BIF
+`LOCATION_ELEV` (`:257`). `create_evaluation_splits.py` never re-derives it.
+
+**19 stations sit in the wrong `elevation_band` today** — 18 REMEDHUS `Low`->`Mid`, Baytik
+`Low`->`High`; 15 train, 4 oos.
+
+**THE CONTROL PASSED**, which is why the above is trusted rather than assumed: the >3,000 m
+SNOTEL stations agree with MERIT to within **-11.4 to +0.2 m** while disagreeing with ERA5 by
+**+625 to +1,284 m**. The test separates bad metadata from orography smoothing instead of
+flagging every mountain.
+
+| flag | n | meaning |
+|---|---|---|
+| `OK` | 787 | metadata and MERIT agree |
+| `PROBABLY_SRTM_BACKFILL` | 171 | agree to < 1 m — NOT independent evidence, MERIT is SRTM3-derived |
+| `SENTINEL__MERIT_SUGGESTS` | 19 | nodata code, not an elevation |
+| `DISAGREES_OUTSIDE_LOCAL_RELIEF` | 13 | genuine value, kept as-is |
+
+### THE POLICY: flag everything, replace nothing
+
+A sentinel is repairable in principle, but **nothing is written to
+`csvs/station_splits.csv`** — verified byte-for-byte untouched (mtime unchanged, no backups
+created, git clean). The `--execute` branch that would have patched it was **removed from the
+script rather than left disabled**, so it cannot be triggered by accident.
+
+The reason is not caution for its own sake. **`elevation_band` is a stratification key and
+`split` was DRAWN from the current, wrong bands.** Correcting the values now would leave a
+split whose stratification no longer matches the column it was built from; re-drawing would
+move stations between train and oos and invalidate every trained model. Recording the bias is
+the safe action. Re-drawing is a separate, deliberate call — and §44.6's warning applies, that
+the OOT cut date already lives in two unlinked places.
+
+For the 13 genuine disagreements the metadata is **kept**: the operator knows where their
+instrument is, a 90 m DEM sampled at a reported coordinate does not.
+
+**AN UNRESOLVED QUESTION INSIDE THOSE 13.** Where MERIT and ERA5 agree with each other but not
+the metadata, it is not knowable from here whether the **elevation** or the **COORDINATE** is
+wrong — and a wrong coordinate is far worse, because the satellite tiles, the ERA5 pixel and
+the Landsat ST tile are then all centred on the wrong place. Worst cases: `AmeriFlux_US-xKA`
+(meta 1329, MERIT 324, ERA5 342 — the two DEM-independent legs agree on ~330 m),
+`ISMN_SCAN_AdamsRanch#1` (1868 vs 1358 vs 1372), `ISMN_LABFLUX_Bussolenobosco` (1100 vs 627
+vs 1615 — all three disagree, the only such case). Test: search each station's own 25 km MERIT
+tile for a location matching the reported elevation; a close match at a plausible offset points
+to a coordinate error, no match anywhere in the tile points to a bad elevation field. NOT RUN.
+
+Deliverables: `csvs/station_elevation_check.csv`, `csvs/station_elevation_flags.csv`,
+`fig/era5_radiation/station_elevation_check.png` (metadata vs MERIT with the 32 outliers
+labelled; the two DEM-independent legs; and the separation panel, where bad metadata leaves the
+origin in BOTH axes while orography smoothing moves only x).
