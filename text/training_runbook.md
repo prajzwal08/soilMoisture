@@ -16776,3 +16776,154 @@ New: `backfill_s2_download.py`, `backfill_merge_raw.py`, `backfill_tokens.py`,
 for this: `convert_satellite_to_zarr.py`, `create_token_zarr.py` (both wipe a station).
 Already built (Session 44): `audit_s2_coverage.py` + `slurm/audit_s2_coverage.sh`,
 `probe_s2_missing.py` + `slurm/probe_s2_missing.sh`.
+
+### §50.7 Phase 0 results — and two defects in the EXISTING store (Session 44, 2026-09-28)
+
+`backfill_catalogue.py` (job 27293812): 645,826 catalogue items, 990 stations, 0 failures;
+260,854 existing S2 scenes read.
+
+**Nodata (0a ii).** Everything is 0 except **3 scenes**:
+
+| scene | value | mechanism |
+|---|---|---|
+| Hupsel 20180212 | −31768, 1 px | NaN → int16 = −32768 at download, then +1000 by date-harmonise |
+| Hupsel 20190118 | −31768, 40 px | same |
+| ImnaviatCreek 20220615 | −32768, 68,313 values (~11%) | post-cut: raw NaN cast, never harmonised |
+
+The pre/post-cut split (−31768 vs −32768) verifies the mechanism: `download_s2_mpc.py:233` cast NaN
+without `fillna(0)`, and `harmonize_s2_pre2022.py`'s min-DN ≥ 1000 skip guard cannot see a
+negative value, so it offset it.
+
+**Double offset (0a i) — confirmed.** **166 pre-2022-01-25 scenes whose catalogue baseline is
+already 04.00/05.10**, at 155 stations (mostly one each, the Dec 2021 – Jan 2022 transition), got
++1000 a second time from the date-based harmonisation:
+
+| group | scenes | B04 median − station post-cut | dark-band p1 DN |
+|---|---|---|---|
+| post-cut (native offset) | 102,186 | 0 | 1,230 |
+| pre-cut, pb < 04 (harmonised once) | 158,501 | −66 | 1,184 |
+| **pre-cut, pb ≥ 04 (double)** | **166** | **+1,290** | **1,826** |
+
+About +10% reflectance in every band; their SEnSeIv2 masks were computed on the too-bright input
+too. Also noted, NOT a repair target yet: 3,436 post-cut scenes have dark-band p1 < 900 —
+most likely genuine negative BOA reflectance in natively offset data (checked in 0e).
+
+**0c target list:** 26,389 scenes at 565 stations; 22,127 need +1000 (pb < 04.00); 1,620 come
+from a neighbouring MGRS tile (the station's own tile has no item that date).
+
+### §50.8 Phase 0d — repair the 169 defective existing scenes (decision: fix everything before the next model run)
+
+Same machinery as the backfill, but rows are **replaced at the same index** (no shift):
+- **Raw:** sibling `s2_merged` with the repaired rows, verify that ONLY those rows changed and
+  every other row is bit-equal, swap. Double offset → −1000 on non-zero pixels; negatives → 0 on
+  the negative pixels only.
+- **Tokens:** re-encode only the repaired rows (TerraMind, retokenize helpers) and replace them in
+  `s2/{l3,l6,l9,l12}`; regenerate `s2_l*.npy`. Re-run SEnSeIv2 on the repaired rows and replace
+  those `cm` rows by date (the old masks saw ~10%-too-bright input). Cloud-filter verdicts made
+  on the bad masks are not revisited — a wrongly rejected tile is already gone.
+- **Order per station:** repair first, then backfill (repair keys on date, so the backfill's
+  later index shift is harmless). The 0b backup covers every repair station.
+- **0e (read-only):** confirm the 3,436 post-cut p1 < 900 scenes are genuine (baseline ≥ 04.00,
+  values in (0, 1000), no date clustering).
+
+### §50.9 Order — nothing trains until all of this is done
+
+1. Backfill smoke (5 stations; jobs 27294622 → 27294637): backup VERIFIED, download running.
+2. Repair smoke: the 3 negative scenes + a few double-offset stations, disjoint from (1).
+3. On go: full backup → full repair → full backfill → phase-7 verify on every touched station.
+4. §48 full cache (after 3, so nothing is built twice) and full lst22 (independent).
+5. Refit `driver_stats.json` (re-admitted stations); `lst_stats` is Landsat-only, unaffected.
+6. Re-run `audit_s2_coverage.py` and the Phase 0 store audit: ratio ≈ 1 in window, 0 negative,
+   0 double-offset. Only then the GPU training smoke — and STOP.
+
+## §51 OPEN ISSUES — check these before submitting a training or eval job (Session 44, 2026-09-28)
+
+Found by the §47 full verification (job 27289563, `VERIFY PASSED`, 1h22m, 15/15 checks). The
+verification passing and these issues existing are not a contradiction: two of the three are
+things the checks do not look at, which is itself the finding.
+
+**None of these block a training launch. Two of them silently corrupt what gets REPORTED.**
+
+### §51.1 The split says 573 train stations; the dataset builds 565 — OPEN
+
+```
+train 1,043,694 samples from 565 stations
+  stations dropped, by reason:
+         8  no_sample_survived_year_filters
+```
+
+The 8 are §50's: `Price`, `MedBow`, `Coldfoot`, `SuuRanch`, `SwedePeak`, `ParleysUpper`,
+`Bussolenobosco`, `ReynoldsHomestead` — **no pre-2023 Sentinel-2 at all**, because the
+2026-05-20 download hit an expired MPC SAS token, took 853,552 HTTP 403s, and
+`download_s2_mpc.py` skips a failed scene while still logging the station "done".
+
+**Why the verification did not catch it.** `verify_splits_v2.py` asserts
+`train dataset is non-empty`, not `stations admitted == stations in the split`. An
+eight-station silent loss clears that bar. The check is wrong, not just the data.
+
+- **Impact if launched now:** training runs on 565 stations while every report, plot and paper
+  table drawn from `station_splits.csv` says 573. The count is wrong by 1.4% and nothing says so.
+- **Check before submitting:** the dataset's own audit line. `Dataset: N samples from M stations`
+  — M must equal the split count, and `stations dropped, by reason` must be empty.
+- **Fix:** either §50's backfill lands, or the 8 are demoted out of `train` so the inventory tells
+  the truth. Do not leave them in train as phantom members.
+- **Also fix the check:** `verify_splits_v2.py` must assert admitted == expected and FAIL, not
+  merely report non-empty.
+
+### §51.2 `MIN_POST_CUT_DAYS = 365` is declared and never enforced — OPEN
+
+55 stations with a partial post-cut year are inside the OOT/OOST sets — `Ashton` 269 d,
+`MapleCity` 269 d, `TrialLake` 12 d, `IT-Lsn` 10 d.
+
+```
+oot   364,708 samples from 411 stations    oot_eligible  says 312
+oost  116,558 samples from 125 stations    oost_eligible says 125 -> flag says 115
+```
+
+Part of that gap is benign — `oot` filters on `split in {train, val}` while `oot_eligible` is
+train-only by construction (§22.2). The rest is not: the rule lives in `splits_config.py` and in
+the regenerated eligibility columns, and **nothing reads either**. `eval_predict.py` builds from
+`split_filter` + `years`; `dataset.py:1437-1438` gates on >= 30 observed days per station-year.
+
+- **Impact:** §22.5 reports `*_stn`, the mean across stations with each counted once. A station
+  holding only January-September enters that mean at the same weight as one with three full
+  years, carrying a nine-month ubRMSE. `TrialLake`'s 12 days is a fortnight standing in for a
+  year. **This corrupts the headline OOT number, not the training.**
+- **Check before submitting an eval:** every station in the OOT/OOST parquet must clear 365
+  post-cut label days.
+- **Fix:** filter OOT/OOST admission in `eval_predict.py` on measured post-cut coverage, and turn
+  `verify_splits_v2.py`'s check-6 print into a real assert. The spec in §47.9 item 6 said
+  "assert"; the implementation only prints, which is why this was reported rather than caught.
+
+### §51.3 The shared root cause, stated plainly
+
+§51.1 and §51.2 are the same defect in different clothes: **a rule declared in one file and
+enforced in another, or nowhere.** That is precisely the §44.6 disease §47 was written to cure —
+the OOT cut date living in `create_evaluation_splits.py:27` AND `train.py:280` with nothing tying
+them. §47 collapsed the cut date into `splits_config.py` and then introduced two new constants
+with the same illness. A constant that no code path reads is documentation, not a rule.
+
+**Standing rule from this:** a new constant in `splits_config.py` is not done until something
+imports it AND a verification asserts on it.
+
+### §51.4 Not bugs, but know them before reading any number
+
+- **`era5_window_not_fully_covered` drops 157,040 train samples** — the single largest sink,
+  ~13% of what would otherwise build, larger than every other drop reason combined. By design:
+  the 365-day rolling ERA5 window cannot be filled at the start of a station's record. It is not
+  a fault, but it means "samples" and "observed station-days" differ by a lot more than the QC
+  flags suggest.
+- **`sigma_ST` = 2.7066 K is measured (§49) but nothing consumes it**, and it is not SHA'd into
+  `CONFIG` the way `ckpt_utils.py:39-51` treats the other normalisation constants. Until it is, a
+  checkpoint carries no record of which thermal scale it was trained under.
+- **`csvs/lst_tile_means.csv` is gitignored** (`.gitignore:9` is a blanket `*.csv`), so it exists
+  as one file on disk. Regenerable in 17 seconds, so this is a note, not a risk.
+
+### §51.5 Pre-flight, in order
+
+```
+1. Dataset audit line: stations admitted == split count, drop table empty     (§51.1)
+2. OOT/OOST admission: every station clears 365 post-cut days                 (§51.2)
+3. CONFIG hashes: era5_stats18 960780057c67d5d2, driver_stats 52436829f08bf963
+4. If the thermal head is on: sigma_ST present in CONFIG and hashed           (§51.4)
+```
