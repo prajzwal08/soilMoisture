@@ -16587,3 +16587,192 @@ SwedePeak, SuuRanch) — §47's admission rule counts days, not sample-producing
 (~150 GB scratch, 993 stations; smoke 8/8 = 1.2 GB) and `consolidate_landsat_st.sh`
 (993 x `_lst22.npz` into the work3 data tree). `ablation.py` has no key list for `fine` /
 `lulc` yet, so `--ablate` on §48 checkpoints covers the trunk inputs only.
+
+## §50 S2 backfill — recovering the scenes the 2026-05-20 download silently skipped (PLANNED 2026-09-28, Session 44, nothing built)
+
+### §50.1 What was found, measured
+
+Found while building §48: 8 train stations (Price, MedBow, Coldfoot, SuuRanch, SwedePeak,
+ParleysUpper, Bussolenobosco, ReynoldsHomestead) produce no sample in 2016-2022 — `driver_stats`
+565/573. Labels and ERA5 cover those years; **their S2 starts in 2023/2024**, and the loader drops any
+year outside the S2 record (`year_outside_s2_record`). The raw store (`/projects` and scratch alike)
+holds the same short record, so the loss predates tokenisation.
+
+`audit_s2_coverage.py` (job 27290895, `csvs/s2_coverage_audit.csv`) then asked the question of every
+station: per station-year inside the station's own `[start, end]` window, unique S2 dates the MPC
+catalogue offers (sentinel-2-l2a, same bbox, cloud < 75) vs dates obtained (raw store + the cloud
+filter's deletions from `text/cloudy_tile_manifest_delete_log.csv`). Smoke-validated on 5 known-bad
+and 3 healthy stations first (healthy = 0 lost).
+
+| split | catalogue | obtained | lost | station-years < 0.1 |
+|---|---|---|---|---|
+| train | 290,299 | 271,443 | 6.5% | 163 |
+| oos | 94,201 | 88,114 | 6.5% | 43 |
+| val | 47,577 | 46,144 | 3.0% | 15 |
+
+**26,387 of 432,232 in-window scenes (6.1%) were never obtained.** 60 stations have a year below
+0.1, 140 below 0.5, 377 below 0.8 (the last includes legitimate shortfall — see §50.3). The median
+station-year is complete; 2016's median is 0.71. Worst: SNOTEL/SCAN (Coldfoot 90% lost, MedBow 80%,
+SwedePeak 80%, SusitnaValleyHigh 77%, ReeseCenter 76%), plus SMOSMANIA and ICOS_SE-Svb.
+
+### §50.2 Why — never downloaded, not deleted
+
+Traced stage by stage for Price and confirmed across all 140 stations with a year below 0.5:
+
+- **Download window was right.** `max(2016-01-01, start_date)`; the downloader's CSV gives Price
+  2014, and S1 for the same stations fetched on 2026-05-21 reaches 2016.
+- **Nothing downstream deleted them.** The cloud filter's manifest and delete log (the only S2
+  deletion step) contain no missing date; Price = 145 kept + 45 deleted = 190, all 2023+. Cloud
+  masks (SEnSeIv2, `cloud_masking_inference.py`) were computed on every tile on disk at the time,
+  and across all 140 stations **exactly one** missing date ever had a cloud mask
+  (Bussolenobosco 20231207). `_cm_extra` equals the cloud filter's deletions (Price 45 = 45).
+  So the tiles never existed.
+- **The download dropped them.** The version that ran on 2026-05-20 (closest committed: 3c1b43f)
+  caught a failed scene with `logging.debug(...)` + `continue` — invisible at INFO — and set the
+  station `done` if one scene succeeded. `with_retry` retried three times within ~1 min. The MPC SAS
+  token in the signed URLs expired at `se=2026-05-20T11:05:26Z`; the log shows the first HTTP 403 at
+  13:05 CEST (= 11:05 UTC) and **853,552** after it. The catalogue returns newest-first at every
+  station (measured), so a station whose requests start failing mid-list keeps its recent years
+  and loses its older ones — the observed shape. The current `download_s2_mpc.py` logs at WARNING
+  but still skips and still says `done`.
+- **The data is there and loads.** `probe_s2_missing.py` (job 27291193) retried 60 never-obtained
+  scenes at 5 stations through the downloader's exact path, one attempt each: **60/60 load**, all
+  processing baselines (02.12, 03.00, 04.00, 05.10); 24/24 controls load.
+
+Not fully proven: why 774 stations processed after 11:05 UTC kept their pre-2023 scenes (most
+likely present from an earlier run; that log was overwritten).
+
+### §50.3 Facts the backfill is built on (Explore pass)
+
+- **No existing writer appends.** `convert_satellite_to_zarr.py:71` and `create_token_zarr.py:320`
+  open `mode="w"` and wipe the station (S1/DEM/LULC/era5 values18 included).
+  `retokenize_satellite_zarr.py:156-181` (`_encode_temporal`) re-encodes ALL dates with
+  `overwrite=True`; `:224-248` (`_run_cloud_masks`) likewise for `cm`. `fix_tokenization_gaps.py`
+  (`:66-116`) is the closest precedent and is also wholesale.
+- **The TIF stage is gone.** No scratch `satellite/`, no `CloudMask/` or `S2L2A/` under the data
+  tree. Truth = `/projects/prjs1968/satellite_zarr` (raw; **writable, no backup, only copy**) and
+  `/projects/prjs1968/zarr_tokens` (read-only, only copy). `/projects/prjs1968` → `/gpfs/work3/0/prjs1968`.
+- **Row alignment.** Raw `s2/data[i]`↔`s2/dates[i]` (`chunks=(1,…)`, dates `|S8` one chunk).
+  Token `s2/{l3,l6,l9,l12}[i]`↔`s2/dates[i]` (l* chunked 32, dates `<U8`)↔root `s2_l{3,6,9}.npy[i]`.
+  There is no `s2/token_mask` by design (`verify_zarr_store.py:59-61`). `cm` is joined BY DATE
+  (`dataset.py:415-432`) and must ⊇ s2 dates. §48 cache (`s2_l12.npy`, `s2_cm.npy`, `pyr.npz`) is
+  per index. Inserting mid-axis shifts every later row, so all of these move together.
+  `dataset.py:1182` assumes `s2/dates` ascending. Readers use `open_consolidated`, so `.zmetadata`
+  must be re-consolidated or they see old shapes.
+- **Harmonisation is by DATE.** `harmonize_s2_pre2022.py` adds +1000 DN to stems < 20220125
+  (`:42,54`) and skips a tile whose min non-zero DN ≥ 1000 (`:71-75`); its `return 0, 0` (`:52,56`)
+  vs a 3-way unpack (`:115`) crashes stations with nothing pre-2022. The probe shows **pre-cutoff
+  scenes already at baseline 04.00/05.10** (MedBow 20220225 pb 05.10, Condom 20211214 pb 04.00),
+  which carry the offset already — date-based harmonisation double-offsets them. Decide by
+  `s2:processing_baseline`.
+- **NaN → int16.** `download_s2_mpc.py:233` casts NaN-filled float to int16 without `fillna(0)`,
+  so nodata may not be DN 0. Not yet checked in the existing tiles.
+- **Stale-output traps.** `convert_l369_to_npy.py:57` and `prepare_s48_cache.py:48` skip existing
+  outputs; `restage_store.py` rsyncs without `--delete`; `verify_restage` only asserts dst ≥ src;
+  `verify_zarr_store.py` does not check dates length / sortedness / uniqueness or cm ⊇ s2.
+- **Evidence files get overwritten.** `filter_cloudy_tiles.py --analyze/--delete` rewrite
+  `text/cloudy_tile_manifest.csv` and `…_delete_log.csv` (`:227-231,257,261`; untracked) — the
+  delete log is the "obtained" evidence of §50.1. `trim_cm_extra.py` overwrites its archive.
+- **The downloader cannot target.** No station/date flags; the checkpoint marks every station
+  done, so a re-run is a no-op (`:384-390`); `metadata.json` is rewritten (`:319-331`); it reads
+  `data/station_splits.csv` (`:51`). Several MPC items can share a date (different MGRS tiles).
+- **Unlock template:** `slurm/splice_era5_guarded.sh` — explicit dir list, `chmod u+w`,
+  `trap relock EXIT INT TERM`, relock verified by counting writable dirs, `--relock-only` for a
+  SIGKILLed job; Python side `os.access(W_OK)` pre-flight (`splice_era5_radiation.py:143-154`).
+- **Envs.** Download/harmonise `soilmoisture` (no zarr); cloud mask/cm `sensei` (GPU); zarr,
+  TerraMind, npy, cache, verify `terramind`.
+
+### §50.4 The plan
+
+**Principle:** download only what is missing, put it through the SAME QC as the rest, and merge it
+in without changing one byte of an existing row. Every phase is smoked on the 5 probe stations
+(Price, Coldfoot, MedBow, ReeseCenter, Condom) end-to-end through §50.5, then STOP; full runs only
+on explicit go.
+
+```
+0a existing-store audit ──► 0b backup ──► 0c target list
+        │ (convention for baseline + nodata)
+        ▼
+1 download (targets only, fresh sign per attempt, ledger) ──► 2 harmonise BY BASELINE
+        ──► 3 cloud mask + filter (backfill set only, new manifest)
+        ──► 4 merge raw store (sibling group, verify, swap)
+        ──► 5 token store (encode NEW dates only, splice, guarded unlock)
+        ──► 6 restage + §48 cache + driver_stats refit ──► 7 verify
+```
+
+**Phase 0 — gates before anything is written**
+- **0a Existing-store audit** (read-only, CPU, Pool(64)). Per S2 scene in every raw store: the
+  catalogue item's `s2:processing_baseline` (by date + MGRS), per-band median DN, nodata census
+  (0 vs -32768/garbage). Answers (i) are existing pre-cutoff baseline ≥ 04.00 scenes double-offset
+  (median ≈ +1000 above neighbours)? (ii) is existing nodata 0? If either says no, the existing
+  store has its own defect and that gets its own decision BEFORE any merge — the backfill must
+  reproduce the store's true convention, or both are fixed together.
+- **0b Backup** every station to be touched: its raw `.zarr` and token dir to
+  `/gpfs/work3/0/prjs1968/backfill_backup/<date>/`, verify by file count + bytes, `chmod -R a-w`.
+  Also back up both cloud-filter CSVs. Merge not wipe; never trust a sentinel.
+- **0c Target list** `csvs/s2_backfill_targets.csv`: (station, date, item_id, mgrs_tile,
+  processing_baseline, cloud_cover) for every in-window catalogue date not in (store ∪ old delete
+  log). One item per date, deterministic: the MGRS tile the station's existing scenes use, else
+  lowest cloud cover. **Scope: all missing in-window dates**, not only whole-year gaps.
+
+**Phase 1 — Download** (new `backfill_s2_download.py`, soilmoisture, CPU). Targets CSV only →
+`/gpfs/scratch1/shared/pkhanal/s2_backfill/{st}/S2L2A/{date}.tif`. Same grid, crop, bands,
+resampling as `download_s2_mpc.py` (import `station_grid`, `center_crop`, `S2_BANDS`, `RES_M`);
+`fillna(0)` before int16 only if 0a says existing nodata is 0. **Fresh `planetary_computer.sign()`
+on every attempt.** Per-scene ledger `csvs/s2_backfill_ledger.csv` (status, error, item_id,
+baseline, nodata_frac); per-station requested/ok/failed; any failure = PARTIAL, never done;
+resubmits retry only failures. Also patch `download_s2_mpc.py`: count failures, WARNING per scene,
+status `partial`, re-sign per attempt, fix the `return 0, 0` in harmonise.
+
+**Phase 2 — Harmonise by baseline** (soilmoisture). +1000 DN iff `processing_baseline < 04.00`,
+from the ledger, on the explicit file list; never the min-DN heuristic. Atomic rewrite; ledger
+column `harmonised`.
+
+**Phase 3 — Cloud mask + filter on the backfill set only.** `cloud_masking_inference.py
+--scratch-dir …/s2_backfill --data-dir …/s2_backfill_cm` (same SEnSeIv2 model, same
+`(DN-1000)/10000`). Filter with the SAME rule (patch invalid on any cloud or ≥ 1% nodata; tile
+rejected if > 50% invalid) into a NEW manifest/delete log (`text/s2_backfill_manifest.csv`); the
+originals are never overwritten. All-zero edge scenes fall out here. Kept → `csvs/s2_backfill_kept.csv`.
+
+**Phase 4 — Merge the raw store** (new `backfill_merge_raw.py`, terramind, CPU). Per station: old
+`s2/data` + `dates` ∪ kept scenes; assert disjoint dates; sort; write a sibling group `s2_merged`
+(chunks (1,12,224,224), dates one `|S8` chunk); verify shape, ascending unique dates, every old row
+bit-equal at its new index, every new row equal to its TIF; swap (`s2`→`s2_prebackfill`,
+`s2_merged`→`s2`); drop `s2_prebackfill` only after §50.5 passes. S1/DEM/LULC/attrs untouched.
+
+**Phase 5 — Token store** (new `backfill_tokens.py`; terramind GPU, then sensei GPU). On
+`/projects/prjs1968/zarr_tokens` under the guarded unlock (per-station list: `{st}/`, `s2/`,
+`s2/{dates,l3,l6,l9,l12}/`, `cm/`, `cm/{masks,dates}/`) with `os.access` pre-flight. Encode **only
+the new dates** with the retokenize helpers (`_nn_fill_and_sanitize`, TerraMind encoder,
+`_NORM_MEAN/_NORM_STD`, all 12 bands) reading the merged raw store; splice into
+`l3/l6/l9/l12/dates` at sorted positions; assert old rows bit-equal (re-encoding old dates could
+drift on different GPUs). `cm` for new dates via `_run_cloud_masks` (or Phase 3's masks — same
+model), merged by date so cm ⊇ s2. Delete then regenerate `s2_l{3,6,9}.{npy,json}`;
+`consolidate_metadata`; relock and count.
+
+**Phase 6 — Downstream.** Delete the affected stations' scratch copies (copies, not originals) and
+re-stage into clean dirs (`restage_store.py`, `verify_restage.py`). Add `--stations` to
+`prepare_s48_cache.py`, delete their `pyr.npz`, rebuild. `lst22`, era5 stats, `fine_stats`
+unaffected. **Refit `driver_stats.json`** — the re-admitted train stations change SIF/TWSA/soil/
+label_mean inputs (565 → up to 573).
+
+### §50.5 Verification (one sbatch each, nothing on the login node)
+
+1. Extended store check for every touched station: `len(dates) == shape[0]` for raw and every
+   token layer; dates ascending and unique; raw dates == token s2 dates; cm ⊇ s2; `.npy` rows ==
+   zarr rows; old rows bit-equal to the 0b backup at their new indices.
+2. Re-run `audit_s2_coverage.py` with the new delete log counted as obtained → ratio ≈ 1 in window.
+3. `verify_s48.py` part B on backfilled stations; a dataset build admits the 8 stations.
+4. Harmonisation spot check: per-band median DN of backfilled pre-2022 scenes vs neighbours.
+
+### §50.6 Interaction with §48, and files
+
+Independent of §48: the full cache + LST runs and the GPU smoke can go now; affected stations'
+cache entries are rebuilt in Phase 6. **The first reported training run should use backfilled data.**
+
+New: `backfill_s2_download.py`, `backfill_merge_raw.py`, `backfill_tokens.py`,
+`audit_s2_store_consistency.py` (0a), `verify_backfill.py`, `slurm/backfill_*.sh`. Patched:
+`download_s2_mpc.py`, `harmonize_s2_pre2022.py`, `prepare_s48_cache.py` (`--stations`). Never used
+for this: `convert_satellite_to_zarr.py`, `create_token_zarr.py` (both wipe a station).
+Already built (Session 44): `audit_s2_coverage.py` + `slurm/audit_s2_coverage.sh`,
+`probe_s2_missing.py` + `slurm/probe_s2_missing.sh`.
