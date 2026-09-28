@@ -16247,6 +16247,165 @@ truth: `train.py:281-285`, `train_unet.py:187-189`, `dataset.py:45,1019-1021,104
 `create_evaluation_splits.py:20-35`, `update_splits_tile_pairs.py:62-64`. `CLAUDE.md:104`'s
 stale "1 year (365 days)" corrected to 3 years / 1095 days (§44.7 item 2).
 
+## §48 Light CNN fine encoder, LULC embedding, GroupNorm — and the build moves into `model.py` (SPECIFIED 2026-09-28, Session 44)
+
+Amends §46.2 and §46.5-E, and closes §46.5's open "file layout, to confirm before the first edit".
+Everything in §46 not named here stands: the LST head, three disconnected depth heads, per-depth
+`label_mean` bias init, SM-only `best.pt` selection, the `lambda=0` control, the `driver_stats`
+port, and **re-staging to scratch first**. §47.11's standing rule also stands: nothing trains
+until the stats refit has run on the staged store.
+
+### §48.1 Why an encoder, and not §46's masked pool + 1x1
+
+§46 delivers the raw imagery to each decoder stage by masked average pooling followed by a
+`Conv2d(27,c,1)`. A 1x1 conv sees one pixel's spectrum; the pooling averages away what lies
+*inside* each coarse cell — texture, edges, field boundaries, slope position. That is exactly the
+fine-scale pattern this build exists to recover. A small CNN computes features from the
+neighbourhood at each resolution *before* downsampling, so the 40 m and 80 m stages receive learned
+summaries of the 20 m detail rather than blurred averages. TerraMind cannot do this: its 16 px
+patches mean nothing below 160 m exists for it (§34.9). A light CNN is the complement.
+
+What it will and will not learn, stated so it is not overclaimed later: below 100 m the only dense
+target is Landsat LST, and §29 measured that pattern ~97% static. The encoder will mostly learn a
+static land-surface map. Only S1 carries fine-scale wetness dynamics, which is why `s1_age` stays.
+
+### §48.2 The ten decisions
+
+| # | Item | Decision |
+|---|---|---|
+| 1 | NDVI / NDWI | **Both dropped** (as §46). No reflectance branch; S2 z-scored in DN. |
+| 2 | Input normalisation | **TerraMind constants** (as §46.2). No own train-split input stats. |
+| 3 | LULC | **Learned 8-d embedding at 10 m, then 2x2 mean to 20 m.** Not nearest-neighbour. |
+| 4 | Grid | **20 m, 112x112.** `up4`/`conv4` deleted; station pixel (56,56). |
+| 5 | Fine path | **Light CNN encoder** replaces masked pool + 1x1 `skip_proj`. |
+| 6 | S1 channels | VV, VH, `s1_valid`, `s1_age`, `orbit` — age and orbit kept. |
+| 7 | Speckle filter | **None.** 2x2 mean in **linear power** is the multilook. |
+| 8 | Normalisation layers | **GroupNorm** replaces BatchNorm in decoder and encoder. |
+| 9 | Modality dropout | p=0.2 per sample, train only; zero S2 *or* S1 — data **and** mask (and age). |
+| 10 | Invalid pixels | Zeroed **after** normalisation, masks flag them (§46.3 step 8). |
+
+**On item 3.** Each 10 m pixel's class looks up a learned 8-d vector; the 2x2 mean then gives a
+20 m cell of 3 crop + 1 forest pixels `0.75*e_crop + 0.25*e_forest`. That is algebraically the
+one-hot area fraction times a learned matrix, so §46's mixed-pixel argument survives. Nodata goes
+to `padding_idx`. **§46.5 item 7 (LULC codes present) becomes mandatory before training**: under a
+learned embedding, the non-idempotent `_LULC_REMAP` collapsing two classes onto one code
+(§46.7.2) is a real bug, not a relabelling one-hot would forgive.
+
+**On item 7.** Speckle is the multiplicative interference noise of coherent imaging; GRD's
+ENL ~4.4 still leaves roughly +/-2 dB per 10 m pixel. The 2x2 mean suppresses it, by less than 4x
+because the native resolution is ~20 m and adjacent 10 m pixels are correlated; the encoder's 3x3
+convs are a learned smoother on top. Order: dB -> linear -> masked mean -> dB -> TerraMind z-score.
+Averaging dB directly is a biased geometric mean.
+
+**On item 8.** BatchNorm normalises with the current batch: small per-GPU batches, one station per
+sample, not synced across DDP ranks, and eval switches to running statistics accumulated on
+training batches — which, with item 9, contain zeroed modalities eval never sees. GroupNorm is
+per-sample and identical in train and eval. Consequence: old checkpoints cannot reload, so §46's
+`--keep-up4` is dropped; the baseline is reproduced from tag `baseline-unet-temporal`.
+
+### §48.3 Inputs per sample
+
+| group | channels @ 112x112 (20 m) | normalisation |
+|---|---|---|
+| S2 | 10 bands (B01/B09 dropped) + `s2_valid` = 11 | TerraMind mean/std in DN |
+| S1 | VV, VH, `s1_valid`, `s1_age`, `orbit` = 5 | TerraMind dB `[-10.93,-17.329]/[4.391,4.459]`; age / MAX_AGE |
+| DEM | DEM + `dem_valid` = 2 | TerraMind `[670.665]/[951.272]`; sentinels -99.9 / 0.0 masked (§46.7.3) |
+| LULC | class raster 224x224 uint8 at 10 m, **preceding** year | none — embedded in the model |
+
+`fine` = 18 x 112 x 112 fp16 (~450 KB) + `lulc` 224x224 uint8 (~50 KB). Replaces §46.2's 27 ch.
+
+### §48.4 Model
+
+```
+stems (3x3 conv, GN, ReLU) @112:
+  S2 11->16 | S1 5->8 | DEM 2->4 | LULC emb(K,8)@224 -> 2x2 mean -> 3x3 conv 8->4
+  concat -> 32 ch
+encoder, 2 x (conv3x3-GN-ReLU) per level:
+  E1 @112 (20 m): 32     E2 @56 (40 m): 64     E3 @28 (80 m): 128        ~0.3 M params
+decoder:
+  L12 bottleneck 14x14 -> bottle_proj 512
+    -> up1 -> conv1(512+128 -> 256) @28    <- FiLM(E3, context)
+    -> up2 -> conv2(256+64  -> 128) @56    <- FiLM(E2, context)
+    -> up3 -> conv3(128+32  ->  64) @112   <- FiLM(E1, context)
+  -> 3 per-depth heads (SM, station pixel 56,56)
+  -> head_lst 1x1 -> crop inner 110x110 -> avg_pool 5 -> 22x22 @100 m
+```
+
+- The skip-channel slices of `conv{1,2,3}.net[0].weight` are zero-initialised, so step 0 equals
+  the bottleneck-only decoder (§46.7.4: the Sequential is `.net`, not `.block`).
+- `--fine-skips {cnn,pool}`: `pool` is §46's masked pool + 1x1 to the same 32/64/128 widths —
+  the one-run ablation that says whether the encoder earns its parameters.
+- Forward: `(bottleneck, fine, lulc, context, depth_ctx)`.
+
+### §48.5 The LST loss is computed at 100 m
+
+```
+model:   64-ch map 112x112 @20 m -> head_lst -> crop 110x110 -> avg_pool 5 -> 22x22 @100 m
+target:  Landsat st30 76x76 @30 m -> sparse area-overlap average -> 22x22 @100 m
+         + per-cell observation counts; cells with zero count carry no loss
+```
+
+Pattern term: Huber on the spatially-centred field `(That - mean) vs (T - mean)`, over
+`sigma_ST`. Level term: a separate scalar on the tile means. 100 m because that is where TIRS
+acquires; `st30` is a resampled deliverable, and supervising finer would supervise interpolation.
+
+### §48.6 File layout — the build goes into the canonical files
+
+**Decided:** `model.py` / `dataset.py` / `train.py` / `ckpt_utils.py`, not the `_unet` quartet.
+The patchwise arm is preserved by tags `pw_stage2a-ep9` / `pre-s1-decoder-aux`; the U-Net
+baseline by `baseline-unet-temporal`. The canonical files already carry what §46.5 would have
+ported — `driver_stats` (item 15), `--select-metric ubrmse` (item 30), provenance SHA checks
+(items 32, 36) — and `eval_predict.py` already imports them. Ported *in* from `_unet`: the
+temporal-transformer-over-L12 trunk, the decoder, `select_anchor_zarr`. The `_unet` files stay
+untouched as the frozen snapshot.
+
+### §48.7 §46.5 items amended
+
+- 11, 12: build the 18-ch `fine` + 10 m `lulc` raster, not 27 ch.
+- 17, 18: superseded by the encoder; masked pool survives only as `--fine-skips pool`.
+- 19: delete `up4`/`conv4`, no `--keep-up4`.
+- 25: forward signature per §48.4.
+- 26: superseded — GroupNorm everywhere.
+- 6: per-channel stats of `fine` become a report, not constants.
+- 7: mandatory before training (§48.2 item 3).
+- 15, 30, 32, 36: largely free under §48.6; verify rather than port.
+
+### §48.8 Verification additions to §46.8
+
+1. Encoder parameter count logged (~0.3 M).
+2. Step-0 check: with the zero-init slices, output equals the bottleneck-only path.
+3. Modality-dropout check: a dropped modality has data **and** mask exactly 0.0.
+4. LULC: indices within `[0, K)`, nodata hits `padding_idx`, codes-present table from item 7.
+5. Detection of fingerprinting stays §46.9 (lambda=0 control, per-station OOS-vs-val gap), plus
+   the `--fine-skips pool` ablation. A learned encoder on DEM + LULC is fingerprint capacity.
+6. Smoke run, then STOP.
+
+### §48.9 Amendments agreed after §48.1-§48.8 were written (same session)
+
+1. **`s2_age` added.** S1 carried an age channel and S2 did not; a clear S2 scene can be weeks old
+   in cloudy seasons. S2 is now 10 bands + `s2_valid` + `s2_age` = **12**, total continuous
+   channels **19** (§48.3's 18 superseded). Stem S2 12->16.
+2. **"Most recent" means on or before day D**, for S2, S1 and the anchor alike. A scene on D
+   counts; nothing after D ever does. LULC stays the preceding year.
+3. **LST on day D is a TARGET, never an input** — the same role as the SM label on D. `L_lst` is
+   masked at the sample level on non-overpass days (~7-12% of samples carry it, §43).
+4. **Pattern-only LST loss: level term alpha = 0.** Both fields are centred over the same valid
+   cells, so tile-level error cancels exactly; the model cannot score by knowing "hot day" from
+   ERA5 or season. Consequence: `head_lst`'s absolute level is unconstrained and must never be
+   read or reported as Kelvin — only as a within-tile anomaly. `skt` is already absent from
+   `era5/values18`, so no same-day skin-temperature input exists.
+5. **ERA5 constants.** `train.py` and `eval_predict.py` now point at `era5_stats18.json`
+   (`dataset.py:80` reads `era5/values18`). `train_unet.py` stays on the 19-column
+   `era5_stats.json`: the frozen arm reads `era5/values` and its `era5_mlp` is `Linear(19,...)`.
+   The new trunk in `model.py` takes **18** ERA5 columns.
+6. **The canonical files are patchwise at the data interface** (per-patch `s2_hist (T,K,768)`,
+   loss refuses K != 1, no pyramids, no anchor). So §48.6 means REPLACING their patchwise contents
+   with the U-Net trunk ported from `model_unet.py` / `dataset_unet.py`, while keeping the
+   canonical fixes: `values18` + `era5_rel_pos` from real dates, `doy_pe` buffer and split
+   `EMB_INIT_STD`/`HIST_EMB_INIT_STD`, `driver_stats`, `head_bias_init`, strict labels, the
+   fail-closed cloud mask, SHA checks, `select_metric`, §47 splits. Rollback point: tag
+   `pre-s48-build`.
+
 ## §49 `sigma_ST` measured — the constants job §46 asked for, and what 8 stations already show (Session 44, 2026-09-28)
 
 §46 specified "one CPU job settles the remaining constants, and runs before any training", over
