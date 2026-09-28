@@ -18,17 +18,21 @@ import pandas as pd
 INVENTORY_CSV = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_inventory.csv")
 OUT_CSV       = Path("/home/khanalp/code/PhD/soilMoisture/csvs/station_splits.csv")
 
-RANDOM_SEED        = 42
-COLOC_THRESHOLD_KM = 3.0
-OOS_FRACTION       = 0.20
-VAL_FRACTION       = 0.10
-ABLATION_FRACTION  = 0.20   # ~20% of train → ablation_train; ~20% of OOS → ablation_oos
-MIN_CELL_SIZE      = 3        # cells with fewer groups → all go to train
-OOT_CUT_DATE      = 20230101  # YYYYMMDD integer
-OOT_MIN_PRE_YEARS  = 1        # ≥ 1 year of pre-2023 data required for OOT
-ELEV_IMBALANCE_TOL = 0.10     # 10 pp tolerance before elevation swap
-
-FLUX_SM_OOS_TARGET = 15       # ~15 flux+SM sites forced into OOS (~30% of 49)
+# §47: every one of these used to be defined here AND, for the cut date, again in
+# train.py:280 with nothing tying them. They now live in splits_config, which is the only
+# place any of them may be changed.
+from splits_config import (          # noqa: E402
+    ABLATION_FRACTION,
+    COLOC_THRESHOLD_KM,
+    ELEV_IMBALANCE_TOL,
+    FLUX_SM_OOS_TARGET,
+    MIN_CELL_SIZE,
+    OOS_FRACTION,
+    OOT_CUT_DATE,
+    OOT_MIN_PRE_YEARS,
+    RANDOM_SEED,
+    VAL_FRACTION,
+)
 
 # IGBP macro-group mapping
 IGBP_MACRO = {

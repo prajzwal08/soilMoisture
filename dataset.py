@@ -42,6 +42,8 @@ import zarr
 from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 
+from splits_config import TRAIN_YEARS, category_of, station_dir_name
+
 ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
 
 # torch.from_numpy on a read-only /dev/shm memmap triggers a non-writable warning;
@@ -1014,7 +1016,9 @@ class SoilMoistureDataset(Dataset):
         # augmentation. Here it would delete half of patch k's acquisitions outright, so it
         # defaults OFF and has to be asked for.
         self._patch_token_dropout = patch_token_dropout
-        self.years     = years or list(range(2016, 2024))
+        # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
+        # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
+        self.years     = list(years) if years else list(TRAIN_YEARS)
 
         # ERA5 normalisation stats
         with open(era5_stats_path) as f:
@@ -1038,13 +1042,9 @@ class SoilMoistureDataset(Dataset):
 
         splits = pd.read_csv(splits_csv)
 
-        # Category filter using has_soil_moisture / has_flux columns
+        # Category filter using has_soil_moisture / has_flux columns (splits_config.category_of)
         if category_filter is not None:
-            def _cat(r):
-                sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-                fl = str(r.get("has_flux",          "False")).lower() == "true"
-                return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
-            splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
+            splits = splits[splits.apply(category_of, axis=1).isin(category_filter)]
 
         if split_filter is not None:
             splits = splits[splits["split"].isin(split_filter)]
@@ -1109,15 +1109,10 @@ class SoilMoistureDataset(Dataset):
             if max_stations is not None and len(admitted_dirs) >= max_stations:
                 break
 
-            has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-            has_fl = str(r.get("has_flux",          "False")).lower() == "true"
-            cat    = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+            cat = category_of(r)
 
-            # Build directory name matching the on-disk convention
-            if str(r["source_network"]) == "ISMN":
-                dir_name = f"ISMN_{r['network']}_{r['station_name']}"
-            else:
-                dir_name = f"{r['source_network']}_{r['station_id']}"
+            # Directory name matching the on-disk convention (splits_config.station_dir_name)
+            dir_name = station_dir_name(r)
 
             sat_dir = ZARR_ROOT / cat / dir_name
 

@@ -31,17 +31,9 @@ from pathlib import Path
 import numpy as np
 
 
-def _category_of(r) -> str:
-    """The sat_dir category, resolved exactly as dataset.py resolves it."""
-    sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-    fl = str(r.get("has_flux",          "False")).lower() == "true"
-    return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
-
-
-def _dir_name_of(r) -> str:
-    if str(r["source_network"]) == "ISMN":
-        return f"ISMN_{r['network']}_{r['station_name']}"
-    return f"{r['source_network']}_{r['station_id']}"
+# §47: one definition of each, shared with dataset.py rather than re-derived here.
+from splits_config import category_of as _category_of
+from splits_config import station_dir_name as _dir_name_of
 
 
 def preload_one_station(task):

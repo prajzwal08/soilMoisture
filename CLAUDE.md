@@ -101,7 +101,7 @@ ISMN raw data (hourly, per-sensor)
 
 ### Station-level quality filters (applied in `process_single_station`)
 1. Must have a valid continuous surface (0-10 cm) run after gap removal
-2. Must have ≥ 1 year (365 days) of valid daily data
+2. Must have ≥ 3 years (1095 days) of valid daily data (`preprocessing_ISMN_soilMoisture.py:228`; §44.4 measured the inventory minimum at exactly 1095)
 3. No NaNs may remain after gap-filling (otherwise station is skipped)
 
 ### `utils.py` — utility functions

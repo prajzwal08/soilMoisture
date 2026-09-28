@@ -59,10 +59,10 @@ import pandas as pd
 
 CSV = Path("csvs/station_splits.csv")
 
-TILE_M       = 2240.0
-PATCH_M      = 160.0
-HALF_TILE_M  = TILE_M / 2.0      # 1120 m: beyond this, B is outside A's tile
-DUP_M        = 50.0              # closer than this across networks = same physical site
+# §47: superseded by update_splits_v2.py. The geometry constants now come from
+# splits_config so the two sweeps can never disagree about what "shares a tile" means.
+from splits_config import TILE_M, PATCH_M, HALF_TILE_M, DUP_M  # noqa: E402
+
 
 
 def haversine_m(lat1, lon1, lat2, lon2):

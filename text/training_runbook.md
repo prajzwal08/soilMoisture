@@ -15924,3 +15924,469 @@ Method note, in the §45 tradition: this cost a session's worth of design as an 
 the answer sat in `/gpfs/work3/0/prjs1968/data/logs/harmonize_s2_23183555_*.err` the whole time.
 **Provenance beats inference** — check whether the job logs still exist before designing a
 measurement.
+
+## §47 Splits rebuilt — all soil moisture, tiles and the Netherlands out of training, OOT to 2025 (APPLIED 2026-09-28, verified — see §47.11)
+
+Discharges §44.7 item 3, which has been open since Session 42 and is the last thing standing between
+§46 and a launch. It does four things: brings the `sm_and_flux` stations into training, extends the
+tile-sharing holdout from train to val, puts the Netherlands entirely outside training, and moves
+the temporal holdout from 2023 alone to 2023-2025 behind a single source of truth for the cut date.
+
+Everything below is measured from `csvs/station_splits.csv` (990 rows) and
+`csvs/station_duration_audit.csv` (per-station `n_days`, minimum exactly 1095 -- §44.4).
+Station-years are record days intersected with the window, divided by 365.25.
+
+### §47.1 The four defects
+
+1. **`category_filter = ["sm_only"]`** (`train.py:279`) discards 48 stations that carry real
+   soil-moisture labels purely because they also carry flux. 22 of them sit in `split=="train"`.
+2. **The tile rule was enforced for train but not for val.** §35.29 demoted every *train* station
+   within 1120 m of another SM station, and left 18 val stations that share tiles with each other --
+   duplicated sites inside the set that drives early stopping and the LR schedule.
+3. **The Netherlands is in training.** 7 of 8 TWENTE stations are `train` (§44.5). The stated
+   product (`text/architecture.md:607-620`) is a 10 m soil-moisture map of the Netherlands; claiming
+   it from a model trained on Dutch stations is not defensible.
+4. **OOT is 2023 only, and its cut date lives in two unlinked files** --
+   `create_evaluation_splits.py:27` sets `OOT_CUT_DATE=20230101`, `train.py:280` independently sets
+   `years=range(2016,2023)`. Inputs now reach 2025 (397 stations have S2 tokens ending 2025,
+   `csvs/dataset_coverage.csv`; ERA5 runs to 3653 days, `csvs/era5_18_verify.csv`), so two thirds of
+   the available temporal holdout is being discarded.
+
+### §47.2 Before -- what training uses today
+
+`category_filter=["sm_only"]`, 839 stations reachable:
+
+| split | stations | st-yr 2016-22 | st-yr 2023+ |
+|---|---|---|---|
+| train | **572** | **2951.7** | 882.3 |
+| val | 73 | 355.6 | 108.5 |
+| oos | 193 | 965.2 | 269.0 |
+| duplicate | 1 | 4.1 | 0.0 |
+
+The full inventory is 990 stations / 7144 station-years; the 151 ICOS+AmeriFlux rows split
+48 `sm_and_flux` / 103 `flux_only`.
+
+### §47.3 The three demotion rules
+
+Applied only to `has_soil_moisture == True` stations (887). A station already `oos` or `duplicate`
+is untouched; nothing is ever deleted.
+
+| # | Rule | Threshold | Moves |
+|---|---|---|---|
+| 1 | Shares a tile with another SM station | haversine < **1120 m** | train/val -> `oos` |
+| 2 | Netherlands | `network == "TWENTE"` | train/val -> `oos` |
+| 3 | Too little pre-cut record to be a *seen* station | < **365 days** before `OOT_CUT_DATE` | train/val -> `oos` |
+
+**Rule 1's threshold is not a choice.** Every station gets its own 2240 m tile centred on itself, so
+"B is inside A's tile" is exactly `d < 1120 m`. §39.3's 2.24 km figure is *tile overlap*, a looser
+and different relation -- do not reuse it here.
+
+**Rule 1 costs zero train stations.** `update_splits_tile_pairs.py` already swept all 887
+`has_soil_moisture` stations at 1120 m and demoted the 17 it found; no train row carries
+`same_patch_pair` or `tile_pair_eval`. The 9 pairs in `csvs/colocated_pairs.csv` that still contain
+a train station each pair it with a `flux_only` station -- `US-Bi1`, `US-xNG`, `US-Seg`, `US-GLE`,
+the `ES-LM*` cluster, `CZ-Stn`/`RU-Fy2` -- and `flux_only` never trains, so there is nothing to
+leak. What rule 1 still catches is 18 val stations:
+
+```
+11  FMI SOD011/012/013, SOD071/072/073, SOD081/083, SOD101/102/103   same-patch <160 m
+ 7  TxSON CR1000-2, CR200-6/7/15/18/24/25                            tile-pair 160-1120 m
+```
+
+Worth seeing what those 18 were before mourning them: the 11 FMI probes sit at **three** physical
+Sodankyla locations (SOD01x, SOD07x, SOD08x/10x are each within 160 m -- one TerraMind token), and
+the 7 TxSON probes sit inside **one** 2.24 km tile. val lost 18 rows but roughly 4 independent
+locations; the rest was one site counted repeatedly, which is precisely what was inflating the
+early-stopping signal.
+
+**Rule 3** exists because of 8 Berlin stations (33-47 days pre-2023, 1095 days after) plus 6
+SCAN/SNOTEL ones (`Nunn#1`, `StanleyFarm`, `Vallecitos`, `Fifteenmile`, `QuartzMountain`,
+`RockSprings`). Left in `train` they would contribute nothing to training and three full years to
+OOT, so OOT would be measuring *spatial* generalisation while being reported as temporal.
+
+### §47.4 The val top-up comes out of OOS, not out of train
+
+After the demotions val is 55 stations / 293.3 st-yr -- 6.2% of the 887, against the 10% the split
+framework targets. The replacement is drawn from `oos`, not from `train`.
+
+**This leaks nothing.** val and oos are both station-disjoint from train; reassigning between them
+trades test power for model-selection power and leaves the training set untouched. The eligible pool
+is deep enough to draw from properly:
+
+```
+OOS after demotions          258 stn / 1172.1 st-yr
+  tile-pair members           60   ineligible -- would re-duplicate val
+  <1 yr pre-2023              27   ineligible -- nothing to validate on
+  joint_eval reserved         14   ineligible -- §22's flux+SM OOS reservation
+  TWENTE                       8   ineligible -- that is the whole point of rule 2
+  ELIGIBLE                   149 stn / 790.2 st-yr, 144 location groups, 22 strata cells
+```
+
+34 whole location groups are drawn, stratified by `kg_macro x igbp_macro x elevation_band` exactly
+as `create_evaluation_splits.py:195-225` already does. **Order matters**: demote first, then draw,
+or a just-demoted TWENTE or FMI station becomes a candidate for its own replacement.
+
+The one quantity this change spends is OOS: 258 -> 224 stations. Still 25% of the 887, above the
+20% the framework targets, and the test set stays larger than val.
+
+### §47.5 "At least one year post-cut" is an admission rule, not a description
+
+A station's *post-cut record* is how much label it holds after `OOT_CUT_DATE`. Three train stations,
+all trained on 2016-2022, differ entirely in what is left on the far side:
+
+```
+ARM Morrison      record 2015-10-01 .. 2025-12-30   post-cut 1095 d   FULL
+ARM Ashton        record 2016-02-26 .. 2023-09-28   post-cut  270 d   PARTIAL
+AMMA Banizoumbou  record 2014-01-01 .. 2018-12-30   post-cut    0 d   NONE
+```
+
+Across the 573 train stations:
+
+```
+  no post-cut data at all      216 stn     0.0 st-yr   contribute nothing to OOT
+  partial year (1-364 d)        45 stn    25.1 st-yr   ADMITTED TODAY, should not be
+  full year or more (>=365 d)  312 stn   842.2 st-yr   the usable OOT
+```
+
+The 45 partial-year stations are worth 3% more data and a seasonal bias. §22.5 reports `*_stn` --
+the mean across stations, each counted once -- so `Ashton`, holding only a January-to-September
+stretch, would enter that mean with a nine-month ubRMSE at the same weight as `Morrison`'s three
+full years. And `dataset.py:1437-1438`'s `min_obs=30` admits any station-year with 30 observed days,
+so absent an explicit rule the 45 join OOT silently. **`MIN_POST_CUT_DAYS = 365` is therefore an
+admission rule for OOT and OOST**; the excluded stations are reported by name, not deleted.
+
+### §47.6 After -- the splits this run trains on
+
+`sm_only + sm_and_flux` (887 stations), three demotion rules, then the OOS-funded val top-up:
+
+| split | stations | st-yr 2016-22 | st-yr 2023-25 | >=1 yr post-cut |
+|---|---|---|---|---|
+| train | **573** | **3012.7** | 867.3 | 312 |
+| val | **89** | ~474 | ~112 | -- |
+| oos | **224** | ~992 | ~321 | ~114 |
+| duplicate | 1 | 4.1 | 0.0 | 0 |
+| **OOT** (train, 2023-25) | **312** | -- | **842.2** | -- |
+| **OOST** (oos, 2023-25) | ~114 | -- | ~321 | -- |
+
+`~` marks quantities fixed by the stratified draw of §47.4; train is exact and unaffected by it.
+
+**Training does not shrink. It grows.** The ledger:
+
+```
+  +22 sm_and_flux stations into train      +93.8 st-yr
+   -7 TWENTE train -> oos                  -28.8 st-yr
+  -14 <1yr-pre-2023 train/val -> oos        -4.0 st-yr   (12 train, 2 val)
+  -18 tile-pair val -> oos                 -73.1 st-yr   (val only; train already clean)
+  +34 oos -> val  (top-up, stratified)       0.0 st-yr   (train untouched)
+  ------------------------------------------------------
+  train  572 -> 573 stations,  2951.7 -> 3012.7 st-yr   (+2.1%)
+  val     73 ->  89 stations,   355.6 -> ~474    st-yr   (+33%)
+  oos    193 -> 224 stations,   965.2 -> ~992    st-yr   (+2.8%)
+```
+
+OOT goes from ~326 station-years to **842**, purely by extending the window to a horizon the inputs
+already cover.
+
+### §47.7 Two questions that closed rather than opened
+
+- **`flux_only` cannot join.** `h5ls` over `level1_organised/flux_only/*.nc` finds no
+  `soil_moisture` and no `depth` dataset -- these are flux-only files, not mislabelled ones. The
+  `station_duration_audit.csv` rows for all 151 ICOS/AmeriFlux stations carry an *empty*
+  `n_observed_surface`, which reads as 0 in a naive sum; it is missing, not zero. (Separately, ~79
+  AmeriFlux BASE sites probably do hold SWC that was never extracted -- a new download, out of
+  scope here.)
+- **All 48 `sm_and_flux` stations have usable depths**: 19 carry all three bins, 11 carry
+  0-10 + 10-30, 17 carry 0-10 only, 1 carries 10-30 only. §46's disconnected per-depth heads make a
+  missing bin a masked-loss case rather than a crash -- but that is verified in §47.9 item 4, not
+  assumed.
+
+### §47.8 Implementation
+
+**1. `splits_config.py` -- the single source of truth.** The §44.6 precondition; no constant defined
+twice:
+
+```python
+TRAIN_YEARS       = list(range(2016, 2023))
+OOT_YEARS         = [2023, 2024, 2025]
+OOT_CUT_DATE      = 20230101
+MIN_PRE_CUT_DAYS  = 365
+MIN_POST_CUT_DAYS = 365
+TILE_M, PATCH_M, HALF_TILE_M, DUP_M = 2240.0, 160.0, 1120.0, 50.0
+NL_NETWORKS       = {"TWENTE"}
+SM_CATEGORIES     = ["sm_only", "sm_and_flux"]
+```
+
+Consumers rewired: `train.py:279-280`, `train_unet.py:191-192`, `eval_predict.py:43-54` and its
+three `cfg.get("category_filter", ["sm_only"])` defaults, `create_evaluation_splits.py:22-30`,
+`update_splits_tile_pairs.py:62-65`, and `dataset.py:1017` -- whose `range(2016, 2024)` default must
+stop being a silent fallback. The `sm_only`/`sm_and_flux`/`flux_only` derivation is duplicated in
+five places (`dataset.py:1041-1047`, `dataset.py:1112-1114`, `dataset_unet.py:774-779`,
+`shm_preload.py:121-122`, `train_unet.py:126-131`); it becomes one `category_of(row)` helper.
+
+**2. `update_splits_v2.py`** extends `update_splits_tile_pairs.py` rather than replacing it -- the
+haversine sweep, latitude pre-reject, cross-split leakage check and dry-run-by-default `--apply`
+are already there. Additions: rules 2 and 3; new `nl_holdout`, `thin_pre_cut`, `val_topup` columns
+so every move is attributable from the CSV alone; the §47.4 draw; regeneration of `oot_eligible` /
+`oost_eligible` from **measured** coverage rather than `end_date` (§22.2's warning: the flag claimed
+128 OOST where only 98 were real); backup to `csvs/station_splits.csv.pre_s47`.
+
+**3. Stats refit is mandatory.** `csvs/era5_stats18.json` and `csvs/driver_stats.json` are fitted on
+`split == "train"` (`compute_driver_stats.py:25`). The train set changes, both hashes change, and
+`ckpt_utils.py:39-51` will correctly refuse every pre-existing checkpoint -- the §35.28 provenance
+mechanism working, not a fault. §35.29 is the precedent: the 0-10 cm label mean moved 0.1720 ->
+0.1715 under a comparable change, so treat a large move as a bug.
+
+**4. `eval_predict.py:43-54`** takes `OOT_YEARS` for `oot` and `oost`, and emits metrics per year
+across 2023/2024/2025 as well as pooled, so horizon drift is visible. OOT stays on
+`split_filter=["train","val"]` -- §22.2's "do not filter OOT on `oot_eligible`" still holds.
+
+### §47.9 Verification -- pre-registered, one SLURM job, nothing on the login node
+
+`verify_splits_v2.py` + `slurm/verify_splits_v2.sh`, `Pool(64)` / `--cpus-per-task=64`. It must FAIL
+loudly, not warn:
+
+1. **Geometry** -- global sweep over the 887 SM stations: no pair < 1120 m with both members in
+   `train`; none with both in `val`; none straddling two splits.
+2. **Netherlands** -- zero TWENTE rows in `train` or `val`; all 8 in `oos`.
+3. **Top-up purity** -- every `val_topup` station was `oos` in `.pre_s47`, is not tile-pair /
+   TWENTE / thin / `joint_eval` / `flux_only_eval`, and has >= 365 label days in 2016-2022; the
+   train membership is byte-identical before and after the draw.
+4. **Temporal** -- every `train` row clears `MIN_PRE_CUT_DAYS`; `TRAIN_YEARS` and `OOT_YEARS` are
+   disjoint; no sample built by the train dataset has `year >= 2023`.
+5. **The datasets actually build** -- instantiate `SoilMoistureDataset` for `train` and `val` with
+   `SM_CATEGORIES` and print stations admitted, samples, and **samples per depth bin**. This is the
+   real test of the 17 surface-only `sm_and_flux` stations: the 10-30 and 30-100 heads must see a
+   smaller station population without a crash or a silent zero-fill.
+6. **OOT/OOST from the dataset, not from the flags** -- build with `years=OOT_YEARS`, report what
+   the year gating yields, assert every admitted station clears `MIN_POST_CUT_DAYS`, and print the
+   excluded partial-year stations by name (expected: 45 in train).
+7. **Stats** -- new hashes printed beside old; per-depth label means before and after.
+
+Only then: `sbatch slurm/train.sh`.
+
+### §47.10 Risks
+
+- **Every existing checkpoint is invalidated** by the stats refit. Intended -- but §46 starts from
+  scratch, not from `last.pt`.
+- **ICOS `sm_and_flux` stations are all 2017-2020** (1461 days), so they add training data and
+  nothing to OOT.
+- **OOS shrinks 258 -> 224** to fund the val top-up (OOST ~133 -> ~114).
+- **Moving 34 OOS groups perturbs the OOS strata balance** they were drawn under. Re-run
+  `elevation_balance_check` (`create_evaluation_splits.py:265-319`) on the post-move OOS.
+- **`same_patch_pair` / `tile_pair_eval` are keyed on `station_id` alone**, which is not unique
+  across source networks. The v2 sweep keys on `source_network|network|station_id`.
+
+### §47.11 Built and applied — measured (Session 43, 2026-09-28)
+
+Everything in §47.1-§47.10 above was written before the code ran. This subsection is what came
+out of running it. Jobs 27284271 / 27284474 / 27284627 (dry runs) and 27284770 (`--apply`),
+gated by 27285211 (`verify_splits_v2.py --skip-datasets`).
+
+**The predictions held to the station.** The dry run reproduces §47.6 exactly:
+
+```
+split counts: train 573   val 89   oos 224   duplicate 1
+  train   573 stn   3012.7 st-yr 2016-2022    867.3 st-yr 2023-2025
+  val      89 stn    476.7 st-yr 2016-2022    135.9 st-yr 2023-2025
+  oos     224 stn    988.6 st-yr 2016-2022    321.2 st-yr 2023-2025
+  oot_eligible  312     oost_eligible  115     partial-year, excluded  55
+```
+
+41 stations demoted -- 21 from train (8 Berlin + 3 SCAN + 3 SNOTEL thin-pre-cut, 7 TWENTE) and
+20 from val (11 FMI same-patch, 7 TxSON tile-pair, `Bushland#1` and `BlazedAlder` thin) -- then
+34 drawn back from oos. `csvs/station_splits.csv.pre_s47` holds the previous state; eight new
+columns (`pre_cut_days`, `post_cut_days`, `oot_effective_days`, `nl_holdout`, `thin_pre_cut`,
+`val_topup`, plus the refreshed `same_patch_pair` / `tile_pair_eval`) make every move
+attributable without recomputing geometry.
+
+**Three defects, all in the new code, all caught by the dry run rather than by review.** Worth
+recording because two of them would have produced a *plausible* split file:
+
+1. **The whole-group assertion fired on the `duplicate` sentinel.** §35.29 marks one member of
+   the 6 m `VairaRanch`/`US-Var` pair `split="duplicate"`, so its location group legitimately
+   holds two split values forever. Both the purity assertion and the "split straddle" warning
+   had to exempt it. A sentinel that is deliberately not a split is invisible to code that
+   assumes splits partition the inventory.
+2. **The top-up under-drew by exactly 15.** `n_target` counted soil-moisture stations (887 x
+   0.10 = 89) while the "how many do we have" side counted *all* rows, including the 15
+   `flux_only` stations sitting in val that can never be validated on. It drew 19 instead of 34
+   and would have left val at 74 while reporting success. Both sides of a ratio have to count
+   the same population.
+3. **Building groups from the eligible rows alone split a group.** `location_group_id` 17 had
+   one eligible member and one reserved one; the draw moved the eligible half to val and left
+   the other in oos. Fixed by requiring every soil-moisture member of a group to be eligible
+   before the group is a candidate -- 64 of the oos groups are mixed and are now skipped
+   outright, which is why the stratified pass needed one extra group from the remainder.
+
+**Verification, checks 1-4 and 7: PASS.** The geometry is recomputed from lat/lon rather than
+read back from the columns `update_splits_v2.py` wrote, so the writer cannot vouch for itself:
+zero tile-sharing pairs inside train, zero inside val, zero across splits; all 8 Dutch stations
+in oos; every `val_topup` station was oos beforehand and none is tile-pair, Dutch, thin or
+reserved; **train gained nothing** (`-21 demoted, +0 added`), which is the whole point of
+funding the top-up from oos; every train station clears `MIN_PRE_CUT_DAYS`.
+
+**What is still blocked, and it is not §47's doing.** `dataset.py:47` points `ZARR_ROOT` at
+`/gpfs/scratch1/shared/pkhanal/zarr`, where **36 of 993 stations carry a `.complete` marker** --
+the purged scratch of the standing re-stage blocker. So:
+
+- **Verification checks 5 and 6** (the datasets build; per-depth sample counts; OOT/OOST counted
+  from the year gating rather than the flags) ran as `--skip-datasets`. They are the real test
+  of the 17 surface-only `sm_and_flux` stations and must be run once the store is staged:
+  `sbatch slurm/verify_splits_v2.sh`, no flag.
+- **The stats refit** (§47.8 item 3) cannot run either -- `compute_era5_stats.py` and
+  `compute_driver_stats.py` read the same store. Current hashes, for the diff afterwards:
+  `era5_stats18 4685726166195d72`, `era5_stats 572028af6cd66199`,
+  `driver_stats 34ade6b95d913b52`. Until they are regenerated the splits are correct and the
+  normalisation constants are stale, which is the one state in which **training must not be
+  launched**.
+
+Code: `splits_config.py` (new), `update_splits_v2.py` + `slurm/update_splits_v2.sh` (new),
+`verify_splits_v2.py` + `slurm/verify_splits_v2.sh` (new). Rewired to the single source of
+truth: `train.py:281-285`, `train_unet.py:187-189`, `dataset.py:45,1019-1021,1045-1047,1112-1115`,
+`dataset_unet.py`, `shm_preload.py:34-36`, `eval_predict.py:36,44-59`,
+`create_evaluation_splits.py:20-35`, `update_splits_tile_pairs.py:62-64`. `CLAUDE.md:104`'s
+stale "1 year (365 days)" corrected to 3 years / 1095 days (§44.7 item 2).
+
+## §49 `sigma_ST` measured — the constants job §46 asked for, and what 8 stations already show (Session 44, 2026-09-28)
+
+§46 specified "one CPU job settles the remaining constants, and runs before any training", over
+the 133,127 supervised station-dates, **train stations and pre-OOT years only**. It was never
+written, so `sigma_ST` did not exist — no `.py` mentioned it and no file in `csvs/` held it. This
+section is that job, its smoke, and the two defects the smoke caught.
+
+Built: `landsat_target.py` (the grid, shared), `compute_lst_stats.py` + `slurm/compute_lst_stats.sh`.
+
+### §49.1 The target grid is forced, and it is NOT centred on the station
+
+The loss compares a pooled prediction against a warped target, so the target footprint must equal
+the prediction footprint exactly. §46 `:8208` pools with `F.avg_pool2d(kernel_size=5, stride=5)`
+on the 112x112 @ 20 m map. 112 does not divide by 5: the pool consumes pixels 0-109 and emits
+22 cells, so the footprint runs 2200 m from the tile's **west/north edge**, not from its centre.
+
+```
+model tile      west = cx-1120   north = cy+1120         2240 m   224 x 10 m
+pooled 22x22    west = cx-1120   north = cy+1120         2200 m    22 x 100 m
+                east = cx+1080   south = cy-1080
+Landsat bundle  76 x 30 m = 2280 m, origin snapped to (15,15) mod 30
+```
+
+Three different extents, and 2200/30 = 73.33 source pixels — not an integer, which is why §46
+specifies `Resampling.average` (area-weighted) and not a strided pool. The last 40 m of the tile
+is unsupervised on each axis; that falls out of the arithmetic and is recorded so nobody "fixes"
+it into a centred grid and shifts every thermal cell by one 20 m pixel.
+
+`landsat_target.py` exists so this is derived **once**. §46's loader must import it. If the two
+derive the grid separately, `sigma_ST` is in different units from the residual it divides and
+nothing raises — the thermal loss is simply mis-scaled.
+
+Masking happens **before** the warp. Warping first would let a rejected 30 m pixel bleed into a
+100 m cell through the area-weighted average.
+
+### §49.2 Two defects, both caught at 8 stations rather than 573
+
+1. **`landsat_target.py` could not be imported from the training env.** It took the Landsat grid
+   constants from `download_landsat_st_mpc`, which imports `planetary_computer` — present in
+   `soilmoisture`, absent from `terramind`. `LS_RES_M`, `LS_GRID_OFFSET` and `snap` are now
+   duplicated with a comment saying why; three copied lines beat making the training env depend
+   on the download stack.
+2. **The mask key in `build_landsat_mask.py`'s docstring does not exist on disk.** The docstring
+   describes a single `mask`; every bundle carries **`mask_1km` and `mask_05km`**, two cdist
+   thresholds, plus `n_px_1km` / `n_px_05km`. No `.py` in the repo references either name, so the
+   script that wrote these bundles is not the one on disk. `mask_1km` is the rule §42 settled on
+   (cdist > 1 km, the strict choice) and is what the job uses.
+
+The second was only trustworthy because the job cross-checks itself: over the 8 smoke stations it
+counted **1,038 supervised pre-cut scenes from the bundles against 1,038 in
+`csvs/landsat_mask_index.csv`** — an exact match, which confirms the mask key AND the year filter
+independently rather than by assertion. The guard held too: with the wrong key every station
+returned `READ_FAIL:KeyError` and the job exited `FATAL: refusing to emit a fabricated constant`
+rather than writing a number built from nothing.
+
+### §49.3 The smoke result — 8 stations, and why the ratio is the point
+
+`sbatch slurm/compute_lst_stats.sh --dry-run --limit 8` (job 27289098). **ARM and AMMA-CATCH
+only — dry, hot, continental, and NOT representative of 573.**
+
+```
+scenes on disk (train stations)                     2,019
+scenes used (pre-cut, supervised, >=2 valid cells)  1,030 of 1,038
+target cells contributing                         423,545
+
+sigma_ST     =  1.8832 K    pooled SD of the centred 22x22 field
+sigma_level  = 13.2654 K    SD of tile-mean ST
+ratio        =  0.1420
+```
+
+`sigma_level` is the SD of each scene's tile mean — season, overpass date, climate. `sigma_ST` is
+what survives removing that mean: how much the 100 m cells differ from each other inside one tile
+on one day. The variance split is the argument for §46's whole loss design:
+
+```
+level variance    13.27^2 = 176.0     98.0%
+pattern variance   1.88^2 =   3.5      2.0%
+```
+
+**Train a thermal head on raw Kelvin and 98% of what it optimises is level** — season and climate,
+which the 18 ERA5 drivers already hand the model directly. It would score well while learning
+nothing about within-tile structure, which is the only reason the aux target exists. Dividing by
+`sigma_ST` and holding `alpha = 0` discards the 98% deliberately. This is the same lesson as §29's
+Simpson's paradox (pooled +0.167, within-station -0.077) in a different guise: the between-unit
+term is large, easy, and not the question being asked.
+
+1.88 K is also consistent with §29's measured 5-9 K within-tile *range* — a range is roughly
+4-5 sigma, so the two measurements agree.
+
+`sigma_level` is unused while `alpha = 0`. It is computed because it is free in the same pass and
+because it is the scale that would make a level Huber commensurable with the pattern one if
+`alpha` is ever reopened.
+
+### §49.4 Pending
+
+- ~~Full run~~ **DONE** (job 27289401), and the pre-registered expectation was WRONG.
+- **The `alpha = 0` gate.** `csvs/lst_tile_means.csv` (one row per station-date) falls out of the
+  same pass, so the R2 of tile-mean ST regressed on the 18 ERA5 drivers can be settled without
+  re-reading the 4.5 GB archive. That is a design decision, not a constant: if ERA5 alone predicts
+  tile-mean ST well, the level term is redundant and `alpha = 0` is justified on evidence rather
+  than assertion.
+- `sigma_ST` must be SHA'd into `CONFIG` the way `ckpt_utils.py:39-51` treats the other
+  normalisation constants. It is a model contract, not a convenience.
+
+### §49.5 The full run — and a prediction that failed (job 27289401)
+
+573/573 stations, `mask_1km` throughout, and the self-check held at scale: **53,087 supervised
+pre-cut scenes from the bundles against 53,087 in `csvs/landsat_mask_index.csv`.**
+
+```
+scenes on disk (train stations)                      154,859
+scenes used (pre-cut, supervised, >=2 valid cells)    52,414 of 53,087
+target cells contributing                         17,983,485
+
+sigma_ST     =  2.7066 K       (8-station smoke said 1.8832)
+sigma_level  = 14.8944 K       (smoke said 13.2654)
+ratio        =  0.1817         (smoke said 0.1420)
+```
+
+§49.4 predicted `sigma_ST` would **fall**, reasoning that wet or overcast maritime tiles are
+nearly uniform and the smoke had sampled only dry continental sites. **It rose 44%.** The
+inference was backwards: ARM and AMMA-CATCH are flat homogeneous cropland and Sahel, so they are
+a LOW-contrast subset, not a high-contrast one. Within-tile thermal contrast over the full 573 is
+larger than dry-continental intuition suggests. Recorded because the reasoning was plausible and
+still wrong — the smoke set was chosen by CSV row order (`--limit 8` takes the first 8 admitted),
+which is alphabetical by network and therefore not a sample of anything.
+
+The variance split barely moves, so §46's design argument is unaffected:
+
+```
+level variance    14.89^2 = 221.8     96.8%
+pattern variance   2.71^2 =   7.3      3.2%
+```
+
+Still ~97% level. `alpha = 0` plus the `sigma_ST` division remains the difference between
+training a thermal head on season and training it on structure.
+
+`delta = 1.0` on the thermal Huber now means **+/- 2.71 K** — quadratic within one SD of normal
+within-tile spread, linear beyond. §42's QC kept cells up to 360 K and §37 measured residual
+contamination surviving QC by construction, so a 20 K bad cell lands at 7.4 sigma, firmly in the
+Huber's linear regime. That is the bound working as §46.5 intended.
+
+Written: `csvs/lst_stats.json`, `csvs/lst_tile_means.csv` (52,414 rows).

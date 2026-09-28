@@ -43,6 +43,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.optim import AdamW
+
+from splits_config import SM_CATEGORIES, TRAIN_YEARS, category_of
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import torch.multiprocessing
@@ -124,20 +126,14 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
 
     splits = pd.read_csv(splits_csv)
     if category_filter:
-        def _cat(r):
-            sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-            fl = str(r.get("has_flux",          "False")).lower() == "true"
-            return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
-        splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
+        splits = splits[splits.apply(category_of, axis=1).isin(category_filter)]
     splits = splits[splits["split"].isin(["train", "val"])]
 
     n_written = 0
     for _, r in splits.iterrows():
         if not bool(r.get("soil_patch_ok", True)):
             continue
-        has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-        has_fl = str(r.get("has_flux",          "False")).lower() == "true"
-        cat    = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+        cat = category_of(r)
         if str(r["source_network"]) == "ISMN":
             dir_name = f"ISMN_{r['network']}_{r['station_name']}"
         else:
@@ -183,13 +179,17 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
 CONFIG = {
     # Paths
     "splits_csv"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv",
+    # 19-column constants, deliberately NOT stats18: this frozen arm's dataset_unet.py:146
+    # reads the 19-column `era5/values` (skt included) and model_unet.py's era5_mlp is
+    # Linear(19, ...). Only the canonical dataset.py reads `era5/values18` (§43.12, §48).
     "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json",
     # Each run saves checkpoints under {checkpoint_dir}/{run_name}/
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
 
     # Data
-    "category_filter": ["sm_only"],
-    "years"          : list(range(2016, 2023)),  # 2023 held out for OOT/OOST evaluation
+    # §47: both come from splits_config, the single source of truth for the cut.
+    "category_filter": list(SM_CATEGORIES),
+    "years"          : list(TRAIN_YEARS),
     "seed"           : 42,
 
     # Training

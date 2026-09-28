@@ -99,8 +99,10 @@ REPO       = Path("/gpfs/work3/0/prjs1968/soilMoisture")
 SPLITS_CSV = REPO / "csvs" / "station_splits.csv"
 OUT_PATH   = REPO / "csvs" / "driver_stats.json"
 
-# Must match train.py CONFIG["years"] = list(range(2016, 2023)).  2023 is OOT.
-TRAIN_YEARS = list(range(2016, 2023))
+# §47: TRAIN_YEARS is no longer restated here. It is one constant in splits_config,
+# imported by train.py, eval_predict.py and both stats scripts, so the cut cannot be moved
+# in one place and silently left behind in another (§44.6).
+from splits_config import TRAIN_YEARS, SM_CATEGORIES  # noqa: E402
 
 # Must match SoilMoistureDataset.__init__ defaults / train.py usage.
 MIN_OBS         = 30            # min qc==0 days per station-year for that year to be used
@@ -452,7 +454,7 @@ def main():
     ap.add_argument("--splits-csv", type=Path, default=SPLITS_CSV)
     ap.add_argument("--out",        type=Path, default=OUT_PATH)
     ap.add_argument("--workers",    type=int,  default=N_WORKERS)
-    ap.add_argument("--categories", nargs="+", default=["sm_only"],
+    ap.add_argument("--categories", nargs="+", default=list(SM_CATEGORIES),
                     help="Station categories to include. Default sm_only, matching "
                          "train.py CONFIG['category_filter'].")
     args = ap.parse_args()

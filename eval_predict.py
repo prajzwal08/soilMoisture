@@ -33,24 +33,29 @@ from train import CudaPrefetcher
 from ckpt_utils import load_checkpoint
 from shm_preload import preload_l12_to_shm         # §35.33 parallel L12 staging
 from ablation import AblationDataset, MODALITIES     # §24 modality shuffling
+from splits_config import OOT_YEARS, SM_CATEGORIES, TRAIN_YEARS
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
-ERA5_STATS = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json")
+# §47: the 18-column set, matching dataset.py:80 ERA5_ARRAY = "era5/values18".
+ERA5_STATS = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats18.json")
 OUT_DIR    = Path("/gpfs/work3/0/prjs1968/soilMoisture/eval_output")
 
 # §22.2.  "val" is not a held-out split -- it exists only to reproduce the
 # training-time numbers (§22.6 hard gate) and is never run by default.
+# §47: the OOT horizon is 2023-2025, not 2023 alone -- the inputs reach 2025 (397
+# stations carry S2 tokens ending 2025) and a one-year holdout discarded two thirds of it.
+# Every year list here comes from splits_config; none is written out again.
 EVAL_SPLITS = {
-    "oos":  dict(split_filter=["oos"],          years=list(range(2016, 2023))),
-    "oot":  dict(split_filter=["train", "val"], years=[2023]),
-    "oost": dict(split_filter=["oos"],          years=[2023]),
-    "val":  dict(split_filter=["val"],          years=list(range(2016, 2023))),
+    "oos":  dict(split_filter=["oos"],          years=list(TRAIN_YEARS)),
+    "oot":  dict(split_filter=["train", "val"], years=list(OOT_YEARS)),
+    "oost": dict(split_filter=["oos"],          years=list(OOT_YEARS)),
+    "val":  dict(split_filter=["val"],          years=list(TRAIN_YEARS)),
     # §26.  A dense network spans all three splits, so the station set comes from
     # --pixel-csv rather than from the `split` column.  The per-station split is
     # still carried into the output as `tile_split` / `station_split`.
     "network": dict(split_filter=["train", "val", "oos"],
-                    years=list(range(2016, 2023))),
+                    years=list(TRAIN_YEARS)),
 }
 
 # Station counts measured by the §22.2 zarr probe.  This is a DATED REFERENCE, not an
@@ -412,7 +417,7 @@ def main():
         t_shm = time.perf_counter()
         preload_l12_to_shm(
             splits_csv      = str(SPLITS_CSV),
-            category_filter = cfg.get("category_filter", ["sm_only"]),
+            category_filter = cfg.get("category_filter", list(SM_CATEGORIES)),
             shm_dir         = shm_dir,
             # Every split's station pool, deduplicated inside the preloader. Caps are None:
             # evaluation never subsets, and --max-stations is a smoke-test flag whose extra
@@ -459,7 +464,7 @@ def main():
         "epoch":           int(epoch),
         "best_val_loss":   float(cfg.get("best_val_loss", float("nan")))
                            if isinstance(cfg.get("best_val_loss"), (int, float)) else None,
-        "category_filter": cfg.get("category_filter", ["sm_only"]),
+        "category_filter": cfg.get("category_filter", list(SM_CATEGORIES)),
         "depths":          SM_DEPTHS,
         "generated":       datetime.now().isoformat(timespec="seconds"),
         "max_stations":    args.max_stations,
@@ -520,7 +525,7 @@ def main():
             splits_csv      = active_csv,
             era5_stats_path = str(ERA5_STATS),
             years           = scfg["years"],
-            category_filter = cfg.get("category_filter", ["sm_only"]),
+            category_filter = cfg.get("category_filter", list(SM_CATEGORIES)),
             split_filter    = scfg["split_filter"],
             training        = False,
             max_stations    = args.max_stations,

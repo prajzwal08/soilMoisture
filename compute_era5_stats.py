@@ -113,9 +113,10 @@ ERA5_VARS = [
 ]
 PRECIP_IDX = ERA5_VARS.index("tp_sum")
 
-# Must match train.py CONFIG["years"] = list(range(2016, 2023)).  2023 is the
-# held-out OOT year and must not reach a normalisation constant.
-TRAIN_YEARS = list(range(2016, 2023))
+# §47: TRAIN_YEARS is no longer restated here. It is one constant in splits_config,
+# imported by train.py, eval_predict.py and both stats scripts, so the cut cannot be moved
+# in one place and silently left behind in another (§44.6).
+from splits_config import TRAIN_YEARS, SM_CATEGORIES  # noqa: E402
 
 N_WORKERS = 64      # project standard: Pool(64) + --cpus-per-task=64
 STD_FLOOR = 1e-12
@@ -221,7 +222,7 @@ def main():
     ap.add_argument("--splits-csv", type=Path, default=SPLITS_CSV)
     ap.add_argument("--out",        type=Path, default=OUT_PATH)
     ap.add_argument("--workers",    type=int,  default=N_WORKERS)
-    ap.add_argument("--categories", nargs="+", default=["sm_only"])
+    ap.add_argument("--categories", nargs="+", default=list(SM_CATEGORIES))
     args = ap.parse_args()
 
     print("=" * 78)

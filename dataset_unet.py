@@ -37,6 +37,8 @@ import zarr
 from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 
+from splits_config import category_of
+
 ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
 
 # torch.from_numpy on a read-only /dev/shm memmap triggers a non-writable warning;
@@ -770,13 +772,9 @@ class SoilMoistureDataset(Dataset):
 
         splits = pd.read_csv(splits_csv)
 
-        # Category filter using has_soil_moisture / has_flux columns
+        # Category filter using has_soil_moisture / has_flux columns (splits_config.category_of)
         if category_filter is not None:
-            def _cat(r):
-                sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-                fl = str(r.get("has_flux",          "False")).lower() == "true"
-                return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
-            splits = splits[splits.apply(_cat, axis=1).isin(category_filter)]
+            splits = splits[splits.apply(category_of, axis=1).isin(category_filter)]
 
         if split_filter is not None:
             splits = splits[splits["split"].isin(split_filter)]
@@ -812,9 +810,7 @@ class SoilMoistureDataset(Dataset):
         self._l369_cache          : dict[Path, dict[str, np.ndarray]] = {}
 
         for _, r in splits.iterrows():
-            has_sm = str(r.get("has_soil_moisture", "False")).lower() == "true"
-            has_fl = str(r.get("has_flux",          "False")).lower() == "true"
-            cat    = "sm_and_flux" if (has_sm and has_fl) else ("sm_only" if has_sm else "flux_only")
+            cat = category_of(r)
 
             # Build directory name matching the on-disk convention
             if str(r["source_network"]) == "ISMN":

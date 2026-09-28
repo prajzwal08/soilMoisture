@@ -47,6 +47,8 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
+
+from splits_config import SM_CATEGORIES, TRAIN_YEARS
 from torch.utils.data.distributed import DistributedSampler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -266,7 +268,11 @@ def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
 CONFIG = {
     # Paths
     "splits_csv"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv",
-    "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json",
+    # §47: dataset.py:80 reads `era5/values18` (18 cols, skt dropped, ssrd/strd added),
+    # so it must be z-scored with the 18-column constants. era5_stats.json is the 19-column
+    # pre-§43.12 set -- same length mistake aside, its columns 6+ describe skt where the
+    # array now holds u10. §43.12 built stats18 but never repointed the trainer.
+    "era5_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats18.json",
     # Produced by compute_driver_stats.py.  Supplies SIF/TWSA/soil normalisation to
     # dataset.py and the per-depth head bias to this file (§35.24).  Fail closed: a
     # missing file raises rather than silently training heads from a zero bias, which
@@ -276,8 +282,11 @@ CONFIG = {
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
 
     # Data
-    "category_filter": ["sm_only"],
-    "years"          : list(range(2016, 2023)),  # 2023 held out for OOT/OOST evaluation
+    # §47: both come from splits_config. The cut used to live here AND in
+    # create_evaluation_splits.py:27 with nothing tying them, so moving one silently made
+    # OOT contaminated or empty (§44.6).
+    "category_filter": list(SM_CATEGORIES),
+    "years"          : list(TRAIN_YEARS),
     "seed"           : 42,
 
     # Training
