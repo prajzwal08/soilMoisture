@@ -7602,3 +7602,97 @@ STILL TO DECIDE BEFORE THE FIRST EDIT: file layout.  §46.5 ASSUMES editing mode
 
 NEXT SESSION: implementation, group A first (the re-stage).  Nothing trains until it is done --
   today the dataset would build 0 samples and not raise.
+
+================================================================================
+SESSION 44b -- 2026-09-28  --  §47 splits rebuilt + verified, three stores
+                               re-staged, sigma_ST measured, §51 issues logged
+================================================================================
+
+WHAT WAS ASKED: train on all soil moisture including sm_and_flux; tile-sharing pairs and the
+Netherlands strictly out of training; rework OOS/OOT/OOST; how much does it cost?
+
+ANSWER: it costs nothing -- training GREW.  572 -> 573 stations, 2951.7 -> 3012.7 st-yr.
+  +22 sm_and_flux in, -7 TWENTE, -14 thin-pre-cut, -18 tile-pair (val only; train was already
+  clean from §35.29).  val 73 -> 89, funded from OOS rather than train, so train membership is
+  untouched.  OOT extended 2023 -> 2023-2025: 312 stations / 842 st-yr, up from ~326 st-yr.
+
+  The tile rule cost ZERO train stations.  §35.29 had already swept all 887 has_soil_moisture
+  stations at 1120 m.  The 9 pairs still holding a train station each pair it with a flux_only
+  station, which never trains.  What it still caught was 18 val stations sharing tiles with each
+  other -- 11 FMI probes at three Sodankyla locations, 7 TxSON inside one tile.  val lost 18 rows
+  but ~4 independent locations.
+
+SHIPPED (commits a2c5d0d, 1240650 on feat/landsat-st-100m):
+  splits_config.py          -- single source of truth: cut date, tile geometry, categories,
+                               stratification constants.  §44.6's precondition, discharged.
+  update_splits_v2.py       -- the three demotion rules + the OOS-funded val top-up
+  verify_splits_v2.py       -- 15 checks, geometry RECOMPUTED from lat/lon not read back
+  restage_store.py          -- + verify_restage.py, counts chunk files, never .complete
+  landsat_target.py         -- the 22x22 @ 100 m grid, derived ONCE for §46's loader to import
+  compute_lst_stats.py      -- sigma_ST / sigma_level, train stations + pre-OOT years only
+  6 slurm wrappers, 11 rewired modules
+  text/training_runbook.md  -- §47 (+§47.11 measured), §49 (sigma_ST), §51 (open issues)
+
+RE-STAGED AND VERIFIED (all three, counted not sentinelled):
+  tokens      993/993   1.457 TB   196,384 files    (~6 min, 4.9 GB/s aggregate, 8 shards)
+  imagery     998/998   0.258 TB   791,110 files
+  LANDSAT_ST  993/993   0.005 TB     1,991 files
+
+STATS REFIT (the old "do not launch" blocker, now closed):
+  era5_stats18  4685726166195d72 -> 960780057c67d5d2
+  driver_stats  34ade6b95d913b52 -> 52436829f08bf963
+  573 train stations in [sm_only, sm_and_flux], 2016-2022, 573/573 contributing.
+  Label mean 0-10 cm 0.17154 -> 0.17312.  n_stations 563 -> 565.
+
+sigma_ST MEASURED (§49): 2.7066 K, sigma_level 14.8944 K, over 52,414 supervised pre-cut scenes
+  / 17.98M cells.  Variance split 97% level / 3% pattern -- which IS the argument for alpha=0:
+  train a thermal head on raw Kelvin and 98% of what it optimises is season, which ERA5 already
+  supplies directly.
+
+BUGS FOUND AND FIXED:
+  train.py fed dataset.py the 19-column era5_stats.json while dataset.py:80 reads era5/values18
+    (18 cols, skt dropped, ssrd/strd added).  From index 6 the constants described skt where the
+    array holds u10.  PRE-EXISTING: §43.12 built stats18 and never repointed the trainer.
+  restage_store.py treated every top-level dir as a station category.  True for zarr_tokens
+    (three), false for the feature root (NINE -- logs/ and _ecostress_staging/ among them).  It
+    copied 33,305 files before being cancelled; scratch copy removed, source verified intact,
+    store now carries an explicit category allowlist that RAISES on a missing one.
+  landsat_target.py imported its grid from download_landsat_st_mpc, which imports
+    planetary_computer -- soilmoisture env only, absent from terramind.  Constants duplicated
+    with a comment rather than making the training env depend on the download stack.
+  build_landsat_mask.py's docstring describes a `mask` key that no bundle has; every bundle
+    carries mask_1km and mask_05km.  Caught because the job cross-checks itself: 53,087
+    supervised pre-cut scenes from the bundles vs 53,087 in landsat_mask_index.csv, exact.
+
+METHOD NOTES WORTH KEEPING:
+  A prediction that FAILED: §49.4 said sigma_ST would fall on the full set (wet maritime tiles
+    are uniform).  It ROSE 44%, 1.88 -> 2.71 K.  --limit 8 takes the first 8 admitted in CSV row
+    order, i.e. alphabetical by network -- ARM and AMMA-CATCH, flat homogeneous cropland and
+    Sahel, a LOW-contrast subset.  The smoke set was not a sample of anything.
+  "Is the job stuck?" needs a live reading.  sacct TotalCPU showed 00:00:00 after 28 min and the
+    log was 0 bytes -- both misleading (TotalCPU finalises at step end; python block-buffers to a
+    file).  srun --overlap onto the node settled it: STAT=D, 18.5% CPU, RSS climbing -- I/O bound,
+    not hung.  It still had to be killed: 1h walltime, four dataset builds, and a walltime kill
+    would have taken the buffered output with it.  PYTHONUNBUFFERED=1 + python -u now.
+
+VERIFICATION: job 27289563, 15/15 PASS, 1h22m, 1,548 station-builds.
+  depth 0-10 573 stn / 1,043,694 samples | 10-30 467 / 857,381 | 30-100 374 / 693,229
+  -- the sm_and_flux depth test at full scale: three heads, three shrinking populations, no
+  crash, no silent zero-fill.
+
+AND YET -- §51, two open issues the PASS did not catch, both logged for pre-flight:
+  §51.1  split says 573 train, dataset builds 565.  The 8 are §50's (no pre-2023 S2).
+         verify_splits_v2.py asserts "non-empty", not "admitted == expected".
+  §51.2  MIN_POST_CUT_DAYS = 365 is declared in splits_config.py and in the eligibility columns
+         and NOTHING reads either.  55 partial-year stations sit inside OOT/OOST; TrialLake
+         contributes 12 days at the same weight as three full years (§22.5 reports *_stn).
+  §51.3  Both are ONE defect: a rule declared in one file and enforced in another, or nowhere.
+         Exactly the §44.6 disease §47 was written to cure -- and §47 then introduced two new
+         constants with it.  Standing rule now in the runbook: a constant in splits_config.py is
+         not done until something imports it AND a verification asserts on it.
+
+NEITHER BLOCKS TRAINING.  Both corrupt what gets REPORTED.
+
+NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admission in
+  eval_predict.py), then the alpha=0 gate -- R2 of tile-mean ST on the 18 ERA5 drivers, input
+  already written to csvs/lst_tile_means.csv so it needs no re-read of the 4.5 GB archive.
