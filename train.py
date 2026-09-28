@@ -1,13 +1,22 @@
 """
-Training script for SoilMoistureModel — Phase 1 (sm_only).
+Training script for SoilMoistureModel — §48: temporal trunk + fine CNN encoder + U-Net
+decoder, soil-moisture heads plus the Landsat ST pattern head.
 
 Usage (terramind conda env):
     python train.py [--lr LR] [--batch-size N] [--n-layers N] [--run-name NAME]
                     [--max-stations N] [--warmup-steps N] [--huber-delta D]
-                    [--log-every N]
+                    [--log-every N] [--lambda-lst auto|FLOAT] [--fine-skips cnn|pool]
+                    [--modality-dropout P]
+
+    L = L_sm + lambda * L_lst       L_lst is PATTERN ONLY (alpha = 0, §48.9 item 4)
+    lambda "auto" = EMA(g_sm / g_lst), both gradient norms taken at the shared 64-ch map z
+    (§46.5 item 28); --lambda-lst 0 is the control that attributes any change to the aux head.
 
 Requires csvs/driver_stats.json (compute_driver_stats.py) — it supplies the per-depth
-label means used to initialise the regression-head biases. Missing file = hard error.
+label means used to initialise the regression-head biases — plus csvs/fine_stats.json and
+csvs/lst_stats.json. Missing file = hard error; all four are SHA'd into the checkpoint.
+
+This file REPLACED the patchwise trainer (tags `pw_stage2a-ep9`, `pre-s48-build`).
 
 Resume behaviour: if {checkpoint_dir}/{run_name}/last.pt exists the run
 resumes automatically — no flag needed. Delete last.pt for a fresh start.
@@ -15,9 +24,10 @@ Resume restores the RNG streams, the global optimizer-step counter (so LR warmup
 not restart) and the per-rank sampler order, so a requeued run is the same experiment
 as an uninterrupted one.
 
-Model selection, early stopping and ReduceLROnPlateau all key off val_huber_pooled
-(Σ per-depth Huber sums / Σ counts over the whole val epoch), NOT the mean-of-batch-
-means `val_loss`, which depends on batch composition. See §35.24.
+Model selection, early stopping and ReduceLROnPlateau all key off the SOIL-MOISTURE
+component only (station-mean ubRMSE by default, or val_huber_pooled), NEVER the total
+L_sm + lambda*L_lst — otherwise the lambda=0 control would be selected on a different
+quantity and could not be compared (§46.5 item 30).
 
 W&B project: soil-moisture-phd
 """
@@ -56,7 +66,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.multiprocessing
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss
+from model import SoilMoistureModel, masked_huber_loss, lst_pattern_loss
 
 # ── Preemption handling ───────────────────────────────────────────────────────
 # _preempted is set by the SIGTERM handler in whichever process SLURM signalled.
@@ -228,39 +238,10 @@ class CudaPrefetcher:
     def __len__(self):
         return len(self._loader)
 
-# ── /dev/shm L12 preloader ────────────────────────────────────────────────────
-
-# Moved to shm_preload.py (§35.33) so train and eval stage tokens through ONE
-# implementation. Re-exported under the old name: it was module level only so a fork
-# Pool could pickle it, and nothing else ever called it.
-from shm_preload import preload_one_station as _preload_one_station
-
-
-def _preload_l12_to_shm(splits_csv: str, category_filter, shm_dir: Path,
-                        max_train_stations: int | None = None,
-                        max_val_stations:   int | None = None,
-                        token_sel: str = "station",
-                        workers: int = 64) -> None:
-    """Thin wrapper over shm_preload.preload_l12_to_shm (§35.33).
-
-    The body moved to shm_preload.py so eval_predict.py gets the same parallel staging;
-    it was duplicated-or-nothing before, and eval had nothing. Only train+val are staged:
-    OOS/test stations are never touched during training, so preloading them wastes
-    /dev/shm. The per-split caps are preserved exactly — see that module's docstring for
-    why they are load-bearing.
-    """
-    from shm_preload import preload_l12_to_shm
-    preload_l12_to_shm(
-        splits_csv      = splits_csv,
-        category_filter = category_filter,
-        shm_dir         = shm_dir,
-        split_caps      = [("train", max_train_stations), ("val", max_val_stations)],
-        token_sel       = token_sel,
-        workers         = workers,
-        label           = "SHM",
-    )
-
-
+# There is no /dev/shm L12 preloader any more. The patchwise arm staged tokens there because
+# the token store chunks l12 32 acquisitions at a time; §48 reads pooled pyramids from RAM
+# and the anchor from a flat per-station memmap (prepare_s48_cache.py), which the page cache
+# shares across ranks by itself.
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -278,6 +259,10 @@ CONFIG = {
     # missing file raises rather than silently training heads from a zero bias, which
     # costs the first ~1k steps just walking the output up to the label mean.
     "driver_stats"  : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/driver_stats.json",
+    # TerraMind constants for the fine path (§48.2 item 2) and sigma_ST for the thermal loss
+    # (§49). Both are model contracts: SHA'd into the checkpoint beside the two above.
+    "fine_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/fine_stats.json",
+    "lst_stats"     : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/lst_stats.json",
     # Each run saves checkpoints under {checkpoint_dir}/{run_name}/
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
 
@@ -316,10 +301,9 @@ CONFIG = {
     # per station, per-station mean removed — which is the quantity every reported number
     # in this project is stated in. "huber_pooled" keeps selection on the training loss.
     "select_metric"   : "ubrmse",
-    # Once-per-val-epoch K=196 forward + input-gradient ratio (§35.19). Cheap, rank-0 only,
-    # forward/one-backward, and it is the only check on the architecture's central claim.
-    "patch_map_diag"  : True,
-    "patch_map_diag_stations": 2,   # tiny separate token_sel="all" dataset; ~30 MB/sample
+    # Once-per-val-epoch input-gradient ratio, fine imagery vs everything else (rank 0, one
+    # batch, gradients w.r.t. INPUTS only). ~0 means the decoder is not reading the fine path.
+    "input_grad_diag" : True,
 
     # Model
     "n_depths"      : 3,
@@ -327,21 +311,21 @@ CONFIG = {
     "n_heads"       : 12,
     "n_layers"      : 6,
     "drop_path_rate": 0.1,
-    # There is no use_cls_depth option any more. The per-patch sequence carries the depth
-    # CLS tokens as a prefix and the model raises without them, so the flag was a lie in
-    # three places at once: CONFIG said False, main() overwrote it to True unconditionally,
-    # and the --use-cls-depth argparse entry was parsed and never read. Deleted rather than
-    # documented — a knob with one legal value is not a knob.
+    # There is no use_cls_depth option: the three disconnected depth heads each read their
+    # own CLS row, so the prefix is an invariant of the architecture, not a knob.
 
-    # Architecture (§35.18 / text/patchwise_math.md). "unet" is the pooled baseline and must
-    # stay byte-identical; "patchwise" is the two-transformer model — T1 encodes the 431
-    # tile-level driver tokens ONCE per sample, T2 runs each patch's 106-token sequence and
-    # cross-attends into T1's cached K/V. STEP 1 has no decoder: the head predicts at 160 m.
-    "driver_mode"   : "memory",  # memory | concat — how the drivers enter each patch sequence
-    "driver_layers" : 2,         # T1 depth. NOT a repeat count: T1 runs once whatever its depth
-    "token_sel"     : "station",  # "station" = K=1 (token 105), the only supervised setting;
-                                  # "all" = K=196, inference only (~30 MB/sample IPC)
-    "patch_token_dropout": 0.0,
+    # Fine path (§48). "cnn" = the light encoder; "pool" = §46's masked pool + 1x1, kept as
+    # the one-run ablation that says whether the encoder earns its parameters.
+    "fine_skips"      : "cnn",
+    "modality_dropout": 0.2,    # per-sample P(zero S2 or S1 in the fine path), train only
+
+    # Thermal aux (§46.5 items 27-28, §48.9 item 4). "auto" = EMA(g_sm / g_lst) at the shared
+    # 64-ch map, refreshed every lambda_every optimizer steps and all-reduced so every rank
+    # optimises the same objective. A number fixes it; 0 is the control.
+    "lambda_lst"      : "auto",
+    "lambda_every"    : 50,
+    "lambda_ema"      : 0.9,
+    "lst_delta"       : 1.0,    # Huber knee in units of sigma_ST (= 2.71 K, §49.5)
 
     # Loss
     "loss_fn"   : "huber",
@@ -566,13 +550,15 @@ def compute_metrics(preds, targets, station_keys, n_worst=5):
 
 def _compute_loss(pred, label, per_depth=False, return_breakdown=False, delta=0.05,
                   depth_weights=None):
-    """Huber on the supervised patch. Returns (loss, tv) or (loss, tv, depth_sum, depth_cnt).
+    """SM Huber at the station pixel. Returns (loss, tv) or (loss, tv, depth_sum, depth_cnt).
 
-    `tv` is retained as a always-zero second element purely so the epoch bookkeeping and the
-    W&B panels keep their shape. There is no TV term and no boundary term any more: both were
-    defined on the 224x224 decoder map, which this architecture does not produce. The boundary
-    penalty in particular was LIVE at 0.1 and its `.mean()` would have renormalised by
-    ~50,176x (50,176 px x 3 depths against K=1 x 3) -- §35.22.
+    `pred` is the model's output dict or its `sm` map (B, 3, 112, 112). This is the
+    SOIL-MOISTURE component only — the thermal term is added by the caller, so everything
+    that selects or schedules on this function's output stays SM-only (§46.5 item 30).
+
+    `tv` is retained as an always-zero second element purely so the epoch bookkeeping and the
+    W&B panels keep their shape. TV = 0 by design (§46.1 row 12), and there is no boundary
+    term: Kelvin is not in [0, 1], and the SM heads have no such penalty either.
 
     depth_sum/depth_cnt are raw per-depth SUMS over this batch (see masked_huber_loss); the
     caller accumulates them over the epoch and all_reduce(SUM)s across ranks, which is only
@@ -586,6 +572,8 @@ def _compute_loss(pred, label, per_depth=False, return_breakdown=False, delta=0.
     which the loss stops being quadratic, i.e. what counts as an outlier in m3/m3, and a
     run cannot be reproduced from its log if that number is invisible.
     """
+    if isinstance(pred, dict):
+        pred = pred["sm"]
     if return_breakdown:
         loss, depth_sum, depth_cnt = masked_huber_loss(
             pred, label, delta=delta, per_depth=per_depth,
@@ -594,6 +582,67 @@ def _compute_loss(pred, label, per_depth=False, return_breakdown=False, delta=0.
     return (masked_huber_loss(pred, label, delta=delta, per_depth=per_depth,
                               depth_weights=depth_weights),
             pred.new_zeros(1))
+
+
+class LambdaLST:
+    """lambda for L = L_sm + lambda * L_lst (§46.5 item 28).
+
+    "auto": lambda <- EMA(g_sm / g_lst), where g_* = ||dL_* / dz|| at the shared 64-channel
+    112x112 map both heads read. Taken at z and NOT over parameters: autograd.grad w.r.t. a
+    non-leaf touches no AccumulateGrad node, so DDP's reducer sees nothing (the train.py
+    precedent of input_grad_ratio). The two norms are all-reduced (SUM) before the ratio, so
+    every rank moves to the same lambda on the same step and optimises the same objective;
+    refresh steps are keyed to global_step, which is identical across ranks.
+
+    The point is to make two incommensurable scales — m3/m3 Huber and sigma_ST-units Huber —
+    contribute comparably to the gradient the decoder sees, without hand-tuning. A number
+    fixes lambda; 0 is the control, and then no L_lst gradient is ever formed.
+    """
+
+    def __init__(self, spec, every: int = 50, beta: float = 0.9):
+        self.auto  = (str(spec) == "auto")
+        self.value = 0.0 if self.auto else float(spec)
+        self.every = max(1, int(every))
+        self.beta  = float(beta)
+        self.n_updates = 0
+        self.last_ratio = float("nan")
+
+    @property
+    def active(self) -> bool:
+        return self.auto or self.value != 0.0
+
+    def due(self, global_step: int) -> bool:
+        return self.auto and (self.n_updates == 0 or global_step % self.every == 0)
+
+    def update(self, l_sm, l_lst, z, ddp_active: bool) -> None:
+        g_sm,  = torch.autograd.grad(l_sm,  z, retain_graph=True, allow_unused=True)
+        g_lst, = torch.autograd.grad(l_lst, z, retain_graph=True, allow_unused=True)
+        norms = torch.stack([
+            (g_sm.float().norm()  if g_sm  is not None else z.new_zeros((), dtype=torch.float32)),
+            (g_lst.float().norm() if g_lst is not None else z.new_zeros((), dtype=torch.float32)),
+        ]).detach()
+        if ddp_active:
+            dist.all_reduce(norms, op=dist.ReduceOp.SUM)
+        g_sm_v, g_lst_v = float(norms[0]), float(norms[1])
+        # Either norm zero = nothing to balance this step, so keep lambda and stay "due":
+        #   g_lst == 0  no thermal cell on any rank
+        #   g_sm  == 0  step 0 — the SM heads are zero-weight-initialised (model.py), so
+        #               dL_sm/dz is exactly 0 until the first update. Seeding the EMA with that
+        #               0 would hold lambda near zero for the first ~1/(1-beta) refreshes.
+        if g_lst_v <= 0.0 or g_sm_v <= 0.0 or not math.isfinite(g_sm_v / g_lst_v):
+            return
+        ratio = g_sm_v / g_lst_v
+        self.last_ratio = ratio
+        self.value = ratio if self.n_updates == 0 else (
+            self.beta * self.value + (1.0 - self.beta) * ratio)
+        self.n_updates += 1
+
+    def state_dict(self) -> dict:
+        return {"auto": self.auto, "value": self.value, "n_updates": self.n_updates}
+
+    def load_state_dict(self, st: dict | None) -> None:
+        if st and bool(st.get("auto")) == self.auto and self.auto:
+            self.value, self.n_updates = float(st["value"]), int(st["n_updates"])
 
 
 def _per_depth_mean(depth_sum, depth_cnt) -> dict:
@@ -904,7 +953,8 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      debug_nan=False, skip_batches=0, mid_ckpt_every=500,
                      mid_ckpt_fn=None, huber_delta=0.05, depth_weights=None,
                      global_step=0, warmup=None, is_main=True, log_every=1,
-                     ddp_active=False, preempt_check_every=25, use_wandb=False):
+                     ddp_active=False, preempt_check_every=25, use_wandb=False,
+                     lam=None, sigma_st=1.0, lst_delta=1.0):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -916,11 +966,15 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
 
     Returns (mean_loss, mean_tv, data_time, compute_time, depth_sum, depth_cnt,
              global_step, stats) — global_step is the running optimizer-step count that
-    drives warmup across requeues; stats carries the gradient-norm summary.
+    drives warmup across requeues; stats carries the gradient-norm summary and the thermal
+    term. mean_loss is the SM component only, so it stays comparable with the lambda=0
+    control; the thermal term is reported separately (stats["lst_*"]).
     """
     model.train()
     total_loss   = torch.zeros((), device=device)   # kept on-device: see the log throttle
     total_tv     = torch.zeros((), device=device)
+    lst_sum      = torch.zeros((), device=device)   # Σ (L_lst x cells), for a cell-weighted mean
+    lst_cells    = torch.zeros((), device=device)
     # clip_grad_norm_ RETURNS the pre-clip total norm and it was being thrown away. It is
     # the first number you want when a run diverges or flatlines: a norm two orders of
     # magnitude above grad_clip every step means the reported lr is fiction (every update is
@@ -963,19 +1017,36 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
 
         t_compute = time.perf_counter()
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu = model(batch)
+            out = model(batch)
 
             if debug_nan:
-                bad_out = _scan_for_nan({"mu": mu})
+                bad_out = _scan_for_nan({"sm": out["sm"], "lst": out["lst"]})
                 if bad_out:
                     _report_nan(f"batch {n_batches+1:03d} OUTPUT", batch, bad_out)
 
             loss, tv, d_sum, d_cnt = _compute_loss(
-                mu, batch["label"], per_depth, return_breakdown=True, delta=huber_delta,
+                out, batch["label"], per_depth, return_breakdown=True, delta=huber_delta,
                 depth_weights=depth_weights)
 
         depth_sum_acc += d_sum
         depth_cnt_acc += d_cnt
+
+        # Thermal pattern term, outside autocast (lst_pattern_loss works in fp32). Skipped
+        # entirely under the lambda=0 control, so the control forms no L_lst gradient at all.
+        total = loss
+        if lam is not None and lam.active:
+            l_lst, n_cells = lst_pattern_loss(out["lst"], batch["lst_obs"], sigma_st,
+                                              delta=lst_delta, return_count=True)
+            if lam.due(global_step):
+                lam.update(loss, l_lst, out["z"], ddp_active)
+            total = loss + lam.value * l_lst
+            lst_sum   += l_lst.detach() * n_cells
+            lst_cells += n_cells
+        else:
+            # head_lst must stay in the graph: DDP is built without find_unused_parameters,
+            # and a parameter with no gradient on one step is a hard error there. Zero weight,
+            # so the control's gradient is exactly the SM gradient.
+            total = loss + 0.0 * out["lst"].float().sum()
 
         # Warmup is applied per OPTIMIZER STEP, immediately before the step, and is
         # driven by the global counter so a requeue resumes mid-ramp instead of
@@ -983,7 +1054,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         lr_factor = warmup.set_step(global_step) if warmup is not None else 1.0
 
         optimizer.zero_grad()
-        loss.backward()
+        total.backward()
 
         if debug_nan:
             bad_grad = any(p.grad is not None and (torch.isnan(p.grad).any() or torch.isinf(p.grad).any())
@@ -1022,7 +1093,9 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
             # printed 467 of 902 logged batches as exactly "0.0001" and 73 as "0.0000".
             # The log is the only per-batch record that survives without W&B, and at
             # `.4f` most of a converged run is quantised into a flat floor.
-            print(f"  batch {skip_batches + n_batches:04d}  loss={_l:.3e}"
+            _lam = lam.value if (lam is not None and lam.active) else 0.0
+            print(f"  batch {skip_batches + n_batches:04d}  loss_sm={_l:.3e}"
+                  f"  total={total.item():.3e}  lambda={_lam:.3e}"
                   f"  gnorm={_g:.3f}  lr={optimizer.param_groups[0]['lr']:.3e}"
                   f"  wu={lr_factor:.2f}  step={step_ms:.0f}ms")
             # Step-level W&B (§35.31). Everything logged here was ALREADY synced to host
@@ -1042,6 +1115,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                 # after that import succeeded, so this is a sys.modules hit, not a load.
                 import wandb
                 wandb.log({"train/loss_step"     : _l,
+                           "train/lambda_lst"    : _lam,
                            "train/gnorm_step"    : _g,
                            "train/lr"            : optimizer.param_groups[0]["lr"],
                            "train/warmup_factor" : lr_factor,
@@ -1083,67 +1157,36 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         "grad_norm_mean": total_gnorm.item() / n,
         "grad_norm_max" : max_gnorm.item(),
         "clip_frac"     : n_clipped.item() / n,   # 1.0 = every step was clipped
+        # Raw sums, reduced across ranks by the caller.
+        "lst_sum"       : lst_sum.item(),
+        "lst_cells"     : lst_cells.item(),
     }
+    if lam is not None:
+        stats["lambda_lst"]       = lam.value
+        stats["lambda_raw_ratio"] = lam.last_ratio
     return (total_loss.item() / n, total_tv.item() / n, data_time, compute_time,
             depth_sum_acc, depth_cnt_acc, global_step, stats)
 
 
-@torch.no_grad()
-def patch_map_diag(raw_model, loader, device):
-    """K=196 forward on ONE batch -> across-patch spread of the emitted 14x14 map.
-
-    §35.19, the architecture's central untested claim.  Training supervises K=1 (patch 105)
-    and inference asks for K=196, and NOTHING in the loss constrains the other 195 patches.
-    If the tile-constant drivers (ERA5, SIF, TWSA, soil) explain most of the label variance,
-    the loss is fully minimised by a function that ignores dem_k / lulc_k / the per-patch
-    history entirely and emits 196 identical numbers — which would look like a perfectly
-    healthy training curve and would make every 160 m map in the thesis a constant.
-
-    pred.std(dim=1) over the patch axis is the direct test.  Near zero = the map is flat =
-    the 160 m claim is unsupported by anything the model has actually learned.
-
-    Forward-only and deliberately NOT routed through masked_huber_loss, which refuses
-    K != 1 (correctly — supervising several patches needs multi-station labels).
-    """
-    raw_model.eval()
-    for batch in loader:
-        b = {k: (v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v)
-             for k, v in batch.items()}
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu = raw_model(b)                                   # (B, K, n_depths)
-        mu = mu.float()
-        if mu.shape[1] < 2:
-            return {"error": f"loader emitted K={mu.shape[1]}; expected 196 "
-                             f"(token_sel='all' did not take effect)"}
-        sd  = mu.std(dim=1).mean(dim=0)                          # (n_depths,)
-        rng = (mu.amax(dim=1) - mu.amin(dim=1)).mean(dim=0)      # (n_depths,)
-        return {"K": int(mu.shape[1]),
-                "sd":    [float(v) for v in sd],
-                "range": [float(v) for v in rng]}
-    return {"error": "patch-map loader yielded no batches"}
-
-
 def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
-    """d(loss)/d(per-patch inputs) vs d(loss)/d(tile-constant inputs), RMS per element.
+    """d(L_sm)/d(fine imagery) vs d(L_sm)/d(everything else), RMS per element.
 
-    The companion to patch_map_diag and the cheaper of the two: if the ratio is ~0 the model
-    is not USING the per-patch inputs, which is the same failure the flat map would show,
-    detectable one epoch earlier and without a second dataset.
+    The check on §48's central claim: the fine encoder exists so the SM map can carry
+    structure below 160 m. If this ratio is ~0 the loss is being minimised without reading
+    the fine path at all, and every 20 m map is the bottleneck upsampled.
 
-    Norms are divided by sqrt(numel) so tensors of very different sizes — era5 is
-    (B, 365, C) while s2_hist is (B, T, K, 768) — are compared as RMS per element rather
-    than by raw magnitude.
-
-    Uses torch.autograd.grad w.r.t. the INPUTS only: parameter AccumulateGrad nodes are not
-    on any path to those leaves, so nothing lands in p.grad and DDP's reducer never sees a
-    gradient it was not expecting.  Rank 0 only, one batch, K=1 (so the real loss applies).
+    Norms are divided by sqrt(numel) so tensors of very different sizes compare as RMS per
+    element. torch.autograd.grad w.r.t. INPUTS only: no parameter gradient is produced and
+    DDP's reducer is untouched. Rank 0 only, one batch. Soil moisture only — the thermal
+    head would read the fine path by construction and would say nothing about the SM heads.
     """
     if not batch:
         return {}
-    per_patch_keys = ("dem_tok", "lulc_tok", "s2_hist", "s1_hist")
-    tile_keys      = ("era5", "soil_patch", "sif", "twsa")
+    fine_keys = ("fine",)
+    rest_keys = ("era5", "soil_patch", "sif", "twsa", "s2_pyr", "s1_pyr", "anchor_l12",
+                 "dem_pyr", "lulc_pyr")
     b, leaves = dict(batch), {}
-    for k in per_patch_keys + tile_keys:
+    for k in fine_keys + rest_keys:
         v = b.get(k)
         if not isinstance(v, torch.Tensor) or not v.is_floating_point():
             continue
@@ -1153,32 +1196,33 @@ def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
         return {}
 
     was_training = raw_model.training
-    raw_model.eval()          # drop-path off: attribution, not a training step
+    raw_model.eval()          # drop-path and modality dropout off: attribution, not training
     try:
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu = raw_model(b)
-            loss = masked_huber_loss(mu, b["label"].to(device), delta=huber_delta,
+            out  = raw_model(b)
+            loss = masked_huber_loss(out["sm"], b["label"].to(device), delta=huber_delta,
                                      per_depth=depth_weights is not None,
                                      depth_weights=depth_weights)
         grads = torch.autograd.grad(loss, list(leaves.values()), allow_unused=True)
     finally:
         raw_model.train(was_training)
 
-    out = {}
+    res = {}
     for (k, t), g in zip(leaves.items(), grads):
-        out[k] = (0.0 if g is None
+        res[k] = (0.0 if g is None
                   else float(g.detach().float().norm().item() / max(t.numel() ** 0.5, 1.0)))
-    pp = sum(out.get(k, 0.0) for k in per_patch_keys)
-    tc = sum(out.get(k, 0.0) for k in tile_keys)
-    out["per_patch_sum"] = pp
-    out["tile_const_sum"] = tc
-    out["ratio"] = (pp / tc) if tc > 0 else float("nan")
-    return out
+    fs = sum(res.get(k, 0.0) for k in fine_keys)
+    rs = sum(res.get(k, 0.0) for k in rest_keys)
+    res["fine_sum"] = fs
+    res["rest_sum"] = rs
+    res["ratio"]    = (fs / rs) if rs > 0 else float("nan")
+    return res
 
 
 @torch.no_grad()
 def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False,
-             huber_delta=0.05, depth_weights=None, diag_out=None):
+             huber_delta=0.05, depth_weights=None, diag_out=None, sigma_st=1.0,
+             lst_delta=1.0):
     """Distributed-aware evaluation.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
@@ -1215,64 +1259,53 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     depth_sum_acc = torch.zeros(n_depths, device=device)
     depth_cnt_acc = torch.zeros(n_depths, device=device)
 
-    # ── Collapse diagnostics (§35.24 contract) ───────────────────────────────────
-    # Shapes are taken from the model up front, NOT lazily from the first forward: a rank
-    # whose val shard is empty (or --max-val-batches 0) would otherwise have nothing to
-    # allocate from and would skip the all_reduce, hanging the other three.
-    want_diag   = diag_out is not None
-    diag_blocks = getattr(model, "patch_blocks", None)
-    diag_dim    = getattr(model, "d_model", None)
-    diag_nd     = getattr(model, "n_depths", n_depths)
-    if want_diag and (diag_blocks is None or diag_dim is None):
-        if rank == 0:
-            print("  [diag] WARNING: model exposes no patch_blocks/d_model — the §35.20 "
-                  "collapse diagnostics are DISABLED for this run. This is not a "
-                  "silent skip: attention-entropy and depth-context collapse are the "
-                  "load-bearing evidence for step 1 and will be missing from W&B.")
-        want_diag = False
-    if want_diag:
-        n_layers_diag = len(diag_blocks)
-        # (n_layers, 3): [:,0] Σ entropy in nats, [:,1] Σ entropy/log(n_valid), [:,2] count
-        ent_acc   = torch.zeros(n_layers_diag, 3, device=device)
-        ctx_acc   = torch.zeros(diag_nd, diag_dim, device=device)
-        ctx_n_acc = torch.zeros(1, device=device)
-        n_ent_missing = 0
-        n_ctx_missing = 0
+    # ── Diagnostics (§35.24 contract: epoch-wide SUMS, all_reduce'd here) ─────────
+    # Allocated up front, not lazily from the first forward: a rank whose val shard is
+    # empty would otherwise skip the all_reduce and hang the other three.
+    #   depth_ctx   the three CLS outputs, for the inert-use_cls_depth check — now
+    #               load-bearing, since the depth heads are disconnected (§46.5 item 34)
+    #   map_sd      within-tile SD of each depth's 112x112 SM map, sample-summed. ~0 means
+    #               the 20 m map is flat, i.e. nothing below the bottleneck reaches the heads
+    #   lst         Σ(L_lst x cells) and Σ cells, the thermal pattern loss on val
+    want_diag = diag_out is not None
+    diag_dim  = getattr(model, "d_model", 768)
+    diag_nd   = getattr(model, "n_depths", n_depths)
+    ctx_acc   = torch.zeros(diag_nd, diag_dim, device=device)
+    ctx_n_acc = torch.zeros(1, device=device)
+    msd_acc   = torch.zeros(n_depths + 1, device=device)    # [:n] Σ SD per depth, [n] count
+    lst_acc   = torch.zeros(2, device=device)               # [0] Σ loss*cells, [1] Σ cells
+    n_ctx_missing = 0
 
     for batch in CudaPrefetcher(loader, device):
         if max_batches is not None and n_batches >= max_batches:
             break
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu = model(batch)
+            out = model(batch)
             loss, _, d_sum, d_cnt = _compute_loss(
-                mu, batch["label"], per_depth=per_depth, return_breakdown=True,
+                out, batch["label"], per_depth=per_depth, return_breakdown=True,
                 delta=huber_delta, depth_weights=depth_weights)
         depth_sum_acc += d_sum
         depth_cnt_acc += d_cnt
         total_loss += loss.item()
         n_batches  += 1
 
+        sm = out["sm"].float()
+        msd_acc[:n_depths] += sm.flatten(2).std(dim=2).sum(0)
+        msd_acc[n_depths]  += sm.shape[0]
+        if "lst_obs" in batch:
+            l_lst, n_cells = lst_pattern_loss(out["lst"], batch["lst_obs"], sigma_st,
+                                              delta=lst_delta, return_count=True)
+            lst_acc[0] += l_lst.detach() * n_cells
+            lst_acc[1] += n_cells
+
         if want_diag:
             if n_batches == 1 and rank == 0:
-                # Keep one K=1 batch for the input-gradient attribution afterwards. Costs
-                # one batch of VRAM for the epoch and saves re-loading data for it.
+                # Keep one batch for the input-gradient attribution afterwards.
                 diag_out["_first_batch"] = {
                     k: (v.detach() if isinstance(v, torch.Tensor) else v)
                     for k, v in batch.items()
                 }
-            ent = getattr(model, "_last_attn_entropy", None)
-            if ent is None:
-                n_ent_missing += 1
-            else:
-                e = ent.detach().float().to(ent_acc.device)
-                if e.shape != ent_acc.shape:
-                    raise RuntimeError(
-                        f"[diag] _last_attn_entropy has shape {tuple(e.shape)}, expected "
-                        f"{tuple(ent_acc.shape)} = (n_layers, 3) per the §35.24 contract "
-                        f"[:,0]=Σnats, [:,1]=Σ(entropy/log n_valid), [:,2]=count."
-                    )
-                ent_acc += e
             ctx = getattr(model, "_last_depth_ctx",   None)
             ctn = getattr(model, "_last_depth_ctx_n", None)
             if ctx is None or ctn is None:
@@ -1288,9 +1321,9 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
                 ctx_acc   += c
                 ctx_n_acc += float(ctn)
 
-        # mu is (B, K, n_depths); the value IS the prediction and the dataset already
-        # selected patch 105. No map, nothing to index.
-        all_preds.append(mu[:, 0, :].float().cpu().numpy())
+        # The supervised value is the station pixel of each depth's map.
+        all_preds.append(out["sm"][:, :, SoilMoistureModel.STATION_ROW,
+                                   SoilMoistureModel.STATION_COL].float().cpu().numpy())
         all_targets.append(batch["label"].cpu().numpy())
         all_station_keys.extend(batch["station_key"])
         if "sample_idx" in batch:
@@ -1298,22 +1331,23 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
 
     mean_loss = total_loss / max(n_batches, 1)
 
-    if want_diag:
-        # Raw SUMS over the whole val epoch on every rank -> SUM-reduce, exactly like the
-        # per-depth Huber accumulators.  Unconditional: every rank allocated these above,
-        # so no rank can skip the collective.
-        if world_size > 1:
-            dist.all_reduce(ent_acc,   op=dist.ReduceOp.SUM)
-            dist.all_reduce(ctx_acc,   op=dist.ReduceOp.SUM)
-            dist.all_reduce(ctx_n_acc, op=dist.ReduceOp.SUM)
-        diag_out["attn_entropy_sums"] = ent_acc.cpu()
-        diag_out["depth_ctx_sum"]     = ctx_acc.cpu()
-        diag_out["depth_ctx_n"]       = float(ctx_n_acc.item())
-        diag_out["n_ent_missing"]     = n_ent_missing
-        diag_out["n_ctx_missing"]     = n_ctx_missing
-        diag_out["n_batches"]         = n_batches
-    elif diag_out is not None:
-        diag_out["disabled"] = True
+    # Unconditional collectives: every rank allocated these above.
+    if world_size > 1:
+        dist.all_reduce(msd_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(lst_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(ctx_acc,   op=dist.ReduceOp.SUM)
+        dist.all_reduce(ctx_n_acc, op=dist.ReduceOp.SUM)
+    if diag_out is not None:
+        _n = float(msd_acc[n_depths])
+        diag_out["map_sd"]        = ([float(v) / _n for v in msd_acc[:n_depths]] if _n > 0
+                                     else [float("nan")] * n_depths)
+        diag_out["lst_loss"]      = (float(lst_acc[0] / lst_acc[1]) if lst_acc[1] > 0
+                                     else float("nan"))
+        diag_out["lst_cells"]     = float(lst_acc[1])
+        diag_out["depth_ctx_sum"] = ctx_acc.cpu()
+        diag_out["depth_ctx_n"]   = float(ctx_n_acc.item())
+        diag_out["n_ctx_missing"] = n_ctx_missing
+        diag_out["n_batches"]     = n_batches
 
     if world_size > 1:
         # Average loss across all ranks. SUM then divide (see the training-side comment):
@@ -1408,17 +1442,15 @@ def main():
                         help="Scan inputs/outputs/grads/params for NaN/Inf each batch (slow)")
     parser.add_argument("--per-depth-loss", action="store_true",
                         help="Equal-weight Huber per depth (vs. pooled baseline)")
-    # ── Architecture (§35.18) ───────────────────────────────────────────────
-    parser.add_argument("--driver-mode", choices=["memory", "concat"], default=None,
-                        help="memory: drivers are a read-only cross-attended memory, K/V cached "
-                             "once per sample. concat: all 537 tokens in one self-attention stack")
-    parser.add_argument("--driver-layers", type=int, default=None,
-                        help="Depth of the driver (weather) encoder T1; default 2")
-    parser.add_argument("--token-sel", choices=["station", "all"], default=None,
-                        help="Which patches the dataset emits. station = K=1 (token 105), the "
-                             "only supervised setting; all = K=196, inference only")
-    parser.add_argument("--patch-token-dropout", type=float, default=None,
-                        help="Per-patch token dropout during training (patchwise only)")
+    # ── Architecture / thermal aux (§48) ────────────────────────────────────
+    parser.add_argument("--fine-skips", choices=["cnn", "pool"], default=None,
+                        help="cnn: the light fine encoder (default). pool: §46's masked pool + "
+                             "1x1, the ablation")
+    parser.add_argument("--modality-dropout", type=float, default=None,
+                        help="Per-sample P(zero S2 or S1 in the fine path) in training (0.2)")
+    parser.add_argument("--lambda-lst", type=str, default=None,
+                        help="'auto' = EMA(g_sm/g_lst) at the shared map (default); a number "
+                             "fixes it; 0 is the control (no thermal gradient at all)")
     # Regularisation overrides — CONFIG keeps the baseline values so comparison runs
     # stay clean; pass these on the sbatch line to make a run self-documenting.
     parser.add_argument("--weight-decay", type=float, default=None,
@@ -1444,16 +1476,9 @@ def main():
                              "ubrmse (default) = depth-mean of station-mean ubRMSE, the "
                              "quantity §35.10 is stated in. huber_pooled = the pooled "
                              "training loss. Both are always logged")
-    parser.add_argument("--input-norm", action="store_true",
-                        help="LayerNorm the frozen TerraMind features on the way in. OFF by "
-                             "default (§35.26): it deletes token magnitude, 9.3%% of S2's "
-                             "TEMPORAL variance rides there even with the registers stripped, "
-                             "and the frozen pooled baseline does not do it. Pass this to run "
-                             "it as a deliberate ablation.")
-    parser.add_argument("--no-patch-map-diag", action="store_true",
-                        help="Disable the once-per-epoch K=196 patch-map diagnostic "
-                             "(across-patch SD of the emitted map + per-patch vs "
-                             "tile-constant input-gradient ratio). On by default")
+    parser.add_argument("--no-input-grad-diag", action="store_true",
+                        help="Disable the once-per-epoch fine-vs-rest input-gradient ratio "
+                             "(rank 0, one val batch). On by default")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
@@ -1464,24 +1489,18 @@ def main():
     if args.prefetch_factor is not None: CONFIG["prefetch_factor"] = args.prefetch_factor
     if args.max_epochs  is not None: CONFIG["max_epochs"] = args.max_epochs
     if args.per_depth_loss: CONFIG["per_depth_loss"] = True
-    if args.driver_mode   is not None: CONFIG["driver_mode"]   = args.driver_mode
-    if args.driver_layers is not None: CONFIG["driver_layers"] = args.driver_layers
-    if args.token_sel     is not None: CONFIG["token_sel"]     = args.token_sel
-    if args.patch_token_dropout is not None:
-        CONFIG["patch_token_dropout"] = args.patch_token_dropout
+    if args.fine_skips       is not None: CONFIG["fine_skips"]       = args.fine_skips
+    if args.modality_dropout is not None: CONFIG["modality_dropout"] = args.modality_dropout
+    if args.lambda_lst       is not None:
+        # Validate here, before anything is allocated: a typo would otherwise surface as a
+        # float() error on the first training step, after the datasets are built.
+        if args.lambda_lst != "auto":
+            float(args.lambda_lst)
+        CONFIG["lambda_lst"] = args.lambda_lst
 
-    # token_sel is a startup invariant, not a runtime one. masked_huber_loss refuses K != 1
-    # (multi-station labels do not exist yet, §35.19) and evaluate() hardcodes mu[:, 0, :],
-    # so --token-sel all cannot train — but it only died on the FIRST BACKWARD, ~30 minutes
-    # in, after the shm preload had already read 120 GB and four H100s had been held for the
-    # whole of it. Fail here instead, before anything is allocated.
-    if CONFIG["token_sel"] != "station":
-        raise ValueError(
-            f"--token-sel {CONFIG['token_sel']!r} cannot be trained on: the loss requires "
-            f"K=1 (one supervised patch per sample) and evaluate() reads mu[:, 0, :]. "
-            f"token_sel='all' is an INFERENCE-only setting for 14x14 map figures — use "
-            f"eval_predict.py / eval_stations.py for it."
-        )
+    # Architecture stamp. ckpt_utils refuses anything else: every earlier arm shares key
+    # prefixes with this one, so the stamp is the only reliable discriminator.
+    CONFIG["arch"] = "s48"
 
     # Provenance: no code path recorded a commit SHA into a checkpoint, so a reported number
     # could not be traced to the code that produced it (§35.13).
@@ -1493,12 +1512,6 @@ def main():
                                                     text=True, stderr=_sp.DEVNULL).strip())
     except Exception:
         CONFIG["git_sha"], CONFIG["git_dirty"] = "unknown", None
-
-    # Architecture flags must live in CONFIG, not only in `args`, because CONFIG is what
-    # gets written into the checkpoint — ckpt_utils.load_checkpoint rebuilds the model from
-    # it. A flag passed straight from `args` to the constructor cannot be recovered at load
-    # time, so the checkpoint would fail to rebuild with a shape mismatch (§35.28).
-    CONFIG["use_input_norm"] = bool(args.input_norm)
 
     # Normalisation provenance (§35.28). git_sha traces a number to the CODE that produced
     # it; it says nothing about the CONSTANTS. csvs/era5_stats.json and
@@ -1513,7 +1526,9 @@ def main():
     # answerable from the artifact rather than from memory.
     for _key, _path in (("era5_stats", CONFIG["era5_stats"]),
                         ("driver_stats", str(Path(CONFIG["era5_stats"]).with_name(
-                            "driver_stats.json")))):
+                            "driver_stats.json"))),
+                        ("fine_stats", CONFIG["fine_stats"]),
+                        ("lst_stats",  CONFIG["lst_stats"])):
         try:
             CONFIG[f"{_key}_sha"] = hashlib.sha256(
                 Path(_path).read_bytes()).hexdigest()[:16]
@@ -1532,63 +1547,12 @@ def main():
     if args.huber_delta         is not None: CONFIG["huber_delta"]         = args.huber_delta
     if args.log_every           is not None: CONFIG["log_every"]           = args.log_every
     if args.select_metric       is not None: CONFIG["select_metric"]       = args.select_metric
-    if args.no_patch_map_diag:               CONFIG["patch_map_diag"]      = False
+    if args.no_input_grad_diag:              CONFIG["input_grad_diag"]     = False
 
-    # ── L12 shared memory preloading (before DDP init to avoid TCPStore timeout) ──
-    # Rank 0 reads ~120 GB from GPFS — can take several minutes. Doing this before
-    # dist.init_process_group() means ranks 1-3 spin on a sentinel file rather than
-    # inside an NCCL communicator setup that times out after 600 s.
-    SHM_DIR  = Path(f"/dev/shm/sm_l12_{os.environ.get('SLURM_JOB_ID', os.getpid())}")
-    _shm_done = SHM_DIR / ".done"
-    # LOCAL_RANK, not RANK.  /dev/shm is per NODE, so the preload has to run once per node
-    # — and the sentinel it drops is likewise only visible on that node.  Gating on global
-    # RANK meant that on a 2-node launch node 1's shm was never populated AND its ranks
-    # (global 4-7, local 0-3) waited on a sentinel that could only ever appear on node 0.
-    # They then spun the full 3 h _SHM_WAIT_MAX holding four H100s before dying, on a job
-    # that was otherwise healthy.  Single-node launches are unaffected: there LOCAL_RANK 0
-    # is global rank 0.
-    _pre_local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    _pre_rank       = int(os.environ.get("RANK", "0"))
-    # Caps must match the dataset's, which applies max_stations to the train split and
-    # max_stations//5 to val INDEPENDENTLY (see val_max_stations below).
-    _val_cap = max(1, args.max_stations // 5) if args.max_stations is not None else None
-    if _pre_local_rank == 0:
-        SHM_DIR.mkdir(parents=True, exist_ok=True)
-        # The explicit rmtree at the bottom of main() is unreachable on the preempt path —
-        # the _Preempted handler raises SystemExit(0) — so a preempted job stranded ~145 GB
-        # of tmpfs on the node, and SLURM does not clear /dev/shm between steps. atexit runs
-        # on SystemExit and on a normal return, so it covers both. (It cannot cover SIGKILL;
-        # nothing in-process can.) Registered on local rank 0 only: /dev/shm is per node and
-        # a non-owner must never delete another rank's live memmaps.
-        import atexit as _atexit
-        _atexit.register(lambda: shutil.rmtree(SHM_DIR, ignore_errors=True))
-        t_shm = time.perf_counter()
-        # workers: the job asks for --cpus-per-task=64 and this runs before the DataLoader
-        # workers exist, so the whole allocation is idle. SLURM_CPUS_PER_TASK keeps it
-        # honest if the sbatch is ever resized.
-        _preload_l12_to_shm(CONFIG["splits_csv"], CONFIG.get("category_filter"), SHM_DIR,
-                            max_train_stations=args.max_stations,
-                            max_val_stations=_val_cap,
-                            token_sel=CONFIG["token_sel"],
-                            workers=int(os.environ.get("SLURM_CPUS_PER_TASK", "64")))
-        _shm_done.touch()
-        print(f"[SHM] Preload done in {time.perf_counter() - t_shm:.1f}s  ({SHM_DIR})")
-    else:
-        # Bounded wait. Rank 0's preload reads ~120 GB from GPFS and took 1901 s in the worst
-        # observed case, so the ceiling is generous — but it must exist: an unbounded spin
-        # means a rank-0 death during preload leaves ranks 1-3 idling for the full 120 h
-        # walltime while holding four H100s.
-        _SHM_WAIT_MAX = 3 * 3600
-        _t_wait = time.perf_counter()
-        while not _shm_done.exists():
-            if time.perf_counter() - _t_wait > _SHM_WAIT_MAX:
-                raise RuntimeError(
-                    f"[SHM] rank {_pre_rank} (local {_pre_local_rank}): waited "
-                    f"{_SHM_WAIT_MAX/3600:.0f} h for this NODE's local-rank-0 preload "
-                    f"sentinel ({_shm_done}) and it never appeared — local rank 0 most "
-                    f"likely died during preload. Failing fast instead of holding the GPUs."
-                )
-            time.sleep(2)
+    # sigma_ST (§49): the thermal residual is divided by it, so it is a model contract, not a
+    # convenience. Read once here and carried in CONFIG, hence in every checkpoint.
+    with open(CONFIG["lst_stats"]) as _f:
+        CONFIG["sigma_st"] = float(json.load(_f)["sigma_ST"])
 
     is_ddp = "LOCAL_RANK" in os.environ
     if is_ddp:
@@ -1616,18 +1580,17 @@ def main():
         era5_stats_path  = CONFIG["era5_stats"],
         years            = CONFIG["years"],
         category_filter  = CONFIG["category_filter"],
-        shm_dir          = SHM_DIR,
-        token_sel        = CONFIG["token_sel"],
-        patch_token_dropout = CONFIG["patch_token_dropout"],
     )
-    # Same object the shm preloader was capped with — computed once so the two can never
-    # drift apart again (§35.24 item 7).
-    val_max_stations = _val_cap
+    # Val gets a fifth of the smoke-test station cap, as it always has.
+    val_max_stations = max(1, args.max_stations // 5) if args.max_stations is not None else None
     # file_system strategy avoids fd exhaustion with 32 workers; must be set before workers spawn
     torch.multiprocessing.set_sharing_strategy("file_system")
 
+    # require_lst whenever the thermal term is on: a thermal head with no target anywhere in
+    # the training set would train on nothing and log nothing wrong (§46.8).
+    _lam_on = str(CONFIG["lambda_lst"]) == "auto" or float(CONFIG["lambda_lst"]) != 0.0
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
-                                         max_stations=args.max_stations)
+                                         max_stations=args.max_stations, require_lst=_lam_on)
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank,
                                         shuffle=True, drop_last=True) if is_ddp else None
 
@@ -1672,32 +1635,6 @@ def main():
         persistent_workers = CONFIG.get("val_num_workers", 2) > 0,
         prefetch_factor    = CONFIG["prefetch_factor"] if CONFIG.get("val_num_workers", 2) > 0 else None,
     )
-
-    # ── K=196 patch-map diagnostic loader (§35.19) ────────────────────
-    # A SEPARATE, deliberately tiny dataset: token_sel="all" restores the ~30 MB/sample IPC
-    # payload, so it gets 2 stations, batch_size 2 and num_workers 0, on rank 0 only. It
-    # exists to answer one question once per epoch — does the model emit 196 different
-    # numbers, or 196 copies of one? — and nothing in the training loss asks that question.
-    # Built here rather than lazily so a mistake surfaces before the first epoch, not four
-    # hours in. Failure to build is a warning, never fatal: this is a diagnostic.
-    patch_map_loader = None
-    if CONFIG["patch_map_diag"] and is_main:
-        try:
-            _pm_kwargs = dict(common_kwargs)
-            _pm_kwargs["token_sel"] = "all"
-            _pm_kwargs["patch_token_dropout"] = 0.0
-            _pm_ds = SoilMoistureDataset(**_pm_kwargs, split_filter=["val"], training=False,
-                                         max_stations=CONFIG["patch_map_diag_stations"])
-            if len(_pm_ds) == 0:
-                raise RuntimeError("patch-map dataset is empty")
-            patch_map_loader = DataLoader(_pm_ds, batch_size=2, shuffle=False,
-                                          num_workers=0, pin_memory=False)
-            print(f"  [diag] patch-map loader ready: {len(_pm_ds)} samples, token_sel=all")
-        except Exception as e:
-            print(f"  [diag] WARNING: could not build the K=196 patch-map loader ({e}) — "
-                  f"diag/patch_map_sd_* will be MISSING. The 160 m claim then has no "
-                  f"check at all this run; --no-patch-map-diag silences this deliberately.")
-            patch_map_loader = None
 
     # ── Head bias initialisation (§35.24) ─────────────────────────────
     # The per-depth regression heads start at bias 0, so epoch 1 opens with the model
@@ -1758,17 +1695,17 @@ def main():
         print(f"  head_bias_init (from {driver_stats_path.name}): " +
               "  ".join(f"{d}={b:.4f}" for d, b in zip(SM_DEPTHS, head_bias_init)))
     model = SoilMoistureModel(
-        n_depths       = CONFIG["n_depths"],
-        d_model        = CONFIG["d_model"],
-        n_heads        = CONFIG["n_heads"],
-        n_layers       = CONFIG["n_layers"],
-        drop_path_rate = CONFIG.get("drop_path_rate", 0.1),
-        use_cls_depth  = True,   # invariant, not a setting — see the CONFIG comment
-        driver_mode    = CONFIG.get("driver_mode", "memory"),
-        driver_layers  = CONFIG.get("driver_layers", 2),
-        head_bias_init = head_bias_init,
-        use_input_norm = CONFIG["use_input_norm"],
+        n_depths         = CONFIG["n_depths"],
+        d_model          = CONFIG["d_model"],
+        n_heads          = CONFIG["n_heads"],
+        n_layers         = CONFIG["n_layers"],
+        drop_path_rate   = CONFIG.get("drop_path_rate", 0.1),
+        head_bias_init   = head_bias_init,
+        fine_skips       = CONFIG["fine_skips"],
+        modality_dropout = CONFIG["modality_dropout"],
     ).to(device)
+    lam = LambdaLST(CONFIG["lambda_lst"], every=CONFIG["lambda_every"],
+                    beta=CONFIG["lambda_ema"])
 
     if is_ddp:
         model = DDP(model, device_ids=[local_rank])
@@ -1776,16 +1713,17 @@ def main():
     raw_model = model.module if is_ddp else model
     n_params = sum(p.numel() for p in raw_model.parameters() if p.requires_grad)
     if is_main:
-        print(f"Trainable parameters: {n_params:,}")
+        print(f"Trainable parameters: {n_params:,}  (fine encoder "
+              f"{sum(p.numel() for p in raw_model.fine_encoder.parameters()):,})")
         # Echo the run-defining config. It is saved into the checkpoint too, but a job
         # log should be readable on its own — otherwise which flags a run actually used
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
-        _echo = ["run_name", "driver_mode", "driver_layers", "token_sel",
-                 "per_depth_loss", "lr", "warmup_steps", "huber_delta", "batch_size",
-                 "weight_decay", "drop_path_rate",
+        _echo = ["run_name", "fine_skips", "modality_dropout", "lambda_lst", "sigma_st",
+                 "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
+                 "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
-                 "select_metric", "patch_map_diag", "git_sha",
-                 "era5_stats_sha", "driver_stats_sha"]
+                 "select_metric", "input_grad_diag", "git_sha",
+                 "era5_stats_sha", "driver_stats_sha", "fine_stats_sha", "lst_stats_sha"]
         print("CONFIG: " + "  ".join(f"{k}={CONFIG.get(k)}" for k in _echo))
 
     # ── Optimiser ─────────────────────────────────────────────────────
@@ -1910,6 +1848,8 @@ def main():
         # the objective mid-run.
         if ckpt.get("depth_weights") is not None:
             depth_weights_list = list(ckpt["depth_weights"])
+        # Same for lambda: an "auto" run resumes at its EMA, not re-measured from scratch.
+        lam.load_state_dict(ckpt.get("lambda_lst"))
 
         # RNG state, so a requeued run replays the same augmentation stream as an
         # uninterrupted one (§35.24 item 10). Restored on every rank from its own slice,
@@ -1969,6 +1909,7 @@ def main():
                 pg["lr"] = lr
             warmup.sync_base_from_optimizer()
             skip_batches = mc.get("batches_done", 0)
+            lam.load_state_dict(mc.get("lambda_lst"))
             # The mid-epoch checkpoint is the more precise source for both of these.
             if mc.get("global_step") is not None:
                 global_step = mc["global_step"]
@@ -2055,6 +1996,7 @@ def main():
                     "no_improve_count": no_improve_count,
                     "selection_metric": SELECTION_METRIC,
                     "depth_weights"   : depth_weights_list,
+                    "lambda_lst"      : lam.state_dict(),
                     "config"          : CONFIG,
                     "wandb_run_id"    : wandb.run.id if use_wandb else None,
                 }, mid_ckpt_path)
@@ -2086,6 +2028,9 @@ def main():
                     ddp_active     = is_ddp,
                     preempt_check_every = CONFIG["preempt_check_every"],
                     use_wandb      = use_wandb,
+                    lam            = lam,
+                    sigma_st       = CONFIG["sigma_st"],
+                    lst_delta      = CONFIG["lst_delta"],
                 )
             except _Preempted:
                 # Every rank arrives here on the same batch (the all_reduce(MAX) in
@@ -2118,6 +2063,7 @@ def main():
                     "no_improve_count": no_improve_count,
                     "selection_metric": SELECTION_METRIC,
                     "depth_weights"   : depth_weights_list,
+                    "lambda_lst"      : lam.state_dict(),
                     "global_step"     : global_step,
                     "rng"             : _rng_states,
                     "config"          : CONFIG,
@@ -2128,11 +2074,6 @@ def main():
         # All ranks evaluate their shard in parallel — all_reduce inside evaluate()
         # averages the loss across ranks; all_gather_object collects preds to rank 0.
         # No NCCL timeout risk: all GPUs stay active throughout validation.
-        # Arm the entropy diagnostic for the validation pass only: collecting attention
-        # weights forces the math kernel and gives up SDPA, so it stays off during training.
-        for _blk in raw_model.patch_blocks:
-            _blk.collect_entropy = True
-
         val_diag = {}
         val_loss, metrics, per_station, val_depth_sum, val_depth_cnt = evaluate(
             model if not is_ddp else model.module,
@@ -2143,26 +2084,15 @@ def main():
             huber_delta=CONFIG["huber_delta"],
             depth_weights=depth_weights,
             diag_out=val_diag,
+            sigma_st=CONFIG["sigma_st"],
+            lst_delta=CONFIG["lst_delta"],
         )
-        # Disarm immediately. Collecting attention weights forces need_weights=True, which gives
-        # up the SDPA/flash kernel; leaving it on would silently slow every subsequent TRAINING
-        # epoch, not just this validation pass.
-        for _blk in raw_model.patch_blocks:
-            _blk.collect_entropy = False
 
-        # ── §35.19 patch-map diagnostics (rank 0, no collectives) ───────────────────
-        # Both run on the RAW module. The K=196 pass is forward-only under no_grad; the
-        # gradient-ratio pass takes grads w.r.t. INPUTS only, so no parameter gradient is
-        # produced and DDP's reducer is untouched. Other ranks simply wait a few seconds at
-        # the next collective. Never fatal — a broken diagnostic must not kill a 120 h run.
-        pm_diag, gr_diag = {}, {}
-        if CONFIG["patch_map_diag"] and is_main:
-            if patch_map_loader is not None:
-                try:
-                    pm_diag = patch_map_diag(raw_model, patch_map_loader, device)
-                except Exception as e:
-                    print(f"  [diag] patch-map forward failed: {e}")
-                    pm_diag = {"error": str(e)}
+        # ── Fine-path attribution (rank 0, no collectives) ──────────────────────────
+        # Gradients w.r.t. INPUTS only, so no parameter gradient is produced and DDP's
+        # reducer is untouched. Never fatal — a broken diagnostic must not kill a 120 h run.
+        gr_diag = {}
+        if CONFIG["input_grad_diag"] and is_main:
             try:
                 gr_diag = input_grad_ratio(raw_model, val_diag.get("_first_batch"),
                                            device, CONFIG["huber_delta"],
@@ -2196,6 +2126,11 @@ def main():
             # rank stays in sync and the collective count matches the val path.
             dist.all_reduce(train_depth_sum, op=dist.ReduceOp.SUM)
             dist.all_reduce(train_depth_cnt, op=dist.ReduceOp.SUM)
+            # Thermal term: raw sums, same rule. Unconditional so every rank joins.
+            _lst_t = torch.tensor([train_stats.get("lst_sum", 0.0),
+                                   train_stats.get("lst_cells", 0.0)], device=device)
+            dist.all_reduce(_lst_t, op=dist.ReduceOp.SUM)
+            train_stats["lst_sum"], train_stats["lst_cells"] = _lst_t.tolist()
             if is_main:
                 train_loss = t_loss.item()
                 train_tv   = t_tv.item()
@@ -2305,6 +2240,15 @@ def main():
             # three lines above, so the block reconciles without mental arithmetic.
             print(f"  {'pooled':>8s}  train={train_pooled:.6f}  val={val_pooled:.6f}"
                   f"   |  depth_mean  train={train_depth_mean:.6f}  val={val_depth_mean:.6f}")
+            _tr_lst = (train_stats["lst_sum"] / train_stats["lst_cells"]
+                       if train_stats.get("lst_cells") else float("nan"))
+            print(f"  {'thermal':>8s}  train_lst={_tr_lst:.4f}"
+                  f"  val_lst={val_diag.get('lst_loss', float('nan')):.4f}"
+                  f"  (pattern Huber, sigma_ST units; val cells="
+                  f"{int(val_diag.get('lst_cells', 0))})"
+                  f"  lambda={train_stats.get('lambda_lst', 0.0):.4e}"
+                  f"  raw g_sm/g_lst={train_stats.get('lambda_raw_ratio', float('nan')):.4e}"
+                  f"   <-- NOT in the selection scalar")
             print(f"  {'SELECT':>8s}  {SELECTION_METRIC}={val_selection:.6f}  <-- drives "
                   f"best.pt, early stopping and ReduceLROnPlateau."
                   f"   |  val_huber_pooled={val_pooled:.6f}"
@@ -2411,6 +2355,9 @@ def main():
                 # effective step is grad_clip/||g||, not the lr logged above.
                 for _k, _v in train_stats.items():
                     log_dict[f"opt/{_k}"] = _v
+                log_dict["train/lst_loss"] = _tr_lst
+                log_dict["val/lst_loss"]   = val_diag.get("lst_loss", float("nan"))
+                log_dict["val/lst_cells"]  = val_diag.get("lst_cells", 0.0)
                 for depth, m in metrics.items():
                     log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
                     log_dict[f"val/{depth}/MAE"]    = m["MAE"]
@@ -2452,108 +2399,40 @@ def main():
                     for b in range(a + 1, len(SM_DEPTHS)):
                         log_dict[f"diag/depth_token_cos_{a}{b}"] = cos[a, b].item()
 
-                # ── §35.19 patch-map / input-attribution ────────────────────────────
-                if pm_diag.get("error"):
-                    print(f"  [diag] patch-map: {pm_diag['error']}")
-                elif pm_diag:
-                    for _d, _sd, _rg in zip(SM_DEPTHS, pm_diag["sd"], pm_diag["range"]):
-                        log_dict[f"diag/patch_map_sd_{_d}"]    = _sd
-                        log_dict[f"diag/patch_map_range_{_d}"] = _rg
-                    log_dict["diag/patch_map_sd_mean"] = sum(pm_diag["sd"]) / len(pm_diag["sd"])
-                    print(f"  [diag] patch map (K={pm_diag['K']}) across-patch SD  " +
-                          "  ".join(f"{d}={s:.5f}" for d, s in zip(SM_DEPTHS, pm_diag["sd"])) +
-                          "   <-- ~0 means the 14x14 map is CONSTANT and the 160 m claim "
-                          "is unsupported")
+                # ── Fine-path attribution and map flatness (§48) ──────────────────
                 if gr_diag:
                     for _k, _v in gr_diag.items():
                         log_dict[f"diag/grad_{_k}"] = _v
-                    print(f"  [diag] input-grad RMS  per_patch={gr_diag['per_patch_sum']:.3e}"
-                          f"  tile_const={gr_diag['tile_const_sum']:.3e}"
-                          f"  ratio={gr_diag['ratio']:.4f}   <-- ~0 means the loss is being "
-                          f"minimised without reading the per-patch inputs at all")
+                    print(f"  [diag] input-grad RMS  fine={gr_diag['fine_sum']:.3e}"
+                          f"  rest={gr_diag['rest_sum']:.3e}"
+                          f"  ratio={gr_diag['ratio']:.4f}   <-- ~0 means the SM loss is "
+                          f"being minimised without reading the fine imagery at all")
+                _msd = val_diag.get("map_sd")
+                if _msd:
+                    for _d, _s in zip(SM_DEPTHS, _msd):
+                        log_dict[f"diag/map_sd_{_d}"] = _s
+                    print("  [diag] within-tile SD of the 112x112 SM map  " +
+                          "  ".join(f"{d}={s:.5f}" for d, s in zip(SM_DEPTHS, _msd)) +
+                          "   <-- ~0 means the 20 m map is flat")
 
-                # ── §35.20 collapse diagnostics ─────────────────────────────────────
-                # Both of these are load-bearing evidence for step 1 and both were
-                # reporting nothing:
-                #
-                #   depth_ctx: read via getattr(raw_model, "_last_depth_ctx", None), which
-                #     has been None on every epoch since the U-Net strip (commit fe0dc2c) —
-                #     the only surviving producer is model_unet.py. getattr's default
-                #     turned a dead diagnostic into an absent W&B key, and an absent key
-                #     looks exactly like a key nobody plotted.
-                #
-                #   attn_entropy: a single-batch, rank-0-only snapshot of whatever
-                #     _last_attn_entropy happened to hold after the final forward of one
-                #     shard, compared against a FIXED math.log(MAX_S2 + MAX_S1) = log(100)
-                #     reference. That reference was wrong in both directions at once: a
-                #     sample almost never has all 100 history slots valid, so the true
-                #     uniform ceiling is log(n_valid) < log(100) and a genuinely collapsed
-                #     row read as "well below uniform"; and nothing constrained the entropy
-                #     to be over history keys only, so driver/CLS keys inflated it.
-                #
-                # Both are now epoch-wide sums accumulated inside evaluate() and
-                # all_reduce(SUM)'d there, per the §35.24 contract. The scale-free ratio
-                # (entropy / log n_valid, per sample, per head, per readout row) replaces
-                # the fixed reference: 1.0 means uniform means collapsed, on any sample
-                # whatever its history length.
-                if not val_diag or val_diag.get("disabled"):
-                    print("  [diag] WARNING: §35.20 collapse diagnostics unavailable this "
-                          "epoch — nothing logged under diag/attn_entropy* or "
-                          "diag/depth_ctx*.")
+                # depth_ctx: the transformer OUTPUT for each depth slot, summed over the
+                # whole val epoch. The input depth_tokens can stay near-orthogonal while the
+                # outputs collapse onto one vector — that is use_cls_depth being inert, and
+                # with the depth heads disconnected it is now load-bearing (§46.5 item 34).
+                _ctx_n = val_diag.get("depth_ctx_n", 0.0)
+                if _ctx_n > 0:
+                    with torch.no_grad():
+                        _dc = F.normalize(val_diag["depth_ctx_sum"].float() / _ctx_n, dim=-1)
+                        _cc = _dc @ _dc.T
+                    for a in range(len(SM_DEPTHS)):
+                        for b in range(a + 1, len(SM_DEPTHS)):
+                            log_dict[f"diag/depth_ctx_cos_{a}{b}"] = float(_cc[a, b])
+                    log_dict["diag/depth_ctx_n"] = _ctx_n
                 else:
-                    ent_sums = val_diag["attn_entropy_sums"]        # (n_layers, 3)
-                    if val_diag["n_ent_missing"]:
-                        print(f"  [diag] WARNING: _last_attn_entropy was absent on "
-                              f"{val_diag['n_ent_missing']}/{val_diag['n_batches']} val "
-                              f"batches — entropy below is averaged over the rest. If this "
-                              f"is all of them, the model is not populating the stash and "
-                              f"the collapse detector is BLIND.")
-                    _ent_nats, _ent_ratio = [], []
-                    for _i in range(ent_sums.shape[0]):
-                        _cnt = float(ent_sums[_i, 2])
-                        if _cnt <= 0:
-                            continue
-                        _nats  = float(ent_sums[_i, 0]) / _cnt
-                        _ratio = float(ent_sums[_i, 1]) / _cnt
-                        log_dict[f"diag/attn_entropy_L{_i}"]       = _nats
-                        log_dict[f"diag/attn_entropy_ratio_L{_i}"] = _ratio
-                        _ent_nats.append(_nats)
-                        _ent_ratio.append(_ratio)
-                    if _ent_nats:
-                        log_dict["diag/attn_entropy_mean"]       = sum(_ent_nats) / len(_ent_nats)
-                        # THE number to watch: 1.0 = uniform attention over the valid
-                        # history = the model is reading a mean, which is precisely what
-                        # un-pooling exists to escape.
-                        log_dict["diag/attn_entropy_ratio_mean"] = sum(_ent_ratio) / len(_ent_ratio)
-                        log_dict["diag/attn_entropy_ratio_max"]  = max(_ent_ratio)
-                        print(f"  [diag] attn entropy  mean={log_dict['diag/attn_entropy_mean']:.3f} nats"
-                              f"  collapse_ratio mean={log_dict['diag/attn_entropy_ratio_mean']:.4f}"
-                              f"  max={log_dict['diag/attn_entropy_ratio_max']:.4f}"
-                              f"   (1.0 = uniform = collapsed)")
-                    else:
-                        print("  [diag] WARNING: attention-entropy counts were all zero — "
-                              "collect_entropy did not arm, or no readout row contributed.")
-
-                    # depth_ctx: the transformer OUTPUT for each depth slot, summed over
-                    # the whole val epoch. The input depth_tokens can stay near-orthogonal
-                    # while the outputs collapse onto one vector — that is exactly
-                    # use_cls_depth being inert, and only this pair of cosines shows it.
-                    _ctx_n = val_diag["depth_ctx_n"]
-                    if _ctx_n > 0:
-                        with torch.no_grad():
-                            _dc  = F.normalize(val_diag["depth_ctx_sum"].float() / _ctx_n, dim=-1)
-                            _cc  = _dc @ _dc.T
-                        for a in range(len(SM_DEPTHS)):
-                            for b in range(a + 1, len(SM_DEPTHS)):
-                                log_dict[f"diag/depth_ctx_cos_{a}{b}"] = float(_cc[a, b])
-                        log_dict["diag/depth_ctx_n"] = _ctx_n
-                    else:
-                        print(f"  [diag] WARNING: _last_depth_ctx / _last_depth_ctx_n were "
-                              f"absent on {val_diag['n_ctx_missing']}/"
-                              f"{val_diag['n_batches']} val batches and the accumulated "
-                              f"count is 0 — diag/depth_ctx_cos_* is NOT logged this "
-                              f"epoch. The depth-collapse check is blind until the model "
-                              f"populates those attributes.")
+                    print(f"  [diag] WARNING: depth-context sums were empty on "
+                          f"{val_diag.get('n_ctx_missing', '?')}/"
+                          f"{val_diag.get('n_batches', '?')} val batches — "
+                          f"diag/depth_ctx_cos_* is NOT logged this epoch.")
                 # Worst-5 stations per depth
                 if per_station:
                     for depth in SM_DEPTHS:
@@ -2591,6 +2470,7 @@ def main():
                 "val_ubrmse_depth_mean": val_ubrmse_sel,
                 "selection_metric": SELECTION_METRIC,
                 "depth_weights"   : depth_weights_list,
+                "lambda_lst"      : lam.state_dict(),
                 "best_val_loss"   : best_val_loss,
                 "no_improve_count": no_improve_count,
                 "global_step"     : global_step,
@@ -2626,12 +2506,6 @@ def main():
         print(f"\nTraining complete. Best val_loss: {best_val_loss:.4f}")
         print(f"Checkpoints: {ckpt_dir}")
 
-    # Local rank 0, matching the preload: /dev/shm is per node, so on a multi-node launch
-    # global rank 0 can only ever clean its own node's tmpfs and node 1's ~145 GB would
-    # survive the job.
-    if int(os.environ.get("LOCAL_RANK", "0")) == 0 and SHM_DIR.exists():
-        shutil.rmtree(SHM_DIR, ignore_errors=True)
-        print(f"[SHM] Cleaned up {SHM_DIR}")
 
     if is_ddp:
         dist.destroy_process_group()

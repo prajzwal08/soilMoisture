@@ -1,39 +1,39 @@
 """
-SoilMoistureModel — patchwise, two transformers, no decoder
-===========================================================
-§34 / §35.18. Derivation with every dimension: text/patchwise_math.md.
+SoilMoistureModel — temporal trunk + fine CNN encoder + U-Net decoder, two heads
+================================================================================
+§48 (amending §46). Runbook: text/training_runbook.md §46, §48, §49.
 
-The pooled U-Net-temporal baseline this replaced is frozen in model_unet.py (with
-dataset_unet.py / train_unet.py / ckpt_utils_unet.py); tag `baseline-unet-temporal`.
-Nothing here branches on it.
+This file REPLACED the patchwise arm (§34/§35.18); that code lives at tags `pw_stage2a-ep9` and
+`pre-s1-decoder-aux`. The pooled U-Net baseline this trunk is ported from is frozen in
+model_unet.py (tag `baseline-unet-temporal`). The trunk keeps the canonical fixes the patchwise
+arm accumulated: 18 ERA5 columns (`era5/values18`), ERA5 staleness from real row dates, the
+precomputed DOY table, and the driver/history split of annotation scales (§35.24-26).
 
-  T1  DriverMemoryEncoder      431 tokens, driver_layers deep, runs ONCE per sample
-        soil 4 + era5 365 + sif 50 + twsa 12 (that order), each + circular_doy_pe + rel_pos_emb + a
-        modality tag; then self-attention so the driver days can see each other.
-        Tile-level, so it carries NO patch index — which is what makes the cache exact.
-        -> m (B, 431, 768), then Kc_l = m.Wk_c(l), Vc_l = m.Wv_c(l) for each T2 layer.
+  TRUNK  one temporal transformer, runs once per sample
+    [ depth_CLS x3 | DEM pyr x4 | LULC pyr x4 | soil x4 | anchor L12 x196 |
+      S2 pyr x MAX_S2*4 | S1 pyr x MAX_S1*4 | ERA5 x365 | SIF x50 | TWSA x12 ]
+    -> bottleneck: the 196 anchor rows, (B, 768, 14, 14) at 160 m
+    -> context:    mean of the valid non-spatial, non-CLS rows, (B, 768)
+    -> depth_ctx:  the 3 CLS rows, (B, 3, 768)
 
-  T2  PatchwiseBlock x n_layers   105 tokens, runs K times (K folded into the batch)
-        [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 ]
-        per layer:  SelfAttn(105)  ->  CrossAttn(Q=105, K/V=cached 431)  ->  FFN
-        Statics are a PREFIX so temporal attention can condition drydown on cover/terrain.
-        History carries staleness + modality only: no scale_emb (it indexed pyramid levels)
-        and no absolute DOY (ERA5 is the seasonal anchor).
+  FINE ENCODER (§48.1) — light CNN on the most recent imagery on or before day D
+    fine (B, 19, 112, 112) @ 20 m   S2 12 | S1 5 | DEM 2      (channel map: FINE_* below)
+    lulc (B, 224, 224) long @ 10 m  class index, LULC_PAD = nodata
+    stems -> 32 ch @112 -> E1 32 @112 (20 m), E2 64 @56 (40 m), E3 128 @28 (80 m)
 
-  Readout: each depth CLS token attends with its OWN query, and its output row IS that
-        depth's prediction -> Linear(768,1) per depth -> (B, K, n_depths) at 160 m.
-        196 patches = a 14x14 map. STEP 1 has NO decoder, and there is no star residual.
+  DECODER — coarse context up, measured detail down (§46.4)
+    bottle 512 @14 -> up -> conv1(512+128) @28 -> up -> conv2(256+64) @56
+                   -> up -> conv3(128+32) @112 = z (B, 64, 112, 112)
+    each skip FiLM-modulated by `context`; the skip slices of conv{1,2,3}'s first conv are
+    zero-initialised, so step 0 is exactly the bottleneck-only decoder.
 
-  Weight sharing across patches is the mechanism, not an optimisation: supervising the
-  station's single token teaches the mapping at all 196 (§34.4). Training runs K=1
-  (token 105), inference K=196, same checkpoint.
+  HEADS on z
+    SM   3 disconnected per-depth heads, each FiLM'd by its own CLS row, bias = label_mean
+         -> (B, 3, 112, 112); supervised at the station pixel (56, 56)
+    LST  1x1 conv -> pixels 0..109 -> avg_pool 5 -> (B, 1, 22, 22) @ 100 m, in units of
+         sigma_ST, PATTERN ONLY: its level is unconstrained and is never Kelvin (§48.9 item 4)
 
-  --driver-mode concat puts all 536 tokens (105 + 431) in one self-attention stack instead,
-  and does NOT build T1 at all. Kept as an option because it cannot be retrofitted
-  (§3.4 of the maths doc), but not run.
-
-  Loss: Huber on (B, K, n_depths) against the ISMN label, NaN depths masked. There is no
-  map and nothing to index.
+  GroupNorm everywhere a BatchNorm used to be (§48.2 item 8).
 """
 
 import math
@@ -89,12 +89,11 @@ DOY_MAX_HARMONIC = 26
 #     history content  raw frozen TerraMind L12 token            std 4.65
 #
 # A single shared table cannot suit both. At std 1.0 the annotation was ~450% of a driver
-# token (the real §35.24 bug — the driver token was mostly calendar) and a sensible ~21% of
-# a history token. Setting everything to 0.02 fixed the drivers and broke the history,
-# dropping staleness to 0.43% there — which is what the input LayerNorm was then added to
-# paper over. Splitting the tables fixes the cause instead of the symptom.
+# token (the §35.24 bug — the driver token was mostly calendar) and a sensible ~21% of a
+# history token. The pooled pyramid tokens and the anchor tokens here are frozen TerraMind
+# features, so they take the HISTORY scale.
 EMB_INIT_STD      = 0.02    # annotations on DRIVER tokens (era5, sif, twsa, soil)
-HIST_EMB_INIT_STD = 1.0     # annotations on FROZEN TerraMind tokens (s2, s1, dem, lulc)
+HIST_EMB_INIT_STD = 1.0     # annotations on FROZEN TerraMind tokens (pyramids, anchor)
 
 
 def circular_doy_pe(doys: torch.Tensor, dim: int = 768,
@@ -123,180 +122,266 @@ def circular_doy_pe(doys: torch.Tensor, dim: int = 768,
     return pe * (scale * math.sqrt(2.0))                               # (N, dim)
 
 
-class PatchwiseBlock(nn.Module):
+def _gn(c: int) -> nn.GroupNorm:
+    """GroupNorm with at most 8 groups and at least 4 channels per group.
+
+    Per-sample statistics, identical in train and eval: BatchNorm's batch statistics are noisy
+    at a few samples per GPU, are not synced across DDP ranks, and its eval-time running
+    averages would be accumulated on batches that contain modality-dropped samples (§48.2
+    item 8).
     """
-    One layer of the patch decoder (transformer 2 of the two-transformer design, §35.18).
+    return nn.GroupNorm(max(1, min(8, c // 4)), c)
 
-        x = x + SelfAttn (LN(x))                 over the patch's own 105 tokens
-        x = x + CrossAttn(LN(x), memory)         memory mode only — reads the 431 driver tokens
-        x = x + FFN      (LN(x))
 
-    Cross-attention is written out by hand rather than with nn.MultiheadAttention, and that is
-    the whole point of the design. MHA runs `in_proj` on whatever it is handed, so passing an
-    .expand()ed memory would re-project the same 431 driver tokens once per patch — exactly the
-    duplication the cache exists to remove. Here `k_proj`/`v_proj` are called by the parent, ONCE
-    per sample, and this block receives the projected (Kc, Vc) directly.
+# ── Fine imagery layout (§48.3 + §48.9 item 1) ───────────────────────────────
+#
+# `fine` is (19, 112, 112) at 20 m, built by dataset.py in §46.3's worker order: normalised
+# with TerraMind's constants, then invalid pixels zeroed. The valid flags are channels, so
+# the network always sees "missing" explicitly rather than a plausible-looking zero.
 
-    The queries are reshaped to (B, h, K*L, dh) rather than expanding the memory to (B*K, ...).
-    All K patches of a sample share one memory, so folding K into the query length is exact and
-    allocates nothing; expanding the memory would cost B*K*h*M*dh (≈2 GB at K=196).
+FINE_S2    = slice(0, 12)    # 10 bands (B01/B09 dropped) | s2_valid | s2_age
+FINE_S1    = slice(12, 17)   # VV | VH | s1_valid | s1_age | orbit (0 asc, 1 desc)
+FINE_DEM   = slice(17, 19)   # DEM | dem_valid
+FINE_CH    = 19
+FINE_VALID = {"s2": 10, "s1": 14, "dem": 18}     # absolute channel index of each flag
+
+LULC_N_CLASSES = 10          # TerraMind LULC indices 0..9
+LULC_PAD       = 10          # nodata; maps to a fixed zero embedding
+LULC_EMB_DIM   = 8
+
+ENC_CH = (32, 64, 128)       # E1 @112 (20 m), E2 @56 (40 m), E3 @28 (80 m)
+
+
+def _masked_avg_pool(x: torch.Tensor, m: torch.Tensor, k: int) -> torch.Tensor:
+    """pool(x*m) / pool(m): an unbiased mean over valid pixels, 0 where none are valid."""
+    num = F.avg_pool2d(x * m, k)
+    den = F.avg_pool2d(m, k)
+    return num / den.clamp_min(1e-6) * (den > 0)
+
+
+class _ConvBlock(nn.Module):
+    """2 x (3x3 conv -> GroupNorm -> ReLU). `stride` applies to the first conv only.
+
+    The Sequential is named `.net` — the zero-init of the skip slices addresses
+    `conv{i}.net[0].weight` (§46.7 trap 4).
     """
-
-    def __init__(self, d_model: int, n_heads: int, driver_mode: str = "memory",
-                 dropout: float = 0.1, drop_path: float = 0.0, n_readout: int = 3,
-                 hist_start: int = 5):
+    def __init__(self, in_ch: int, out_ch: int, stride: int = 1, dropout: float = 0.0):
         super().__init__()
-        assert d_model % n_heads == 0
-        self.d_model, self.n_heads = d_model, n_heads
-        self.head_dim    = d_model // n_heads
-        self.driver_mode = driver_mode
-        self.n_readout   = n_readout
-        # First HISTORY column of the sequence: everything before it is the depth CLS prefix
-        # plus dem/lulc. Only the history columns are meaningful to the collapse detector.
-        self.hist_start  = hist_start
-        self.attn_drop   = dropout
+        layers = [
+            nn.Conv2d(in_ch, out_ch, 3, stride=stride, padding=1, bias=False),
+            _gn(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            _gn(out_ch),
+            nn.ReLU(inplace=True),
+        ]
+        if dropout > 0:
+            layers.append(nn.Dropout2d(dropout))
+        self.net = nn.Sequential(*layers)
 
-        self.norm_self = nn.LayerNorm(d_model)
-        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout,
-                                               batch_first=True)
+    def forward(self, x):
+        return self.net(x)
 
-        if driver_mode == "memory":
-            self.norm_cross = nn.LayerNorm(d_model)
-            self.q_proj = nn.Linear(d_model, d_model)
-            self.k_proj = nn.Linear(d_model, d_model)   # called by the PARENT, once per sample
-            self.v_proj = nn.Linear(d_model, d_model)   # ditto — never inside the patch loop
-            self.o_proj = nn.Linear(d_model, d_model)
 
-        self.norm_ffn = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(4 * d_model, d_model),
-        )
-        # Residual dropout on all three sub-blocks. Without it the only dropout in T2 was
-        # inside MultiheadAttention's weights and mid-FFN, so the 6-layer, ~60 M-parameter
-        # half of the model was materially LESS regularised than the 2-layer T1, which gets
-        # full residual dropout from nn.TransformerEncoderLayer.
-        self.resid_drop = nn.Dropout(dropout)
+def _stem(in_ch: int, out_ch: int) -> nn.Sequential:
+    return nn.Sequential(nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+                         _gn(out_ch), nn.ReLU(inplace=True))
 
-        # One DropPath draw per residual branch — and this block has THREE branches (self,
-        # cross, FFN) where a standard ViT block has two. `drop_path` is a per-LAYER rate
-        # from the dpr schedule, so the per-branch rate must be deflated or effective
-        # survival is (1-p)^3, nearly 3x the intended drop at the deepest layer.
-        branch_p = 1.0 - (1.0 - drop_path) ** (1.0 / 3.0)
-        self.drop_path = DropPath(branch_p)
 
-        # Set by the parent when train.py asks for a diagnostic pass. Off by default: collecting
-        # weights forces the math kernel and gives up SDPA.
-        self.collect_entropy = False
-        self.last_entropy: torch.Tensor | None = None
+class FineEncoder(nn.Module):
+    """
+    Light CNN on the most recent imagery (§48.1): one stem per modality, then three levels.
 
-    def _cross(self, x, kc, vc, mem_pad, B, K):
-        """
-        x       (B*K, L, d)      queries, patch tokens
-        kc, vc  (B, M, d)        ALREADY projected by the parent — one copy per sample
-        mem_pad (B, M) bool      True = ignore
-        """
-        N, L, d = x.shape
-        h, dh   = self.n_heads, self.head_dim
-        M       = kc.shape[1]
+        S2  12 -> 16 | S1 5 -> 8 | DEM 2 -> 4 | LULC emb 8 @10 m -> 2x2 mean -> 4   = 32 @112
+        E1 32 @112   E2 64 @56   E3 128 @28                                  ~0.3 M params
 
-        q = self.q_proj(x)                                       # (B*K, L, d)
-        # (B*K, L, d) -> (B, K*L, h, dh) -> (B, h, K*L, dh); no copy of the memory anywhere.
-        q = q.reshape(B, K * L, h, dh).transpose(1, 2)           # (B, h, K*L, dh)
-        k = kc.reshape(B, M, h, dh).transpose(1, 2)              # (B, h, M,   dh)
-        v = vc.reshape(B, M, h, dh).transpose(1, 2)
+    LULC is embedded at its native 10 m and THEN averaged to 20 m. A 20 m cell of 3 crop and
+    1 forest pixel becomes 0.75*e_crop + 0.25*e_forest — algebraically the one-hot area
+    fraction times a learned matrix, so mixed pixels survive (§48.2 item 3). The mean is over
+    valid pixels only; LULC_PAD has a fixed zero vector.
 
-        attn_mask = None
-        if mem_pad is not None:
-            # SDPA bool mask: True = participate. (B,1,1,M) broadcasts over heads and queries.
-            attn_mask = (~mem_pad)[:, None, None, :]
+    fine_skips="pool" is §46's parameter-free alternative kept as the ablation: masked average
+    pooling of the 19 raw channels + the LULC embedding to each scale, then a 1x1 conv to the
+    same widths. It sees one pixel's values, never a neighbourhood.
 
-        out = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask,
-            dropout_p=self.attn_drop if self.training else 0.0,
-        )                                                        # (B, h, K*L, dh)
-        out = out.transpose(1, 2).reshape(N, L, d)
-        return self.o_proj(out)
+    Modality dropout (§48.2 item 9), training only: with probability `modality_dropout` per
+    sample, zero ALL of S2's or S1's channels — data, valid flag and age together — so the
+    network sees "missing", never "valid at the mean". It is applied here, on the device,
+    so train and eval batches from the dataset are identical.
+    """
 
-    def forward(self, x, kc=None, vc=None, mem_pad=None, self_pad=None, B=None, K=None,
-                hist_end=None):
-        h = self.norm_self(x)
-        if self.collect_entropy:
-            # average_attn_weights=False: head-averaging BEFORE the entropy is what made the
-            # detector blind. Twelve heads each sharply peaked on a different handful of
-            # tokens average to something numerically indistinguishable from uniform.
-            a, w = self.self_attn(h, h, h, key_padding_mask=self_pad,
-                                  need_weights=True, average_attn_weights=False)
-            self.last_entropy = _row_entropy(
-                w, self_pad, self.n_readout, self.hist_start,
-                hist_end if hist_end is not None else x.shape[1]).detach()
+    def __init__(self, fine_skips: str = "cnn", modality_dropout: float = 0.2):
+        super().__init__()
+        if fine_skips not in ("cnn", "pool"):
+            raise ValueError(f"fine_skips must be 'cnn' or 'pool', got {fine_skips!r}")
+        self.fine_skips       = fine_skips
+        self.modality_dropout = modality_dropout
+
+        self.lulc_emb = nn.Embedding(LULC_N_CLASSES + 1, LULC_EMB_DIM, padding_idx=LULC_PAD)
+
+        if fine_skips == "cnn":
+            self.stem_s2   = _stem(FINE_S2.stop - FINE_S2.start, 16)
+            self.stem_s1   = _stem(FINE_S1.stop - FINE_S1.start, 8)
+            self.stem_dem  = _stem(FINE_DEM.stop - FINE_DEM.start, 4)
+            self.stem_lulc = _stem(LULC_EMB_DIM, 4)
+            self.enc1 = _ConvBlock(32, ENC_CH[0])
+            self.enc2 = _ConvBlock(ENC_CH[0], ENC_CH[1], stride=2)
+            self.enc3 = _ConvBlock(ENC_CH[1], ENC_CH[2], stride=2)
         else:
-            a, _ = self.self_attn(h, h, h, key_padding_mask=self_pad, need_weights=False)
-        x = x + self.drop_path(self.resid_drop(a))
+            n_in = FINE_CH + LULC_EMB_DIM
+            self.pool_proj = nn.ModuleList([nn.Conv2d(n_in, c, 1) for c in ENC_CH])
 
-        if self.driver_mode == "memory":
-            x = x + self.drop_path(self.resid_drop(
-                self._cross(self.norm_cross(x), kc, vc, mem_pad, B, K)))
+    def _drop_modality(self, fine: torch.Tensor) -> torch.Tensor:
+        if not self.training or self.modality_dropout <= 0.0:
+            return fine
+        B = fine.shape[0]
+        drop  = torch.rand(B, device=fine.device) < self.modality_dropout      # (B,)
+        which = torch.rand(B, device=fine.device) < 0.5                        # True = S2
+        keep  = torch.ones(B, FINE_CH, 1, 1, device=fine.device, dtype=fine.dtype)
+        keep[:, FINE_S2] = (~(drop & which)).to(fine.dtype).view(B, 1, 1, 1)
+        keep[:, FINE_S1] = (~(drop & ~which)).to(fine.dtype).view(B, 1, 1, 1)
+        return fine * keep
 
-        x = x + self.drop_path(self.resid_drop(self.ffn(self.norm_ffn(x))))
-        return x
+    def _lulc_20m(self, lulc: torch.Tensor) -> torch.Tensor:
+        """(B, 224, 224) long @ 10 m -> (B, 8, 112, 112) float @ 20 m, masked 2x2 mean."""
+        e = self.lulc_emb(lulc).permute(0, 3, 1, 2)                    # (B, 8, 224, 224)
+        m = (lulc != LULC_PAD).unsqueeze(1).to(e.dtype)                # (B, 1, 224, 224)
+        return _masked_avg_pool(e, m, 2)
+
+    def forward(self, fine: torch.Tensor, lulc: torch.Tensor):
+        """Returns [E1 (B,32,112,112), E2 (B,64,56,56), E3 (B,128,28,28)]."""
+        fine = self._drop_modality(fine.float())
+        lulc = self._lulc_20m(lulc.long())
+
+        if self.fine_skips == "cnn":
+            x = torch.cat([
+                self.stem_s2(fine[:, FINE_S2]),
+                self.stem_s1(fine[:, FINE_S1]),
+                self.stem_dem(fine[:, FINE_DEM]),
+                self.stem_lulc(lulc),
+            ], dim=1)                                                  # (B, 32, 112, 112)
+            e1 = self.enc1(x)
+            e2 = self.enc2(e1)
+            e3 = self.enc3(e2)
+            return [e1, e2, e3]
+
+        # pool: each modality is averaged over its OWN valid pixels, so a 40 m cell with one
+        # cloudy 20 m pixel is the mean of the other three, not diluted toward zero.
+        x = torch.cat([fine, lulc], dim=1)                             # (B, 27, 112, 112)
+        m = torch.ones_like(x[:, :1]).expand_as(x).clone()
+        for name, sl in (("s2", FINE_S2), ("s1", FINE_S1), ("dem", FINE_DEM)):
+            m[:, sl] = fine[:, FINE_VALID[name]:FINE_VALID[name] + 1]
+        m[:, FINE_CH:] = (lulc.abs().sum(1, keepdim=True) > 0).to(x.dtype)
+        outs = []
+        for k, proj in zip((1, 2, 4), self.pool_proj):
+            outs.append(proj(x if k == 1 else _masked_avg_pool(x, m, k)))
+        return outs
 
 
-def _row_entropy(w: torch.Tensor, pad: torch.Tensor | None,
-                 n_readout: int, hist_start: int, hist_end: int) -> torch.Tensor:
+# ── Decoder ──────────────────────────────────────────────────────────────────
+
+class FiLMLayer(nn.Module):
+    """Feature-wise Linear Modulation: modulate a spatial feature map with a
+    context vector via learned scale and shift. Initialised as identity
+    (scale=1, shift=0) so training starts from the unmodulated baseline."""
+
+    def __init__(self, d_context: int, n_channels: int):
+        super().__init__()
+        self.proj = nn.Linear(d_context, 2 * n_channels)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.ones_(self.proj.bias[:n_channels])    # scale → 1 at init
+        nn.init.zeros_(self.proj.bias[n_channels:])   # shift → 0 at init
+
+    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, H, W)  context: (B, d_context)
+        params = self.proj(context)                               # (B, 2C)
+        C      = x.shape[1]
+        scale  = params[:, :C].unsqueeze(-1).unsqueeze(-1)       # (B, C, 1, 1)
+        shift  = params[:, C:].unsqueeze(-1).unsqueeze(-1)
+        return scale * x + shift
+
+
+LST_POOL = 5                 # 112 @ 20 m -> 22 @ 100 m over pixels 0..109 (landsat_target.py)
+LST_N    = 22
+
+
+class UNetDecoder(nn.Module):
     """
-    Collapse statistic for the readout rows — accumulated, not sampled.
+    14 -> 28 -> 56 -> 112. No up4 / conv4: nothing supervises 10 m (§46.4).
 
-    This is the detector §35.20 step 1 relies on, and it is the SOLE evidence separating
-    "un-pooling genuinely does not help" from "attention collapsed". Register-dominated keys
-    make q.k near-constant, which shows up here as entropy pinned at the uniform value — and
-    NOT in the map SD, which is why it has to be logged explicitly.
-
-    w           (N, h, L, L)  attention weights, PER HEAD (not head-averaged)
-    pad         (N, L)        True = ignored key
-    n_readout                 leading rows that are readouts (the depth CLS tokens)
-    hist_start                first history column; the depth-CLS/dem/lulc prefix is excluded
-    hist_end                  one past the last history column. In CONCAT mode the sequence
-                              continues into 431 driver tokens after the 105 patch ones, and
-                              an open-ended slice would silently fold the weather into the
-                              history entropy — making the two driver modes' numbers
-                              incomparable, which is the one comparison the arm exists for.
-
-    Returns (3,) float32:  [sum_entropy_nats, sum_ratio, count]  over (sample, head,
-    readout-row) triples, for the caller to accumulate over the epoch and all_reduce(SUM).
-    `ratio` is entropy / log(n_valid_hist), so 1.0 is exactly uniform — collapsed —
-    whatever that sample's valid-slot count happened to be.
-
-    Three defects this replaces, all of which made a collapsed run readable as healthy:
-    the weights were head-averaged first; the row spanned the 5 non-history prefix columns;
-    and the result was compared against a fixed log(100) although the median station-year
-    carries ~36 of 60 S2 slots, so a fully collapsed row scored ~4.0 against a 4.605
-    "collapse" threshold and passed.
+    The skips are the FINE encoder's features, not TerraMind L9/L6/L3 — tokens carry nothing
+    below 160 m (§34.9). The first conv of each stage sees [upsampled path | skip]; the skip
+    columns of its weight start at zero, so at step 0 the decoder IS the bottleneck-only
+    decoder and the encoder is brought in by gradient, not by initialisation (§48.4).
     """
-    rows = w[:, :, :n_readout, hist_start:hist_end]                  # (N, h, R, H)
-    if pad is not None:
-        keep    = (~pad[:, hist_start:hist_end])[:, None, None, :]   # (N, 1, 1, H)
-        rows    = rows * keep
-        n_valid = keep.reshape(rows.shape[0], -1).sum(-1)            # (N,)
-    else:
-        n_valid = torch.full((rows.shape[0],), rows.shape[-1],
-                             device=rows.device, dtype=torch.long)
 
-    # Renormalise over the history columns alone. The row is a softmax over ALL L keys, so
-    # without this step the entropy is partly a measure of how much mass leaked to the
-    # prefix rather than of how sharply the history is being read.
-    p   = rows / rows.sum(-1, keepdim=True).clamp_min(1e-9)
-    ent = -(p.clamp_min(1e-9).log() * p).sum(-1)                     # (N, h, R)
+    def __init__(
+        self,
+        in_ch:     int   = 768,
+        dec_ch:    tuple = (512, 256, 128, 64),
+        n_depths:  int   = 3,
+        d_context: int   = 768,
+        head_bias_init: list[float] | None = None,
+    ):
+        super().__init__()
+        c = dec_ch
+        self.n_depths = n_depths
 
-    # A sample with <2 valid history slots has no meaningful entropy and log(1) = 0 would
-    # divide by zero; drop those from both the sum and the count.
-    ok    = (n_valid >= 2)[:, None, None].expand_as(ent)
-    ref   = n_valid.clamp_min(2).float().log()[:, None, None]        # (N, 1, 1)
-    ent   = torch.where(ok, ent, torch.zeros_like(ent))
-    ratio = torch.where(ok, ent / ref, torch.zeros_like(ent))
-    return torch.stack([ent.sum().float(), ratio.sum().float(), ok.sum().float()])
+        self.bottle_proj = nn.Conv2d(in_ch, c[0], 1)
+        self.film_skip   = nn.ModuleList([FiLMLayer(d_context, e) for e in ENC_CH[::-1]])
+
+        self.up    = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
+        self.conv1 = _ConvBlock(c[0] + ENC_CH[2], c[1], dropout=0.15)   # @28
+        self.conv2 = _ConvBlock(c[1] + ENC_CH[1], c[2], dropout=0.15)   # @56
+        self.conv3 = _ConvBlock(c[2] + ENC_CH[0], c[3], dropout=0.15)   # @112
+        with torch.no_grad():
+            for conv, c_path in ((self.conv1, c[0]), (self.conv2, c[1]), (self.conv3, c[2])):
+                conv.net[0].weight[:, c_path:].zero_()
+
+        self.pre_head_drop = nn.Dropout(0.1)
+
+        # Three DISCONNECTED depth heads (§46.1 rows 5-9): no star residual, so each predicts
+        # absolutely and each bias starts at that depth's train-set mean. Zero-init would mean
+        # "predict zero moisture", far outside the data.
+        self.depth_film = nn.ModuleList([FiLMLayer(d_context, c[3]) for _ in range(n_depths)])
+        self.heads      = nn.ModuleList([nn.Conv2d(c[3], 1, 1) for _ in range(n_depths)])
+        # Zero WEIGHTS, bias = label_mean: each depth opens at exactly its own mean. With the
+        # default init the 64 post-ReLU channels add +/-0.4 m3/m3 on top of the bias (measured
+        # by verify_s48.py check 4: 0.05 / 0.56 / 0.56 against 0.17 / 0.19 / 0.19), which
+        # opens training in Huber's linear regime — the §35.24 defect the bias init exists to
+        # remove. The weights still get a gradient on step 1, since the map they read is not 0.
+        for h in self.heads:
+            nn.init.zeros_(h.weight)
+        if head_bias_init is not None:
+            if len(head_bias_init) != n_depths:
+                raise ValueError(f"head_bias_init needs {n_depths} values, "
+                                 f"got {len(head_bias_init)}")
+            with torch.no_grad():
+                for h, b in zip(self.heads, head_bias_init):
+                    h.bias.fill_(float(b))
+
+        # Thermal head: OUTSIDE the per-depth branch — Kelvin is not a depth. Reads z directly.
+        self.head_lst = nn.Conv2d(c[3], 1, 1)
+
+    def forward(self, bottleneck, skips, context, depth_ctx):
+        # skips: [E1 @112, E2 @56, E3 @28]; context (B, d); depth_ctx (B, n_depths, d)
+        e1, e2, e3 = skips
+        x = self.bottle_proj(bottleneck)                                        # (B,512,14,14)
+        x = self.conv1(torch.cat([self.up(x), self.film_skip[0](e3, context)], 1))  # @28
+        x = self.conv2(torch.cat([self.up(x), self.film_skip[1](e2, context)], 1))  # @56
+        z = self.conv3(torch.cat([self.up(x), self.film_skip[2](e1, context)], 1))  # @112
+        x = self.pre_head_drop(z)
+
+        # Readouts in fp32, outside autocast: epoch-to-epoch checkpoint decisions are made on
+        # val differences of order 1e-5 m3/m3, below bf16's ~1e-3 absolute at SM = 0.5.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            xf, dcf = x.float(), depth_ctx.float()
+            sm = torch.cat([self.heads[d](self.depth_film[d](xf, dcf[:, d, :]))
+                            for d in range(self.n_depths)], dim=1)             # (B,3,112,112)
+            lst_map = self.head_lst(xf)                                         # (B,1,112,112)
+            n = LST_POOL * LST_N
+            lst = F.avg_pool2d(lst_map[:, :, :n, :n], LST_POOL)                 # (B,1,22,22)
+        return sm, lst, z
 
 
 # ── Soil encoder ─────────────────────────────────────────────────────────────
@@ -307,11 +392,10 @@ class SoilEncoder(nn.Module):
 
     Input : (B, 21, 74, 74) float32 — NaN-free (pre-filled by dataset)
     Output: (B,  4, 768)    float32 — 4 static soil tokens
-    ~211 K parameters
 
-    Architecture (from architecture.md §4d):
-      Block 1: DWConv(21, 3×3) → PWConv(21→32) → BN → GELU  # (B,32,74,74)
-      Block 2: DWConv(32, 3×3, s=2) → PWConv(32→64) → BN → GELU  # (B,64,37,37)
+    Architecture (from architecture.md §4d), GroupNorm in place of BatchNorm (§48):
+      Block 1: DWConv(21, 3×3) → PWConv(21→32) → GN → GELU  # (B,32,74,74)
+      Block 2: DWConv(32, 3×3, s=2) → PWConv(32→64) → GN → GELU  # (B,64,37,37)
       Pyramid: centre 1×1 / 3×3 / 7×7 / full 37×37 → mean → Linear(64→768)
     """
     IN_CH  = 21
@@ -324,13 +408,13 @@ class SoilEncoder(nn.Module):
         self.block1 = nn.Sequential(
             nn.Conv2d(self.IN_CH,  self.IN_CH,  3, padding=1, groups=self.IN_CH,  bias=False),
             nn.Conv2d(self.IN_CH,  self.MID_CH, 1, bias=False),
-            nn.BatchNorm2d(self.MID_CH),
+            _gn(self.MID_CH),
             nn.GELU(),
         )
         self.block2 = nn.Sequential(
             nn.Conv2d(self.MID_CH, self.MID_CH, 3, stride=2, padding=1, groups=self.MID_CH, bias=False),
             nn.Conv2d(self.MID_CH, c,           1, bias=False),
-            nn.BatchNorm2d(c),
+            _gn(c),
             nn.GELU(),
         )
         self.proj = nn.ModuleList([nn.Linear(c, d_model) for _ in range(4)])
@@ -341,7 +425,7 @@ class SoilEncoder(nn.Module):
         cy = cx = 18                                                 # centre of 37×37
         # Scales: input is 30 m/px, but block2 has stride 2 → cells here are 60 m, and each
         # cell has a 5-input-px receptive field. So a k×k window spans k×60 m and sees
-        # (5 + 2(k-1))×30 m of input. (Earlier comments assumed 30 m cells — 2× too small.)
+        # (5 + 2(k-1))×30 m of input.
         t0 = x[:, :, cy:cy+1,   cx:cx+1  ].mean(dim=(-2, -1))     # 1×1   win 60 m,  RF 150 m
         t1 = x[:, :, cy-1:cy+2, cx-1:cx+2].mean(dim=(-2, -1))     # 3×3   win 180 m, RF 270 m
         t2 = x[:, :, cy-3:cy+4, cx-3:cx+4].mean(dim=(-2, -1))     # 7×7   win 420 m, RF 510 m
@@ -353,601 +437,285 @@ class SoilEncoder(nn.Module):
 
 # ── Full model ───────────────────────────────────────────────────────────────
 
+N_ERA5 = 18                  # era5/values18: skt dropped, ssrd_sum/strd_sum added (§43.12)
+
+
 class SoilMoistureModel(nn.Module):
     """
     Args:
-        n_depths      : number of SM depth bins (3)
-        d_model       : token dimension (768)
-        n_heads       : attention heads (12)
-        n_layers      : T2 patch-decoder layers (6)
-        driver_layers : T1 weather-encoder depth (2). A DEPTH, not a repeat count — T1 runs
-                        once per sample whatever its depth (§35.19).
-        driver_mode   : "memory" (read-only cross-attended drivers, K/V cached once per
-                        sample) or "concat" (all 536 = 105 + 431 in one self-attention
-                        stack; T1 is not built at all in that mode).
-        head_bias_init: per-depth initial head bias in m3/m3, SM_DEPTHS order. train.py
-                        passes the train-set means from csvs/driver_stats.json.
-        use_input_norm: LayerNorm the frozen TerraMind features on the way in. OFF by
-                        default (§35.26) — it deletes token magnitude, 9.3% of S2's
-                        temporal variance rides there, and the frozen baseline does not
-                        do it. --input-norm turns it on as a deliberate ablation.
+        n_depths        : SM depth bins (3), SM_DEPTHS order
+        d_model         : token dimension (768)
+        n_heads         : attention heads (12)
+        n_layers        : trunk transformer layers (6)
+        head_bias_init  : per-depth initial SM head bias in m3/m3 — train.py passes
+                          driver_stats.json's `label_mean`
+        fine_skips      : "cnn" (§48, default) or "pool" (§46's masked pool + 1x1, the ablation)
+        modality_dropout: per-sample probability of zeroing S2 or S1 in the fine path (train)
+
+    forward(batch) -> dict
+        sm   (B, 3, 112, 112)  soil moisture map @ 20 m; station pixel (56, 56)
+        lst  (B, 1, 22, 22)    thermal pattern @ 100 m, units of sigma_ST, level meaningless
+        z    (B, 64, 112, 112) the shared map both heads read — train.py takes the gradient
+                               norms for lambda here, never at parameter leaves (§46.5 item 28)
     """
+
+    STATION_ROW = 56
+    STATION_COL = 56
 
     def __init__(
         self,
-        n_depths:      int   = 3,
-        d_model:       int   = 768,
-        n_heads:       int   = 12,
-        n_layers:      int   = 6,
-        drop_path_rate: float = 0.1,
-        use_cls_depth:  bool  = True,
-        driver_mode:    str   = "memory",
-        driver_layers:  int   = 2,
-        head_bias_init: list[float] | None = None,
-        use_input_norm: bool = False,
+        n_depths:         int   = 3,
+        d_model:          int   = 768,
+        n_heads:          int   = 12,
+        n_layers:         int   = 6,
+        drop_path_rate:   float = 0.1,
+        head_bias_init:   list[float] | None = None,
+        fine_skips:       str   = "cnn",
+        modality_dropout: float = 0.2,
     ):
         super().__init__()
-        if driver_mode not in ("memory", "concat"):
-            raise ValueError(f"driver_mode must be 'memory' or 'concat', got {driver_mode!r}")
-        self.d_model       = d_model
-        self.n_depths      = n_depths
-        self.use_cls_depth = use_cls_depth
-        self.driver_mode   = driver_mode
-        self.driver_layers = driver_layers
+        self.d_model  = d_model
+        self.n_depths = n_depths
+        # Kept as an attribute: train.py's inert-CLS diagnostic and checkpoints read it. The
+        # disconnected per-depth heads require the CLS rows, so it is not optional here.
+        self.use_cls_depth = True
 
-        # ── Encoders ──────────────────────────────────────────────────
+        # ── Driver encoders ───────────────────────────────────────────
         self.soil_encoder = SoilEncoder(d_model=d_model)
-
         self.era5_mlp = nn.Sequential(
-            nn.Linear(19, 256),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(256, d_model),
-        )
-
-        # SIF and TWSA MLP encoders (scalar → token)
+            nn.Linear(N_ERA5, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
         self.sif_mlp  = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
         self.twsa_mlp = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
 
-        # ── Modality type embeddings ───────────────────────────────────
-        # Soil tokens
+        # ── Annotations ───────────────────────────────────────────────
+        # Driver side (small, driver content is small)
         self.soil_modality_emb = nn.Embedding(1, d_model)
-        # Static (DEM=0, LULC=1)
-        self.static_modality_emb = nn.Embedding(2, d_model)
-        # Satellite history: 0 = S2, 1 = S1 ascending, 2 = S1 descending.
-        #
-        # THREE, not two. dataset.py merges the two S1 orbits into one date-sorted list, and
-        # RTC backscatter differs systematically between ascending and descending (incidence
-        # angle, look azimuth, local geometry) by an amount comparable to the moisture signal.
-        # With a single shared S1 tag an orbit switch is indistinguishable from a wetting
-        # event, so that variance gets attributed to soil moisture.
-        self.hist_modality_emb = nn.Embedding(3, d_model)
-        # ERA5 temporal tokens
         self.era5_modality_emb = nn.Embedding(1, d_model)
-        # Optional sparse modalities
         self.sif_modality_emb  = nn.Embedding(1, d_model)
         self.twsa_modality_emb = nn.Embedding(1, d_model)
+        self.rel_pos_emb       = nn.Embedding(365, d_model)   # DRIVERS: era5, sif, twsa
+        # History side (full scale, frozen TerraMind content is large)
+        self.static_modality_emb  = nn.Embedding(2, d_model)  # DEM=0, LULC=1
+        self.spatial_modality_emb = nn.Embedding(3, d_model)  # anchor: S2=0, S1 asc=1, desc=2
+        # Satellite history: 0 = S2, 1 = S1 ascending, 2 = S1 descending. THREE, not two:
+        # asc/desc backscatter differs by an amount comparable to the moisture signal, so a
+        # shared S1 tag makes an orbit switch indistinguishable from a wetting event.
+        self.hist_modality_emb = nn.Embedding(3, d_model)
+        self.scale_emb         = nn.Embedding(4, d_model)     # pyramid level
+        self.rel_pos_emb_hist  = nn.Embedding(365, d_model)   # HISTORY + anchor staleness
+        self.spatial_row_emb   = nn.Embedding(14, d_model)
+        self.spatial_col_emb   = nn.Embedding(14, d_model)
 
-        # Learned staleness embedding, SPLIT BY STREAM. Both are indexed by the dataset's
-        # `*_rel_pos` (364 = the target day), never by slot index — see _build_driver_tokens.
-        #
-        # Two tables rather than one shared table because the streams they annotate differ in
-        # magnitude by ~21x; see the EMB_INIT_STD comment. The extra table is 365 x 768 =
-        # 280 K parameters, ~0.4% of the model, and it removes the need for any normalisation
-        # of the frozen features.
-        self.rel_pos_emb      = nn.Embedding(365, d_model)   # DRIVERS: era5, sif, twsa
-        self.rel_pos_emb_hist = nn.Embedding(365, d_model)   # HISTORY: s2, s1
-
-        # Driver-side annotations: small, because driver content is small.
         for emb in (self.soil_modality_emb, self.era5_modality_emb,
                     self.sif_modality_emb, self.twsa_modality_emb, self.rel_pos_emb):
             nn.init.trunc_normal_(emb.weight, std=EMB_INIT_STD)
-        # History-side annotations: full scale, because frozen TerraMind tokens are large.
-        # This is what nn.Embedding's default gave before §35.24, and for THIS stream the
-        # default was already right — a ~21% annotation share against std-4.65 content.
-        for emb in (self.static_modality_emb, self.hist_modality_emb, self.rel_pos_emb_hist):
+        for emb in (self.static_modality_emb, self.spatial_modality_emb, self.hist_modality_emb,
+                    self.scale_emb, self.rel_pos_emb_hist,
+                    self.spatial_row_emb, self.spatial_col_emb):
             nn.init.trunc_normal_(emb.weight, std=HIST_EMB_INIT_STD)
 
-        # Day-of-year code, precomputed. It is a pure function of one integer in [0, 366], so
-        # recomputing (B·365, 768) sin/cos every forward was tens of MB of allocation and a
-        # transcendental pass per step for a 367-row lookup table. Registered as a buffer so
-        # it follows .to(device) and lands in the checkpoint's device placement, but with
-        # persistent=False so it does not bloat the state_dict or break older checkpoints.
-        self.register_buffer("doy_pe",
-                             circular_doy_pe(torch.arange(367), d_model),
+        # DOY code as a 367-row table (a pure function of one integer); persistent=False so it
+        # follows .to(device) without entering the state_dict.
+        self.register_buffer("doy_pe", circular_doy_pe(torch.arange(367), d_model),
                              persistent=False)
 
-        # Input normalisation for the FROZEN TerraMind features.
-        #
-        # These arrive at whatever scale the upstream encoder produced — and per §35.3's
-        # register audit that scale is large and dominated by a handful of register
-        # dimensions. They were being added straight to rel_pos_emb / hist_modality_emb and
-        # carried at raw magnitude through the residual stream into the FFN and the readout;
-        # only the attention *input* was ever normalised, by norm_self.
-        #
-        # This is required for EMB_INIT_STD to mean anything on the satellite tokens: a
-        # positional code at std 0.02 against an unnormalised frozen feature is invisible,
-        # which would trade the driver-token problem for the same problem on the history.
-        # One LayerNorm per stream, not one shared, so each sensor keeps its own gain.
-        # OFF BY DEFAULT (§35.26). These normalise the frozen TerraMind features on the way
-        # in. They were added in §35.24 to make a 0.02 staleness code visible against a
-        # std-4.65 token — but that only became necessary because §35.24 had just shrunk the
-        # history annotations to 0.02 in the first place. With rel_pos_emb_hist back at full
-        # scale the problem does not exist, and normalising costs two measured things:
-        #
-        #   - 9.3% of S2's TEMPORAL variance rides on token magnitude and does NOT collapse
-        #     when the registers are stripped (§35.25). LayerNorm deletes it. Wet soil is
-        #     darker in SWIR, so this is a plausible wetness carrier.
-        #   - parity with the frozen pooled baseline (model_unet.py), which does not do this.
-        #
-        # What it buys, and what is therefore given up by leaving it off: within-tile
-        # magnitude variation is 97% register sink (29.4% -> 2.7% stripped), so LayerNorm
-        # would clean that up. That is a SPATIAL nuisance, and step 1 has no decoder to
-        # render it. Revisit when one exists — a decoder broadcasts a token over a 16x16
-        # block, which is exactly where sink magnitude becomes visible artefacts.
-        #
-        # nn.Identity when off, not a skipped call, so no parameter can leave the autograd
-        # graph — train.py builds DDP without find_unused_parameters.
-        self.use_input_norm = use_input_norm
-        _mk_norm = (lambda: nn.LayerNorm(d_model)) if use_input_norm else (lambda: nn.Identity())
-        self.s2_norm   = _mk_norm()
-        self.s1_norm   = _mk_norm()
-        self.dem_norm  = _mk_norm()
-        self.lulc_norm = _mk_norm()
+        # ── Depth CLS tokens ──────────────────────────────────────────
+        # trunc_normal, not zero: with no positional code on these slots, zero-init makes all
+        # three depth queries identical, and attention is permutation-equivariant over them.
+        self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
+        nn.init.trunc_normal_(self.depth_tokens, std=0.02)
 
-        # (§35.25's log|token| scale feature lived here. It existed only to hand back the
-        # magnitude the input LayerNorm had just deleted; with that norm off by default the
-        # magnitude is simply present in the token and there is nothing to re-inject.)
-
-        # Stochastic-depth schedule, shared by T1 and T2.
+        # ── Temporal transformer ──────────────────────────────────────
         dpr = [drop_path_rate * i / max(n_layers - 1, 1) for i in range(n_layers)]
-
-        # ── Depth-specific CLS tokens (one per depth, attend across all tokens) ──
-        if use_cls_depth:
-            self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
-            # Zero-init would make all depth queries numerically identical, and no positional
-            # encoding is added to these slots — attention is permutation-equivariant over
-            # them, so depth_ctx[:,0,:] == depth_ctx[:,1,:] == ... exactly at step 0. Random
-            # init gives each depth a distinct query from the first step.
-            nn.init.trunc_normal_(self.depth_tokens, std=0.02)
-
-        # ── Two transformers (§35.18, text/patchwise_math.md) ──
-        #
-        #   T1 driver_enc   431 tokens, driver_layers deep, runs ONCE per sample
-        #   T2 patch_blocks 105 tokens, n_layers deep, runs K times (K folded into batch)
-        #
-        # STEP 1 has no decoder at all (§34.4): the prediction is the token head at 160 m.
-        if not use_cls_depth:
-            raise ValueError("use_cls_depth is required: the per-patch sequence carries "
-                             "the depth CLS tokens as a prefix.")
-
-        # T1 — the weather encoder. Depth here processes only tile-constant drivers, so it
-        # is deliberately shallower than T2 (§35.19: 6 would take the model to 100.4 M,
-        # 2.0x the 50.35 M baseline, confounding capacity with architecture).
-        #
-        # MEMORY MODE ONLY. T1's justification (§4.3 of the maths doc) is that it restores the
-        # 431x431 "weather reads weather" block, which the memory design would otherwise lose
-        # — concat already has that block inside its joint stack. Running T1 unconditionally
-        # gave concat the block twice, made its sequence 536 rather than the 537 the doc
-        # derives, and fed it a LayerNorm'd memory against raw patch tokens, biasing the very
-        # softmax-budget competition §7/§8 says the arm exists to measure.
-        #
-        # T1's stochastic-depth rates are scaled against T2's depth, not against T1's own.
-        # Normalising by (driver_layers - 1) put HALF of a 2-layer encoder at the maximum
-        # drop rate — ddpr = [0.0, 0.1] — which is a great deal of stochastic depth for two
-        # layers. Against n_layers the same schedule gives [0.0, 0.02].
-        ddpr = [drop_path_rate * i / max(n_layers - 1, 1) for i in range(driver_layers)]
-        self.driver_enc = nn.ModuleList([
+        self.transformer_layers = nn.ModuleList([
             DropPathTransformerLayer(
                 nn.TransformerEncoderLayer(
-                    d_model         = d_model,
-                    nhead           = n_heads,
-                    dim_feedforward = d_model * 4,
-                    dropout         = 0.1,
-                    batch_first     = True,
-                    norm_first      = True,
-                ),
-                drop_prob = ddpr[i],
-            )
-            for i in range(driver_layers)
-        ]) if driver_mode == "memory" else nn.ModuleList()
-
-        # UNCONDITIONAL, unlike driver_enc (§35.26). Making the norm memory-only tied a
-        # scale decision to an architecture decision: the two arms then differed both in
-        # whether the drivers were contextualised — the actual hypothesis — and in whether
-        # they were normalised, so a difference in result could not be attributed. T1 stays
-        # memory-only because §4.3's argument holds (concat already has the 431x431 block
-        # inside its joint stack, and running T1 there would give it that block twice).
-        self.driver_norm = nn.LayerNorm(d_model)
-
-        # T2 — the patch decoder. hist_start = n_depths depth-CLS rows + dem + lulc.
-        self.hist_start = n_depths + 2
-        self.patch_blocks = nn.ModuleList([
-            PatchwiseBlock(d_model, n_heads, driver_mode=driver_mode,
-                           dropout=0.1, drop_path=dpr[i], n_readout=n_depths,
-                           hist_start=self.hist_start)
+                    d_model=d_model, nhead=n_heads, dim_feedforward=d_model * 4,
+                    dropout=0.1, batch_first=True, norm_first=True),
+                drop_prob=dpr[i])
             for i in range(n_layers)
         ])
-        self.patch_norm = nn.LayerNorm(d_model)
+        self.transformer_norm = nn.LayerNorm(d_model)
 
-        # Independent depth heads, one per depth, reading that depth's OWN CLS row.
-        #
-        # NOT §18.4's star residual (`depth_d = base + offset_d`), which was a sample-efficiency
-        # bias rather than a data necessity (§35.8). And no FiLM either: an earlier draft ran
-        # head_i(FiLM1d_i(patch_cls, depth_ctx_i)), but FiLM earned its place in the U-Net by
-        # broadcasting one context vector across a (B,C,H,W) map — here both operands are
-        # (N, 768) vectors from the same transformer, so modulation buys nothing a direct
-        # readout does not already have. It also cost 3 x 1.18 M parameters and, being
-        # identity-initialised, started all three depths reading the identical vector.
-        #
-        # Each depth CLS is a full readout over all 105 tokens with its own learned query, so
-        # a separate patch CLS was strictly redundant with them and is gone too.
-        self.depth_heads = nn.ModuleList([nn.Linear(d_model, 1) for _ in range(n_depths)])
+        # ── Fine path + decoder ───────────────────────────────────────
+        self.fine_encoder = FineEncoder(fine_skips=fine_skips,
+                                        modality_dropout=modality_dropout)
+        self.decoder = UNetDecoder(in_ch=d_model, n_depths=n_depths, d_context=d_model,
+                                   head_bias_init=head_bias_init)
 
-        # Initialise each head's bias to that depth's TRAIN-SET mean soil moisture.
-        #
-        # Labels are raw m3/m3 (~0.25 typical), so a default bias of U(±0.036) starts every
-        # prediction ~0.2 away from the truth — far outside Huber's delta=0.05, which means
-        # the loss opens in its LINEAR regime with a constant +/-delta gradient carrying no
-        # information about how wrong the prediction is. The first epochs then go on walking
-        # three scalars to the data mean while the collapse diagnostics report on an
-        # attention pattern that has not started training yet.
-        if head_bias_init is not None:
-            if len(head_bias_init) != n_depths:
-                raise ValueError(f"head_bias_init needs {n_depths} values, "
-                                 f"got {len(head_bias_init)}")
-            with torch.no_grad():
-                for i, b in enumerate(head_bias_init):
-                    self.depth_heads[i].bias.fill_(float(b))
+    # ── Sequence ─────────────────────────────────────────────────────────────
 
-    # ── Internal helpers ─────────────────────────────────────────────────────
+    def _anchor_tokens(self, batch: dict, device) -> torch.Tensor:
+        """Target-day spatial tokens: the anchor's L12 (B, 196, 768) + 2-D PE + sensor + age.
 
-
-    def _build_driver_tokens(self, batch: dict):
+        The anchor is chosen by dataset.py's select_anchor_zarr: the most recent fully-clear
+        acquisition on or before day D, falling back to the most recent regardless.
         """
-        TRANSFORMER 1's input: the 431 tile-level driver tokens.
+        tok   = batch["anchor_l12"].to(device).float()                        # (B, 196, 768)
+        rows  = torch.arange(14, device=device)
+        pe    = (self.spatial_row_emb(rows).unsqueeze(1) +
+                 self.spatial_col_emb(rows).unsqueeze(0)).reshape(196, self.d_model)
+        orbit = batch["anchor_orbit"].to(device).long().clamp(0, 2)            # (B,)
+        age   = batch["anchor_rel_pos"].to(device).long().clamp(0, 364)        # (B,)
+        return (tok + pe.unsqueeze(0)
+                + self.spatial_modality_emb(orbit).unsqueeze(1)
+                + self.rel_pos_emb_hist(age).unsqueeze(1))
 
-            soil 4 + era5 365 + sif 50 + twsa 12 = 431          <- THE ACTUAL ORDER
-
-        Row order matters and this docstring used to state it wrong (era5 first). Nothing
-        crashes, because `mem_pad` is built in the same order as `toks` — but a §35.9
-        ablation arm that masks "the ERA5 block" as m[:, 0:365] would silently hit the four
-        soil tokens plus era5[0:361]. Slice by these offsets, not by the modality list order:
-
-            soil  [  0,   4)
-            era5  [  4, 369)
-            sif   [369, 419)
-            twsa  [419, 431)
-
-        Built the way the pooled baseline's `_build_sequence` did (it lives in model_unet.py
-        now, tag `baseline-unet-temporal`) — same MLPs, same DOY code, same rel_pos_emb, same
-        modality embeddings, same padding rules, so the patchwise arm stays comparable to it.
-        Two deliberate departures, both from §35.24: the DOY code is a precomputed table
-        rather than a per-forward sin/cos pass, and ERA5's rel_pos comes from the dataset's
-        real row dates instead of the slot index.
-
-        These tokens carry NO patch index: ERA5 is 9 km and the tile is 2.24 km, so one grid cell
-        covers the whole tile. That is what makes the K/V cache exact (text/patchwise_math.md §2.4).
-
-        Returns (m_raw (B, 431, 768), pad (B, 431) bool  True = ignore).
+    def _build_sequence(self, batch: dict):
         """
-        # From the PARAMETERS, not from the batch. Taking it from batch["era5"] made every
-        # subsequent .to(device) a no-op moving a tensor to where it already was — so a batch
-        # that arrived on CPU would not have been moved to the GPU, it would have failed deep
-        # inside era5_mlp on a CPU-vs-CUDA matmul. Now the .to() calls are real.
-        device = next(self.parameters()).device
-        era5   = batch["era5"].to(device)
-        B      = era5.shape[0]
-        toks, pads = [], []
+        [ CLS x3 | DEM x4 | LULC x4 | soil x4 | anchor x196 | S2 x MAX_S2*4 | S1 x MAX_S1*4 |
+          ERA5 x365 | SIF | TWSA ]
 
-        # ── soil (4) ───────────────────────────────────────────────────────
-        soil_tok = self.soil_encoder(batch["soil_patch"].to(device))          # (B, 4, 768)
-        soil_tok = soil_tok + self.soil_modality_emb(
-            torch.zeros(1, dtype=torch.long, device=device))
-        toks.append(soil_tok)
-        pads.append(torch.zeros(B, soil_tok.shape[1], device=device, dtype=torch.bool))
-
-        # ── ERA5 (365) ─────────────────────────────────────────────────────
-        era5_doys = batch["era5_doys"].to(device)
-        era5_tok  = self.era5_mlp(era5)
-        # rel_pos comes from the dataset's REAL row dates, never from the slot index.
-        # load_era5_rolling right-aligns a *compacted* window, so slot index equals staleness
-        # only when the 365-day window happens to have no interior missing day — and the
-        # admission guard used to be year-granular, which let a months-old row sit at slot
-        # 364 and be embedded as "today's weather". S2/S1/SIF/TWSA all carry a real
-        # per-observation rel_pos; ERA5 was the only modality that did not.
-        era5_rel = batch["era5_rel_pos"].to(device).reshape(-1).clamp(0, 364)
-        era5_tok  = (era5_tok
-                     + self.doy_pe[era5_doys.reshape(-1).clamp(0, 366)
-                                   ].reshape(B, 365, self.d_model)
-                     + self.rel_pos_emb(era5_rel).reshape(B, 365, self.d_model)
-                     + self.era5_modality_emb(torch.zeros(1, dtype=torch.long, device=device)))
-        toks.append(era5_tok)
-        pads.append((era5_doys == 0).to(device))
-
-        # ── SIF (50) and TWSA (12), both sparse ────────────────────────────
-        # No `if vals.shape[1] == 0: continue` guard. MAX_SIF/MAX_TWSA are module constants so
-        # the branch was unreachable, and taking it would have dropped sif_mlp/twsa_mlp out of
-        # the autograd graph entirely — a hard DDP error, since train.py builds DDP without
-        # find_unused_parameters. Empty slots are handled by the `valid` mask, as elsewhere.
-        for key, mlp, mod_emb in (
-            ("sif",  self.sif_mlp,  self.sif_modality_emb),
-            ("twsa", self.twsa_mlp, self.twsa_modality_emb),
-        ):
-            vals    = batch[key].to(device)
-            doys    = batch[f"{key}_doys"].to(device)
-            rel_pos = batch[f"{key}_rel_pos"].to(device)
-            valid   = batch[f"{key}_valid"].to(device)
-            tok = (mlp(vals.float())
-                   + self.doy_pe[doys.reshape(-1).clamp(0, 366)
-                                 ].reshape(B, -1, self.d_model)
-                   + self.rel_pos_emb(rel_pos.reshape(-1).clamp(0, 364)
-                                      ).reshape(B, -1, self.d_model)
-                   + mod_emb(torch.zeros(1, dtype=torch.long, device=device)))
-            toks.append(tok)
-            pads.append(~valid)
-
-        return torch.cat(toks, dim=1), torch.cat(pads, dim=1)
-
-    def _build_patch_seq(self, batch: dict):
-        """
-        TRANSFORMER 2's input, per patch k:
-
-            [ depth_CLS x3 | dem_k | lulc_k | hist_k x100 ]   = 105 tokens
-
-        The depth CLS tokens ARE the readouts — each attends with its own query and its output
-        is that depth's prediction. There is no separate patch CLS.
-
-        Statics enter as a PREFIX, not appended to the summary, so temporal attention can
-        condition drydown on cover and terrain (§34.3). History carries staleness and modality
-        only — no scale_emb (it indexed pyramid levels, meaningless un-pooled) and no absolute
-        DOY (ERA5 is the seasonal anchor; the driver tokens carry the season, the history
-        carries only how long ago it was observed).
-
-        Returns (x (B, K, 105, 768), pad (B, K, 105) bool  True = ignore).
+        Returns (seq (B, T, d), pad (B, T) True = ignore, spatial_start int).
         """
         device = next(self.parameters()).device
         d      = self.d_model
-        # Frozen TerraMind features are LayerNorm'd on the way in — see the tm-norm comment
-        # in __init__. Without it the raw register-dominated magnitude flows through the
-        # residual stream to the FFN and the readout, and swamps the positional codes.
-        dem    = self.dem_norm(batch["dem_tok"].to(device).float())       # (B, K, 768)
-        B, K   = dem.shape[:2]
+        era5   = batch["era5"].to(device).float()
+        B      = era5.shape[0]
+        toks, pads = [], []
 
-        blocks, pads = [], []
+        def _nopad(n):
+            return torch.zeros(B, n, device=device, dtype=torch.bool)
 
-        # depth CLS prefix — (n_depths, d) shared across patches
-        blocks.append(self.depth_tokens.view(1, 1, self.n_depths, d).expand(B, K, -1, -1))
-        pads.append(torch.zeros(B, K, self.n_depths, device=device, dtype=torch.bool))
+        # depth CLS prefix
+        toks.append(self.depth_tokens.unsqueeze(0).expand(B, -1, -1))
+        pads.append(_nopad(self.n_depths))
 
-        # per-patch statics.
-        #
-        # dem_valid / lulc_valid come from the nodata masks that the dataset already computed
-        # and used to drop on the floor, leaving model.py to hardcode "statics are always
-        # valid". A tile with DEM void-fill, or a station with no DEM in the zarr at all
-        # (which the dataset padded with an all-zero token), was feeding a fabricated
-        # elevation embedding into the PREFIX of every patch sequence — and terrain is the
-        # §34.3 mechanism the architecture rests on.
-        static_w = self.static_modality_emb.weight                          # (2, d)
-        blocks.append((dem + static_w[0]).unsqueeze(2))                     # (B, K, 1, d)
-        blocks.append((self.lulc_norm(batch["lulc_tok"].to(device).float())
-                       + static_w[1]).unsqueeze(2))
-        pads.append(torch.stack([
-            ~batch["dem_valid"].to(device).bool(),
-            ~batch["lulc_valid"].to(device).bool(),
-        ], dim=-1))                                                         # (B, K, 2)
+        scale_e  = self.scale_emb.weight                                       # (4, d)
+        static_w = self.static_modality_emb.weight                             # (2, d)
 
-        # per-patch history: S2 then S1
-        for hist_idx, (key, tok_norm) in enumerate((("s2", self.s2_norm),
-                                                    ("s1", self.s1_norm))):
-            h = batch[f"{key}_hist"].to(device).float()                     # (B, T, K, 768)
-            # tok_norm is nn.Identity by default (§35.26): the frozen token keeps its own
-            # magnitude, which carries 9.3% of S2's temporal variance.
-            h = tok_norm(h)
-            h = h.permute(0, 2, 1, 3)                                       # (B, K, T, 768)
-            # HISTORY staleness table, initialised at full scale against std-4.65 content —
-            # not the driver table, which is 50x smaller for a stream 21x smaller.
-            rel = self.rel_pos_emb_hist(
-                batch[f"{key}_rel_pos"].to(device).reshape(-1).clamp(0, 364)
-            ).reshape(B, 1, -1, d)                                          # (B, 1, T, d)
+        # statics: DEM and LULC pyramids (pooled frozen TerraMind L12), then soil
+        for i, key in enumerate(("dem_pyr", "lulc_pyr")):
+            toks.append(batch[key].to(device).float() + scale_e + static_w[i])
+            pads.append(_nopad(4))
+        soil = self.soil_encoder(batch["soil_patch"].to(device).float())
+        toks.append(soil + self.soil_modality_emb.weight)
+        pads.append(_nopad(4))
+
+        # anchor spatial tokens
+        spatial_start = sum(t.shape[1] for t in toks)
+        toks.append(self._anchor_tokens(batch, device))
+        pads.append(_nopad(196))
+
+        # satellite history: pooled pyramids + staleness + level + sensor/orbit
+        for key in ("s2", "s1"):
+            pyr   = batch[f"{key}_pyr"].to(device).float()                    # (B, T, 4, d)
+            T     = pyr.shape[1]
+            rel   = self.rel_pos_emb_hist(
+                batch[f"{key}_rel_pos"].to(device).long().reshape(-1).clamp(0, 364)
+            ).reshape(B, T, 1, d)
             if key == "s2":
-                mod = self.hist_modality_emb(
-                    torch.zeros(1, dtype=torch.long, device=device)).view(1, 1, 1, d)
+                mod = self.hist_modality_emb.weight[0].view(1, 1, 1, d)
             else:
-                # 1 = S1 ascending, 2 = S1 descending; see the hist_modality_emb comment.
-                orb = batch["s1_orbit"].to(device).long().clamp(0, 1)       # (B, T)
-                mod = self.hist_modality_emb(orb + 1).unsqueeze(1)          # (B, 1, T, d)
-            blocks.append(h + rel + mod)
-            # dataset.py's _finalise_history already ANDs the token mask with (doys > 0), so
-            # this covers padded slots, NaN-skipped acquisitions, and — since §35.24 made the
-            # cloud mask fail closed — acquisitions with no cloud-mask entry alike.
-            pads.append(~batch[f"{key}_hist_valid"].to(device).permute(0, 2, 1))
+                orb = batch["s1_orbit"].to(device).long().clamp(0, 1)          # (B, T)
+                mod = self.hist_modality_emb(orb + 1).unsqueeze(2)             # (B, T, 1, d)
+            toks.append((pyr + rel + scale_e.view(1, 1, 4, d) + mod).reshape(B, T * 4, d))
+            valid = batch[f"{key}_valid"].to(device).bool()                    # (B, T)
+            pads.append((~valid).unsqueeze(-1).expand(-1, -1, 4).reshape(B, T * 4))
 
-        return torch.cat(blocks, dim=2), torch.cat(pads, dim=2)
+        # ERA5: staleness from the dataset's REAL row dates, never the slot index
+        era5_doys = batch["era5_doys"].to(device).long()
+        era5_rel  = batch["era5_rel_pos"].to(device).long().reshape(-1).clamp(0, 364)
+        toks.append(self.era5_mlp(era5)
+                    + self.doy_pe[era5_doys.reshape(-1).clamp(0, 366)].reshape(B, -1, d)
+                    + self.rel_pos_emb(era5_rel).reshape(B, -1, d)
+                    + self.era5_modality_emb.weight)
+        pads.append(era5_doys == 0)
 
-    def _forward_patchwise(self, batch: dict) -> torch.Tensor:
-        """Returns (B, K, n_depths) — one soil-moisture value per depth per patch, at 160 m."""
-        # ── T1: encode the weather ONCE, then project the cache ONCE ───────
-        m, mem_pad = self._build_driver_tokens(batch)
-        # T1 runs in memory mode only — see the driver_enc comment in __init__. In concat mode
-        # the raw driver tokens join the joint self-attention stack, which is what §3 derives.
-        for layer in self.driver_enc:
-            m = layer(m, src_key_padding_mask=mem_pad)
-        m = self.driver_norm(m)                                             # (B, 431, 768)
+        # SIF and TWSA, both sparse; empty slots handled by the valid mask, never by a branch
+        # that would drop an MLP out of the graph (DDP runs without find_unused_parameters).
+        for key, mlp, mod_emb in (("sif",  self.sif_mlp,  self.sif_modality_emb),
+                                  ("twsa", self.twsa_mlp, self.twsa_modality_emb)):
+            vals = batch[key].to(device).float()
+            doys = batch[f"{key}_doys"].to(device).long()
+            rel  = batch[f"{key}_rel_pos"].to(device).long()
+            toks.append(mlp(vals)
+                        + self.doy_pe[doys.reshape(-1).clamp(0, 366)].reshape(B, -1, d)
+                        + self.rel_pos_emb(rel.reshape(-1).clamp(0, 364)).reshape(B, -1, d)
+                        + mod_emb.weight)
+            pads.append(~batch[f"{key}_valid"].to(device).bool())
 
-        # k_proj/v_proj live on the blocks but are called HERE, outside the patch loop. This is
-        # the entire cost argument: 2*431*d^2 once per sample instead of once per patch.
-        kv = ([(blk.k_proj(m), blk.v_proj(m)) for blk in self.patch_blocks]
-              if self.driver_mode == "memory" else None)
-
-        # ── T2: run every patch against that cache ─────────────────────────
-        x, pad = self._build_patch_seq(batch)                               # (B,K,105,d)
-        B, K, L, d = x.shape
-        # One past the last HISTORY column, captured BEFORE concat mode appends the 431 driver
-        # tokens. The entropy detector must span the same columns in both driver modes or the
-        # two arms' numbers cannot be compared — which is the only reason the arms exist.
-        hist_end = L
-        x   = x.reshape(B * K, L, d)
-        pad = pad.reshape(B * K, L)
-
-        if self.driver_mode == "concat":
-            # No cache and no cross-attention: the memory joins the self-attention sequence, so
-            # every patch carries its own copy of all 431 driver tokens (T = 105 + 431 = 536).
-            mem = m.unsqueeze(1).expand(B, K, -1, -1).reshape(B * K, -1, d)
-            x   = torch.cat([x, mem], dim=1)
-            pad = torch.cat([pad, mem_pad.unsqueeze(1).expand(B, K, -1).reshape(B * K, -1)], 1)
-
-        ent = []
-        for i, blk in enumerate(self.patch_blocks):
-            kc, vc = kv[i] if kv is not None else (None, None)
-            x = blk(x, kc, vc, mem_pad, pad, B, K, hist_end)
-            if blk.collect_entropy and blk.last_entropy is not None:
-                ent.append(blk.last_entropy)
-        # Diagnostic stash, read by train.py. §35.20 made this the SOLE detector for
-        # register-driven attention collapse, so it is emitted as SUMS and a COUNT per layer —
-        # (n_layers, 3) = [sum_entropy_nats, sum_ratio, count] — for the caller to accumulate
-        # over the whole val epoch and all_reduce(SUM). It used to be overwritten on every
-        # forward, so what actually reached W&B was one batch on rank 0.
-        #
-        # `ent` collects only blocks that were ARMED, so arming a subset would return a
-        # shorter tensor that train.py's per-layer logging would mislabel — layer 4's number
-        # reported under layer 0's name, silently. Arm all or arm none.
-        if ent and len(ent) != len(self.patch_blocks):
-            raise RuntimeError(
-                f"collect_entropy was set on {len(ent)} of {len(self.patch_blocks)} patch "
-                f"blocks. The (n_layers, 3) diagnostic contract requires all or none — a "
-                f"partial arm produces a tensor whose rows do not correspond to layer index."
-            )
-        self._last_attn_entropy = torch.stack(ent) if ent else None
-
-        x = self.patch_norm(x)
-        # The depth CLS rows are the first n_depths tokens in BOTH driver modes (concat appends
-        # the memory after the patch tokens, so the prefix is untouched).
-        depth_ctx = x[:, :self.n_depths, :]                       # (B*K, n_depths, d)
-
-        # Collapse diagnostic for the depth heads, as a SUM plus its count so train.py can
-        # accumulate across the epoch. The OUTPUT cosine is the one that matters: the input
-        # depth_tokens can stay near-orthogonal (they are excluded from weight decay, so they
-        # will) while these three collapse to the same vector, which is exactly use_cls_depth
-        # being inert. The producer was lost with the U-Net strip and train.py has been
-        # reading a getattr default ever since, logging nothing.
-        self._last_depth_ctx   = depth_ctx.detach().float().sum(0)          # (n_depths, d)
-        self._last_depth_ctx_n = depth_ctx.shape[0]
-
-        # Readout in fp32, outside autocast. Under bf16 the head's output carries ~0.2%
-        # relative precision — ~1e-3 absolute at SM = 0.5 — while epoch-to-epoch checkpoint
-        # decisions are made on val differences of order 1e-5. Three Linear(768, 1) layers
-        # cost nothing to run unautocast, and it takes the quantisation out of every number
-        # that ends up in a table.
-        with torch.autocast(device_type=depth_ctx.device.type, enabled=False):
-            dc  = depth_ctx.float()
-            out = torch.cat([
-                self.depth_heads[i](dc[:, i, :])
-                for i in range(self.n_depths)
-            ], dim=-1)                                            # (B*K, n_depths)
-        return out.reshape(B, K, self.n_depths)
+        return torch.cat(toks, 1), torch.cat(pads, 1), spatial_start
 
     # ── Forward ──────────────────────────────────────────────────────────────
 
-    def forward(self, batch: dict) -> torch.Tensor:
-        """Returns mu (B, K, n_depths) at 160 m. K=1 in training, 196 for a full map."""
-        return self._forward_patchwise(batch)
+    def forward(self, batch: dict) -> dict:
+        device = next(self.parameters()).device
+        seq, pad, sp = self._build_sequence(batch)
+        B = seq.shape[0]
+
+        x = seq
+        for layer in self.transformer_layers:
+            x = layer(x, src_key_padding_mask=pad)
+        ctx = self.transformer_norm(x)                                         # (B, T, d)
+
+        depth_ctx = ctx[:, :self.n_depths, :]                                  # (B, 3, d)
+        # Collapse diagnostic, as a SUM plus count for epoch accumulation: the OUTPUT cosine
+        # is what matters — the CLS parameters can stay near-orthogonal while six layers drive
+        # all three rows to the same content, which is use_cls_depth being inert.
+        self._last_depth_ctx   = depth_ctx.detach().float().sum(0)            # (3, d)
+        self._last_depth_ctx_n = B
+
+        bottleneck = ctx[:, sp:sp + 196, :].reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
+
+        # FiLM context: mean of valid rows, excluding the CLS prefix and the spatial block
+        keep = (~pad).clone()
+        keep[:, :self.n_depths] = False
+        keep[:, sp:sp + 196]    = False
+        kf      = keep.unsqueeze(-1).to(ctx.dtype)
+        context = (ctx * kf).sum(1) / kf.sum(1).clamp_min(1.0)                # (B, d)
+
+        skips = self.fine_encoder(batch["fine"].to(device), batch["lulc"].to(device))
+        sm, lst, z = self.decoder(bottleneck, skips, context, depth_ctx)
+        return {"sm": sm, "lst": lst, "z": z}
 
 
-# ── Loss ─────────────────────────────────────────────────────────────────────
+# ── Losses ───────────────────────────────────────────────────────────────────
 
 def masked_huber_loss(
-    pred_k:      torch.Tensor,   # (B, K, n_depths) — the model output; K=1 in training
-    label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
-    delta:       float = 0.05,
-    per_depth:   bool  = False,
+    sm_map:        torch.Tensor,   # (B, n_depths, 112, 112)
+    label:         torch.Tensor,   # (B, n_depths) — NaN where depth absent
+    station_row:   int   = SoilMoistureModel.STATION_ROW,
+    station_col:   int   = SoilMoistureModel.STATION_COL,
+    delta:         float = 0.05,
+    per_depth:     bool  = False,
     depth_weights: torch.Tensor | None = None,
     return_breakdown: bool = False,
 ):
-    """Huber loss on the supervised patch, ignoring depths with no observation.
+    """Huber loss at the station pixel, ignoring depths with no observation.
 
-    There is no station-pixel index. The U-Net emitted a 224x224 map and something had to pick
-    the supervised pixel; this model emits (B, K, n_depths) where the value IS the prediction,
-    and the dataset already selected patch 105 (§35.20).
+    return_breakdown=True additionally returns (depth_sum, depth_cnt), both (n_depths,)
+    float32, detached, on-device — raw SUMS for the caller to accumulate over the epoch and
+    all_reduce(SUM) across ranks, which is only correct on sums. The scalar `loss` is
+    byte-identical with and without the flag.
 
-    return_breakdown=True additionally returns (depth_sum, depth_cnt), both
-    (n_depths,) float32, detached, on-device:
-        depth_sum[d] = Σ Huber over samples in this batch that observed depth d
-        depth_cnt[d] = number of those samples
-    Raw SUMS, not means — the caller accumulates them over the epoch and
-    all_reduce(SUM)s across ranks, which is only correct on sums.
-
-    The returned scalar `loss` is byte-identical with and without the flag, so
-    train/val loss stays comparable across runs.
-
-    `depth_weights` (n_depths,) sets the fixed per-depth weight used when per_depth=True —
-    inverse per-depth frequency over the training set. None means uniform, which reduces
-    exactly to the pooled branch. It must NOT be derived from the batch; see the comment
-    on the per_depth branch for why.
-
-    NOTE: mean(depth_sum / depth_cnt) still does not equal the scalar loss — the breakdown
-    is sample-weighted over the epoch while the scalar is w_d-weighted. Deep coverage is
-    sparse (43 val stations at 30-100 cm vs 74 at 0-10), which is what w_d compensates for.
-    Two different quantities on purpose; see training_runbook.md §19.3.
+    per_depth=True weights each valid (sample, depth) pair by a FIXED w_d supplied by the
+    caller (inverse per-depth frequency over the training set), never by batch composition:
+    a batch-mean-per-depth form hands each deep sample 1/n_d(batch) of the gradient, which
+    is not a function of the dataset. w_d = 1 reduces exactly to the pooled branch.
+    See training_runbook.md §19.3 for why the breakdown and the scalar differ on purpose.
     """
-    if pred_k.ndim != 3:
-        raise ValueError(f"expected (B, K, n_depths), got {tuple(pred_k.shape)}")
-    if pred_k.shape[1] != 1:
-        raise ValueError(
-            f"training loss expects K=1, got K={pred_k.shape[1]}. token_sel='all' is for "
-            "inference only; supervising several patches needs multi-station labels, which "
-            "dataset.py does not emit yet (§35.19)."
-        )
-    pred = pred_k[:, 0, :]                                             # (B, n_depths)
+    pred = sm_map[:, :, station_row, station_col]                      # (B, n_depths)
 
     if return_breakdown:
-        # Branch-free so no data-dependent control flow is introduced: the
-        # `if mask_d.any():` pattern below would cost one GPU sync per depth
-        # per batch. nan_to_num keeps NaN out of the autograd-free arithmetic;
-        # the `valid` mask zeroes those entries out anyway.
-        valid     = ~torch.isnan(label)                                # (B, D) bool
+        valid     = ~torch.isnan(label)
         lab       = torch.nan_to_num(label, nan=0.0)
         elem      = F.huber_loss(pred.detach(), lab, delta=delta, reduction="none")
-        # torch.where, NOT `elem * valid`: nan * False is nan, not 0.  `pred` is taken
-        # for ALL depths while the scalar loss only ever sees pred[mask], so a non-finite
-        # prediction at a depth with no label cannot affect training — but it would make
-        # depth_sum nan, survive all_reduce(SUM) to every rank, and silently turn the
-        # per-depth diagnostic into nan while train_loss still looked healthy.  That is
-        # precisely the signal this breakdown exists to provide.
-        depth_sum = torch.where(valid, elem, elem.new_zeros(())).sum(0).float()   # (D,)
-        depth_cnt = valid.sum(0).float()                               # (D,)
+        # torch.where, NOT `elem * valid`: nan * False is nan, and a non-finite prediction at
+        # an unlabelled depth would otherwise turn the per-depth diagnostic nan on every rank.
+        depth_sum = torch.where(valid, elem, elem.new_zeros(())).sum(0).float()
+        depth_cnt = valid.sum(0).float()
 
+    mask = ~torch.isnan(label)
     if per_depth:
-        # Equal gradient weight per depth, WITHOUT letting batch composition set it.
-        #
-        # The old form was mean-over-depths of (mean over that batch's valid samples), which
-        # gives every sample a weight of 1/n_d(batch): a batch holding 120 surface labels and
-        # 2 at 30-100 cm handed each deep sample 20x the per-sample gradient of a surface
-        # one, and 40x if it held only 1. The effective epoch objective was therefore an
-        # E_batch[1/n_d]-weighted thing that is not a fixed function of the dataset and does
-        # not survive a change of batch size.
-        #
-        # Here each (sample, depth) pair carries a FIXED weight w_d supplied by the caller —
-        # inverse per-depth frequency over the whole training set — and the loss is the
-        # weighted mean over valid pairs. Nothing depends on how the batch was drawn.
-        # w_d = 1 reduces exactly to the pooled branch below.
-        mask = ~torch.isnan(label)                                     # (B, D)
-        if depth_weights is None:
-            w = torch.ones_like(label)
-        else:
-            w = depth_weights.to(device=label.device, dtype=label.dtype).expand_as(label)
-        wm   = torch.where(mask, w, torch.zeros_like(w))               # (B, D)
-        elem = F.huber_loss(pred, torch.nan_to_num(label, nan=0.0),
-                            delta=delta, reduction="none")             # (B, D)
+        w = (torch.ones_like(label) if depth_weights is None else
+             depth_weights.to(device=label.device, dtype=label.dtype).expand_as(label))
+        wm    = torch.where(mask, w, torch.zeros_like(w))
+        elem  = F.huber_loss(pred, torch.nan_to_num(label, nan=0.0), delta=delta,
+                             reduction="none")
         denom = wm.sum()
-        # `elem * wm` is safe where `wm == 0`: label was nan_to_num'd, so elem is finite there
-        # and the zero weight removes it from both the numerator and the denominator — a
-        # depth with no label in this batch contributes no gradient to its head.
-        loss = ((elem * wm).sum() / denom) if denom > 0 else pred.sum() * 0.0
+        loss  = ((elem * wm).sum() / denom) if denom > 0 else pred.sum() * 0.0
     else:
-        # Default: pool all valid (batch × depth) pairs into one mean — preserves
-        # backward compatibility with baseline runs.
-        mask = ~torch.isnan(label)
         loss = (F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
                 if mask.any() else pred.sum() * 0.0)
 
@@ -955,3 +723,44 @@ def masked_huber_loss(
         return loss, depth_sum, depth_cnt
     return loss
 
+
+def lst_pattern_loss(
+    lst_pred:  torch.Tensor,   # (B, 1, 22, 22) model output, units of sigma_ST
+    lst_obs:   torch.Tensor,   # (B, 22, 22) Kelvin, NaN where no retrieval / no overpass
+    sigma_st:  float,
+    delta:     float = 1.0,
+    min_cells: int   = 2,
+    return_count: bool = False,
+):
+    """Pattern-only thermal loss (§46.5 item 27, §48.9 item 4, alpha = 0).
+
+    Both fields are centred over the SAME valid cells, so any tile-level error cancels
+    exactly and the model cannot score by knowing "hot day". The observed anomaly is divided
+    by sigma_ST (lst_stats.json, 2.7066 K) and the head predicts in those units, so delta=1.0
+    means +/- 1 sigma_ST: quadratic within normal within-tile spread, linear beyond (§49.5).
+
+    A sample on a non-overpass day has no valid cell and contributes nothing — the sample-level
+    mask falls out of the cell mask. Samples with fewer than `min_cells` valid cells are
+    dropped (a single cell has no pattern), matching compute_lst_stats.py.
+
+    Returns the mean over all valid cells in the batch (0-graph-connected if none), and with
+    return_count=True also the number of cells as a detached float.
+    """
+    pred  = lst_pred[:, 0].float()                                     # (B, 22, 22)
+    valid = torch.isfinite(lst_obs)
+    n     = valid.flatten(1).sum(1)                                    # (B,)
+    valid = valid & (n >= min_cells).view(-1, 1, 1)
+    vf    = valid.to(pred.dtype)
+    cnt   = vf.flatten(1).sum(1).clamp_min(1.0).view(-1, 1, 1)
+
+    obs   = torch.nan_to_num(lst_obs.float(), nan=0.0) / sigma_st
+    obs_c = obs  - (obs  * vf).flatten(1).sum(1).view(-1, 1, 1) / cnt
+    prd_c = pred - (pred * vf).flatten(1).sum(1).view(-1, 1, 1) / cnt
+
+    elem  = F.huber_loss(prd_c, obs_c, delta=delta, reduction="none")
+    total = vf.sum()
+    loss  = (torch.where(valid, elem, elem.new_zeros(())).sum() / total
+             if total > 0 else pred.sum() * 0.0)
+    if return_count:
+        return loss, total.detach()
+    return loss

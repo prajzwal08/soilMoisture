@@ -1,30 +1,39 @@
 """
 SoilMoistureDataset
 ====================
-Loads pre-computed TerraMind features, ERA5-Land meteo, and ISMN labels
-for one station × year × day-of-year sample.
+One sample = one (station, year, day-of-year) triple, for the §48 model: temporal trunk over
+pooled TerraMind pyramids + the anchor's L12, a light CNN on the most recent raw imagery, and
+two targets — ISMN soil moisture at the station pixel and the Landsat ST pattern at 100 m.
 
-All data is read from Zarr stores on scratch:
-  {ZARR_ROOT}/{sm_only|sm_and_flux|flux_only}/{station}/
-      s2/             dates, l3, l6, l9, l12, token_mask, cm
-      s1_asc/         dates, l3, l6, l9, l12, token_mask
-      s1_desc/        dates, l3, l6, l9, l12, token_mask  (if available)
-      dem/            l12
-      dem_token_mask/
-      lulc/           l12
-      lulc_token_mask/
-      era5/           values, dates
-      sif/            values, dates
-      twsa/           values, dates
-      labels/         soil_moisture, depth, time, qc
-      soil/           soil_patch (21, 74, 74)
+This file REPLACED the patchwise loader (§34/§35, tags `pw_stage2a-ep9`, `pre-s48-build`).
+Everything below the sample path — labels, QC, soil, ERA5/SIF/TWSA, the audit counters — is
+the canonical code unchanged; see §35.24 for why each of those fails closed.
 
-§35.24 audit. Everything this loader does about MISSING data now fails closed: an
-acquisition with no cloud mask is invalid rather than clear, an orbit with no token_mask
-contributes nothing rather than everything, a station with no QC source is dropped rather
-than assumed observed, and a missing driver_stats.json raises rather than quietly leaving
-SIF/TWSA/soil unnormalised. Each of those removes data silently by construction, so each is
-counted and printed at the end of __init__.
+FOUR stores, all read-only here:
+
+  ZARR_ROOT   token store (scratch)      era5/values18, sif, twsa, labels, soil
+  CACHE_ROOT  §48 cache (scratch)        built once by prepare_s48_cache.py from ZARR_ROOT:
+              {cat}/{station}/pyr.npz        per-acquisition pyramids (N,4,768), valid-token
+                                             counts, date ints; DEM/LULC pyramids
+              {cat}/{station}/{orbit}_l12.npy  (N,196,768) fp16 — the anchor, one row per read
+              {cat}/{station}/s2_cm.npy      (N_s2,224,224) u1 pixel cloud classes aligned to
+                                             s2 dates, 255 where no mask exists (fail closed)
+              The token store chunks l12 32 acquisitions at a time and cm/masks as ONE chunk
+              per station, so reading either per sample decompresses ~9 MB / ~5 MB to use
+              0.3 MB. The cache exists for that reason only; it holds no new information.
+  RAW_ROOT    raw imagery (scratch)      {station}.zarr  s2/data (N,12,224,224) i2 DN,
+                                         s1_{asc,desc}/data (N,2,224,224) f2 dB, dem/data,
+                                         lulc/data (Y,224,224) u1 TerraMind indices
+  LST_ROOT    Landsat target (work3)     {cat}/{station}/LANDSAT_ST/{station}_lst22.npz,
+                                         built by consolidate_landsat_st.py
+
+"Most recent" always means ON OR BEFORE day D (§48.9 item 2). The Landsat scene on day D is a
+TARGET, never an input (§48.9 item 3).
+
+§35.24 audit. Everything this loader does about MISSING data fails closed: an acquisition with
+no cloud mask is invalid rather than clear, an orbit with no token_mask contributes nothing,
+a station with no QC source is dropped, and a missing driver_stats.json raises. Each of those
+removes data silently by construction, so each is counted and printed at the end of __init__.
 """
 
 import json
@@ -44,16 +53,16 @@ from torch.utils.data import Dataset
 
 from splits_config import TRAIN_YEARS, category_of, station_dir_name
 
-ZARR_ROOT = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+ZARR_ROOT  = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+CACHE_ROOT = Path("/gpfs/scratch1/shared/pkhanal/s48cache")
+RAW_ROOT   = Path("/gpfs/scratch1/shared/pkhanal/satellite_zarr")
+LST_ROOT   = Path("/gpfs/work3/0/prjs1968/data")
+FINE_STATS_PATH = Path(__file__).resolve().parent / "csvs" / "fine_stats.json"
 
-# torch.from_numpy on a read-only /dev/shm memmap triggers a non-writable warning;
-# the tensor is immediately copied into a pre-allocated output buffer so mutation is safe.
+# torch.from_numpy on a read-only memmap triggers a non-writable warning; every such tensor
+# is copied into a fresh buffer before it leaves __getitem__.
 warnings.filterwarnings("ignore", message=".*not writable.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*non-writeable.*", category=UserWarning)
-
-# Set DISABLE_L12_CACHE=1 to skip eager L12 RAM caching and force the lazy
-# zarr chunk-read fallback in load_s2_rolling_zarr / load_s1_rolling_zarr.
-DISABLE_L12_CACHE = os.environ.get("DISABLE_L12_CACHE", "") == "1"
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -81,19 +90,21 @@ ERA5_ARRAY = "era5/values18"
 
 SM_DEPTHS = ["0-10", "10-30", "30-100"]  # n_depths = 3
 
-S2_BAND_INDICES = list(range(12))  # all 12 S2L2A bands (no B10)
+S2_BAND_INDICES = list(range(12))  # all 12 S2L2A bands (no B10); precompute_terramind.py reads it
 
 PREC_IDX = ERA5_VARS.index("tp_sum")  # index computed once at import, not per sample
 
-# Token grid is 14x14 over a 224px tile, so patch k covers pixels [16k, 16k+16).
-# Every tile is station-centred at (112,112), hence the supervised token is
-# always index 105 = (112//16)*14 + (112//16). §35.8.
-TOKEN_GRID   = 14
-N_TOKENS     = TOKEN_GRID * TOKEN_GRID          # 196
+# Token grid is 14x14 over a 224px tile, so patch k covers pixels [16k, 16k+16). Kept for the
+# analysis scripts that import them; the §48 model reads the whole grid.
+TOKEN_GRID    = 14
+N_TOKENS      = TOKEN_GRID * TOKEN_GRID          # 196
 STATION_TOKEN = (112 // 16) * TOKEN_GRID + (112 // 16)   # 105
 
 MAX_S2 = 60
 MAX_S1 = 40
+
+HIST_ORBITS = ("s2", "s1_asc", "s1_desc")
+ANCHOR_ORBIT_ID = {"s2": 0, "s1_asc": 1, "s1_desc": 2}
 
 # ── Cloud-mask class table ───────────────────────────────────────────────────
 # cm/masks is written by cloud_masking_inference.py, which runs SEnSeIv2-SegFormerB2 (the
@@ -109,38 +120,34 @@ MAX_S1 = 40
 #
 # Writing this down because the obvious misreading is expensive. Under Sentinel-2 SCL the
 # same integers mean something almost opposite -- 4 = vegetation and 5 = not-vegetated, i.e.
-# the two classes you most want to KEEP. A reviewer who assumes SCL reads the line below as
-# "throw away all the good pixels" and either 'fixes' it or, worse, copies the pattern into
-# a new file. The list is correct for THIS product.
+# the two classes you most want to KEEP. The list is correct for THIS product.
 CM_BAD_CLASSES = [3, 4, 5, 255]
 
 # Fraction of a 16x16 = 256-pixel patch that may be bad before the token is rejected.
-# 0.01 of 256 is 2.56 px, so this admits at most TWO bad pixels: 3 px = 1.17% and fails.
-# That is effectively zero tolerance, and it is deliberate at 10 m resolution -- a token is
-# 160 m across, thin cirrus at its edge contaminates the whole 768-d embedding, and S2 is
-# the modality the patchwise hypothesis rests on. Flagged for review in the §35.24 audit;
-# not changed here.
+# 0.01 of 256 is 2.56 px, so this admits at most TWO bad pixels. Deliberate at 10 m: a token
+# is 160 m across and thin cirrus at its edge contaminates the whole 768-d embedding.
 CM_MAX_BAD_FRAC = 0.01
 
-# S1 orbit identity, emitted as `s1_orbit` so the model can tell an ascending pass from a
-# descending one. §35.24 audit item 8: the loader merged both orbits into one date-sorted
-# list and threw the key away, so a VV backscatter step that is pure geometry (different
-# incidence angle, different azimuth) was indistinguishable from a wetting event.
+# S1 orbit identity. RTC backscatter differs systematically between ascending and descending
+# (incidence angle, look azimuth) by an amount comparable to the moisture signal, so an orbit
+# switch must never be readable as a wetting event (§35.24 audit item 8).
 ORBIT_ASC, ORBIT_DESC = 0, 1
 _ORBIT_ID = {"s1_asc": ORBIT_ASC, "s1_desc": ORBIT_DESC}
 
 # labels/qc sentinel written by create_token_zarr.py when the source NetCDF carried NEITHER
-# `soil_moisture_qc` NOR `quality_flag`. The producer used to default to zeros, i.e. "every
-# day directly observed", which made climatological gap-fill indistinguishable from a real
-# measurement and trained the model on it. §35.24 audit item 4.
+# `soil_moisture_qc` NOR `quality_flag` (§35.24 audit item 4).
 QC_OBSERVED   = 0
 QC_NO_SOURCE  = 255
 
 # A soil channel that is NaN over the whole 74x74 patch cannot be nearest-neighbour filled;
-# it is set to 0 (== the dataset mean once z-scored) and flagged dead. One or two dead
-# channels is a tolerable hole in a 21-channel stack; more than that and the station's soil
-# block is fiction, so the station is dropped. §35.24 audit item 6.
+# it is set to 0 (== the dataset mean once z-scored) and flagged dead. More than two dead
+# channels and the station's soil block is fiction, so it is dropped (§35.24 audit item 6).
 MAX_DEAD_SOIL_CHANNELS = 2
+
+# ── Fine imagery (§48.3, §48.9 item 1) — must match model.py's FINE_* layout ────
+FINE_CH        = 19          # S2 10 bands + valid + age | S1 VV VH valid age orbit | DEM valid
+LULC_PAD       = 10          # model.py LULC_PAD; TerraMind index 0 (nodata) and >9 map here
+LST_N          = 22
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -353,324 +360,365 @@ def _load_driver_stats(path):
     return st
 
 
-def _token_slice(token_sel):
-    """A basic slice when the selection is contiguous, else None.
 
-    Contiguity matters: `arr[i, slice, :]` on a numpy memmap faults in only the pages the
-    slice touches, whereas fancy indexing materialises through a temporary. Both live
-    selections are contiguous -- [STATION_TOKEN] and arange(196).
+# ── Pyramids and the §48 cache ───────────────────────────────────────────────
+
+def _cpu_pyramid_pool(l12: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
     """
-    sel = np.asarray(token_sel)
-    if sel.size == 1 or np.all(np.diff(sel) == 1):
-        return slice(int(sel[0]), int(sel[-1]) + 1)
-    return None
+    Masked 4-scale nested-window pooling of L12 tokens, as the frozen U-Net arm did it
+    (dataset_unet.py:193), so the trunk's history tokens mean the same thing they did there.
 
-
-def _narrowed_for(flag, key: str) -> bool:
-    """Resolve the per-source narrowing flag for one modality key.
-
-    The L12 cache is assembled PER KEY (§35.24b item 1): a station can legitimately have its
-    s2 array from a full-width /dev/shm memmap and its s1_desc array from the narrowed zarr
-    read in the same dict. A single per-station bool would then be wrong for one of them and
-    silently index the wrong patch axis, so the flag travels as {key: bool}. A bare bool is
-    still accepted for direct callers.
+    l12:        (M, 196, 768) fp16
+    token_mask: (M, 14, 14)   bool — True = valid/clear patch
+    returns:    (M, 4, 768)   fp32   centre ~2x2 / 4x4 / 10x10 / 14x14 tokens
     """
-    if isinstance(flag, dict):
-        return bool(flag.get(key, False))
-    return bool(flag)
+    M, N_tok, D = l12.shape
+    G    = int(N_tok ** 0.5)
+    g    = l12.float().reshape(M, G, G, D)
+    v    = token_mask.float().unsqueeze(-1)
+
+    half   = G // 2
+    widths = [max(1, G * (i + 1) // 8) for i in range(4)]
+
+    def _pool(w):
+        rs, re = half - w, half + w
+        rg = g[:, rs:re, rs:re, :]
+        rv = v[:, rs:re, rs:re, :]
+        return (rg * rv).sum(dim=(1, 2)) / rv.sum(dim=(1, 2)).clamp(min=1)
+
+    return torch.stack([_pool(w) for w in widths], dim=1)
 
 
-def _read_patch_tokens(src, i: int, tsl, sel):
-    """Acquisition i, patches `sel` only -> (K, 768).
+def _cm_token_mask(cm: np.ndarray) -> np.ndarray:
+    """(N, 224, 224) u1 cloud classes -> (N, 14, 14) bool, True = <= CM_MAX_BAD_FRAC bad."""
+    n   = cm.shape[0]
+    bad = np.isin(cm[:, :224, :224].reshape(n, 14, 16, 14, 16), CM_BAD_CLASSES).mean(axis=(2, 4))
+    return bad <= CM_MAX_BAD_FRAC
 
-    THE point of the patchwise loader. The old code did `src[i]` -- a full (196,768) fp16
-    slab, 294 KB spanning ~72 memmap pages -- and then threw 195/196 of it away. l12 is
-    C-contiguous, so patch k is a contiguous 768-float run: 1.5 KB, one page.
+
+def build_station_cache(zg: zarr.Group, out_dir: Path) -> dict:
+    """Write one station's §48 cache from its token store. Used by prepare_s48_cache.py.
+
+    Fail closed throughout, as the patchwise loader was (§35.24 audit items 2, 3):
+      * S2 acquisition with no cloud-mask entry  -> token mask all False, cm row all 255
+      * S1 orbit with no stored token_mask       -> token mask all False
+      * any non-finite token in an acquisition   -> token mask all False, l12 row zeroed
+    An acquisition whose mask is all False has nvalid == 0 and is never read: not as
+    history, not as the anchor.
+
+    Returns a small report dict (counts), never raises for a missing modality.
     """
-    if tsl is not None:
-        return np.asarray(src[i, tsl, :])
-    return np.asarray(src[i])[sel]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    arrays, rep = {}, {}
+
+    cm_arr, cm_idx = None, {}
+    if "cm/masks" in zg and "cm/dates" in zg:
+        cm_arr = zg["cm/masks"][:]                                   # one chunk anyway
+        cm_idx = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
+
+    for orbit in HIST_ORBITS:
+        if f"{orbit}/l12" not in zg or f"{orbit}/dates" not in zg:
+            continue
+        dates = [str(d) for d in zg[f"{orbit}/dates"][:]]
+        l12   = np.asarray(zg[f"{orbit}/l12"][:])                     # (N, 196, 768) f16
+        N     = len(dates)
+        if orbit == "s2":
+            cm_al = np.full((N, 224, 224), 255, dtype=np.uint8)
+            for i, d in enumerate(dates):
+                j = cm_idx.get(d)
+                if j is not None:
+                    cm_al[i] = cm_arr[j, :224, :224]
+            tm = _cm_token_mask(cm_al)
+            np.save(out_dir / "s2_cm.npy", cm_al)
+            rep["s2_no_cm"] = int(sum(d not in cm_idx for d in dates))
+        elif f"{orbit}/token_mask" in zg:
+            tm = np.asarray(zg[f"{orbit}/token_mask"][:]).astype(bool)
+        else:
+            tm = np.zeros((N, 14, 14), dtype=bool)
+            rep[f"{orbit}_no_token_mask"] = N
+
+        finite = np.isfinite(l12.reshape(N, -1)).all(axis=1)
+        tm     = tm & finite[:, None, None]
+        l12    = np.where(finite[:, None, None], l12, np.float16(0))
+        rep[f"{orbit}_nonfinite"] = int((~finite).sum())
+
+        pyr = np.empty((N, 4, 768), dtype=np.float16)
+        for b0 in range(0, N, 64):
+            b1 = min(b0 + 64, N)
+            pyr[b0:b1] = _cpu_pyramid_pool(torch.from_numpy(l12[b0:b1]),
+                                           torch.from_numpy(tm[b0:b1])).numpy()
+        np.save(out_dir / f"{orbit}_l12.npy", l12)
+        arrays[f"{orbit}_pyr"]       = pyr
+        arrays[f"{orbit}_nvalid"]    = tm.reshape(N, -1).sum(1).astype(np.int16)
+        arrays[f"{orbit}_date_ints"] = np.array([int(d[:8]) for d in dates], dtype=np.int32)
+        rep[f"{orbit}_n"] = N
+
+    for key in ("dem", "lulc"):
+        tm_key = f"{key}_token_mask"
+        ok = key in zg and tm_key in zg
+        l12 = np.asarray(zg[key][:]) if key in zg else np.zeros((196, 768), np.float16)
+        tm  = (np.asarray(zg[tm_key][:]).astype(bool) if ok else np.zeros((14, 14), bool))
+        tm  = tm & bool(np.isfinite(l12).all())
+        arrays[f"{key}_pyr"] = _cpu_pyramid_pool(
+            torch.from_numpy(np.nan_to_num(l12))[None], torch.from_numpy(tm)[None]
+        )[0].numpy().astype(np.float16)
+        arrays[f"{key}_ok"] = np.array(bool(tm.any()))
+        rep[f"{key}_ok"] = bool(tm.any())
+
+    # pyr.npz is written LAST and renamed into place, so its presence is the completion
+    # marker: a job killed mid-station leaves no pyr.npz and the loader skips the station.
+    tmp = out_dir / "pyr.tmp.npz"
+    np.savez(tmp, **arrays)
+    tmp.rename(out_dir / "pyr.npz")
+    return rep
 
 
-def _finalise_history(l12, token_mask, doys, rel_pos, training,
-                      token_sel, dropout_p: float = 0.0):
-    """Turn the (T,K,768) buffer into what the model wants.
+def _load_station_cache(cache_dir: Path) -> dict | None:
+    """pyr.npz fully in RAM (a few MB), l12 / cm as read-only memmaps. None if absent."""
+    p = cache_dir / "pyr.npz"
+    if not p.exists():
+        return None
+    with np.load(p) as z:
+        c = {k: z[k] for k in z.files}
+    for orbit in HIST_ORBITS:
+        f = cache_dir / f"{orbit}_l12.npy"
+        if f"{orbit}_pyr" in c and f.exists():
+            c[f"{orbit}_l12"] = np.load(f, mmap_mode="r")
+    f = cache_dir / "s2_cm.npy"
+    if f.exists():
+        c["s2_cm"] = np.load(f, mmap_mode="r")
+    return c
 
-    Returns (feat (T,K,768) fp16, doys, valid_acq, rel_pos, hist_valid (T,K)).
 
-    Two correctness points that bit the first draft (§35.11):
-      * `token_mask` is (T,14,14), NOT (T,196) -- indexing it directly with token indices
-        silently selects ROWS and returns (T,K,14). Hence the explicit reshape.
-      * `token_mask` now arrives initialised to FALSE (§35.24 audit items 2 and 3). It is
-        written only for slots that were actually filled AND matched a cloud-mask entry
-        (S2) or a stored token_mask row (S1), so an acquisition the quality layer never
-        saw stays invalid instead of being reported clear. The `& valid_acq` below is
-        still required on top of that for padded and NaN-skipped slots, which have a
-        mask row but no data.
+def _int_to_date(d: int) -> datetime:
+    return datetime(d // 10000, (d // 100) % 100, d % 100)
+
+
+def _target_date(year: int, doy: int) -> datetime:
+    return datetime(year, 1, 1) + timedelta(days=doy - 1)
+
+
+def _candidates(cache: dict, orbits, start_int: int, end_int: int):
+    """(date_int, orbit, idx, nvalid) for every usable acquisition in [start, end]."""
+    out = []
+    for orbit in orbits:
+        di = cache.get(f"{orbit}_date_ints")
+        if di is None:
+            continue
+        nv  = cache[f"{orbit}_nvalid"]
+        idx = np.where((di >= start_int) & (di <= end_int) & (nv > 0))[0]
+        out.extend((int(di[i]), orbit, int(i), int(nv[i])) for i in idx)
+    return out
+
+
+def load_history(cache: dict, orbits, year: int, doy: int, max_acq: int):
+    """Pooled-pyramid history over the 365-day window ending ON day D.
+
+    Compact, oldest-first, padding at the tail — the convention the patchwise loaders agreed
+    on (§35.24b item 3). Orbits are merged by date; `orbit` records which pass each slot is.
+
+    Returns (pyr (T,4,768) fp16, doys (T,), valid (T,) bool, rel_pos (T,), orbit (T,) long).
     """
-    valid_acq = doys > 0                                    # (T,)
-    if training and dropout_p > 0:
-        keep = torch.rand(token_mask.shape, dtype=torch.float32) >= dropout_p
-        token_mask = token_mask & keep
-
-    T  = token_mask.shape[0]
-    tm = token_mask.reshape(T, N_TOKENS)[:, token_sel]      # (T,K)
-    tm = tm & valid_acq[:, None]                            # padded/NaN -> invalid
-    return l12, doys, valid_acq, rel_pos, tm
-
-
-def _empty_history(max_acq: int, token_sel):
-    """Zero return for a station with no acquisition in window.
-
-    Must match the shape of the normal path or default_collate raises "stack expects each
-    tensor to be equal size" on any batch mixing a station that has S2/S1 in window with one
-    that does not (§35.11).
-    """
+    start_int, end_int = _window_ints(year, doy)
+    ent = sorted(_candidates(cache, orbits, start_int, end_int))[-max_acq:]
+    pyr     = torch.zeros(max_acq, 4, 768, dtype=torch.float16)
     doys    = torch.zeros(max_acq, dtype=torch.long)
     rel_pos = torch.zeros(max_acq, dtype=torch.long)
-    K       = len(token_sel)
-    return (torch.zeros(max_acq, K, 768, dtype=torch.float16),
-            doys, doys > 0, rel_pos, torch.zeros(max_acq, K, dtype=torch.bool))
+    orbit   = torch.zeros(max_acq, dtype=torch.long)
+    for k, (dint, orb, i, _) in enumerate(ent):
+        dt = _int_to_date(dint)
+        pyr[k]     = torch.from_numpy(np.array(cache[f"{orb}_pyr"][i]))
+        doys[k]    = dt.timetuple().tm_yday
+        rel_pos[k] = _rel_pos(doys[k].item(), dt.year, doy, year)
+        orbit[k]   = _ORBIT_ID.get(orb, 0)
+    return pyr, doys, doys > 0, rel_pos, orbit
 
 
-def load_s2_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
-                          max_acq: int = MAX_S2,
-                          l12_np: np.ndarray | None = None,
-                          date_cache: dict | None = None,
-                          cm_token_mask: np.ndarray | None = None,
-                          training: bool = False,
-                          token_sel=None,
-                          patch_token_dropout: float = 0.0,
-                          l12_narrowed=False):
+def select_anchor(cache: dict, year: int, doy: int):
+    """The anchor: most recent FULLY CLEAR acquisition (all 196 tokens valid) on or before D,
+    across S2 and both S1 orbits; else the most recent usable one. Fail closed — an S2 date with
+    no cloud mask is not a candidate (the frozen U-Net arm counted it as fully clear).
+
+    Returns (l12 (196,768) fp16, rel_pos, orbit_id, found bool).
     """
-    Load S2 L12 tokens for patches `token_sel` over the 365-day rolling window.
+    start_int, end_int = _window_ints(year, doy)
+    cands = _candidates(cache, HIST_ORBITS, start_int, end_int)
+    if not cands:
+        return torch.zeros(196, 768, dtype=torch.float16), 0, 0, False
+    clear = [c for c in cands if c[3] == N_TOKENS]
+    dint, orb, i, _ = max(clear or cands, key=lambda c: (c[0], -ANCHOR_ORBIT_ID[c[1]]))
+    dt  = _int_to_date(dint)
+    l12 = torch.from_numpy(np.array(cache[f"{orb}_l12"][i]))
+    return l12, _rel_pos(dt.timetuple().tm_yday, dt.year, doy, year), ANCHOR_ORBIT_ID[orb], True
 
-    date_cache:    precomputed per-orbit date info from _zarr_date_cache (eliminates zarr date reads)
-    cm_token_mask: precomputed (N_cm, 14, 14) bool quality array from _cm_token_mask_cache
-    l12_np:        preloaded L12 tokens from RAM/shm (eliminates chunk reads for history tokens)
-    l12_narrowed:  bool, or {key: bool}. True when `l12_np` has already been sliced down to
-                   the K selected patches, i.e. its shape is (N, K, 768) and not
-                   (N, 196, 768) (§35.24 audit item 12). The /dev/shm memmaps written by
-                   train.py are still full width, so this is per-source and never assumed.
-    training:      if True, applies random per-patch dropout to token_mask. Defaults OFF —
-                   see the note on `patch_token_dropout` in SoilMoistureDataset.__init__.
-    patch_token_dropout: defaults to 0.0. It used to default to 0.5 here while the dataset
-                   and train.py both passed 0.0, so any caller that reached the loader
-                   directly (eval scripts, probes) silently deleted half of patch 105's
-                   history. §35.24 audit item 10.
 
-    Returns (l12, doys, valid_acq, rel_pos, hist_valid) — l12 is (max_acq, K, 768) fp16.
+# ── Fine imagery (§46.3 worker order, §48.3) ─────────────────────────────────
+
+def _load_fine_stats(path: Path = FINE_STATS_PATH) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing — it carries the TerraMind normalisation "
+                                f"constants for the fine path and is SHA'd into CONFIG.")
+    st = json.loads(path.read_text())
+    keep = st["s2"]["keep_idx"]
+    return {
+        "s2_keep": np.asarray(keep, dtype=np.int64),
+        "s2_mean": np.asarray(st["s2"]["mean"], np.float32)[keep][:, None, None],
+        "s2_std":  np.asarray(st["s2"]["std"],  np.float32)[keep][:, None, None],
+        "s1_mean": np.asarray(st["s1"]["mean"], np.float32)[:, None, None],
+        "s1_std":  np.asarray(st["s1"]["std"],  np.float32)[:, None, None],
+        "dem_mean": float(st["dem"]["mean"][0]),
+        "dem_std":  float(st["dem"]["std"][0]),
+        "dem_nodata_below": float(st["dem"]["nodata_below_m"]),
+        "max_age": float(st["max_age_days"]),
+    }
+
+
+def _pool2(x: np.ndarray, m: np.ndarray):
+    """(C,224,224) values, (224,224) bool valid -> masked 2x2 mean (C,112,112), frac (112,112).
+
+    Masked, so a 20 m cell with one cloudy 10 m pixel is the mean of the other three rather
+    than diluted toward zero. Cells with no valid pixel come back exactly 0.0 — step 8 of
+    §46.3 (zero AFTER normalisation) falls out of the masking.
     """
-    sel        = np.asarray(token_sel)
-    tsl        = _token_slice(sel)
-    K          = len(sel)
-    l12        = torch.zeros(max_acq, K, 768, dtype=torch.float16)
-    doys       = torch.zeros(max_acq, dtype=torch.long)
-    # (14,14) of bools is 196 BYTES against 294 KB of tokens, so it stays full and is
-    # indexed down in _finalise_history. It was never the reason for the wide read.
-    #
-    # FAIL CLOSED (§35.24 audit item 2). This used to be torch.ones, and it is written only
-    # inside `if date_str in cm_d2i`. A station whose zarr has no cm/masks group therefore
-    # reported all 60 S2 acquisitions cloud-free — thick cumulus scored as bare soil, with
-    # nothing anywhere raising. False means "no quality evidence for this acquisition",
-    # which is the only defensible default for a mask.
-    token_mask = torch.zeros(max_acq, 14, 14, dtype=torch.bool)
-    rel_pos    = torch.zeros(max_acq, dtype=torch.long)
-
-    if "s2/l12" not in zg:
-        return _empty_history(max_acq, token_sel)
-
-    # Date arrays — use precomputed cache (no zarr read) or fall back to zarr
-    if date_cache is not None and "s2" in date_cache:
-        s2_dc      = date_cache["s2"]
-        all_dates  = s2_dc["dates"]
-        date_ints  = s2_dc["date_ints"]
-        doys_arr   = s2_dc["doys"]
-        years_arr  = s2_dc["years"]
-        start_int, end_int = _window_ints(year, target_doy)
-        win_idx    = np.where((date_ints >= start_int) & (date_ints <= end_int))[0][-max_acq:].tolist()
-    else:
-        all_dates  = [str(d) for d in zg["s2/dates"][:]]
-        ws, td     = _window_datetimes(year, target_doy)
-        win_idx    = [i for i, d in enumerate(all_dates) if _in_window(d, ws, td)][-max_acq:]
-        doys_arr   = None
-        years_arr  = None
-
-    # CM date→index lookup — prefer precomputed, fall back to zarr read
-    if date_cache is not None and "cm" in date_cache:
-        cm_d2i = date_cache["cm"].get("date_to_idx", {})
-    elif "cm/masks" in zg and "cm/dates" in zg:
-        cm_d2i = {str(d): i for i, d in enumerate(zg["cm/dates"][:])}
-    else:
-        cm_d2i = {}
-
-    tokens_z = l12_np if l12_np is not None else zg["s2/l12"]
-    narrowed = _narrowed_for(l12_narrowed, "s2") and l12_np is not None
-    cm_z     = None if (cm_token_mask is not None or not ("cm/masks" in zg)) else zg["cm/masks"]
-
-    # out_i is advanced only on a SUCCESSFUL write, so a NaN acquisition is skipped rather
-    # than leaving a hole. §35.24b item 3: this loop used to be `enumerate(win_idx)`, which
-    # burned a slot per NaN acquisition while load_s1_rolling_zarr compacted. Both were
-    # masked correctly by `doys > 0`, so neither produced a wrong number — but a station
-    # with several NaN acquisitions silently carried fewer than MAX_S2 usable ones, and two
-    # loaders with the same signature and different indexing semantics is a trap for the
-    # next person. They now agree: compact, oldest-first, padding at the tail.
-    out_i = 0
-    for src_i in win_idx:
-        date_str = all_dates[src_i]
-        if doys_arr is not None:
-            acq_doy  = int(doys_arr[src_i])
-            acq_year = int(years_arr[src_i])
-        else:
-            dt       = datetime.strptime(date_str[:8], "%Y%m%d")
-            acq_doy  = dt.timetuple().tm_yday
-            acq_year = dt.year
-
-        # Narrowed read: patch k only. BEHAVIOUR CHANGE, recorded in §35.22 -- the NaN test
-        # now sees only this patch, where it used to see the whole tile and drop the whole
-        # acquisition if any of the 196 patches was NaN. Discarding an acquisition because a
-        # far corner of the tile is bad is not defensible for a per-patch model.
-        tok_np = (np.asarray(tokens_z[src_i]) if narrowed
-                  else _read_patch_tokens(tokens_z, src_i, tsl, sel))
-        tok = torch.from_numpy(tok_np)
-        if torch.isnan(tok).any():
-            continue
-        l12[out_i]     = tok
-        doys[out_i]    = acq_doy
-        rel_pos[out_i] = _rel_pos(acq_doy, acq_year, target_doy, year)
-
-        if date_str in cm_d2i:
-            cm_idx = cm_d2i[date_str]
-            if cm_token_mask is not None:
-                token_mask[out_i] = torch.from_numpy(cm_token_mask[cm_idx])
-            elif cm_z is not None:
-                # Lazy per-acquisition fallback, used only when the station's 14x14 cache
-                # was not built. CM_BAD_CLASSES is the SEnSeIv2-SegFormerB2 class list, NOT
-                # Sentinel-2 SCL — see the table at the top of this file before touching it.
-                cm    = cm_z[cm_idx]
-                cm_4d = cm[:224, :224].reshape(14, 16, 14, 16)
-                bad_frac = np.isin(cm_4d, CM_BAD_CLASSES).mean(axis=(1, 3))
-                token_mask[out_i] = torch.from_numpy(bad_frac <= CM_MAX_BAD_FRAC)
-
-        out_i += 1
-
-    return _finalise_history(l12, token_mask, doys, rel_pos, training,
-                             token_sel, patch_token_dropout)
+    C  = x.shape[0]
+    mf = m.astype(np.float32)
+    s  = (x * mf).reshape(C, 112, 2, 112, 2).sum(axis=(2, 4))
+    n  = mf.reshape(112, 2, 112, 2).sum(axis=(1, 3))
+    out = np.where(n > 0, s / np.maximum(n, 1.0), 0.0).astype(np.float32)
+    return out, (n / 4.0).astype(np.float32)
 
 
-def load_s1_rolling_zarr(zg: zarr.Group, year: int, target_doy: int,
-                          max_acq: int = MAX_S1,
-                          l12_asc_np: np.ndarray | None = None,
-                          l12_desc_np: np.ndarray | None = None,
-                          date_cache: dict | None = None,
-                          s1_token_mask_cache: dict | None = None,
-                          training: bool = False,
-                          token_sel=None,
-                          patch_token_dropout: float = 0.0,
-                          l12_narrowed=False):
-    """Load S1 L12 tokens (ASC + DESC merged) for patches `token_sel`.
+def _raw_dates(rg, key: str) -> np.ndarray:
+    if rg is None or f"{key}/dates" not in rg:
+        return np.zeros(0, dtype=np.int32)
+    return np.array([int(bytes(d).decode()[:8]) if isinstance(d, (bytes, np.bytes_))
+                     else int(str(d)[:8]) for d in rg[f"{key}/dates"][:]], dtype=np.int32)
 
-    date_cache:          precomputed per-orbit date info (eliminates zarr date reads)
-    s1_token_mask_cache: precomputed {orbit: (N,14,14) bool} from _s1_token_mask_cache
-    l12_asc_np / l12_desc_np: preloaded RAM arrays; eliminates L12 chunk reads.
-    l12_narrowed:        bool, or {key: bool}. ASC and DESC are resolved SEPARATELY — one
-                         orbit can come from a full-width shm memmap while the other came
-                         from the narrowed zarr read (§35.24b item 1).
-    training:            if True, applies random per-patch dropout before masking.
-    patch_token_dropout: defaults to 0.0, same reasoning as the S2 loader (§35.24 item 10).
 
-    Returns (l12, doys, valid_acq, rel_pos, hist_valid, orbit) — the trailing `orbit` is
-    (max_acq,) long, 0 = ASC and 1 = DESC (§35.24 audit item 8).
+def build_fine(raw: dict | None, cache: dict, year: int, doy: int, fs: dict):
+    """The 19-channel fine tensor + the 10 m LULC raster for (station, day D).
+
+    raw: {"zg", "s2", "s1_asc", "s1_desc" (date-int arrays), "lulc_years", "has_dem"} or None
+
+    S2   most recent raw S2 scene on or before D (365-day window) whose date has a cloud mask;
+         fully clear by the token rule preferred, else most recent. Pixel valid = all kept
+         bands non-zero AND cloud class not in CM_BAD_CLASSES.
+    S1   most recent pass on or before D, either orbit. Valid = finite and non-zero in both
+         bands. The 2x2 mean is taken in LINEAR power (dB -> linear -> mean -> dB), which is
+         also the speckle reduction (§48.2 item 7).
+    DEM  static; valid = finite and above the nodata floor.
+    LULC the latest year strictly before D's year (causal); if the store has none that early,
+         the earliest year it has — a mild look-ahead, reported in `lulc_lookahead`.
+
+    Returns (fine (19,112,112) fp16, lulc (224,224) u1, info dict).
     """
-    sel        = np.asarray(token_sel)
-    tsl        = _token_slice(sel)
-    K          = len(sel)
-    l12        = torch.zeros(max_acq, K, 768, dtype=torch.float16)
-    doys       = torch.zeros(max_acq, dtype=torch.long)
-    # FAIL CLOSED (§35.24 audit item 3). tm_np_map[orbit] is None whenever the store has no
-    # `{orbit}/token_mask` array — compute_s1_dem_lulc_token_masks.py writes it, and a store
-    # that predates that script has none. With a ones-init the whole S1 history then read
-    # back valid, layover/shadow and all. Zeros means an orbit with no stored mask
-    # contributes nothing rather than contributing garbage.
-    token_mask = torch.zeros(max_acq, 14, 14, dtype=torch.bool)
-    rel_pos    = torch.zeros(max_acq, dtype=torch.long)
-    orbit      = torch.zeros(max_acq, dtype=torch.long)
+    fine = np.zeros((FINE_CH, 112, 112), dtype=np.float32)
+    lulc = np.full((224, 224), LULC_PAD, dtype=np.uint8)
+    info = {"s2": False, "s1": False, "dem": False, "lulc": False, "lulc_lookahead": False}
+    if raw is None:
+        return torch.from_numpy(fine.astype(np.float16)), torch.from_numpy(lulc), info
+    rg = raw["zg"]
+    start_int, end_int = _window_ints(year, doy)
+    tdate = _target_date(year, doy)
 
-    start_int, end_int = _window_ints(year, target_doy)
-    ws, td = _window_datetimes(year, target_doy)
-    entries: list[tuple[str, object, int, str, int | None, int | None, bool]] = []
+    # ── S2 ──
+    s2_dates = raw["s2"]
+    if len(s2_dates) and "s2_date_ints" in cache and "s2_cm" in cache:
+        tok_idx = {int(d): i for i, d in enumerate(cache["s2_date_ints"])}
+        nv      = cache["s2_nvalid"]
+        cands   = [(int(d), ri, tok_idx[int(d)]) for ri, d in enumerate(s2_dates)
+                   if start_int <= d <= end_int and int(d) in tok_idx and nv[tok_idx[int(d)]] > 0]
+        if cands:
+            clear = [c for c in cands if nv[c[2]] == N_TOKENS]
+            dint, ri, ti = max(clear or cands)
+            x  = np.asarray(rg["s2/data"][ri], dtype=np.float32)[fs["s2_keep"]]   # (10,224,224)
+            cm = np.asarray(cache["s2_cm"][ti])
+            m  = (x != 0).all(axis=0) & ~np.isin(cm, CM_BAD_CLASSES)
+            x  = (x - fs["s2_mean"]) / fs["s2_std"]
+            pooled, frac = _pool2(x, m)
+            if frac.any():
+                fine[0:10] = pooled
+                fine[10]   = frac
+                fine[11]   = (frac > 0) * (tdate - _int_to_date(dint)).days / fs["max_age"]
+                info["s2"] = True
 
-    l12_np_map = {"s1_asc": l12_asc_np, "s1_desc": l12_desc_np}
+    # ── S1 ──
+    best = None
+    for key in ("s1_asc", "s1_desc"):
+        d = raw[key]
+        sel = np.where((d >= start_int) & (d <= end_int))[0]
+        if len(sel):
+            ri = int(sel[np.argmax(d[sel])])
+            cand = (int(d[ri]), -_ORBIT_ID[key], key, ri)
+            best = cand if best is None or cand > best else best
+    if best is not None:
+        dint, _, key, ri = best
+        x  = np.asarray(rg[f"{key}/data"][ri], dtype=np.float32)                  # (2,224,224) dB
+        m  = np.isfinite(x).all(axis=0) & (x != 0).all(axis=0)
+        lin = np.where(m, np.power(10.0, np.where(m, x, 0.0) / 10.0), 0.0)
+        pooled, frac = _pool2(lin, m)
+        if frac.any():
+            db = 10.0 * np.log10(np.maximum(pooled, 1e-10))
+            z  = (db - fs["s1_mean"]) / fs["s1_std"]
+            fine[12:14] = np.where(frac > 0, z, 0.0)
+            fine[14]    = frac
+            fine[15]    = (frac > 0) * (tdate - _int_to_date(dint)).days / fs["max_age"]
+            fine[16]    = (frac > 0) * float(_ORBIT_ID[key])
+            info["s1"]  = True
 
-    # S1 token masks — use precomputed cache or fall back to zarr read
-    tm_np_map: dict[str, np.ndarray | None] = {}
-    for orbit_key in ("s1_asc", "s1_desc"):
-        if s1_token_mask_cache is not None:
-            tm_np_map[orbit_key] = s1_token_mask_cache.get(orbit_key)
-        else:
-            mk = f"{orbit_key}/token_mask"
-            tm_np_map[orbit_key] = np.asarray(zg[mk][:]) if mk in zg else None
+    # ── DEM ──
+    if raw["has_dem"]:
+        x = np.asarray(rg["dem/data"][0], dtype=np.float32)[None]
+        m = np.isfinite(x[0]) & (x[0] > fs["dem_nodata_below"])
+        if not np.any(x[0][m] != 0):
+            m[:] = False                      # an all-zero raster is the fill value, not sea level
+        pooled, frac = _pool2(np.where(m, (x - fs["dem_mean"]) / fs["dem_std"], 0.0), m)
+        if frac.any():
+            fine[17]    = pooled[0]
+            fine[18]    = frac
+            info["dem"] = True
 
-        if f"{orbit_key}/l12" not in zg:
-            continue
+    # ── LULC ──
+    ly = raw["lulc_years"]
+    if len(ly):
+        before = np.where(ly < year)[0]
+        yi = int(before[np.argmax(ly[before])]) if len(before) else int(np.argmin(ly))
+        info["lulc_lookahead"] = not len(before)
+        a = np.asarray(rg["lulc/data"][yi])
+        lulc = np.where((a >= 1) & (a <= 9), a, LULC_PAD).astype(np.uint8)
+        info["lulc"] = bool((lulc != LULC_PAD).any())
 
-        # Date arrays — precomputed cache or zarr read
-        if date_cache is not None and orbit_key in date_cache:
-            dc         = date_cache[orbit_key]
-            orbit_dates = dc["dates"]
-            di          = dc["date_ints"]
-            doys_a      = dc["doys"]
-            years_a     = dc["years"]
-            idx_arr     = np.where((di >= start_int) & (di <= end_int))[0]
-            _src = l12_np_map[orbit_key]
-            tokens_src  = _src if _src is not None else zg[f"{orbit_key}/l12"]
-            _narrow     = _narrowed_for(l12_narrowed, orbit_key) and _src is not None
-            for i in idx_arr:
-                entries.append((orbit_dates[i], tokens_src, int(i), orbit_key,
-                                 int(doys_a[i]), int(years_a[i]), _narrow))
-        else:
-            orbit_dates = [str(d) for d in zg[f"{orbit_key}/dates"][:]]
-            _src = l12_np_map[orbit_key]
-            tokens_src  = _src if _src is not None else zg[f"{orbit_key}/l12"]
-            _narrow     = _narrowed_for(l12_narrowed, orbit_key) and _src is not None
-            for i, d in enumerate(orbit_dates):
-                if _in_window(d, ws, td):
-                    entries.append((d, tokens_src, i, orbit_key, None, None, _narrow))
+    return torch.from_numpy(fine.astype(np.float16)), torch.from_numpy(lulc), info
 
-    if not entries:
-        return (*_empty_history(max_acq, token_sel), orbit)
 
-    entries.sort(key=lambda x: x[0])
-    entries = entries[-max_acq:]
+def _open_raw(dir_name: str) -> dict | None:
+    """Raw imagery handle + its date tables, read once at init. None if the store is absent."""
+    p = RAW_ROOT / f"{dir_name}.zarr"
+    if not p.exists():
+        return None
+    try:
+        rg = zarr.open_consolidated(str(p), mode="r")
+    except KeyError:
+        rg = zarr.open_group(str(p), mode="r")        # 0 of 998 carry .zmetadata (§46.5 item 9)
+    return {
+        "zg": rg,
+        "s2": _raw_dates(rg, "s2") if "s2/data" in rg else np.zeros(0, np.int32),
+        "s1_asc": _raw_dates(rg, "s1_asc") if "s1_asc/data" in rg else np.zeros(0, np.int32),
+        "s1_desc": _raw_dates(rg, "s1_desc") if "s1_desc/data" in rg else np.zeros(0, np.int32),
+        "lulc_years": (np.asarray(rg["lulc/years"][:], dtype=np.int32)
+                       if "lulc/data" in rg and "lulc/years" in rg else np.zeros(0, np.int32)),
+        "has_dem": "dem/data" in rg,
+    }
 
-    out_i = 0
-    for date_str, tokens_z, src_i, orbit_key, cached_doy, cached_year, narrowed in entries:
-        tok_np = (np.asarray(tokens_z[src_i]) if narrowed
-                  else _read_patch_tokens(tokens_z, src_i, tsl, sel))
-        tok = torch.from_numpy(tok_np)
-        if torch.isnan(tok).any():
-            continue
-        if cached_doy is not None:
-            acq_doy  = cached_doy
-            acq_year = cached_year
-        else:
-            dt       = datetime.strptime(date_str[:8], "%Y%m%d")
-            acq_doy  = dt.timetuple().tm_yday
-            acq_year = dt.year
-        l12[out_i]     = tok
-        doys[out_i]    = acq_doy
-        rel_pos[out_i] = _rel_pos(acq_doy, acq_year, target_doy, year)
-        # Orbit identity travels with the acquisition, not with the slot: `entries` is sorted
-        # by DATE across both orbits, so slot i is ASC or DESC depending on which satellite
-        # pass happened to be that day.
-        orbit[out_i]   = _ORBIT_ID[orbit_key]
-        if tm_np_map[orbit_key] is not None:
-            token_mask[out_i] = torch.from_numpy(tm_np_map[orbit_key][src_i])
-        out_i += 1
 
-    return (*_finalise_history(l12, token_mask, doys, rel_pos, training,
-                               token_sel, patch_token_dropout), orbit)
-
+def _load_lst22(cat: str, dir_name: str):
+    """{date_int: row} + (n,22,22) f16 Kelvin, or None if consolidate_landsat_st.py wrote none."""
+    p = LST_ROOT / cat / dir_name / "LANDSAT_ST" / f"{dir_name}_lst22.npz"
+    if not p.exists():
+        return None
+    with np.load(p) as z:
+        arr, dates = z["lst22"], z["dates"]
+    return {int(d): i for i, d in enumerate(dates)}, arr
 
 # ── Soil patch helpers ───────────────────────────────────────────────────────
 
@@ -722,7 +770,7 @@ def load_era5_rolling(cache_entry, year: int, target_doy: int):
     Args:
         cache_entry: (values (N,18) float32, date_ints (N,) int32, doys (N,) int32) or None
     Returns:
-        era5    : (365, 19) float32 numpy array
+        era5    : (365, 18) float32 numpy array
         doys    : (365,) int64 numpy array — absolute DOY, 0 = padding
         rel_pos : (365,) int64 numpy array — TRUE staleness, 364 = the target day
 
@@ -889,46 +937,6 @@ def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     return vals, doys, rel_pos, valid
 
 
-def _load_l12_shm(dir_name: str, shm_dir: Path, expect_k: int | None = None):
-    """Memmapped L12 arrays from /dev/shm (shared across all DDP ranks).
-
-    Returns (arrays, narrowed) or None — `narrowed[key]` is True when that array was
-    already sliced to the K selected patches by the preloader, i.e. its shape is
-    (N, K, 768) and not (N, 196, 768).
-
-    `expect_k` is the caller's own K, and it is a REFUSAL check, not a hint (§35.31).
-    train.py builds the patch-map diagnostic dataset from `dict(common_kwargs)` and
-    only overrides token_sel="all" — so that dataset inherits the same shm_dir as
-    training and would otherwise open a K=1 memmap expecting 196 columns. numpy
-    clips an over-wide basic slice silently, so the failure mode is not an exception:
-    it is diag/patch_map_sd_mean quietly computed over one patch instead of 196, and
-    that number is a pre-registered §35.30 gate condition. On a width mismatch the
-    key is dropped and the caller falls back to reading it from zarr at the right
-    width.
-    """
-    result, narrowed = {}, {}
-    for key in ("s2", "s1_asc", "s1_desc"):
-        bin_path  = shm_dir / f"{dir_name}__{key}.bin"
-        meta_path = shm_dir / f"{dir_name}__{key}.meta.json"
-        # Both must exist: the preloader creates the .bin via np.memmap(mode="w+") BEFORE
-        # writing .meta.json, so a rank-0 death between those two statements leaves a bin
-        # with no meta — and the preloader's own resume check is `if bin_path.exists()`,
-        # so it never repairs it. Checking only the bin here would then raise
-        # FileNotFoundError and kill all four ranks at dataset init.
-        if not (bin_path.exists() and meta_path.exists()):
-            continue
-        meta  = json.loads(meta_path.read_text())
-        shape = tuple(meta["shape"])
-        # Absent key = written by a pre-§35.31 run, which was always full width.
-        nar   = bool(meta.get("narrowed", False))
-        if expect_k is not None:
-            want = expect_k if nar else N_TOKENS
-            if len(shape) != 3 or shape[1] != want:
-                continue
-        result[key]   = np.memmap(bin_path, dtype=meta["dtype"], mode="r", shape=shape)
-        narrowed[key] = nar
-    return (result, narrowed) if result else None
-
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
 
@@ -936,46 +944,27 @@ class SoilMoistureDataset(Dataset):
     """
     One sample = one (station, year, day-of-year) triple.
 
-    All data is read from ZARR_ROOT (/gpfs/scratch1/shared/pkhanal/zarr).
-    Zarr layout per station:
-        {ZARR_ROOT}/{sm_only|sm_and_flux|flux_only}/{station}/
-            s2/          dates, l3, l6, l9, l12, token_mask, cm
-            s1_asc/      dates, l3, l6, l9, l12, token_mask
-            s1_desc/     dates, l3, l6, l9, l12, token_mask  (if available)
-            dem/         l12
-            dem_token_mask/
-            lulc/        l12
-            lulc_token_mask/
-            era5/        values, dates
-            sif/         values, dates
-            twsa/        values, dates
-            labels/      soil_moisture, depth, time
-            soil/        soil_patch (21, 74, 74)
-
     Args:
         splits_csv       : path to station_splits.csv
-        era5_stats_path  : path to csvs/era5_stats.json  (from compute_era5_stats.py)
+        era5_stats_path  : path to csvs/era5_stats18.json  (from compute_era5_stats.py)
         driver_stats_path: path to csvs/driver_stats.json (from compute_driver_stats.py).
                            None -> driver_stats.json next to era5_stats_path. Required;
                            a missing file raises rather than silently skipping the SIF /
                            TWSA / soil z-scoring (§35.24 audit item 7).
-        years            : list of years to include (default 2016–2023)
+        years            : list of years to include (default TRAIN_YEARS, never a silent
+                           window straddling the §47 cut)
         min_obs          : minimum observed SM days per year to include
         category_filter  : list of categories to include, e.g. ["sm_only"]  (None = all)
         split_filter     : list of split values to include, e.g. ["train"]  (None = all)
-        training         : if True, apply SIF/TWSA modality dropout (p=0.5 each)
-        max_stations     : if set, stop scanning splits once this many stations have
-                           ADMITTED AT LEAST ONE SAMPLE (smoke-test mode). It used to count
-                           entries in _zarr_groups, which includes stations whose store is
-                           incomplete or whose labels never survived the filters, so
-                           `--max-stations 20` could yield 11 (§35.24 audit item 11).
+        training         : if True, apply ERA5 value masking and SIF/TWSA modality dropout.
+                           (The fine-path S2/S1 dropout is in model.py, on the device.)
+        max_stations     : if set, stop scanning once this many stations have ADMITTED AT
+                           LEAST ONE SAMPLE (smoke-test mode; §35.24 audit item 11).
         era5_require_full_window
-                         : if True, a sample is admitted only when all 365 days of its
-                           window fall inside the station's ERA5 record. Off by default —
-                           the trailing edge (target day covered) is always enforced, and
-                           era5_rel_pos now declares a short window honestly, so the
-                           leading edge costs samples without fixing a correctness bug.
-                           The count that WOULD be dropped is printed either way.
+                         : admit a sample only if all 365 window days are inside the
+                           station's ERA5 record. Off by default; the count is printed.
+        require_lst      : fail construction if no admitted station has an lst22 bundle —
+                           a thermal head with nothing to supervise it is a silent no-op.
     """
 
     def __init__(
@@ -988,37 +977,14 @@ class SoilMoistureDataset(Dataset):
         split_filter:    list | None = None,
         training:        bool        = True,
         max_stations:    int | None  = None,
-        shm_dir:         Path | None = None,
-        token_sel:       str         = "station",
-        patch_token_dropout: float   = 0.0,
         driver_stats_path: str | None = None,
         era5_require_full_window: bool = False,
+        require_lst:     bool        = False,
     ):
-        self.training   = training
-
-        # Which patches to read. This is the ONLY place the store is narrowed, and everything
-        # downstream inherits it: the loaders allocate (T,K,768) and read K rows per
-        # acquisition rather than all 196 (§35.22).
-        #   "station" -> patch 105 only, the supervised token. Training uses this.
-        #   "all"     -> all 196, for 14x14 map figures. INFERENCE ONLY: it restores a
-        #                ~30 MB/sample IPC payload, so cap the eval batch size.
-        if token_sel == "station":
-            self._token_sel = np.array([STATION_TOKEN], dtype=np.int64)
-        elif token_sel == "all":
-            self._token_sel = np.arange(N_TOKENS, dtype=np.int64)
-        else:
-            raise ValueError(f"token_sel must be 'station' or 'all', got {token_sel!r}")
-        # Contiguous in both cases -- slice(105,106) or slice(0,196) -- so the L12 preload
-        # below can narrow the store with a basic slice instead of fancy indexing (§35.24
-        # audit item 12).
-        self._tsl = _token_slice(self._token_sel)
-        # The old 50% spatial token dropout degraded a POOLED mean, which is a mild
-        # augmentation. Here it would delete half of patch k's acquisitions outright, so it
-        # defaults OFF and has to be asked for.
-        self._patch_token_dropout = patch_token_dropout
+        self.training = training
         # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
         # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
-        self.years     = list(years) if years else list(TRAIN_YEARS)
+        self.years    = list(years) if years else list(TRAIN_YEARS)
 
         # ERA5 normalisation stats
         with open(era5_stats_path) as f:
@@ -1026,6 +992,11 @@ class SoilMoistureDataset(Dataset):
         self._era5_means      = np.array(era5_stats["means"],  dtype=np.float32)
         self._era5_stds       = np.array(era5_stats["stds"],   dtype=np.float32)
         self._era5_log1p_prec = bool(era5_stats.get("log1p_precip", False))
+        if len(self._era5_means) != len(ERA5_VARS):
+            raise ValueError(
+                f"{era5_stats_path} has {len(self._era5_means)} columns but {ERA5_ARRAY} has "
+                f"{len(ERA5_VARS)}. The 19-column era5_stats.json belongs to the frozen "
+                f"U-Net arm; this loader needs era5_stats18.json (§48.9 item 5).")
 
         # SIF / TWSA / soil normalisation stats. Raises if absent — see _load_driver_stats.
         if driver_stats_path is None:
@@ -1035,86 +1006,60 @@ class SoilMoistureDataset(Dataset):
         self._sif_std    = float(_ds["sif"]["std"])
         self._twsa_mean  = float(_ds["twsa"]["mean"])
         self._twsa_std   = float(_ds["twsa"]["std"])
-        # (21,1,1) so it broadcasts straight onto the (21,74,74) patch
         self._soil_mean  = np.asarray(_ds["soil"]["mean"], dtype=np.float32)[:, None, None]
         self._soil_std   = np.asarray(_ds["soil"]["std"],  dtype=np.float32)[:, None, None]
         self.driver_stats = _ds
 
-        splits = pd.read_csv(splits_csv)
+        self._fine_stats = _load_fine_stats()
 
-        # Category filter using has_soil_moisture / has_flux columns (splits_config.category_of)
+        # Fail loud if the scratch roots were purged (§46.5 item 8): a purge used to yield 0
+        # samples and no error, because every station quietly returned None.
+        for root, what in ((ZARR_ROOT, "token store"), (CACHE_ROOT, "§48 cache")):
+            if not root.exists() or not any(root.glob("*/*")):
+                raise FileNotFoundError(
+                    f"{what} root {root} is missing or empty. Re-stage (restage_store.py) / "
+                    f"rebuild (prepare_s48_cache.py) before constructing the dataset.")
+
+        splits = pd.read_csv(splits_csv)
         if category_filter is not None:
             splits = splits[splits.apply(category_of, axis=1).isin(category_filter)]
-
         if split_filter is not None:
             splits = splits[splits["split"].isin(split_filter)]
 
         self.samples = []
 
-        # Per-station in-memory caches (numpy arrays, no open file handles).
-        # Populated once in __init__; DataLoader workers inherit via fork (copy-on-write).
-        # _zarr_groups: sat_dir → open zarr.Group (or None if zarr not available)
-        # _l12_cache:   sat_dir → {"s2": (N,196,768) fp16, "s1_asc": ..., "s1_desc": ...}
-        #               Preloads L12 token arrays into RAM so __getitem__ does 0 disk reads
-        #               for history tokens. CoW fork: one physical copy across all workers.
-        # ERA5/SIF/TWSA/label caches: same format, all populated from zarr on scratch.
-        self._zarr_groups  : dict[Path, zarr.Group | None]       = {}
-        self._l12_cache    : dict[Path, dict[str, np.ndarray]]   = {}
+        # Per-station caches, filled once in __init__; DataLoader workers inherit them by fork
+        # (copy-on-write). The memmaps in _cache share page cache across every rank.
+        self._zarr_groups  : dict[Path, zarr.Group | None] = {}
         self._era5_cache   : dict[Path, tuple | None] = {}
         self._sif_cache    : dict[Path, tuple | None] = {}
         self._twsa_cache   : dict[Path, tuple | None] = {}
         self._label_cache  : dict[Path, tuple]        = {}
-        # Static-per-station tensors (DEM, LULC, soil, token masks).
-        # Loaded once at init; workers inherit as shared CoW pages (read-only).
-        self._static_cache : dict[Path, dict[str, torch.Tensor]] = {}
-        # Precomputed zarr data — eliminates all GPFS reads per __getitem__:
-        #   _cm_token_mask_cache : (N_cm, 14, 14) bool quality array per station
-        #   _s1_token_mask_cache : {orbit: (N, 14, 14) bool} per station
-        #   _zarr_date_cache     : {orbit: {"dates", "date_ints", "doys", "years"}} per station
-        self._cm_token_mask_cache : dict[Path, np.ndarray | None] = {}
-        self._s1_token_mask_cache : dict[Path, dict]               = {}
-        self._zarr_date_cache     : dict[Path, dict]               = {}
-        # True when _l12_cache[sat_dir] holds (N,K,768) arrays rather than (N,196,768).
-        # The /dev/shm memmaps are written full-width by train.py::_preload_l12_to_shm, so
-        # this is per-station and the loaders are told explicitly (§35.24 audit item 12).
-        self._l12_narrowed : dict[Path, dict[str, bool]] = {}
+        self._static_cache : dict[Path, dict]         = {}
+        self._cache        : dict[Path, dict]         = {}   # §48 cache (pyramids, l12, cm)
+        self._raw          : dict[Path, dict | None]  = {}   # raw imagery handle + dates
+        self._lst          : dict[Path, tuple | None] = {}   # (date->row, (n,22,22) f16)
 
         # ── Audit bookkeeping (§35.24 audit item 11) ────────────────────────────
-        # Six independent `continue`s used to drop stations with no output at all beyond a
-        # surviving-station count, so "993 stations became 641" was unattributable. Every
-        # rejection now lands in a counter and the tally is printed.
-        skips        = Counter()          # reason -> stations dropped
-        sample_skips = Counter()          # reason -> individual samples dropped
+        skips        = Counter()
+        sample_skips = Counter()
         era5_reject_by_station : dict[str, int] = defaultdict(int)
-        n_no_cm_group   = 0               # stations with no cm/masks group at all
-        n_s2_acq_no_cm  = 0               # S2 acquisitions with no cloud-mask entry
-        n_s2_acq_total  = 0
-        n_s1_no_tm      = Counter()       # orbit -> stations with no {orbit}/token_mask
-        n_s1_acq_no_tm  = 0
-        n_s1_acq_total  = 0
-        n_dead_soil_ch  = 0               # all-NaN soil channels seen, across kept stations
-        n_l12_shm_partial = Counter()     # key -> stations where shm was partial and zarr filled in
-        n_dem_missing   = 0
-        n_lulc_missing  = 0
-        admitted_dirs: set = set()        # stations that contributed >= 1 sample
-        # station_splits.csv can carry several rows per station. Once a station has been
-        # rejected it must not be re-examined, or the second row lands in a DIFFERENT
-        # counter (the caches it needs were never filled) and the tally double-counts.
+        n_dead_soil_ch = 0
+        n_no_raw       = 0
+        n_raw_missing  = Counter()        # modality -> stations whose raw store lacks it
+        n_no_lst       = 0
+        n_no_dem_pyr   = 0
+        n_no_lulc_pyr  = 0
+        admitted_dirs: set = set()
         rejected_dirs: set = set()
 
         for _, r in splits.iterrows():
-            # max_stations counts ADMITTED stations, not opened ones. Checked here rather
-            # than inside the cache-fill branch so a station that is opened and then thrown
-            # out by a later filter does not consume one of the N slots.
             if max_stations is not None and len(admitted_dirs) >= max_stations:
                 break
 
-            cat = category_of(r)
-
-            # Directory name matching the on-disk convention (splits_config.station_dir_name)
+            cat      = category_of(r)
             dir_name = station_dir_name(r)
-
-            sat_dir = ZARR_ROOT / cat / dir_name
+            sat_dir  = ZARR_ROOT / cat / dir_name
 
             if sat_dir in rejected_dirs:
                 continue
@@ -1124,256 +1069,98 @@ class SoilMoistureDataset(Dataset):
                 rejected_dirs.add(sat_dir)
                 continue
 
-            # Load per-station data into memory once (subsequent rows reuse caches)
             if sat_dir not in self._zarr_groups:
                 zg = _open_zarr(sat_dir, cat)
                 self._zarr_groups[sat_dir] = zg
                 if zg is None:
-                    # _open_zarr returns None when the store has no .complete sentinel.
-                    # Named explicitly so it stops being conflated with "no ERA5" below,
-                    # which is where every one of these used to land.
                     skips["zarr_store_incomplete"] += 1
                     rejected_dirs.add(sat_dir)
                     continue
-                if zg is not None:
-                    self._era5_cache[sat_dir]  = _load_zarr_era5(zg)
 
-                    # SIF / TWSA are z-scored ONCE here rather than per sample: the slicers
-                    # work on these cached arrays, so normalising the cache is identical to
-                    # normalising every window and costs one pass per station (§35.24 item 7).
-                    _sif = _load_zarr_sif(zg)
-                    if _sif is not None:
-                        _sif = ((np.asarray(_sif[0], dtype=np.float32) - self._sif_mean)
-                                / (self._sif_std + 1e-8), _sif[1], _sif[2])
-                    self._sif_cache[sat_dir] = _sif
+                cache = _load_station_cache(CACHE_ROOT / cat / dir_name)
+                if cache is None:
+                    skips["no_s48_cache (run prepare_s48_cache.py)"] += 1
+                    self._zarr_groups[sat_dir] = None
+                    rejected_dirs.add(sat_dir)
+                    continue
+                self._cache[sat_dir] = cache
+                n_no_dem_pyr  += not bool(cache.get("dem_ok", False))
+                n_no_lulc_pyr += not bool(cache.get("lulc_ok", False))
 
-                    _tw = _load_zarr_twsa(zg)
-                    if _tw is not None:
-                        _tw = ((np.asarray(_tw[0], dtype=np.float32) - self._twsa_mean)
-                               / (self._twsa_std + 1e-8), _tw[1], _tw[2])
-                    self._twsa_cache[sat_dir] = _tw
+                raw = _open_raw(dir_name)
+                self._raw[sat_dir] = raw
+                if raw is None:
+                    n_no_raw += 1
+                else:
+                    for k in ("s2", "s1_asc", "s1_desc", "lulc_years"):
+                        n_raw_missing[k] += not len(raw[k])
+                    n_raw_missing["dem"] += not raw["has_dem"]
 
-                    # ── L12 token source, assembled PER KEY (§35.24b item 1) ────
-                    # This used to be per STATION:
-                    #     if shm_l12:                 <- truthy if ANY key was found
-                    #         self._l12_cache[sat_dir] = shm_l12
-                    #     if sat_dir not in self._l12_cache and ...:
-                    #         ... zarr fallback ...   <- now unreachable
-                    # and _load_l12_shm deliberately tolerates a PARTIALLY written station
-                    # (it documents the rank-0-died-between-bin-and-meta case). So a station
-                    # with s2 in /dev/shm but no s1_desc got no cache entry for s1_desc at
-                    # all, and every __getitem__ fell back to lazy GPFS chunk reads for that
-                    # orbit — a large throughput cliff with nothing in the logs. Merge key by
-                    # key, and count every key that had to fall back.
-                    _l12_src: dict[str, np.ndarray] = {}
-                    _l12_nar: dict[str, bool]       = {}
-                    _shm_keys: set = set()
-                    if shm_dir is not None:
-                        shm_l12 = _load_l12_shm(dir_name, shm_dir,
-                                                expect_k=len(self._token_sel))
-                        if shm_l12:
-                            # Narrowed since §35.31 — the preloader now slices to the K
-                            # selected patches before writing, so these are (N,K,768) and
-                            # the whole cache is ~0.8 GB rather than 153.6 GB. tmpfs is
-                            # RESIDENT ram, so full width was never free. The flag comes
-                            # from each array's own meta: a stale full-width bin still
-                            # reads correctly at full width.
-                            _arrs, _nars = shm_l12
-                            _l12_src.update(_arrs)
-                            _shm_keys = set(_arrs)
-                            _l12_nar.update(_nars)
-                    if not DISABLE_L12_CACHE:
-                        for _k in ("s2", "s1_asc", "s1_desc"):
-                            if _k in _l12_src or f"{_k}/l12" not in zg:
-                                continue
-                            if _shm_keys:
-                                # shm covered this station but not this key.
-                                n_l12_shm_partial[_k] += 1
-                            # §35.24 audit item 12. This used to be `zg[f"{k}/l12"][:]` —
-                            # the whole (N,196,768) fp16 slab, ~145 GB across the 993
-                            # stations, resident, of which training reads exactly one of the
-                            # 196 columns. §35.16 promised the narrowing and only the READ
-                            # side landed. Slicing the token axis here takes it to ~0.74 GB.
-                            # Chunking is (T_TOKENS, 196, 768), so the token axis is one
-                            # chunk and DECOMPRESSION cost is unchanged — this buys resident
-                            # memory, not startup time.
-                            _l12_src[_k] = (zg[f"{_k}/l12"][:, self._tsl, :]
-                                            if self._tsl is not None
-                                            else zg[f"{_k}/l12"][:])
-                            _l12_nar[_k] = self._tsl is not None
-                    if _l12_src:
-                        self._l12_cache[sat_dir]    = _l12_src
-                        self._l12_narrowed[sat_dir] = _l12_nar
+                lst = _load_lst22(cat, dir_name)
+                self._lst[sat_dir] = lst
+                n_no_lst += lst is None
 
-                    # ── DEM / LULC, with their validity masks (§35.24 audit item 5) ──
-                    # The masks were already being loaded into _static_cache and then never
-                    # emitted, so the model treated a nodata-filled DEM token as terrain.
-                    # And a station with NO dem array at all was handed torch.zeros(196,768)
-                    # — a fabricated token that is not flat ground, it is whatever the
-                    # decoder decides an all-zero L12 vector means. Both now come with a
-                    # per-patch validity flag, and the fabricated case is flagged invalid.
-                    _has_dem  = "dem"  in zg
-                    _has_lulc = "lulc" in zg
-                    n_dem_missing  += (not _has_dem)
-                    n_lulc_missing += (not _has_lulc)
-                    _dem_l12  = (torch.from_numpy(zg["dem"][:]) if _has_dem
-                                 else torch.zeros(N_TOKENS, 768, dtype=torch.float16))
-                    _lulc_l12 = (torch.from_numpy(zg["lulc"][:]) if _has_lulc
-                                 else torch.zeros(N_TOKENS, 768, dtype=torch.float16))
-                    # Fail closed: no stored mask -> no evidence the token is real.
-                    # verify_zarr_store.py:70 lists dem_token_mask / lulc_token_mask as
-                    # REQUIRED for a complete store, so this branch should be unreachable
-                    # on a verified store and is not costing valid terrain.
-                    _dem_tm   = (torch.from_numpy(np.asarray(zg["dem_token_mask"][:]).astype(bool))
-                                 if ("dem_token_mask" in zg and _has_dem)
-                                 else torch.zeros(14, 14, dtype=torch.bool))
-                    _lulc_tm  = (torch.from_numpy(np.asarray(zg["lulc_token_mask"][:]).astype(bool))
-                                 if ("lulc_token_mask" in zg and _has_lulc)
-                                 else torch.zeros(14, 14, dtype=torch.bool))
+                self._era5_cache[sat_dir] = _load_zarr_era5(zg)
 
-                    # ── Soil: fill, check for dead channels, z-score ────────────
-                    if "soil" in zg:
-                        _soil_np, _soil_ok = fill_soil_nans_with_validity(zg["soil"][:])
-                    else:
-                        _soil_np = np.zeros((21, 74, 74), dtype=np.float32)
-                        _soil_ok = np.zeros(21, dtype=bool)
-                    _n_dead = int((~_soil_ok).sum())
-                    if _n_dead > MAX_DEAD_SOIL_CHANNELS:
-                        # More than a couple of the 21 channels are pure invention. Drop the
-                        # station rather than feed the SoilEncoder a stack that is mostly
-                        # dataset means (§35.24 audit item 6).
-                        skips[f"soil_{_n_dead}_dead_channels"] += 1
+                # SIF / TWSA z-scored ONCE on the cached arrays (§35.24 item 7).
+                _sif = _load_zarr_sif(zg)
+                if _sif is not None:
+                    _sif = ((np.asarray(_sif[0], dtype=np.float32) - self._sif_mean)
+                            / (self._sif_std + 1e-8), _sif[1], _sif[2])
+                self._sif_cache[sat_dir] = _sif
+
+                _tw = _load_zarr_twsa(zg)
+                if _tw is not None:
+                    _tw = ((np.asarray(_tw[0], dtype=np.float32) - self._twsa_mean)
+                           / (self._twsa_std + 1e-8), _tw[1], _tw[2])
+                self._twsa_cache[sat_dir] = _tw
+
+                # ── Soil: fill, check for dead channels, z-score ────────────
+                if "soil" in zg:
+                    _soil_np, _soil_ok = fill_soil_nans_with_validity(zg["soil"][:])
+                else:
+                    _soil_np = np.zeros((21, 74, 74), dtype=np.float32)
+                    _soil_ok = np.zeros(21, dtype=bool)
+                _n_dead = int((~_soil_ok).sum())
+                if _n_dead > MAX_DEAD_SOIL_CHANNELS:
+                    skips[f"soil_{_n_dead}_dead_channels"] += 1
+                    self._zarr_groups[sat_dir] = None
+                    rejected_dirs.add(sat_dir)
+                    continue
+                n_dead_soil_ch += _n_dead
+                _soil_np = (_soil_np - self._soil_mean) / (self._soil_std + 1e-8)
+                # Re-zero AFTER the z-score: 0.0 post-normalisation is the training mean.
+                _soil_np[~_soil_ok] = 0.0
+                self._static_cache[sat_dir] = {
+                    "soil":     torch.from_numpy(np.ascontiguousarray(_soil_np)),
+                    "dem_pyr":  torch.from_numpy(np.asarray(cache["dem_pyr"], np.float32)),
+                    "lulc_pyr": torch.from_numpy(np.asarray(cache["lulc_pyr"], np.float32)),
+                }
+
+                # strict=True: refuse to guess an alignment between labels/qc and labels/sm.
+                try:
+                    lc = _load_zarr_labels(zg, strict=True)
+                except ValueError:
+                    skips["labels_length_mismatch (sm/dates/qc)"] += 1
+                    self._zarr_groups[sat_dir] = None
+                    rejected_dirs.add(sat_dir)
+                    continue
+                if lc is not None:
+                    # QC fail-closed (§35.24 audit item 4): no QC source means climatology
+                    # could be labelled as observation, so the station is refused.
+                    _qc = lc[3]
+                    if _qc is None:
+                        skips["labels_qc_absent"] += 1
                         self._zarr_groups[sat_dir] = None
                         rejected_dirs.add(sat_dir)
                         continue
-                    n_dead_soil_ch += _n_dead
-                    _soil_np = (_soil_np - self._soil_mean) / (self._soil_std + 1e-8)
-                    # Re-zero AFTER the z-score: a dead channel filled with 0.0 and then
-                    # normalised would sit at -mean/std, an extreme value the encoder would
-                    # read as a strong signal. 0.0 post-normalisation is the training mean.
-                    _soil_np[~_soil_ok] = 0.0
-
-                    self._static_cache[sat_dir] = {
-                        "dem":            _dem_l12,
-                        "lulc":           _lulc_l12,
-                        "dem_token_mask": _dem_tm,
-                        "lulc_token_mask":_lulc_tm,
-                        "soil":           torch.from_numpy(np.ascontiguousarray(_soil_np)),
-                        "soil_ch_valid":  torch.from_numpy(_soil_ok),
-                    }
-
-                    # strict=True: refuse to guess an alignment between labels/qc and
-                    # labels/sm. A station we cannot align is dropped, counted, not fudged.
-                    try:
-                        lc = _load_zarr_labels(zg, strict=True)
-                    except ValueError:
-                        skips["labels_length_mismatch (sm/dates/qc)"] += 1
+                    if bool(np.all(_qc == QC_NO_SOURCE)):
+                        skips["labels_qc_no_source_sentinel"] += 1
                         self._zarr_groups[sat_dir] = None
                         rejected_dirs.add(sat_dir)
                         continue
-                    if lc is not None:
-                        # ── QC fail-closed (§35.24 audit item 4) ────────────────
-                        # create_token_zarr.py used to default labels/qc to zeros, i.e.
-                        # "every day directly observed", whenever the source NetCDF carried
-                        # neither soil_moisture_qc nor quality_flag. The preprocessing
-                        # pipeline gap-fills with a month-day climatology, so those zeros
-                        # meant the model trained on climatology labelled as observation —
-                        # which is exactly a station-mean predictor wearing a ground-truth
-                        # badge. The producer now writes 255 for that case and the dataset
-                        # refuses the station rather than trusting the flag.
-                        _qc = lc[3]
-                        if _qc is None:
-                            skips["labels_qc_absent"] += 1
-                            self._zarr_groups[sat_dir] = None
-                            rejected_dirs.add(sat_dir)
-                            continue
-                        if bool(np.all(_qc == QC_NO_SOURCE)):
-                            skips["labels_qc_no_source_sentinel"] += 1
-                            self._zarr_groups[sat_dir] = None
-                            rejected_dirs.add(sat_dir)
-                            continue
-                        self._label_cache[sat_dir] = lc
+                    self._label_cache[sat_dir] = lc
 
-                    # ── Precompute GPFS-hot-path data once at init ──────────────
-                    # (a) CM token-mask quality: (N_cm, 14, 14) bool.
-                    #
-                    # What is RESIDENT here is the 14x14 bool derivation — 196 bytes per
-                    # acquisition, ~39 KB for a 200-date station — not the raw masks. That
-                    # matters because every DDP rank builds this cache independently (only
-                    # L12 is shared through /dev/shm), so anything kept here is multiplied
-                    # by the rank count. The raw (N,224,224) uint8 array is ~10 MB/station
-                    # and would be ~40 GB of pure duplication across 1000 stations x 4 ranks
-                    # if it were held; it is ~250x smaller as a token mask (§35.24b item 4).
-                    #
-                    # The read is now BLOCKED rather than `zg["cm/masks"][:]`. The old form
-                    # was never resident, but it did decompress the whole array into one
-                    # transient allocation; going block by block bounds that peak to one
-                    # chunk-row and keeps `bad_frac` bit-identical (the reduction is per
-                    # acquisition, so blocking cannot change a single value).
-                    cm_qm = None
-                    if "cm/masks" in zg and "cm/dates" in zg:
-                        _cm_arr = zg["cm/masks"]
-                        _n_cm   = int(_cm_arr.shape[0])
-                        cm_qm   = np.empty((_n_cm, 14, 14), dtype=bool)
-                        _blk    = 128
-                        for _b0 in range(0, _n_cm, _blk):
-                            _b1    = min(_b0 + _blk, _n_cm)
-                            _chunk = _cm_arr[_b0:_b1, :224, :224]
-                            _c4    = _chunk.reshape(_b1 - _b0, 14, 16, 14, 16)
-                            # CM_BAD_CLASSES is SEnSeIv2-SegFormerB2 (3 thin cloud, 4 thick
-                            # cloud, 5 cloud shadow, 255 nodata) — NOT Sentinel-2 SCL, where
-                            # 4 and 5 are the good vegetation classes. See the class table
-                            # at the top of this file.
-                            _bad   = np.isin(_c4, CM_BAD_CLASSES).mean(axis=(2, 4))
-                            cm_qm[_b0:_b1] = (_bad <= CM_MAX_BAD_FRAC)
-                    else:
-                        n_no_cm_group += 1
-                    self._cm_token_mask_cache[sat_dir] = cm_qm
-
-                    # (b) S1 token masks per orbit: {orbit: (N, 14, 14) bool}
-                    s1_tm: dict[str, np.ndarray] = {}
-                    for _ok in ("s1_asc", "s1_desc"):
-                        _mk = f"{_ok}/token_mask"
-                        if _mk in zg:
-                            s1_tm[_ok] = np.asarray(zg[_mk][:])
-                        elif f"{_ok}/l12" in zg:
-                            # Orbit has tokens but no quality mask — every one of its
-                            # acquisitions is now dropped by the fail-closed init in
-                            # load_s1_rolling_zarr. Count it so the loss is visible.
-                            n_s1_no_tm[_ok] += 1
-                            n_s1_acq_no_tm  += int(zg[f"{_ok}/l12"].shape[0])
-                    self._s1_token_mask_cache[sat_dir] = s1_tm
-                    for _ok in ("s1_asc", "s1_desc"):
-                        if f"{_ok}/l12" in zg:
-                            n_s1_acq_total += int(zg[f"{_ok}/l12"].shape[0])
-
-                    # (c) Date arrays + precomputed date_ints/years/doys per orbit
-                    _dc: dict = {}
-                    for _orbit in ("s2", "s1_asc", "s1_desc", "cm"):
-                        _dkey = f"{_orbit}/dates"
-                        if _dkey not in zg:
-                            continue
-                        _dates     = [str(d) for d in zg[_dkey][:]]
-                        _date_ints = np.array([int(d[:8]) for d in _dates], dtype=np.int32)
-                        _years_a   = (_date_ints // 10000).astype(np.int16)
-                        _doys_a    = np.array([
-                            datetime(int(d[:4]), int(d[4:6]), int(d[6:8])).timetuple().tm_yday
-                            for d in _dates
-                        ], dtype=np.int16)
-                        _dc[_orbit] = {"dates": _dates, "date_ints": _date_ints,
-                                        "years": _years_a, "doys": _doys_a}
-                    if "cm" in _dc:
-                        _dc["cm"]["date_to_idx"] = {d: i for i, d in enumerate(_dc["cm"]["dates"])}
-                    self._zarr_date_cache[sat_dir] = _dc
-
-                    # How much S2 the fail-closed cloud mask actually costs this station:
-                    # an acquisition whose date has no cm entry now contributes nothing.
-                    if "s2" in _dc:
-                        _cm_keys = set(_dc.get("cm", {}).get("date_to_idx", {}))
-                        n_s2_acq_total  += len(_dc["s2"]["dates"])
-                        n_s2_acq_no_cm  += sum(1 for d in _dc["s2"]["dates"] if d not in _cm_keys)
-
-            # ERA5 year range from cache (fast int arithmetic — no file I/O)
             era5_entry = self._era5_cache.get(sat_dir)
             if era5_entry is None:
                 skips["no_era5"] += 1
@@ -1386,15 +1173,13 @@ class SoilMoistureDataset(Dataset):
             era5_start_year = era5_first_int // 10000
             era5_end_year   = era5_last_int  // 10000
 
-            # S2 year range: from date cache (no zarr I/O)
-            _s2_dc = self._zarr_date_cache.get(sat_dir, {}).get("s2")
-            if _s2_dc is None:
+            _s2_di = self._cache[sat_dir].get("s2_date_ints")
+            if _s2_di is None or not len(_s2_di):
                 skips["no_s2_dates"] += 1
                 self._zarr_groups[sat_dir] = None
                 rejected_dirs.add(sat_dir)
                 continue
-            s2_years = (int(_s2_dc["date_ints"][0]) // 10000,
-                        int(_s2_dc["date_ints"][-1]) // 10000)
+            s2_years = (int(_s2_di[0]) // 10000, int(_s2_di[-1]) // 10000)
 
             if sat_dir not in self._label_cache:
                 skips["no_sm_labels"] += 1
@@ -1405,29 +1190,23 @@ class SoilMoistureDataset(Dataset):
 
             n_year_ok = 0
             for year in self.years:
-                # Cheap year-level pre-filter only — the binding ERA5 test is the
-                # day-granular one inside the day loop below.
                 if not (era5_start_year <= year <= era5_end_year):
                     sample_skips["year_outside_era5_record"] += 1
                     continue
-                if s2_years is None or not (s2_years[0] <= year <= s2_years[1]):
+                if not (s2_years[0] <= year <= s2_years[1]):
                     sample_skips["year_outside_s2_record"] += 1
                     continue
 
-                year_mask    = times.year == year
+                year_mask = times.year == year
                 if not year_mask.any():
                     sample_skips["year_has_no_label_rows"] += 1
                     continue
 
                 year_indices = np.where(year_mask)[0]
-                # Only train on directly observed values (qc==0); gap-filled (qc==1) excluded.
-                # qc_np can no longer be None — a station with no QC array was dropped above
-                # (§35.24 audit item 4) — so the old `~isnan` fallback is gone. It was the
-                # branch that let a gap-filled climatology through as an observation.
                 assert qc_np is not None, (
                     f"{dir_name}: labels/qc is None after the QC admission check — the "
-                    f"fail-closed guard in __init__ was bypassed."
-                )
+                    f"fail-closed guard in __init__ was bypassed.")
+                # Only directly observed values (qc==0); gap-filled (qc==1) excluded.
                 valid_days = np.any(qc_np[:, year_indices] == QC_OBSERVED, axis=0)
                 if valid_days.sum() < min_obs:
                     sample_skips["year_below_min_obs"] += 1
@@ -1435,14 +1214,7 @@ class SoilMoistureDataset(Dataset):
 
                 for day_idx in np.where(valid_days)[0]:
                     doy = times[year_indices[day_idx]].day_of_year
-
-                    # ── ERA5 admission, day-granular (§35.24 audit item 1) ─────
-                    # The guard used to be YEAR-granular: era5_start_year <= year <=
-                    # era5_end_year. A station whose ERA5 record stops on 2021-03-14 still
-                    # admitted every observed day of 2021, and load_era5_rolling right-aligns
-                    # whatever it finds, so a 14-March row was placed in slot 364 and read by
-                    # the model as "today's weather" for a target in September. Compare the
-                    # actual dates instead.
+                    # ERA5 admission, day-granular (§35.24 audit item 1).
                     target_int = _date_to_int(times[year_indices[day_idx]])
                     if not (era5_first_int <= target_int <= era5_last_int):
                         sample_skips["era5_target_day_outside_record"] += 1
@@ -1450,9 +1222,6 @@ class SoilMoistureDataset(Dataset):
                         continue
                     ws_int, _ = _window_ints(year, int(doy))
                     if ws_int < era5_first_int:
-                        # The 365-day window reaches back before the record starts. Not a
-                        # correctness bug any more — era5_rel_pos declares the short window
-                        # honestly and the empty slots are masked — so this is opt-in.
                         sample_skips["era5_window_not_fully_covered"] += 1
                         if era5_require_full_window:
                             era5_reject_by_station[dir_name] += 1
@@ -1463,6 +1232,7 @@ class SoilMoistureDataset(Dataset):
                         "year"       : year,
                         "doy"        : doy,
                         "time_idx"   : year_indices[day_idx],
+                        "date_int"   : target_int,
                         "station_key": dir_name,
                     })
                     n_year_ok += 1
@@ -1474,18 +1244,20 @@ class SoilMoistureDataset(Dataset):
                 rejected_dirs.add(sat_dir)
 
         # ── Audit report (§35.24) ───────────────────────────────────────────────
-        # Every fail-closed decision above is silent by construction: it removes data and
-        # changes nothing that a loss curve would show. So it gets printed.
         n_stations = len(set(s["station_key"] for s in self.samples))
-        print(f"Dataset: {len(self.samples)} samples from {n_stations} stations")
+        n_lst_samples = sum(
+            1 for s in self.samples
+            if self._lst.get(s["sat_dir"]) is not None and s["date_int"] in self._lst[s["sat_dir"]][0])
+        self.n_lst_samples = n_lst_samples
+        print(f"Dataset: {len(self.samples)} samples from {n_stations} stations; "
+              f"{n_lst_samples} ({100.0 * n_lst_samples / max(1, len(self.samples)):.1f}%) "
+              f"carry a Landsat ST target on their own day")
 
         if skips:
             print("  stations dropped, by reason:")
             for reason, n in skips.most_common():
                 print(f"    {n:6d}  {reason}")
         if sample_skips:
-            # "year_*" rows count STATION-YEARS rejected wholesale; "era5_*" rows count
-            # individual target days.
             print("  station-years / samples dropped, by reason:")
             for reason, n in sample_skips.most_common():
                 print(f"    {n:6d}  {reason}")
@@ -1499,20 +1271,16 @@ class SoilMoistureDataset(Dataset):
             for k, v in worst:
                 print(f"    {v:6d}  {k}")
 
-        print(f"  cloud mask: {n_no_cm_group} stations have no cm/masks group at all; "
-              f"{n_s2_acq_no_cm}/{n_s2_acq_total} S2 acquisitions have no cloud-mask entry "
-              f"and are now dropped (they used to read back cloud-free).")
-        print(f"  S1 token mask: {dict(n_s1_no_tm)} stations per orbit have tokens but no "
-              f"token_mask; {n_s1_acq_no_tm}/{n_s1_acq_total} S1 acquisitions dropped for it.")
-        print(f"  statics: {n_dem_missing} stations with no DEM, {n_lulc_missing} with no "
-              f"LULC (their patches are emitted with dem_valid/lulc_valid = False); "
-              f"{n_dead_soil_ch} all-NaN soil channels zeroed in kept stations.")
-        if n_l12_shm_partial:
-            # Not an error — the zarr fallback covered it — but it means rank 0's shm
-            # preload was incomplete for these keys, so check /dev/shm capacity and the
-            # preloader's exit status before blaming the loader for slow epochs.
-            print(f"  L12 cache: /dev/shm was partial for {dict(n_l12_shm_partial)} "
-                  f"(station, key) pairs; those keys were filled from zarr instead.")
+        print(f"  fine path: {n_no_raw} stations with no raw imagery store; raw store lacks "
+              f"{dict(n_raw_missing)} (stations per modality) — those channels arrive zeroed "
+              f"with valid = 0.")
+        print(f"  statics: {n_no_dem_pyr} stations with no valid DEM pyramid, {n_no_lulc_pyr} "
+              f"with no valid LULC pyramid; {n_dead_soil_ch} all-NaN soil channels zeroed.")
+        print(f"  thermal: {n_no_lst} stations have no lst22 bundle.")
+        if require_lst and n_lst_samples == 0:
+            raise RuntimeError("require_lst=True but no admitted sample has a Landsat ST target "
+                               "— run consolidate_landsat_st.py, or the thermal head trains on "
+                               "nothing.")
 
     def __len__(self):
         return len(self.samples)
@@ -1525,120 +1293,61 @@ class SoilMoistureDataset(Dataset):
         sat_dir = s["sat_dir"]
         year    = s["year"]
         doy     = s["doy"]
-        zg      = self._zarr_groups.get(sat_dir)   # zarr group or None
-
-        # §35.24 audit item 14. Everything from s2_hist to dem_tok used to be bound only
-        # inside `if zg is not None:` while the return dict read them unconditionally, so a
-        # None group would have raised UnboundLocalError from a line that mentions none of
-        # the loaders. It is unreachable — __init__ never appends a sample for a station
-        # whose group is None — so make that an invariant instead of a dangling branch.
-        if zg is None:
+        if self._zarr_groups.get(sat_dir) is None:
             raise RuntimeError(
                 f"sample {idx} ({s['station_key']} {s['year']}-{s['doy']}) has no open zarr "
-                f"group. __init__ only appends samples for stations it successfully cached, "
-                f"so this means the group was cleared after construction."
-            )
+                f"group. __init__ only appends samples for stations it cached, so the group "
+                f"was cleared after construction.")
+        cache = self._cache[sat_dir]
 
-        # ── Zarr path — all GPFS data served from precomputed caches ──
-        _l12       = self._l12_cache.get(sat_dir, {})
-        # {key: bool} — resolved per modality inside each loader, because shm and the zarr
-        # fallback can cover different keys of the same station (§35.24b item 1).
-        _narrowed  = self._l12_narrowed.get(sat_dir, {})
-        _dc        = self._zarr_date_cache.get(sat_dir, {})
-        _cm_tm     = self._cm_token_mask_cache.get(sat_dir)
-        _s1_tm     = self._s1_token_mask_cache.get(sat_dir, {})
+        # ── Trunk inputs: pooled history + the anchor, all on or before day D ──
+        s2_pyr, s2_doys, s2_valid, s2_rel_pos, _ = load_history(cache, ("s2",), year, doy, MAX_S2)
+        s1_pyr, s1_doys, s1_valid, s1_rel_pos, s1_orbit = load_history(
+            cache, ("s1_asc", "s1_desc"), year, doy, MAX_S1)
+        anchor_l12, anchor_rp, anchor_orbit, _ = select_anchor(cache, year, doy)
 
-        # s2_doys / s2_valid are unpacked but no longer emitted — they are consumed only
-        # inside _finalise_history, which folds them into s2_hist_valid (§35.24 item 13).
-        s2_hist, _s2_doys, _s2_valid, s2_rel_pos, s2_hist_valid = \
-            load_s2_rolling_zarr(zg, year, doy,
-                                 l12_np=_l12.get("s2"),
-                                 date_cache=_dc,
-                                 cm_token_mask=_cm_tm,
-                                 training=self.training,
-                                 token_sel=self._token_sel,
-                                 patch_token_dropout=self._patch_token_dropout,
-                                 l12_narrowed=_narrowed)
+        _static    = self._static_cache[sat_dir]
+        soil_patch = _static["soil"]
 
-        s1_hist, _s1_doys, _s1_valid, s1_rel_pos, s1_hist_valid, s1_orbit = \
-            load_s1_rolling_zarr(zg, year, doy,
-                                 l12_asc_np=_l12.get("s1_asc"),
-                                 l12_desc_np=_l12.get("s1_desc"),
-                                 date_cache=_dc,
-                                 s1_token_mask_cache=_s1_tm,
-                                 training=self.training,
-                                 token_sel=self._token_sel,
-                                 patch_token_dropout=self._patch_token_dropout,
-                                 l12_narrowed=_narrowed)
+        # ── Fine path: most recent raw imagery on or before day D ─────────
+        fine, lulc, _ = build_fine(self._raw.get(sat_dir), cache, year, doy, self._fine_stats)
 
-        # DEM/LULC enter patch k's sequence DIRECTLY, not as four nested-window means.
-        # §27a.2 measured that pooling retains 1.5% (DEM) / 2.6% (LULC) of within-tile
-        # variance -- that destruction is the defect this whole build exists to remove.
-        _static  = self._static_cache.get(sat_dir, {})
-        _sel     = self._token_sel
-        dem_tok  = _static.get("dem",  torch.zeros(N_TOKENS, 768, dtype=torch.float16))[_sel]
-        lulc_tok = _static.get("lulc", torch.zeros(N_TOKENS, 768, dtype=torch.float16))[_sel]
-        # (14,14) -> (196,) -> the K selected patches. §35.24 audit item 5: these masks were
-        # built into _static_cache at init and then never left __getitem__, so a DEM token
-        # over a nodata void was fed to the model as terrain with nothing marking it.
-        dem_valid  = _static.get("dem_token_mask",
-                                 torch.zeros(14, 14, dtype=torch.bool)).reshape(N_TOKENS)[_sel]
-        lulc_valid = _static.get("lulc_token_mask",
-                                 torch.zeros(14, 14, dtype=torch.bool)).reshape(N_TOKENS)[_sel]
-
-        # ── Soil patch (static, from cache — already z-scored at init) ──
-        soil_patch = _static.get("soil", torch.zeros(21, 74, 74, dtype=torch.float32))
+        # ── Thermal target: the Landsat scene on day D itself, or all-NaN ──
+        lst_obs = torch.full((LST_N, LST_N), float("nan"), dtype=torch.float32)
+        lst = self._lst.get(sat_dir)
+        if lst is not None:
+            row = lst[0].get(s["date_int"])
+            if row is not None:
+                lst_obs = torch.from_numpy(np.asarray(lst[1][row], dtype=np.float32))
 
         # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
-        # load_era5_rolling returns numpy directly; single torch.from_numpy at end
         era5_np, era5_doys_np, era5_rel_np = load_era5_rolling(
             self._era5_cache.get(sat_dir), year, doy)
         if self._era5_log1p_prec:
             era5_np[:, PREC_IDX] = np.log1p(era5_np[:, PREC_IDX].clip(0))
-        era5_np  = (era5_np - self._era5_means) / (self._era5_stds + 1e-8)
-        era5     = torch.from_numpy(era5_np)
+        era5_np   = (era5_np - self._era5_means) / (self._era5_stds + 1e-8)
+        era5      = torch.from_numpy(era5_np)
         era5_doys = torch.from_numpy(era5_doys_np)
-        # True staleness per row, replacing the model's arange(365) (§35.24 audit item 1).
         era5_rel_pos = torch.from_numpy(era5_rel_np)
 
-        # Mask 15% of ERA5 timesteps during training — forces temporal generalisation.
-        # Only masks non-padded slots (era5_doys > 0); never applied at val/test time.
-        #
-        # VALUES ONLY (§35.24b item 2). This used to also set era5_doys[mask] = 0, which the
-        # model reads as PADDING — so the masked rows left the sequence entirely. Two things
-        # broke. First, training saw ~310 valid driver tokens and validation saw 365: a
-        # train/eval shift in sequence LENGTH, not just in content, which is not what input
-        # dropout is supposed to do. Second, the attention-entropy collapse detector
-        # normalises by per-sample log(n_valid_keys) (§35.24 contract), so train and val
-        # were being divided by different references and the diagnostic could not be
-        # compared across them. Standard input dropout keeps the token and masks the value:
-        # the row stays in the sequence, keeps its DOY and its staleness, and carries a zero
-        # feature vector — which, post z-score, is the climatological mean for that variable.
+        # Mask 15% of ERA5 VALUES during training (the rows stay, with their DOY and
+        # staleness) — §35.24b item 2. Never at val/test time.
         if self.training:
-            valid_slots = era5_doys > 0
-            mask = (torch.rand(era5.shape[0]) < 0.15) & valid_slots
+            mask = (torch.rand(era5.shape[0]) < 0.15) & (era5_doys > 0)
             era5[mask] = 0.0
 
-        # ── SIF — optional sparse modality, numpy slice from cache ───
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
-            self._sif_cache.get(sat_dir), year, doy
-        )
+            self._sif_cache.get(sat_dir), year, doy)
         if self.training and random.random() < 0.5:
             sif_valid[:] = False
 
-        # ── TWSA — optional sparse modality, numpy slice from cache ──
         twsa_vals, twsa_doys, twsa_rel_pos, twsa_valid = load_twsa_rolling(
-            self._twsa_cache.get(sat_dir), year, doy
-        )
+            self._twsa_cache.get(sat_dir), year, doy)
         if self.training and random.random() < 0.5:
             twsa_valid[:] = False
 
         # ── ISMN labels — observed values only (qc==0) ───────────────
-        # `qc_np is None` used to be treated as "assume observed"; __init__ now drops those
-        # stations outright, so the only surviving path is an explicit QC_OBSERVED flag
-        # (§35.24 audit item 4). Anything else — gap-filled, still-missing, or the 255
-        # no-QC-source sentinel — leaves the depth as NaN and the loss masks it.
-        sm_np, depths, _, qc_np = self._label_cache[s["sat_dir"]]
+        sm_np, depths, _, qc_np = self._label_cache[sat_dir]
         label = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
         for i, depth_str in enumerate(SM_DEPTHS):
             if depth_str in depths:
@@ -1647,53 +1356,43 @@ class SoilMoistureDataset(Dataset):
                     label[i] = float(sm_np[d_idx, s["time_idx"]])
 
         return {
-            # ── Per-patch satellite history — the point of the whole architecture ──
-            # (T, K, 768) fp16, K=1 in training (patch 105). Only these K patches were ever
-            # read from the store; the other 195 never enter the process (§35.22).
-            # s2_doys / s2_valid / s1_doys / s1_valid / token_valid were emitted here and
-            # read by nothing: model.py uses s2_hist / s2_hist_valid / s2_rel_pos only, and
-            # they are folded into hist_valid before they leave the loader. Dropped in
-            # §35.24 audit item 13. (check_dataset.py's EXPECTED table still names them, but
-            # that table also names s2_l12 and anchor_l3, which this dataset has not emitted
-            # since §35.14 — it is stale against the patchwise arm either way. ablation.py
-            # lists them in MODALITY_KEYS but tolerates absent keys as long as one matches,
-            # and s2_hist / s2_hist_valid / s2_rel_pos still do.)
-            "s2_hist"       : s2_hist,           # (MAX_S2, K, 768) fp16
-            "s2_hist_valid" : s2_hist_valid,     # (MAX_S2, K) bool  — cloud mask AND doy>0
-            "s2_rel_pos"    : s2_rel_pos,        # (MAX_S2,) long    — staleness, 364 = today
+            # ── Trunk: pooled pyramids (T,4,768) + the anchor's L12 ──
+            "s2_pyr"        : s2_pyr,            # (MAX_S2, 4, 768) fp16
+            "s2_doys"       : s2_doys,           # (MAX_S2,) long
+            "s2_valid"      : s2_valid,          # (MAX_S2,) bool
+            "s2_rel_pos"    : s2_rel_pos,        # (MAX_S2,) long — 364 = day D
+            "s1_pyr"        : s1_pyr,            # (MAX_S1, 4, 768) fp16
+            "s1_doys"       : s1_doys,
+            "s1_valid"      : s1_valid,
+            "s1_rel_pos"    : s1_rel_pos,
+            "s1_orbit"      : s1_orbit,          # (MAX_S1,) long — 0 = ASC, 1 = DESC
+            "anchor_l12"    : anchor_l12,        # (196, 768) fp16
+            "anchor_rel_pos": torch.tensor(anchor_rp, dtype=torch.long),
+            "anchor_orbit"  : torch.tensor(anchor_orbit, dtype=torch.long),  # 0 S2, 1 asc, 2 desc
+            "dem_pyr"       : _static["dem_pyr"],    # (4, 768) fp32
+            "lulc_pyr"      : _static["lulc_pyr"],   # (4, 768) fp32
 
-            "s1_hist"       : s1_hist,           # (MAX_S1, K, 768) fp16
-            "s1_hist_valid" : s1_hist_valid,     # (MAX_S1, K) bool
-            "s1_rel_pos"    : s1_rel_pos,        # (MAX_S1,) long
-            "s1_orbit"      : s1_orbit,          # (MAX_S1,) long    — 0 = ASC, 1 = DESC
+            # ── Fine path (model.py FINE_* layout) ──
+            "fine"          : fine,              # (19, 112, 112) fp16
+            "lulc"          : lulc,              # (224, 224) uint8, LULC_PAD = nodata
 
-            # ── Per-patch statics ─────────────────────────────────────────
-            "dem_tok"       : dem_tok,           # (K, 768) fp16
-            "lulc_tok"      : lulc_tok,          # (K, 768) fp16
-            "dem_valid"     : dem_valid,         # (K,) bool — False = fabricated / nodata
-            "lulc_valid"    : lulc_valid,        # (K,) bool
-            # .copy(): self._token_sel is a single array shared by every worker and every
-            # sample, and from_numpy would hand out a VIEW of it. Any in-place write on the
-            # returned tensor — a collate that reuses the buffer, an ablation that permutes
-            # it — would rewrite the dataset's own patch selection (§35.24 item 13).
-            "token_idx"     : torch.from_numpy(self._token_sel.copy()),   # (K,) long
-
-            # ── Tile-level drivers: identical for every patch, hence cacheable ──
+            # ── Drivers ──
             "soil_patch"    : soil_patch,        # (21, 74, 74) fp32 — NaN-free, z-scored
-            "era5"          : era5,              # (365, 19) fp32 — z-scored
+            "era5"          : era5,              # (365, 18) fp32 — z-scored
             "era5_doys"     : era5_doys,         # (365,) long
             "era5_rel_pos"  : era5_rel_pos,      # (365,) long — TRUE staleness, 364 = today
             "sif"           : sif_vals,          # (MAX_SIF, 1) fp32 — z-scored
-            "sif_doys"      : sif_doys,          # (MAX_SIF,) long
-            "sif_rel_pos"   : sif_rel_pos,       # (MAX_SIF,) long
-            "sif_valid"     : sif_valid,         # (MAX_SIF,) bool
+            "sif_doys"      : sif_doys,
+            "sif_rel_pos"   : sif_rel_pos,
+            "sif_valid"     : sif_valid,
             "twsa"          : twsa_vals,         # (MAX_TWSA, 1) fp32 — z-scored
-            "twsa_doys"     : twsa_doys,         # (MAX_TWSA,) long
-            "twsa_rel_pos"  : twsa_rel_pos,      # (MAX_TWSA,) long
-            "twsa_valid"    : twsa_valid,        # (MAX_TWSA,) bool
+            "twsa_doys"     : twsa_doys,
+            "twsa_rel_pos"  : twsa_rel_pos,
+            "twsa_valid"    : twsa_valid,
 
-            # ── Labels and identity ───────────────────────────────────────
+            # ── Targets and identity ──
             "label"         : label,             # (3,) — NaN where the depth has no obs
+            "lst_obs"       : lst_obs,           # (22, 22) Kelvin — all NaN off overpass days
             "station_key"   : s["station_key"],
             "year"          : s["year"],
             "doy"           : s["doy"],

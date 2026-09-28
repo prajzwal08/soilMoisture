@@ -16549,3 +16549,41 @@ contamination surviving QC by construction, so a 20 K bad cell lands at 7.4 sigm
 Huber's linear regime. That is the bound working as §46.5 intended.
 
 Written: `csvs/lst_stats.json`, `csvs/lst_tile_means.csv` (52,414 rows).
+
+### §48.10 Built — code and CPU verification (Session 44, 2026-09-28)
+
+Code: `model.py`, `dataset.py`, `train.py`, `ckpt_utils.py`, `eval_predict.py` rewritten for
+§48 (patchwise arm now only at tags `pw_stage2a-ep9` / `pre-s48-build`). New:
+`prepare_s48_cache.py` (per-station pyramids, flat anchor L12, S2-aligned pixel cloud masks
+-> `/gpfs/scratch1/shared/pkhanal/s48cache`, a pure re-layout forced by the token store's
+32-acquisition l12 chunks and one-chunk cm/masks), `consolidate_landsat_st.py` (22x22 target,
+mask-then-warp through `landsat_target.py`), `csvs/fine_stats.json` (TerraMind constants),
+`verify_s48.py` + `slurm/verify_s48.sh`.
+
+**Verification (job 27290236): 14/14 PASS.** Shapes; fine encoder 298,408 of 47.97 M params;
+step 0 is exactly the bottleneck-only decoder (max |d| = 0.0 when the fine input changes);
+modality dropout zeroes one whole modality incl. valid+age; thermal loss invariant to any
+tile-level offset (alpha = 0); 0-with-graph on no-overpass batches; backward reaches head_lst,
+trunk and the zero-init skip slices; pool ablation runs; the real dataset on 3 cached stations
+gives 4,275 samples with no NaN, zero-after-norm everywhere a valid fraction is 0, nothing after
+day D; a real batch runs through the model. LST smoke (27289922, 8 stations): grid centre vs
+imagery tile `bounds_utm` offset **0.000 m** at all 8 — §46.8 item 5's geometry check.
+
+**Two defects the checks caught, both fixed:**
+1. The SM heads opened at 0.05 / 0.56 / 0.56 against label_mean 0.17 / 0.19 / 0.19 — bias set,
+   but the default weights add +/-0.4 from 64 post-ReLU channels. Heads are now zero-WEIGHT,
+   bias = label_mean (exact at step 0). Consequence handled in `LambdaLST`: dL_sm/dz is 0 at
+   step 0, so a zero gradient on either side is skipped rather than seeding the EMA with 0.
+2. `ckpt_utils.py` hashed `csvs/era5_stats.json` while training used `era5_stats18.json`, so
+   every correct checkpoint would have reported a provenance MISMATCH; and its U-Net guard
+   (`decoder.*` / `transformer_layers.*` keys) would have rejected §48 checkpoints. It now
+   hashes the files the checkpoint names and accepts only `arch == "s48"`.
+
+Found while building, recorded: 8 train stations produce no sample in 2016-2022 (driver_stats
+565/573: Bussolenobosco, ReynoldsHomestead, Price, and SNOTEL Coldfoot, MedBow, ParleysUpper,
+SwedePeak, SuuRanch) — §47's admission rule counts days, not sample-producing years.
+
+**Before a training smoke, two full runs are gated on permission:** `prepare_s48_cache.sh`
+(~150 GB scratch, 993 stations; smoke 8/8 = 1.2 GB) and `consolidate_landsat_st.sh`
+(993 x `_lst22.npz` into the work3 data tree). `ablation.py` has no key list for `fine` /
+`lulc` yet, so `--ablate` on §48 checkpoints covers the trunk inputs only.

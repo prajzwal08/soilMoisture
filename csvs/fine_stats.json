@@ -1,0 +1,14 @@
+{
+  "source": "TerraMind v1 pretraining constants (terratorch v1_pretraining_{mean,std}), copied from precompute_terramind.py:76-87 -- the same units as satellite_zarr (S2 int16 DN, S1 float16 dB, DEM float32 m). External corpus, so no split leakage (§46.2, §48.2 item 2).",
+  "s2": {
+    "bands_all": ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B12"],
+    "keep_idx": [1, 2, 3, 4, 5, 6, 7, 8, 10, 11],
+    "mean": [1390.458, 1503.317, 1718.197, 1853.91, 2199.1, 2779.975, 2987.011, 3083.234, 3132.22, 3162.988, 2424.884, 1857.648],
+    "std":  [2106.761, 2141.107, 2038.973, 2134.138, 2085.321, 1889.926, 1820.257, 1871.918, 1753.829, 1797.379, 1434.261, 1334.311],
+    "nodata_dn": 0
+  },
+  "s1": {"bands": ["VV", "VH"], "mean": [-10.93, -17.329], "std": [4.391, 4.459], "units": "dB"},
+  "dem": {"mean": [670.665], "std": [951.272], "units": "m", "nodata_below_m": -1000.0},
+  "max_age_days": 365,
+  "lulc": {"n_classes": 10, "nodata_code": 0, "codes": "TerraMind indices written once by download_s1_lulc_mpc._remap_lulc: 1 water, 2 trees, 3 flooded veg, 4 crops, 5 built, 6 bare, 7 snow/ice, 8 clouds, 9 rangeland; 0 = nodata"}
+}

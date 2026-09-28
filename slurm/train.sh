@@ -18,8 +18,9 @@ ulimit -n 65536   # kept as headroom; the L3/L6/L9 memmap FDs it was sized for a
 
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
-# /dev/shm L12 preload: ~145 GB measured (shared across 4 ranks as one physical copy).
-# Budget at val→train boundary (post CPU-pooling fix): ~324 GB → ~396 GB headroom vs 720G.
+# §48: no /dev/shm preload. History pyramids live in RAM (~3.6 GB per rank, CoW across
+# workers) and the anchor L12 / pixel cloud masks are page-cached memmaps from
+# /gpfs/scratch1/shared/pkhanal/s48cache (prepare_s48_cache.py).
 # Workers: 12 train + 4 val per rank (48+16=64 total), prefetch_factor=4 — set in train.py CONFIG.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
@@ -57,11 +58,7 @@ fi
 echo "=== pre-flight passed ==="
 echo
 
-# --use-memmap is GONE (§35.22). The .npy memmaps existed solely to serve the ANCHOR L3/L6/L9
-# reads for the U-Net skip connections; the patchwise model has no decoder, no anchor, and
-# touches only L12. The flag no longer exists in train.py, so passing it now fails at argparse.
-#
-# The read amplification that justified it is also gone by a different route: the loader reads
-# tokens_z[i, sel, :] -- 1.5 KB, one memmap page -- instead of the full (196,768) slab, so the
-# epoch is compute-bound rather than IO-bound (job 26071036: gpu_util 27% -> 93-95%, §35.23).
+# §48 flags (all optional): --lambda-lst auto|FLOAT (0 = control), --fine-skips cnn|pool,
+# --modality-dropout P. The dataset refuses to build without the §48 cache, and with the
+# thermal term on it refuses a training set that has no Landsat target at all.
 conda run -n terramind --no-capture-output torchrun --nproc_per_node=4 train.py "$@"
