@@ -573,6 +573,11 @@ def _load_fine_stats(path: Path = FINE_STATS_PATH) -> dict:
     }
 
 
+DEM_ASINH_KNEE_M = 1.0   # fine DEM channel: asinh((elev - tile mean) / 1 m) / 4, clipped +/-2.5
+DEM_ASINH_SCALE  = 4.0
+DEM_ASINH_CLIP   = 2.5
+
+
 def _pool2(x: np.ndarray, m: np.ndarray):
     """(C,224,224) values, (224,224) bool valid -> masked 2x2 mean (C,112,112), frac (112,112).
 
@@ -672,9 +677,16 @@ def build_fine(raw: dict | None, cache: dict, year: int, doy: int, fs: dict):
         m = np.isfinite(x[0]) & (x[0] > fs["dem_nodata_below"])
         if not np.any(x[0][m] != 0):
             m[:] = False                      # an all-zero raster is the fill value, not sea level
-        pooled, frac = _pool2(np.where(m, (x - fs["dem_mean"]) / fs["dem_std"], 0.0), m)
+        # Relative relief, asinh-compressed (2026-09-29; figures/dem_asinh). The global z-score
+        # (elev - 671)/951 left a flat tile's relief at ~0.002 sd and a Tibetan tile as one flat
+        # block; absolute elevation already reaches the trunk through the DEM tokens. asinh is
+        # linear inside |dh| < DEM_ASINH_KNEE_M and logarithmic beyond, so Dutch ditches and
+        # alpine slopes both stay visible, and /DEM_ASINH_SCALE keeps it near +/-2.
+        pooled, frac = _pool2(np.where(m, x, 0.0), m)            # metres, masked 2x2 mean
         if frac.any():
-            fine[17]    = pooled[0]
+            v   = frac > 0
+            rel = np.arcsinh((pooled[0] - pooled[0][v].mean()) / DEM_ASINH_KNEE_M) / DEM_ASINH_SCALE
+            fine[17]    = np.where(v, np.clip(rel, -DEM_ASINH_CLIP, DEM_ASINH_CLIP), 0.0)
             fine[18]    = frac
             info["dem"] = True
 

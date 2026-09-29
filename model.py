@@ -188,6 +188,16 @@ def _stem(in_ch: int, out_ch: int) -> nn.Sequential:
                          _gn(out_ch), nn.ReLU(inplace=True))
 
 
+def _stem_dem(in_ch: int, out_ch: int) -> nn.Sequential:
+    """DEM stem WITHOUT GroupNorm (2026-09-29). The channel is already asinh relative relief
+    (dataset.py): per-sample GN would rescale every tile to the same spread and erase the
+    flat-vs-hilly amplitude the encoding exists to keep; with GroupNorm(1 group) a flat tile
+    whose variance falls under eps collapsed instead. Replicate padding: zero padding drew a
+    false cliff around the tile edge."""
+    return nn.Sequential(nn.Conv2d(in_ch, out_ch, 3, padding=1, padding_mode="replicate"),
+                         nn.ReLU(inplace=True))
+
+
 class FineEncoder(nn.Module):
     """
     Light CNN on the most recent imagery (§48.1): one stem per modality, then three levels.
@@ -222,7 +232,7 @@ class FineEncoder(nn.Module):
         if fine_skips == "cnn":
             self.stem_s2   = _stem(FINE_S2.stop - FINE_S2.start, 16)
             self.stem_s1   = _stem(FINE_S1.stop - FINE_S1.start, 8)
-            self.stem_dem  = _stem(FINE_DEM.stop - FINE_DEM.start, 4)
+            self.stem_dem  = _stem_dem(FINE_DEM.stop - FINE_DEM.start, 4)
             self.stem_lulc = _stem(LULC_EMB_DIM, 4)
             self.enc1 = _ConvBlock(32, ENC_CH[0])
             self.enc2 = _ConvBlock(ENC_CH[0], ENC_CH[1], stride=2)
