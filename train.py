@@ -402,6 +402,7 @@ CONFIG = {
     "lambda_lst"      : "auto",
     "lambda_every"    : 50,
     "lambda_clamp"    : 10.0,   # review C3: lambda stays within [seed/c, seed*c] of its first post-warmup value
+    "lambda_frac"     : 0.3,    # auto lambda = 0.3 x (g_sm/g_lst): LST pulls on the shared map at 30% of SM, not parity
     "lambda_ema"      : 0.9,
     "lst_delta"       : 1.0,    # Huber knee in units of sigma_ST (= 2.71 K, §49.5)
 
@@ -678,13 +679,14 @@ class LambdaLST:
     """
 
     def __init__(self, spec, every: int = 50, beta: float = 0.9, hold_steps: int = 0,
-                 clamp: float = 10.0):
+                 clamp: float = 10.0, frac: float = 1.0):
         self.auto  = (str(spec) == "auto")
         self.value = 0.0 if self.auto else float(spec)
         self.every = max(1, int(every))
         self.beta  = float(beta)
         self.hold_steps = int(hold_steps)
         self.clamp = float(clamp)
+        self.frac  = float(frac)     # LST pulls on z at frac x the SM pull (0.3, user 2026-09-29)
         self.n_updates = 0
         self.last_ratio = float("nan")
         self.ema_sm = self.ema_lst = 0.0
@@ -732,7 +734,7 @@ class LambdaLST:
         raw = self.ema_sm / self.ema_lst
         if self.n_updates == 0:
             self.seed_value = raw
-        self.value = min(max(raw, self.seed_value / self.clamp), self.seed_value * self.clamp)
+        self.value = self.frac * min(max(raw, self.seed_value / self.clamp), self.seed_value * self.clamp)
         self.n_updates += 1
 
     def state_dict(self) -> dict:
@@ -1838,6 +1840,7 @@ def main():
     ).to(device)
     lam = LambdaLST(CONFIG["lambda_lst"], every=CONFIG["lambda_every"],
                     hold_steps=CONFIG["warmup_steps"], clamp=CONFIG["lambda_clamp"],
+                    frac=CONFIG["lambda_frac"],
                     beta=CONFIG["lambda_ema"])
 
     if is_ddp:
