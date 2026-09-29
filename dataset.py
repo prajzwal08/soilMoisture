@@ -1334,7 +1334,7 @@ class SoilMoistureDataset(Dataset):
         s2_pyr, s2_doys, s2_valid, s2_rel_pos, _ = load_history(cache, ("s2",), year, doy, MAX_S2)
         s1_pyr, s1_doys, s1_valid, s1_rel_pos, s1_orbit = load_history(
             cache, ("s1_asc", "s1_desc"), year, doy, MAX_S1)
-        anchor_l12, anchor_rp, anchor_orbit, _ = select_anchor(cache, year, doy)
+        anchor_l12, anchor_rp, anchor_orbit, anchor_found = select_anchor(cache, year, doy)
 
         _static    = self._static_cache[sat_dir]
         soil_patch = _static["soil"]
@@ -1363,8 +1363,12 @@ class SoilMoistureDataset(Dataset):
         # Mask 15% of ERA5 VALUES during training (the rows stay, with their DOY and
         # staleness) — §35.24b item 2. Never at val/test time.
         if self.training:
+            # Mask 15% of days as MISSING (doy 0 = key padding in model.py), not as value 0:
+            # a z-scored 0 reads as "an average day" (~0.8 mm/d rain), which the model would
+            # learn as real weather and never meet at eval (review #10, 2026-09-29).
             mask = (torch.rand(era5.shape[0]) < 0.15) & (era5_doys > 0)
             era5[mask] = 0.0
+            era5_doys[mask] = 0
 
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy)
@@ -1399,6 +1403,7 @@ class SoilMoistureDataset(Dataset):
             "anchor_l12"    : anchor_l12,        # (196, 768) fp16
             "anchor_rel_pos": torch.tensor(anchor_rp, dtype=torch.long),
             "anchor_orbit"  : torch.tensor(anchor_orbit, dtype=torch.long),  # 0 S2, 1 asc, 2 desc
+            "anchor_found"  : torch.tensor(bool(anchor_found)),  # False = zero map, key-padded in model.py
             "dem_pyr"       : _static["dem_pyr"],    # (4, 768) fp32
             "lulc_pyr"      : _static["lulc_pyr"],   # (4, 768) fp32
 

@@ -184,8 +184,12 @@ class _ConvBlock(nn.Module):
 
 
 def _stem(in_ch: int, out_ch: int) -> nn.Sequential:
-    return nn.Sequential(nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
-                         _gn(out_ch), nn.ReLU(inplace=True))
+    """Per-modality stem, no normalisation (review #22, 2026-09-29). The inputs are already
+    normalised (TerraMind constants; LULC is a learned embedding), and a per-sample GroupNorm
+    here took its statistics over cloud/nodata pixels zeroed in the dataset, so the features
+    of a clear pixel shifted with the tile's cloud fraction. GroupNorm stays in enc1-3, after
+    the modalities are mixed."""
+    return nn.Sequential(nn.Conv2d(in_ch, out_ch, 3, padding=1), nn.ReLU(inplace=True))
 
 
 def _stem_dem(in_ch: int, out_ch: int) -> nn.Sequential:
@@ -605,7 +609,13 @@ class SoilMoistureModel(nn.Module):
         # anchor spatial tokens
         spatial_start = sum(t.shape[1] for t in toks)
         toks.append(self._anchor_tokens(batch, device))
-        pads.append(_nopad(196))
+        # No S2/S1 scene in the window: the anchor is a zero map. Key-pad it so no other token
+        # attends to zeros tagged as imagery; the rows still read the drivers as queries, so the
+        # bottleneck is built from context instead (review #7, 2026-09-29).
+        if "anchor_found" in batch:
+            pads.append((~batch["anchor_found"].to(device).bool()).unsqueeze(1).expand(B, 196))
+        else:
+            pads.append(_nopad(196))
 
         # satellite history: pooled pyramids + staleness + level + sensor/orbit
         for key in ("s2", "s1"):
@@ -724,7 +734,9 @@ def masked_huber_loss(
         elem  = F.huber_loss(pred, torch.nan_to_num(label, nan=0.0), delta=delta,
                              reduction="none")
         denom = wm.sum()
-        loss  = ((elem * wm).sum() / denom) if denom > 0 else pred.sum() * 0.0
+        # torch.where, not elem*wm: a non-finite pred at an unlabelled depth would make
+        # nan*0 = nan and poison the whole loss (review #24).
+        loss  = (torch.where(mask, elem * wm, elem.new_zeros(())).sum() / denom) if denom > 0 else pred.sum() * 0.0
     else:
         loss = (F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
                 if mask.any() else pred.sum() * 0.0)

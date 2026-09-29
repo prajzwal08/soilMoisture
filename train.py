@@ -1562,13 +1562,13 @@ def main():
     parser.add_argument("--drop-path-rate", type=float, default=None,
                         help="Stochastic depth rate, linearly scaled across layers (default 0.1)")
     parser.add_argument("--early-stop-patience", type=int, default=None,
-                        help="Epochs without val improvement before stopping (default 20)")
+                        help="Epochs without val improvement before stopping (default 8)")
     parser.add_argument("--train-days-per-station", type=int, default=None,
                         help="Days per station per epoch, redrawn each epoch; 0 = full pass (review A2)")
     parser.add_argument("--val-days-per-station", type=int, default=None,
                         help="Fixed val subset per station for selection; 0 = full val (review A2)")
     parser.add_argument("--lr-patience", type=int, default=None,
-                        help="ReduceLROnPlateau patience in epochs (default 10)")
+                        help="ReduceLROnPlateau patience in epochs (default 3)")
     parser.add_argument("--warmup-steps", type=int, default=None,
                         help="Linear LR warmup length in OPTIMIZER STEPS (default 1000). "
                              "0 disables warmup and restores the pre-§35.24 behaviour. "
@@ -2185,6 +2185,11 @@ def main():
 
             # Save post-training checkpoint before validation — epoch not lost if val
             # crashes. The RNG gather is collective, so it happens on every rank first.
+            # Un-warm param_group["lr"] first: during warmup it holds base*f, and a resume
+            # from this checkpoint adopts param_group["lr"] as the new base
+            # (sync_base_from_optimizer), permanently lowering the lr. Harmless here — no
+            # optimizer step happens before the plateau step, which sets it to base anyway.
+            warmup.before_plateau_step()
             _rng_states = _gather_rng_states(is_ddp, world_size)
             if is_main:
                 _fsync_save({
