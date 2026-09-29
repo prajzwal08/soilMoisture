@@ -1,27 +1,32 @@
-"""One tile at 160 m: static inputs, the predicted SM field through the year, six stations.
+"""One tile at 20 m: static inputs, the predicted SM field through the year, every station.
 
 §35.33.6 found the model predicts nearly the same soil moisture at every station in a tile.
-This shows the field it actually paints, rather than inferring it from six point readouts.
+This shows the field it actually paints, rather than inferring it from point readouts.
 
-`token_sel='all'` makes the dataset emit all 196 patches instead of only the station's, and
-the patchwise model is patch-agnostic -- `_build_patch_seq` runs per patch with shared
-weights -- so one forward pass returns (196, n_depths): a real 14x14 map at 160 m over the
-2.24 km tile. No model change needed; this is the §28.9 readout taken from the input side
-instead of the head.
+§48: the model emits the whole map itself -- model(batch)["sm"] is (B, 3, 112, 112) at 20 m
+over the 2.24 km tile, supervised only at the station pixel (56, 56). One forward pass per
+date is the full field; no token gather is needed. The readout table (csvs/txson_readouts.csv)
+is on the 224 x 10 m grid, so a station at (row, col) sits at map pixel (row // 2, col // 2).
+The six TxSON stations inside ISMN_TxSON_CR200-18 all come from ONE forward pass on ONE tile.
 
-The six TxSON stations inside ISMN_TxSON_CR200-18 land on tokens 105, 62, 100, 20, 44, 172,
-so all six series come from ONE forward pass on ONE tile -- the comparison §26 asked for.
-
-Three figures:
-    {tile}_inputs.{png,pdf}   DEM / LULC / soil / S1 VV at 10 m, with the 160 m token grid
-    {tile}_sm_maps.{png,pdf}  predicted SM at 160 m, --per-year dates per year, ONE shared
+Four figures:
+    {tile}_inputs.{png,pdf}   DEM / LULC / soil / S1 VV at 10 m, with the stations
+    {tile}_sm_maps.{png,pdf}  predicted SM at 20 m, --per-year dates per year, ONE shared
                               colour scale across every panel
-    {tile}_series.{png,pdf}   six panels, one station each, predicted vs observed + metrics
+    {tile}_series.{png,pdf}   one panel per station, predicted (its own map pixel) vs observed
+    {tile}_field.{png,pdf}    time-mean map with stations coloured by OBSERVED mean on the same
+                              scale, and the within-tile spread through time (is the map flat?)
+
+Observations are QC=0 days from the token zarr (combine_network.load_observations), so
+train stations -- absent from every eval split parquet -- are shown too, and flagged.
 
 Usage
 -----
-    python plot_tile_sm_map.py --tile ISMN_TxSON_CR200-18 --years 2019 2020
-    python plot_tile_sm_map.py --cache-only          # re-plot, no GPU
+    python plot_tile_sm_map.py --run-name s48_full_20260929 --tile ISMN_TxSON_CR200-18 \
+        --years 2019 2020 --out-dir figures/eval/s48_full_20260929/tile
+    python plot_tile_sm_map.py ... --cache-only          # re-plot, no GPU
+    python plot_tile_sm_map.py ... --check-preds eval_output/<run>/predictions_oos.parquet
+        # asserts the map's station pixel equals eval_predict's value on shared dates
 """
 from __future__ import annotations
 
@@ -44,9 +49,10 @@ SAT_ZARR   = Path("/projects/prjs1968/satellite_zarr")
 TOK_ZARR   = Path("/gpfs/scratch1/shared/pkhanal/zarr")
 SPLITS     = REPO / "csvs" / "station_splits.csv"
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
-ERA5_STATS = REPO / "csvs" / "era5_stats.json"
+ERA5_STATS = REPO / "csvs" / "era5_stats18.json"      # §47: 18 columns, as in training
 
-PATCH_PX, TOKEN_PX, RES_M, GRID = 224, 16, 10, 14
+PATCH_PX, RES_M = 224, 10          # raw inputs and the readout table: 224 x 10 m
+MAP_PX, STRIDE  = 112, 2           # model map: 112 x 20 m; map pixel = readout pixel // 2
 SM_DEPTHS = ["0-10", "10-30", "30-100"]
 
 # Stored values are TerraMind indices, NOT raw ESRI classes (download_s1_lulc_mpc.py:50-54).
@@ -63,31 +69,38 @@ def _dstr(a) -> list[str]:
     return [d.decode() if isinstance(d, bytes) else str(d) for d in a]
 
 
-def token_of(row: int, col: int) -> int:
-    """Pixel (row, col) in the 224x224 patch -> index in the 14x14 token grid."""
-    return int(row // TOKEN_PX) * GRID + int(col // TOKEN_PX)
+def _key(r) -> str:
+    if str(r["source_network"]) == "ISMN":
+        return f"ISMN_{r['network']}_{r['station_name']}"
+    return f"{r['source_network']}_{r['station_id']}"
+
+
+def _category(r) -> str:
+    sm, fl = bool(r["has_soil_moisture"]), bool(r["has_flux"])
+    return "sm_and_flux" if (sm and fl) else ("sm_only" if sm else "flux_only")
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 -- inference over all 196 patches
+# Stage 1 -- one forward pass per date; the model returns the full 20 m map
 # ---------------------------------------------------------------------------
 def predict_tile(tile: str, run_name: str, ckpt: str, years: list[int],
-                 cache: Path, batch_size: int = 4) -> dict:
+                 cache: Path, batch_size: int = 32) -> dict:
     import torch
     from torch.utils.data import DataLoader
     from dataset import SoilMoistureDataset
     from ckpt_utils import load_checkpoint
+    from splits_config import SM_CATEGORIES
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise SystemExit("needs a GPU (bf16 autocast, as in eval_predict.py); "
+                         "use --cache-only to re-plot")
+    device = torch.device("cuda")
     model, cfg, epoch = load_checkpoint(CKPT_ROOT / run_name / ckpt, device)
-    print(f"  checkpoint epoch {epoch}, trained token_sel={cfg.get('token_sel')!r}")
+    model.eval()
+    print(f"  checkpoint {run_name}/{ckpt}: epoch {epoch}")
 
     splits = pd.read_csv(SPLITS)
-    key = splits.apply(
-        lambda r: (f"ISMN_{r['network']}_{r['station_name']}"
-                   if str(r["source_network"]) == "ISMN"
-                   else f"{r['source_network']}_{r['station_id']}"), axis=1)
-    sub = splits[key == tile]
+    sub = splits[splits.apply(_key, axis=1) == tile]
     if sub.empty:
         raise SystemExit(f"{tile} not in {SPLITS}")
     split_name = str(sub.iloc[0]["split"])
@@ -96,68 +109,56 @@ def predict_tile(tile: str, run_name: str, ckpt: str, years: list[int],
     sub.to_csv(tmp_csv, index=False)
     print(f"  {tile} is split={split_name}")
 
-    # token_sel='all' is the point: K=196 instead of 1. It is NOT what the model trained
-    # with, and that is fine -- the patch blocks share weights across k, so patch 20 is
-    # scored by exactly the machinery that scored patch 105 in training. Only the number
-    # of patches asked for changes.
+    # Exactly eval_predict.py's construction, restricted to one station.
     ds = SoilMoistureDataset(
         splits_csv      = str(tmp_csv),
         era5_stats_path = str(ERA5_STATS),
         years           = years,
-        category_filter = cfg.get("category_filter", ["sm_only"]),
+        category_filter = cfg.get("category_filter", list(SM_CATEGORIES)),
         split_filter    = [split_name],
         training        = False,
-        token_sel       = "all",
-        shm_dir         = None,   # the staged cache is narrowed to K=1 and cannot serve this
     )
+    tmp_csv.unlink(missing_ok=True)
     if len(ds) == 0:
         raise SystemExit(f"no samples for {tile} in {years}")
     print(f"  {len(ds)} dates")
 
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=4)
-    maps, ys, dys = [], [], []
+    maps, lsts, ys, dys = [], [], [], []
     with torch.no_grad():
         for batch in loader:
-            with torch.autocast("cuda", dtype=torch.bfloat16,
-                                enabled=device.type == "cuda"):
-                mu = model(batch)                        # (B, 196, D)
-            if mu.ndim != 3 or mu.shape[1] != GRID * GRID:
-                raise SystemExit(f"expected (B,{GRID*GRID},D), got {tuple(mu.shape)}")
-            maps.append(mu.float().cpu().numpy())
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                out = model(batch)
+            sm = out["sm"]
+            if sm.ndim != 4 or tuple(sm.shape[-2:]) != (MAP_PX, MAP_PX):
+                raise SystemExit(f"expected (B,3,{MAP_PX},{MAP_PX}), got {tuple(sm.shape)}")
+            maps.append(sm.float().cpu().numpy().astype(np.float16))
+            lsts.append(out["lst"][:, 0].float().cpu().numpy().astype(np.float16))
             ys.append(np.asarray(batch["year"]))
             dys.append(np.asarray(batch["doy"]))
 
-    out = dict(maps=np.concatenate(maps), year=np.concatenate(ys),
-               doy=np.concatenate(dys))
-    np.savez_compressed(cache, **out)
-    tmp_csv.unlink(missing_ok=True)
-    print(f"  cached {out['maps'].shape} -> {cache}")
-    return out
+    res = dict(maps=np.concatenate(maps), lst=np.concatenate(lsts),
+               year=np.concatenate(ys), doy=np.concatenate(dys),
+               epoch=np.asarray(epoch), run=np.asarray(run_name))
+    np.savez_compressed(cache, **res)
+    print(f"  cached maps {res['maps'].shape} lst {res['lst'].shape} -> {cache}")
+    return res
 
 
 # ---------------------------------------------------------------------------
 # Panel helpers
 # ---------------------------------------------------------------------------
-def mark_px(ax, st: pd.DataFrame, labels: bool = True):
-    """Station markers + the 160 m token grid, on a 224x224 (10 m) panel."""
-    for k in range(TOKEN_PX, PATCH_PX, TOKEN_PX):
-        ax.axhline(k - .5, color="white", lw=.3, alpha=.30)
-        ax.axvline(k - .5, color="white", lw=.3, alpha=.30)
+def mark(ax, st: pd.DataFrame, scale: float = 1.0, labels: bool = True):
+    """Station markers. scale=1 on a 224 x 10 m panel, 1/STRIDE on the 112 x 20 m map.
+    Train stations are squares: their own label was seen through their own tile."""
     for i, (_, r) in enumerate(st.iterrows()):
-        ax.plot(r["col"], r["row"], "o", ms=6, mfc=STATION_COLOURS[i % 6],
-                mec="white", mew=1.0, zorder=5)
+        x, y = r["col"] * scale, r["row"] * scale
+        ax.plot(x, y, "s" if r["cur_split"] == "train" else "o", ms=6,
+                mfc=STATION_COLOURS[i % 6], mec="white", mew=1.0, zorder=5)
         if labels:
-            ax.annotate(r["station"].replace("ISMN_TxSON_", ""), (r["col"], r["row"]),
+            ax.annotate(f"{r['station_name']} ({r['cur_split']})", (x, y),
                         textcoords="offset points", xytext=(6, 4), fontsize=6,
                         color="white", zorder=6)
-    ax.set_xticks([]); ax.set_yticks([])
-
-
-def mark_tok(ax, st: pd.DataFrame):
-    """The same stations on a 14x14 (160 m) panel."""
-    for i, (_, r) in enumerate(st.iterrows()):
-        ax.plot(r["col"] / TOKEN_PX - .5, r["row"] / TOKEN_PX - .5, "o", ms=6,
-                mfc=STATION_COLOURS[i % 6], mec="white", mew=1.0, zorder=5)
     ax.set_xticks([]); ax.set_yticks([])
 
 
@@ -183,36 +184,50 @@ def pick_dates(date: pd.Series, years: list[int], per_year: int) -> list[int]:
     return sorted(set(picks))
 
 
+def _ub(p, o) -> float:
+    return float(np.sqrt(np.mean(((p - p.mean()) - (o - o.mean())) ** 2)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tile",     default="ISMN_TxSON_CR200-18")
-    ap.add_argument("--run-name", default="pw_stage2a_L3")
+    ap.add_argument("--run-name", required=True)
     ap.add_argument("--ckpt",     default="best.pt")
     ap.add_argument("--years",    type=int, nargs=2, default=[2019, 2020])
     ap.add_argument("--per-year", type=int, default=4,
                     help="SM map panels per year (>=4 samples the seasonal cycle)")
     ap.add_argument("--readouts", default="csvs/txson_readouts.csv")
-    ap.add_argument("--preds",
-                    default="eval_output/pw_stage2a_L3/predictions_val.parquet",
-                    help="observed series come from this parquet's obs column")
+    ap.add_argument("--check-preds", default=None,
+                    help="eval_predict parquet holding the tile station; asserts the map's "
+                         "station pixel reproduces it")
     ap.add_argument("--soil-channel", type=int, default=3)
     ap.add_argument("--depth",    default="0-10", choices=SM_DEPTHS)
-    ap.add_argument("--out-dir",  default="figures/eval/pw_stage2a_L3/tile")
+    ap.add_argument("--out-dir",  required=True)
     ap.add_argument("--cache-only", action="store_true")
     ap.add_argument("--dpi",      type=int, default=200)
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
-    cache = out_dir / f"{args.tile}_patchmap.npz"
+    cache = out_dir / f"{args.tile}_map20m.npz"
     years = list(range(args.years[0], args.years[1] + 1))
     di = SM_DEPTHS.index(args.depth)
+
+    splits = pd.read_csv(SPLITS)
+    splits["key"] = splits.apply(_key, axis=1)
+    split_map = dict(zip(splits.key, splits.split))
+    cat_map = {r["key"]: _category(r) for _, r in splits.iterrows()}
 
     ro = pd.read_csv(args.readouts)
     st = ro[ro["tile"] == args.tile].copy().sort_values("dist_m").reset_index(drop=True)
     if st.empty:
         raise SystemExit(f"no readout rows for {args.tile} in {args.readouts}")
-    st["token"] = [token_of(r, c) for r, c in zip(st["row"], st["col"])]
-    print(f"{args.tile}: {len(st)} stations, tokens {list(st['token'])}")
+    # The readout table predates §47; the split that matters is today's.
+    st["cur_split"] = st["station"].map(split_map).fillna("n/a")
+    st["mrow"], st["mcol"] = st["row"] // STRIDE, st["col"] // STRIDE
+    if not ((st["mrow"] == 56) & (st["mcol"] == 56))[st["is_centre"]].all():
+        raise SystemExit("centre station does not map to pixel (56, 56) -- readout table wrong")
+    print(f"{args.tile}: {len(st)} stations at map pixels "
+          f"{list(zip(st['mrow'], st['mcol']))}  splits {list(st['cur_split'])}")
 
     if args.cache_only or cache.exists():
         z = np.load(cache); pred = {k: z[k] for k in z.files}
@@ -220,11 +235,29 @@ def main():
     else:
         pred = predict_tile(args.tile, args.run_name, args.ckpt, years, cache)
 
-    maps = pred["maps"][:, :, di]                                  # (N, 196)
+    maps = pred["maps"][:, di].astype(np.float32)                 # (N, 112, 112)
     date = (pd.to_datetime(pd.Series(pred["year"]).astype(str) + "-01-01")
             + pd.to_timedelta(pred["doy"] - 1, unit="D"))
     o = np.argsort(date.values)
     maps, date = maps[o], date.iloc[o].reset_index(drop=True)
+
+    # ── map/eval agreement: the map's station pixel must BE eval_predict's prediction ──
+    if args.check_preds:
+        ev = pd.read_parquet(args.check_preds)
+        if "station_key" in ev.columns:          # a per-split parquet
+            ev = ev[(ev["station_key"] == args.tile) & (ev["depth"] == args.depth)]
+        else:                                    # the §26 network parquet: own-tile centre
+            ev = ev[(ev["tile"].astype(str) == args.tile) & ev["is_centre"].astype(bool)
+                    & (ev["depth"] == args.depth)]
+        ev = ev.assign(date=pd.to_datetime(ev["date"]))[["date", "pred"]]
+        m = pd.DataFrame({"date": date, "map": maps[:, 56, 56]}).merge(ev, on="date")
+        if m.empty:
+            print(f"  CHECK  no shared dates with {args.check_preds}")
+        else:
+            d = float(np.abs(m["map"] - m["pred"]).max())
+            # fp16 cache + bf16 autocast: agreement to ~1e-3 m3/m3, not bit-identical
+            print(f"  CHECK  map pixel (56,56) vs eval_predict on {len(m)} dates: "
+                  f"max |diff| {d:.2e}  {'PASS' if d < 2e-3 else 'FAIL'}")
 
     plt.rcParams.update({
         "font.family": "serif", "font.size": 8, "axes.titlesize": 8,
@@ -242,7 +275,7 @@ def main():
     fig.colorbar(im, ax=axes[0], shrink=.8, pad=.02)
     axes[0].set_title(f"DEM  {dem.min():.0f}–{dem.max():.0f} m  (sd {dem.std():.1f})",
                       loc="left")
-    mark_px(axes[0], st)
+    mark(axes[0], st)
 
     yrs = list(raw["lulc/years"][:])
     li = int(np.argmin([abs(int(y) - years[-1]) for y in yrs]))
@@ -257,11 +290,12 @@ def main():
     lab = "  ".join(f"{LULC_NAMES.get(v, v)} {100*frac[v]:.0f}%"
                     for v in sorted(present, key=lambda v: -frac[v])[:2])
     axes[1].set_title(f"Land cover {yrs[li]} · {lab}", loc="left", fontsize=7)
-    mark_px(axes[1], st)
+    mark(axes[1], st)
 
     try:
-        s = zarr.open_consolidated(str(TOK_ZARR / "sm_only" / args.tile))["soil"][
-            args.soil_channel].astype(np.float32)
+        s = zarr.open_consolidated(str(TOK_ZARR / cat_map.get(args.tile, "sm_only")
+                                       / args.tile))["soil"][args.soil_channel]
+        s = s.astype(np.float32)
         idx = np.clip((np.arange(PATCH_PX) * s.shape[0] / PATCH_PX).astype(int),
                       0, s.shape[0] - 1)
         soil = s[np.ix_(idx, idx)]
@@ -273,7 +307,7 @@ def main():
         axes[2].text(.5, .5, f"no soil layer\n({e})", ha="center", va="center",
                      transform=axes[2].transAxes, fontsize=7, color=MUTED)
         axes[2].set_title("Soil", loc="left")
-    mark_px(axes[2], st)
+    mark(axes[2], st)
 
     s1d = _dstr(raw["s1_asc/dates"][:])
     j = int(np.argmin([abs(int(d) - int(f"{years[0]}0101")) for d in s1d]))
@@ -281,10 +315,10 @@ def main():
     im = axes[3].imshow(vv, cmap="gray")
     fig.colorbar(im, ax=axes[3], shrink=.8, pad=.02)
     axes[3].set_title(f"S1 VV (dB)  {s1d[j]}", loc="left")
-    mark_px(axes[3], st)
+    mark(axes[3], st)
 
     fig.suptitle(f"{args.tile} — static inputs at 10 m over the 2.24 km tile.  "
-                 f"White grid = the 14×14 TerraMind tokens the model predicts on (160 m).",
+                 f"Squares = train stations, circles = held out (current §47 split).",
                  fontsize=9)
     for ext in ("png", "pdf"):
         p = out_dir / f"{args.tile}_inputs.{ext}"; fig.savefig(p); print(f"wrote {p}")
@@ -301,24 +335,26 @@ def main():
     sel = maps[picks]
     vmin, vmax = float(np.percentile(sel, 1)), float(np.percentile(sel, 99))
     for ax, p in zip(axes.ravel(), picks):
-        g = maps[p].reshape(GRID, GRID)
+        g = maps[p]
         im = ax.imshow(g, cmap="YlGnBu", vmin=vmin, vmax=vmax, interpolation="nearest")
-        mark_tok(ax, st)
-        ax.set_title(f"{date[p]:%Y-%m-%d}\nrange {g.min():.3f}–{g.max():.3f}  "
-                     f"(spread {g.max()-g.min():.3f})", loc="left")
+        mark(ax, st, scale=1 / STRIDE, labels=False)
+        ax.set_title(f"{date[p]:%Y-%m-%d}\np5–p95 {np.percentile(g, 5):.3f}–"
+                     f"{np.percentile(g, 95):.3f}  (sd {g.std():.4f})", loc="left")
     for ax in axes.ravel()[len(picks):]:
         ax.axis("off")
     fig.colorbar(im, ax=axes, shrink=.6, pad=.02, label=f"predicted SM {args.depth} cm")
-    fig.suptitle(f"{args.tile} — predicted soil moisture at 160 m, {args.per_year} dates "
-                 f"per year, {years[0]}–{years[-1]}.  All 196 patches from one forward "
-                 f"pass per date; shared colour scale.", fontsize=9)
+    fig.suptitle(f"{args.tile} — predicted soil moisture at 20 m, {args.per_year} dates "
+                 f"per year, {years[0]}–{years[-1]}.  One forward pass per date; "
+                 f"shared colour scale.", fontsize=9)
     for ext in ("png", "pdf"):
         p = out_dir / f"{args.tile}_sm_maps.{ext}"; fig.savefig(p); print(f"wrote {p}")
     plt.close(fig)
 
-    # ── FIGURE 3: six separate station series ────────────────────────────
-    obs_df = pd.read_parquet(args.preds)
-    obs_df = obs_df[obs_df["depth"] == args.depth]
+    # ── FIGURE 3: one series per station ─────────────────────────────────
+    from combine_network import load_observations
+    obs_all = load_observations(sorted(st["station"].unique()), cat_map)
+    obs_all = obs_all[obs_all["depth"] == args.depth].assign(
+        date=lambda d: pd.to_datetime(d["date"]))
 
     fig, axes = plt.subplots(len(st), 1, figsize=(11.0, 2.05 * len(st)),
                              sharex=True, constrained_layout=True)
@@ -326,24 +362,24 @@ def main():
     rows = []
     for i, ((_, r), ax) in enumerate(zip(st.iterrows(), axes)):
         name = r["station"]
-        p = pd.DataFrame({"date": date, "pred": maps[:, int(r["token"])]})
-        ob = (obs_df[obs_df["station_key"] == name][["date", "obs"]]
-              .assign(date=lambda d: pd.to_datetime(d["date"])))
+        p = pd.DataFrame({"date": date, "pred": maps[:, int(r["mrow"]), int(r["mcol"])]})
+        ob = obs_all[obs_all["station"] == name][["date", "obs"]]
         m = p.merge(ob, on="date", how="inner").dropna()
 
         ax.plot(p["date"], p["pred"], "-", lw=1.0, color=STATION_COLOURS[i % 6],
-                label=f"predicted · token {int(r['token'])}", zorder=3)
+                label=f"predicted · pixel ({int(r['mrow'])},{int(r['mcol'])})", zorder=3)
         if not m.empty:
             ax.plot(m["date"], m["obs"], ".", ms=2.0, color="black",
                     label="observed", zorder=4)
-            e  = m["pred"] - m["obs"]
-            ub = float(np.sqrt(np.mean(((m["pred"] - m["pred"].mean())
-                                        - (m["obs"] - m["obs"].mean())) ** 2)))
+            e    = m["pred"] - m["obs"]
+            ub   = _ub(m["pred"], m["obs"])
             rmse = float(np.sqrt((e ** 2).mean()))
-            rr = float(np.corrcoef(m["pred"], m["obs"])[0, 1]) if len(m) > 2 else np.nan
+            rr   = float(np.corrcoef(m["pred"], m["obs"])[0, 1]) if len(m) > 2 else np.nan
             txt = (f"ubRMSE {ub:.4f}   RMSE {rmse:.4f}   r {rr:+.3f}   "
                    f"bias {float(e.mean()):+.4f}   n {len(m)}")
-            rows.append(dict(station=name, token=int(r["token"]),
+            rows.append(dict(station=name, split=r["cur_split"],
+                             is_centre=bool(r["is_centre"]),
+                             mrow=int(r["mrow"]), mcol=int(r["mcol"]),
                              dist_m=float(r["dist_m"]), ubRMSE=ub, RMSE=rmse, r=rr,
                              bias=float(e.mean()), n=len(m),
                              obs_mean=float(m["obs"].mean()),
@@ -352,7 +388,7 @@ def main():
             txt = "no overlapping observations"
         ax.text(0.005, 0.95, txt, transform=ax.transAxes, va="top", ha="left",
                 fontsize=7, bbox=dict(fc="white", ec="none", alpha=0.78, pad=1.4))
-        ax.set_ylabel(f"{name.replace('ISMN_TxSON_','')}\nSM (m³/m³)", fontsize=7)
+        ax.set_ylabel(f"{r['station_name']}\n({r['cur_split']})\nSM (m³/m³)", fontsize=7)
         ax.set_ylim(0, 0.55)
         ax.grid(True, color=GRIDC, lw=.5); ax.set_axisbelow(True)
         for side in ("top", "right"):
@@ -361,25 +397,73 @@ def main():
 
     axes[-1].set_xlabel("date")
     fig.suptitle(f"{args.tile} — {len(st)} stations, {args.depth} cm.  Every series is read "
-                 f"from the SAME forward pass on the SAME tile, at its own 160 m token.",
-                 fontsize=9)
+                 f"from the SAME forward pass on the SAME tile, at its own 20 m pixel; only "
+                 f"(56,56) is supervised.", fontsize=9)
     for ext in ("png", "pdf"):
         p = out_dir / f"{args.tile}_series.{ext}"; fig.savefig(p); print(f"wrote {p}")
     plt.close(fig)
 
-    if rows:
-        mt = pd.DataFrame(rows)
+    mt = pd.DataFrame(rows)
+
+    # ── FIGURE 4: is the field flat? ─────────────────────────────────────
+    # (a) time-mean map, stations filled with their OBSERVED mean on the SAME scale: a map
+    #     that has learned the field shows dots that blend in; a flat map shows dots that
+    #     stand out. Means are over each station's own observed dates, so they compare
+    #     observed and predicted over the same days.
+    # (b) within-tile spatial SD per date, against the observed spread between stations.
+    tmean = maps.mean(0)
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.3), constrained_layout=True,
+                             gridspec_kw=dict(width_ratios=[1, 1.5]))
+    lo_hi = [tmean.min(), tmean.max()]
+    if not mt.empty:
+        lo_hi += [mt["obs_mean"].min(), mt["obs_mean"].max()]
+    vmin, vmax = float(min(lo_hi)), float(max(lo_hi))
+    im = axes[0].imshow(tmean, cmap="YlGnBu", vmin=vmin, vmax=vmax, interpolation="nearest")
+    for _, r in mt.iterrows():
+        axes[0].scatter(r["mcol"], r["mrow"], s=70, c=[r["obs_mean"]], cmap="YlGnBu",
+                        vmin=vmin, vmax=vmax, marker="s" if r["split"] == "train" else "o",
+                        edgecolors="black", linewidths=1.0, zorder=5)
+    axes[0].set_xticks([]); axes[0].set_yticks([])
+    fig.colorbar(im, ax=axes[0], shrink=.8, pad=.02, label=f"SM {args.depth} cm")
+    axes[0].set_title(f"(a) predicted time-mean {years[0]}–{years[-1]}; dots = OBSERVED "
+                      f"station mean,\nsame scale.  map p5–p95 "
+                      f"{np.percentile(tmean, 5):.3f}–{np.percentile(tmean, 95):.3f}",
+                      loc="left")
+
+    sd_t = maps.reshape(len(maps), -1).std(1)
+    axes[1].plot(date, sd_t, "-", lw=1.0, color="#4363d8", label="predicted: within-tile SD")
+    if len(mt) > 1:
+        obs_sd = float(mt["obs_mean"].std(ddof=0))
+        prd_sd = float(mt["pred_mean"].std(ddof=0))
+        axes[1].axhline(obs_sd, color="black", ls="--", lw=1.0,
+                        label=f"observed: SD of station means ({obs_sd:.4f})")
+        axes[1].axhline(prd_sd, color="#e6194b", ls=":", lw=1.2,
+                        label=f"predicted at the stations: SD of means ({prd_sd:.4f})")
+    axes[1].set_ylabel("m³/m³"); axes[1].set_ylim(bottom=0)
+    axes[1].grid(True, color=GRIDC, lw=.5)
+    for side in ("top", "right"):
+        axes[1].spines[side].set_visible(False)
+    axes[1].legend(fontsize=7, frameon=False, loc="upper right")
+    axes[1].set_title("(b) spatial spread of the predicted map through time", loc="left")
+    fig.suptitle(f"{args.tile} — does the 20 m map carry the station-to-station field?",
+                 fontsize=9)
+    for ext in ("png", "pdf"):
+        p = out_dir / f"{args.tile}_field.{ext}"; fig.savefig(p); print(f"wrote {p}")
+    plt.close(fig)
+
+    if not mt.empty:
         csv = out_dir / f"{args.tile}_station_metrics.csv"
         mt.to_csv(csv, index=False)
         print(f"wrote {csv}\n")
         print(mt.to_string(index=False))
-        print(f"\nobserved  mean-level spread "
+        print(f"\nobserved  mean-level spread (max-min) "
               f"{mt['obs_mean'].max() - mt['obs_mean'].min():.4f}")
-        print(f"predicted mean-level spread "
+        print(f"predicted mean-level spread (max-min) "
               f"{mt['pred_mean'].max() - mt['pred_mean'].min():.4f}")
         if len(mt) > 2:
             print(f"r(obs_mean, pred_mean) over {len(mt)} stations "
                   f"{np.corrcoef(mt['obs_mean'], mt['pred_mean'])[0, 1]:+.3f}")
+        print(f"within-tile map SD, median over dates {np.median(sd_t):.4f}")
 
 
 if __name__ == "__main__":

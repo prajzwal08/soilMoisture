@@ -22,6 +22,7 @@ Usage:
 """
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -285,6 +286,12 @@ def main():
     groups: dict[str, list[Path]] = {}
     for path in sorted(in_dir.glob("predictions_*.parquet")):
         stem = path.stem.replace("predictions_", "")
+        # Not a held-out split: the §26 pixel readout (scored by combine_network.py) and
+        # ablation arms (predictions_oos_era5_cross_station_s0 ...), which would otherwise
+        # prefix-match "oos" and be merged into the unablated rows.
+        if stem.startswith("network") or re.search(r"_(cross|within)_station_s\d+$", stem):
+            print(f"  skipping {path.name} (not a held-out split file)")
+            continue
         # match the longest known split name that prefixes the stem, so
         # "oost_c1" resolves to oost and not oos
         split = next((s for s in sorted(known, key=len, reverse=True)
@@ -329,6 +336,13 @@ def main():
 
         rows = summarise(ps, df, split_name)
         all_summary.extend(rows)
+        # §47.8 item 4: OOT/OOST per calendar year, so a 2025 collapse cannot hide in the mean.
+        if split_name in ("oot", "oost"):
+            for yr in sorted(df["year"].unique()):
+                dfy = df[df["year"] == yr]
+                psy = per_station_metrics(dfy)
+                if not psy.empty:
+                    all_summary.extend(summarise(psy, dfy, f"{split_name}_{int(yr)}"))
         for r in rows:
             print(f"    {r['depth']:>7s}  "
                   f"ubRMSE {r['ubRMSE_stn']:.4f}/{r.get('ubRMSE_pool', np.nan):.4f} "
@@ -340,7 +354,8 @@ def main():
     order = {"val": 0, "oos": 1, "oot": 2, "oost": 3}
     summary = summary.sort_values(
         ["split", "depth"],
-        key=lambda s: s.map(order) if s.name == "split" else s.map(
+        key=lambda s: s.map(lambda x: order.get(x, order.get(str(x).split("_")[0], 9) + 0.5))
+        if s.name == "split" else s.map(
             {d: i for i, d in enumerate(SM_DEPTHS)})
     ).reset_index(drop=True)
 

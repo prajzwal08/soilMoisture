@@ -2,7 +2,7 @@
 
 The §35.33.6 finding is that the model predicts the station MEAN well only where it has
 seen the station. TxSON is the place to look at that spatially: 40 stations in a 55 x 55 km
-domain, all held out (8 in val, 24 in oos, none in oot -- TxSON labels stop 2022-11-07).
+domain (§47 split: 8 train, 2 val, 30 oos; none in oot -- TxSON labels stop 2022-11-07).
 
 Four panels over the same domain, one dot per station:
 
@@ -19,11 +19,16 @@ printed SD ratio under the title is the same statement as a number.
 The six stations inside tile ISMN_TxSON_CR200-18 are ringed -- observed station-mean spread
 there is 0.0601 (§29.1) against a predicted spread of 0.0113 at r = -0.175 (§26.11).
 
-CPU only, reads eval_output/{run}/predictions_{split}.parquet. Seconds to run.
+CPU only. Reads eval_output/{run}/predictions_{split}.parquet, or with --network-ts the own-tile
+(centre) rows of combine_network.py's {tag}_timeseries.parquet -- the only source that also
+holds the 8 TRAIN stations. Train stations are drawn as squares and left out of the
+headline SD ratio: their own label was seen in training. Seconds to run.
 
 Usage:
     python plot_txson_map.py --in-dir eval_output/pw_stage2a_L3 \
                              --out-dir figures/eval/pw_stage2a_L3
+    python plot_txson_map.py --network-ts eval_output/<run>/txson_timeseries.parquet \
+                             --out-dir figures/eval/<run>
 """
 import argparse
 from pathlib import Path
@@ -58,12 +63,35 @@ def main():
     ap.add_argument("--splits",  nargs="+", default=["val", "oos", "oost"])
     ap.add_argument("--depth",   default="0-10")
     ap.add_argument("--network", default="TxSON")
+    ap.add_argument("--network-ts", default=None,
+                    help="combine_network.py timeseries parquet; uses its own-tile rows "
+                         "instead of the per-split prediction parquets")
     args = ap.parse_args()
 
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
 
+    meta = pd.read_csv(SPLITS_CSV)
+    meta["station_key"] = meta.apply(_make_key, axis=1)
+    cur_split = dict(zip(meta["station_key"], meta["split"]))
+
     frames = []
-    for split in args.splits:
+    if args.network_ts:
+        ts = pd.read_parquet(args.network_ts)
+        ts = ts[ts["is_centre"].astype(bool) & (ts["depth"] == args.depth)
+                & ts["obs"].notna()
+                & ts["station"].astype(str).str.contains(args.network, na=False)]
+        if ts.empty:
+            raise SystemExit(f"No own-tile {args.network} rows at {args.depth} "
+                             f"in {args.network_ts}")
+        d = pd.to_datetime(ts["date"])
+        frames.append(pd.DataFrame({
+            "station_key": ts["station"].astype(str).to_numpy(),
+            "year": d.dt.year.to_numpy(), "doy": d.dt.dayofyear.to_numpy(),
+            "obs": ts["obs"].to_numpy(), "pred": ts["pred"].to_numpy(),
+            "eval_split": ts["station"].astype(str).map(cur_split).fillna("n/a").to_numpy()}))
+        print(f"[network-ts] {len(frames[0]):,} rows | "
+              f"{frames[0]['station_key'].nunique()} {args.network} stations")
+    for split in ([] if args.network_ts else args.splits):
         p = in_dir / f"predictions_{split}.parquet"
         if not p.exists():
             print(f"[{split}] no parquet — skipping")
@@ -93,8 +121,6 @@ def main():
              .reset_index())
     stn["bias"] = stn["pred"] - stn["obs"]
 
-    meta = pd.read_csv(SPLITS_CSV)
-    meta["station_key"] = meta.apply(_make_key, axis=1)
     stn = stn.merge(meta[["station_key", "latitude", "longitude"]],
                     on="station_key", how="left")
     missing = stn["latitude"].isna().sum()
@@ -110,13 +136,19 @@ def main():
         ub.append({"station_key": k, "ubRMSE": float(np.sqrt(np.mean((a - b) ** 2)))})
     stn = stn.merge(pd.DataFrame(ub), on="station_key", how="left")
 
-    sd_obs, sd_pred = stn["obs"].std(), stn["pred"].std()
-    r = stn[["obs", "pred"]].corr().iloc[0, 1]
-    print(f"\n{args.network} {args.depth}: {len(stn)} stations")
+    # Headline statistics on HELD-OUT stations only: a train station's mean was fitted.
+    is_train = stn["split"] == "train"
+    held = stn[~is_train]
+    if is_train.any():
+        print(f"  {int(is_train.sum())} train stations: drawn as squares, excluded from "
+              f"the SD ratio and r")
+    sd_obs, sd_pred = held["obs"].std(), held["pred"].std()
+    r = held[["obs", "pred"]].corr().iloc[0, 1]
+    print(f"\n{args.network} {args.depth}: {len(held)} held-out stations")
     print(f"  observed  station-mean SD  {sd_obs:.4f}   range "
-          f"{stn['obs'].min():.3f}–{stn['obs'].max():.3f}")
+          f"{held['obs'].min():.3f}–{held['obs'].max():.3f}")
     print(f"  predicted station-mean SD  {sd_pred:.4f}   range "
-          f"{stn['pred'].min():.3f}–{stn['pred'].max():.3f}")
+          f"{held['pred'].min():.3f}–{held['pred'].max():.3f}")
     print(f"  SD ratio (pred/obs)        {sd_pred / sd_obs:.3f}")
     print(f"  r(obs, pred) across stations  {r:+.3f}")
 
@@ -135,19 +167,24 @@ def main():
     lo = float(min(stn["obs"].min(), stn["pred"].min()))
     hi = float(max(stn["obs"].max(), stn["pred"].max()))
     blim = float(np.abs(stn["bias"]).max())
+    ulo, uhi = float(stn["ubRMSE"].min()), float(stn["ubRMSE"].max())
 
     panels = [
         ("(a) observed station-mean SM",  "obs",    "viridis",  lo,     hi,    None),
         ("(b) predicted station-mean SM", "pred",   "viridis",  lo,     hi,    None),
         ("(c) bias (pred − obs)",         "bias",   "RdBu_r",  -blim,   blim,  None),
-        ("(d) ubRMSE",                    "ubRMSE", "magma_r",  None,   None,  None),
+        ("(d) ubRMSE",                    "ubRMSE", "magma_r",  ulo,    uhi,   None),
     ]
 
     tile_set = set(CR200_18_TILE)
     for ax, (title, col, cmap, vmin, vmax, _) in zip(axes.ravel(), panels):
-        sc = ax.scatter(stn["longitude"], stn["latitude"], c=stn[col],
-                        cmap=cmap, vmin=vmin, vmax=vmax, s=64,
-                        edgecolor="white", linewidth=0.6, zorder=3)
+        # Held-out stations as circles, train stations as squares, on one colour scale.
+        for grp, mk in ((held, "o"), (stn[is_train], "s")):
+            if grp.empty:
+                continue
+            sc = ax.scatter(grp["longitude"], grp["latitude"], c=grp[col],
+                            cmap=cmap, vmin=vmin, vmax=vmax, s=64, marker=mk,
+                            edgecolor="white", linewidth=0.6, zorder=3)
         # Ring the six CR200-18-tile stations — the within-tile claim of §26/§29.
         tile = stn[stn["station_key"].isin(tile_set)]
         if not tile.empty:
@@ -162,10 +199,11 @@ def main():
             ax.spines[side].set_visible(False)
 
     fig.suptitle(
-        f"{args.network} {args.depth} cm, {len(stn)} held-out stations — "
+        f"{args.network} {args.depth} cm, {len(held)} held-out stations — "
         f"predicted station-mean SD is {sd_pred / sd_obs:.2f}x the observed "
         f"({sd_pred:.4f} vs {sd_obs:.4f}), r = {r:+.2f}\n"
-        f"(a) and (b) share a colour scale; ringed = the six inside tile CR200-18",
+        f"(a) and (b) share a colour scale; ringed = the six inside tile CR200-18; "
+        f"squares = train (not in the SD ratio)",
         fontsize=9)
 
     out_dir.mkdir(parents=True, exist_ok=True)

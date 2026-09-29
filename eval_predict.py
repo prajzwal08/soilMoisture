@@ -69,6 +69,16 @@ def worker_init_fn(worker_id):
     np.random.seed(os.getpid() + worker_id)
 
 
+def _git_sha() -> str | None:
+    """HEAD of the repo the predictions were made with -- so a result names its code."""
+    import subprocess
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        return None
+
+
 def _make_key(r) -> str:
     """station_key as used by dataset.py (the zarr directory name)."""
     if str(r["source_network"]) == "ISMN":
@@ -401,6 +411,7 @@ def main():
         "run_name":        args.run_name,
         "checkpoint":      str(ckpt_path),
         "epoch":           int(epoch),
+        "git_sha":         _git_sha(),
         "best_val_loss":   float(cfg.get("best_val_loss", float("nan")))
                            if isinstance(cfg.get("best_val_loss"), (int, float)) else None,
         "category_filter": cfg.get("category_filter", list(SM_CATEGORIES)),

@@ -425,8 +425,9 @@ def main() -> None:
         f"  across-station spread   {sp_p:.4f}  "
         f"= {100*sp_p/sp_o:.0f}% of observed\n"
         f"  r(predicted level, observed level) = {r_lvl:+.3f}\n\n"
-        f"Every station is `val`: no gradients, but best.pt was selected on val loss.\n"
-        f"Grid overlay = 14×14 TerraMind tokens (160 m). S2 panels are stretched\n"
+        f"Splits are the CURRENT station_splits.csv (§47); train stations were fitted.\n"
+        f"Grid = 14×14 TerraMind L12 anchor tokens (160 m); the §48 SM map is 20 m.\n"
+        f"S2 panels are stretched\n"
         f"independently, so colours are not comparable between them."),
         transform=ax.transAxes, va="top", fontsize=8.4, family="monospace")
 

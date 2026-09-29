@@ -1,8 +1,8 @@
-"""Per-tile time series: several stations predicted from ONE 224x224 map (§26).
+"""Per-tile time series: several stations predicted from ONE tile map (§26).
 
-One forward pass on a tile produces a full (3, 224, 224) soil-moisture map.  This plots,
+One forward pass on a tile produces a full soil-moisture map (§48: (3, 112, 112) at 20 m).  This plots,
 for a single tile, every station that falls inside that map — the one at the supervised
-centre pixel (112, 112) and the neighbours at pixels that received no supervision — each
+centre pixel and the neighbours at pixels that received no supervision — each
 against its own observations, with metrics per panel.
 
 The question the figure answers: does the map track soil moisture away from the pixel the
@@ -42,8 +42,9 @@ C_OFF = "#d62728"        # never-supervised readout
 
 
 def panel_layout(ax, station: str, is_centre: bool, off_px: int, row: int, col: int):
-    tag = ("centre pixel (112,112) — SUPERVISED" if is_centre
-           else f"pixel ({row},{col}) — {off_px} px = {off_px*10} m off centre, NEVER SUPERVISED")
+    # row/col/off_px are on the readout table's 224 x 10 m grid (the model map is 112 x 20 m)
+    tag = ("centre pixel — SUPERVISED" if is_centre
+           else f"{off_px*10} m off centre, NEVER SUPERVISED")
     ax.set_title(f"{station.replace('ISMN_','').replace('TxSON_','')}   ·   {tag}",
                  loc="left", fontsize=9,
                  weight="bold" if is_centre else "normal",
@@ -146,7 +147,7 @@ def plot_tile(ts: pd.DataFrame, tile: str, depth: str, year_lo: int, year_hi: in
     n_off = int((~order.is_centre).sum())
     tsplit = sub.tile_split.iloc[0]
     fig.suptitle(
-        f"{tile.replace('ISMN_','')} — one 224×224 map, {n} stations, depth {depth}\n"
+        f"{tile.replace('ISMN_','')} — one tile map, {n} stations, depth {depth}\n"
         f"1 supervised centre pixel + {n_off} never-supervised off-centre pixels"
         f"   ·   tile split: {tsplit}   ·   {year_lo}–{year_hi}",
         x=.055, ha="left", fontsize=12.5, weight="bold", y=.995)

@@ -84,11 +84,10 @@ $RUN_PY plot_eval_timeseries.py --in-dir "${IN}" \
     --select extremes --n 5 "$@"
 
 echo ""; echo "───────── time series: the six CR200-18-tile TxSON stations ─────────"
-# All six sit in the val split with their own tiles, so each is predicted at its
-# own token.  This is NOT the §26 within-tile six-token readout -- that needs the
-# §28.9 token gather, which eval_predict.py rejects for patchwise checkpoints.
+# Since §47 all six are OOS, each predicted at its own station pixel. The within-tile
+# readout (six stations from ONE map) is slurm/eval_txson_figures.sh.
 $RUN_PY plot_eval_timeseries.py --in-dir "${IN}" \
-    --out-dir "${OUT}/timeseries" --splits val \
+    --out-dir "${OUT}/timeseries" --splits oos \
     --select named --stations \
         ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25 ISMN_TxSON_CR1000-2 \
         ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6
