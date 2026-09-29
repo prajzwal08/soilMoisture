@@ -731,7 +731,11 @@ def masked_huber_loss(
         w = (torch.ones_like(label) if depth_weights is None else
              depth_weights.to(device=label.device, dtype=label.dtype).expand_as(label))
         wm    = torch.where(mask, w, torch.zeros_like(w))
-        elem  = F.huber_loss(pred, torch.nan_to_num(label, nan=0.0), delta=delta,
+        # Mask the INPUT, not just the output: huber's backward multiplies by (pred - label),
+        # so a non-finite pred at an unlabelled depth gave 0 * nan = nan in the gradient
+        # even though the loss value was finite. torch.where routes zero gradient there.
+        elem  = F.huber_loss(torch.where(mask, pred, torch.zeros_like(pred)),
+                             torch.nan_to_num(label, nan=0.0), delta=delta,
                              reduction="none")
         denom = wm.sum()
         # torch.where, not elem*wm: a non-finite pred at an unlabelled depth would make
@@ -744,6 +748,39 @@ def masked_huber_loss(
     if return_breakdown:
         return loss, depth_sum, depth_cnt
     return loss
+
+
+@torch.no_grad()
+def lst_pattern_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor, sigma_st: float,
+                      min_cells: int = 10) -> torch.Tensor:
+    """Validation metrics of the thermal SPATIAL PATTERN, per scene, as all-reducible sums.
+
+    Same alpha=0 convention as lst_pattern_loss: both fields centred over the scene's own
+    valid cells, so only the within-tile pattern is scored, in Kelvin (pred x sigma_ST).
+    A scene needs >= min_cells valid cells (a correlation over 2 cells is meaningless).
+
+    Returns float32 (7,) sums:
+      [0] n_scenes  [1] sum r  [2] n scenes with r > 0  [3] sum sq err (K^2)
+      [4] n cells   [5] sum obs anomaly^2 (K^2)  [6] n scenes where r is defined
+    -> mean pattern r, frac r > 0, pattern RMSE (K), obs pattern sd (K),
+       pattern skill = 1 - err^2/obs^2 (0 = no better than a flat map).
+    """
+    pred  = lst_pred[:, 0].float() * sigma_st                          # (B, 22, 22) K
+    valid = torch.isfinite(lst_obs)
+    keep  = valid.flatten(1).sum(1) >= min_cells                       # (B,)
+    vf    = (valid & keep.view(-1, 1, 1)).float()
+    cnt   = vf.flatten(1).sum(1).clamp_min(1.0)
+    obs   = torch.nan_to_num(lst_obs.float(), nan=0.0)
+    oc    = (obs  - ((obs  * vf).flatten(1).sum(1) / cnt).view(-1, 1, 1)) * vf
+    pc    = (pred - ((pred * vf).flatten(1).sum(1) / cnt).view(-1, 1, 1)) * vf
+    so, sp = (oc * oc).flatten(1).sum(1), (pc * pc).flatten(1).sum(1)
+    ok    = keep & (so > 0) & (sp > 0)                                 # flat pred: r undefined
+    r     = torch.where(ok, (oc * pc).flatten(1).sum(1) / (so * sp).sqrt().clamp_min(1e-12),
+                        torch.zeros_like(so))
+    err   = ((pc - oc) ** 2).flatten(1).sum(1)
+    k     = keep.float()
+    return torch.stack([k.sum(), r.sum(), (ok & (r > 0)).float().sum(), (err * k).sum(),
+                        (cnt * k).sum(), (so * k).sum(), ok.float().sum()])
 
 
 def lst_pattern_loss(

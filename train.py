@@ -66,7 +66,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.multiprocessing
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss, lst_pattern_loss
+from model import SoilMoistureModel, masked_huber_loss, lst_pattern_loss, lst_pattern_stats
 
 # ── Preemption handling ───────────────────────────────────────────────────────
 # _preempted is set by the SIGTERM handler in whichever process SLURM signalled.
@@ -1378,6 +1378,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     ctx_n_acc = torch.zeros(1, device=device)
     msd_acc   = torch.zeros(n_depths + 1, device=device)    # [:n] Σ SD per depth, [n] count
     lst_acc   = torch.zeros(2, device=device)               # [0] Σ loss*cells, [1] Σ cells
+    lst_pat   = torch.zeros(7, device=device)               # lst_pattern_stats sums (spatial pattern r, RMSE K, skill)
     n_ctx_missing = 0
 
     for batch in CudaPrefetcher(loader, device):
@@ -1402,6 +1403,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
                                               delta=lst_delta, return_count=True)
             lst_acc[0] += l_lst.detach() * n_cells
             lst_acc[1] += n_cells
+            lst_pat += lst_pattern_stats(out["lst"], batch["lst_obs"], sigma_st)
 
         if want_diag:
             if n_batches == 1 and rank == 0:
@@ -1439,6 +1441,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     if world_size > 1:
         dist.all_reduce(msd_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(lst_pat, op=dist.ReduceOp.SUM)
         dist.all_reduce(ctx_acc,   op=dist.ReduceOp.SUM)
         dist.all_reduce(ctx_n_acc, op=dist.ReduceOp.SUM)
     if diag_out is not None:
@@ -1448,6 +1451,15 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         diag_out["lst_loss"]      = (float(lst_acc[0] / lst_acc[1]) if lst_acc[1] > 0
                                      else float("nan"))
         diag_out["lst_cells"]     = float(lst_acc[1])
+        _p = [float(v) for v in lst_pat]
+        diag_out["lst_pattern"] = {
+            "n_scenes"    : _p[0],
+            "r_mean"      : _p[1] / _p[6] if _p[6] > 0 else float("nan"),
+            "r_pos_frac"  : _p[2] / _p[6] if _p[6] > 0 else float("nan"),
+            "rmse_K"      : math.sqrt(_p[3] / _p[4]) if _p[4] > 0 else float("nan"),
+            "obs_sd_K"    : math.sqrt(_p[5] / _p[4]) if _p[4] > 0 else float("nan"),
+            "skill"       : 1.0 - _p[3] / _p[5] if _p[5] > 0 else float("nan"),
+        }
         diag_out["depth_ctx_sum"] = ctx_acc.cpu()
         diag_out["depth_ctx_n"]   = float(ctx_n_acc.item())
         diag_out["n_ctx_missing"] = n_ctx_missing
@@ -2153,7 +2165,7 @@ def main():
                     per_depth=CONFIG["per_depth_loss"],
                     max_batches=args.max_train_batches, debug_nan=args.debug_nan,
                     skip_batches = _skip,
-                    mid_ckpt_every = 500,
+                    mid_ckpt_every = 100,   # epochs are ~200 steps now (station-balanced sampler)
                     mid_ckpt_fn    = _save_mid_ckpt,
                     huber_delta    = CONFIG["huber_delta"],
                     depth_weights  = depth_weights,
@@ -2350,9 +2362,14 @@ def main():
         # all_reduce(SUM)'d, and val_ubrmse_sel was broadcast from rank 0 — so it is.
         # (Warmup hands the plateau its own un-warmed base lr and adopts whatever it
         # returns; see WarmupPlateauLR.)
-        warmup.before_plateau_step()
-        scheduler.step(val_selection)
-        warmup.after_plateau_step()
+        # Not during warmup: with ~200-step epochs, 1000 warmup steps span ~5 epochs, and a
+        # plateau counted there could halve the base lr before full lr is ever reached.
+        # global_step is identical on every rank, so every rank takes the same branch.
+        _in_warmup = global_step < CONFIG["warmup_steps"]
+        if not _in_warmup:
+            warmup.before_plateau_step()
+            scheduler.step(val_selection)
+            warmup.after_plateau_step()
 
         if is_main:
             peak_vram = torch.cuda.max_memory_allocated(device) / 1e9
@@ -2390,6 +2407,13 @@ def main():
                   f"  lambda={train_stats.get('lambda_lst', 0.0):.4e}"
                   f"  raw g_sm/g_lst={train_stats.get('lambda_raw_ratio', float('nan')):.4e}"
                   f"   <-- NOT in the selection scalar")
+            _lp = val_diag.get("lst_pattern")
+            if _lp:
+                # Spatial pattern only (both maps centred per scene). skill = 1 - err^2/obs^2:
+                # 0 = no better than a flat map, 1 = perfect pattern.
+                print(f"  {'lst_pat':>8s}  r={_lp['r_mean']:.3f}  r>0 in {100 * _lp['r_pos_frac']:.0f}%"
+                      f"  RMSE={_lp['rmse_K']:.3f} K vs obs sd {_lp['obs_sd_K']:.3f} K"
+                      f"  skill={_lp['skill']:.3f}  (val scenes={int(_lp['n_scenes'])})")
             print(f"  {'SELECT':>8s}  {SELECTION_METRIC}={val_selection:.6f}  <-- drives "
                   f"best.pt, early stopping and ReduceLROnPlateau."
                   f"   |  val_huber_pooled={val_pooled:.6f}"
@@ -2499,6 +2523,8 @@ def main():
                 log_dict["train/lst_loss"] = _tr_lst
                 log_dict["val/lst_loss"]   = val_diag.get("lst_loss", float("nan"))
                 log_dict["val/lst_cells"]  = val_diag.get("lst_cells", 0.0)
+                for _k, _v in (val_diag.get("lst_pattern") or {}).items():
+                    log_dict[f"val/lst_pattern/{_k}"] = _v
                 for depth, m in metrics.items():
                     log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
                     log_dict[f"val/{depth}/MAE"]    = m["MAE"]
@@ -2598,7 +2624,7 @@ def main():
             if val_selection < best_val_loss:
                 best_val_loss    = val_selection
                 no_improve_count = 0
-            else:
+            elif not _in_warmup:          # warmup epochs never count toward early stopping
                 no_improve_count += 1
 
             state = {
