@@ -85,11 +85,11 @@ def plot():
     for h, lab in refs:
         y = asinh_enc(h)
         ax.plot(h, y, "o", ms=3.6, color="#1a6faf", mec="white", mew=0.6, zorder=3)
-        ax.annotate(f"{lab}\n{h:g} m → {y:.2f}", (h, y), xytext=(0, 7 if h > 0 else -18),
+        ax.annotate(f"{lab}\n{h:g} m → {y:.2f}", (h, y), xytext=((-14, -22) if h >= 1000 else (0, 7 if h > 0 else -18)),
                     textcoords="offset points", ha="center", fontsize=6.2, color="0.25", linespacing=0.95)
     ax.set_xscale("symlog", linthresh=1.0, linscale=0.8)
     ax.set_xlim(-1600, 1600)
-    ax.set_ylim(-2.3, 2.6)
+    ax.set_ylim(-2.3, 3.0)
     ax.axhline(0, color="0.75", lw=0.5, zorder=0)
     ax.axvspan(-1, 1, color="0.93", zorder=0, lw=0)
     ax.text(0, -2.05, "linear\n|Δh| < 1 m", ha="center", fontsize=6, color="0.4", linespacing=0.95)
@@ -116,7 +116,7 @@ def plot():
                 im = ax.imshow(f, cmap="RdBu_r", norm=norm, extent=ext, interpolation="nearest")
             ax.plot(56.5 * PIX_KM, 56.5 * PIX_KM, marker="s", ms=3.2, mfc="none", mec="white", mew=0.8)
             sd = float(np.nanstd(f))
-            ax.set_title(f"({next(letters)}) {name}: {title}", loc="left", fontweight="bold")
+            ax.set_title(f"({next(letters)}) {title}" if r == 0 else f"({next(letters)})", loc="left", fontweight="bold")
             ax.text(0.03, 0.04, f"within-tile sd {sd:.3g}", transform=ax.transAxes, fontsize=6,
                     color="white", bbox=dict(fc="black", alpha=0.45, lw=0, pad=1.2))
             ax.set_xticks([0, 1, 2]); ax.set_yticks([0, 1, 2])
@@ -126,7 +126,7 @@ def plot():
             else:
                 ax.set_xticklabels([])
             if c == 0:
-                ax.set_ylabel(f"{where}\nkm")
+                ax.set_ylabel(f"{name} ({where})\nkm")
             else:
                 ax.set_yticklabels([])
             cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
