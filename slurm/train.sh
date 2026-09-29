@@ -62,6 +62,26 @@ if ! conda run -n terramind --no-capture-output python preflight_s48.py; then
   exit 1
 fi
 echo "=== pre-flight passed ==="
+
+# ---------------------------------------------------------------------------
+# /dev/shm STAGING (2026-09-29). GPFS small random reads capped the loader at ~40 samples/s
+# per node (GPUs ~5% busy). stage_shm.py copies the per-sample data -- anchor L12 rows and
+# the precomputed fine rows (prepare_fine_cache.py) -- for train+val stations, scenes
+# <= 2022-12-31, into RAM (~186 GB of the node's 378 GB /dev/shm); dataset.py reads it via
+# S48_CACHE_ROOT. verify_fine_cache.py proved the staged inputs bit-identical. Redone on
+# every (re)start, removed on exit. Stale copies from killed jobs are cleared first.
+STAGE="/dev/shm/s48_${SLURM_JOB_ID}"
+rm -rf /dev/shm/s48_* 2>/dev/null || true
+echo "=== staging to ${STAGE} ==="
+if ! conda run -n terramind --no-capture-output python stage_shm.py --dest "${STAGE}" --workers 48; then
+  echo "STAGING FAILED -- refusing to train (would fall back to slow GPFS reads or miss stations)."
+  rm -rf "${STAGE}"
+  exit 1
+fi
+trap 'rm -rf "${STAGE}"' EXIT
+export S48_CACHE_ROOT="${STAGE}"
+df -h /dev/shm | tail -1
+echo "=== staging done ==="
 echo
 
 # §48 flags (all optional): --lambda-lst auto|FLOAT (0 = control), --fine-skips cnn|pool,

@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO))
 from dataset import CACHE_ROOT, RAW_ROOT, ZARR_ROOT  # noqa: E402
 from splits_config import SM_CATEGORIES, category_of, station_dir_name  # noqa: E402
 
-CACHE_FILES = ("pyr.npz", "s2_l12.npy", "s2_cm.npy")
+CACHE_FILES = ("pyr.npz", "s2_l12.npy", "s2_cm.npy", "fine_meta.npz")   # fine_meta: prepare_fine_cache.py
 
 
 def main() -> int:
