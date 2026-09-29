@@ -54,7 +54,10 @@ from torch.utils.data import Dataset
 from splits_config import TRAIN_YEARS, category_of, station_dir_name
 
 ZARR_ROOT  = Path("/gpfs/scratch1/shared/pkhanal/zarr")
-CACHE_ROOT = Path("/gpfs/scratch1/shared/pkhanal/s48cache")
+CACHE_ROOT_GPFS = Path("/gpfs/scratch1/shared/pkhanal/s48cache")
+# Training reads a /dev/shm copy staged by stage_shm.py (train+val stations, scenes <= 2022):
+# GPFS small random reads capped the loader at ~40 samples/s per node (2026-09-29).
+CACHE_ROOT = Path(os.environ.get("S48_CACHE_ROOT", str(CACHE_ROOT_GPFS)))
 RAW_ROOT   = Path("/gpfs/scratch1/shared/pkhanal/satellite_zarr")
 LST_ROOT   = Path("/gpfs/work3/0/prjs1968/data")
 FINE_STATS_PATH = Path(__file__).resolve().parent / "csvs" / "fine_stats.json"
@@ -473,7 +476,7 @@ def build_station_cache(zg: zarr.Group, out_dir: Path) -> dict:
     return rep
 
 
-def _load_station_cache(cache_dir: Path) -> dict | None:
+def _load_station_cache(cache_dir: Path, fine: bool = True) -> dict | None:
     """pyr.npz fully in RAM (a few MB), l12 / cm as read-only memmaps. None if absent."""
     p = cache_dir / "pyr.npz"
     if not p.exists():
@@ -487,7 +490,41 @@ def _load_station_cache(cache_dir: Path) -> dict | None:
     f = cache_dir / "s2_cm.npy"
     if f.exists():
         c["s2_cm"] = np.load(f, mmap_mode="r")
+    if fine:
+        _attach_fine(c, cache_dir)
     return c
+
+
+def _fine_stats_sha() -> str:
+    import hashlib
+    return hashlib.sha256(FINE_STATS_PATH.read_bytes()).hexdigest()[:16]
+
+
+def _attach_fine(c: dict, cache_dir: Path) -> None:
+    """Precomputed fine inputs (prepare_fine_cache.py). fine_meta.npz is written LAST, so its
+    presence marks a complete set. Refuses a set built under different fine_stats constants."""
+    p = cache_dir / "fine_meta.npz"
+    if not p.exists():
+        return
+    with np.load(p) as z:
+        meta = {k: z[k] for k in z.files}
+    if str(meta["fine_stats_sha"]) != _fine_stats_sha():
+        raise RuntimeError(f"{p}: built with fine_stats sha {meta['fine_stats_sha']}, current "
+                           f"{_fine_stats_sha()} — rerun prepare_fine_cache.py")
+    cand = meta["s2_cand"].astype(np.int64)                      # (K, 3) date, raw_row, tok_row
+    c["fine_s2_cands"] = [(int(d), int(r), int(t), k) for k, (d, r, t) in enumerate(cand)]
+    if len(cand):
+        c["fine_s2"] = np.load(cache_dir / "fine_s2.npy", mmap_mode="r")
+    else:
+        c["fine_s2"] = np.zeros((0, 11, 112, 112), np.float16)
+    for key in ("s1_asc", "s1_desc"):
+        c[f"fine_{key}_dates"] = meta[f"{key}_dates"].astype(np.int64)
+        f = cache_dir / f"fine_{key}.npy"
+        if len(c[f"fine_{key}_dates"]):
+            c[f"fine_{key}"] = np.load(f, mmap_mode="r")
+    c["fine_dem"]        = meta["dem"]
+    c["fine_lulc_years"] = meta["lulc_years"].astype(np.int32)
+    c["fine_lulc"]       = meta["lulc"]
 
 
 def _int_to_date(d: int) -> datetime:
@@ -573,6 +610,20 @@ def _load_fine_stats(path: Path = FINE_STATS_PATH) -> dict:
     }
 
 
+_IO_POOL, _IO_POOL_KEY = None, None
+
+
+def _io_pool(n: int):
+    """One ThreadPoolExecutor per PROCESS (keyed on pid): a pool inherited across the
+    DataLoader's fork has no live threads, so each worker builds its own on first use."""
+    global _IO_POOL, _IO_POOL_KEY
+    key = (os.getpid(), n)
+    if _IO_POOL_KEY != key:
+        from concurrent.futures import ThreadPoolExecutor
+        _IO_POOL, _IO_POOL_KEY = ThreadPoolExecutor(max_workers=n), key
+    return _IO_POOL
+
+
 DEM_ASINH_KNEE_M = 1.0   # fine DEM channel: asinh((elev - tile mean) / 1 m) / 4, clipped +/-2.5
 DEM_ASINH_SCALE  = 4.0
 DEM_ASINH_CLIP   = 2.5
@@ -600,6 +651,93 @@ def _raw_dates(rg, key: str) -> np.ndarray:
                      else int(str(d)[:8]) for d in rg[f"{key}/dates"][:]], dtype=np.int32)
 
 
+# ── Fine per-scene maths, shared by build_fine and prepare_fine_cache.py ──────
+# Each helper writes a float32 buffer exactly as build_fine used to write `fine` (the same
+# float64 -> float32 assignment), so storing buffer.astype(float16) and later assigning it
+# back reproduces build_fine's final fine.astype(float16) bit-for-bit.
+
+def fine_s2_scene(x_raw, cm, fs: dict) -> np.ndarray:
+    """Raw S2 (12,224,224) + its (224,224) cloud-class mask -> (11,112,112) f32:
+    10 z-scored bands masked-2x2-pooled, then the valid fraction. Use only if [10].any()."""
+    out = np.zeros((11, 112, 112), dtype=np.float32)
+    x = np.asarray(x_raw, dtype=np.float32)[fs["s2_keep"]]                   # (10,224,224)
+    m = (x != 0).all(axis=0) & ~np.isin(np.asarray(cm), CM_BAD_CLASSES)
+    x = (x - fs["s2_mean"]) / fs["s2_std"]
+    pooled, frac = _pool2(x, m)
+    out[0:10] = pooled
+    out[10] = frac
+    return out
+
+
+def fine_s1_scene(x_raw, fs: dict) -> np.ndarray:
+    """Raw S1 (2,224,224) dB -> (3,112,112) f32: z-scored VV, VH (2x2 mean in LINEAR power),
+    then the valid fraction. Use only if [2].any()."""
+    out = np.zeros((3, 112, 112), dtype=np.float32)
+    x = np.asarray(x_raw, dtype=np.float32)
+    m = np.isfinite(x).all(axis=0) & (x != 0).all(axis=0)
+    lin = np.where(m, np.power(10.0, np.where(m, x, 0.0) / 10.0), 0.0)
+    pooled, frac = _pool2(lin, m)
+    if frac.any():
+        db = 10.0 * np.log10(np.maximum(pooled, 1e-10))
+        z = (db - fs["s1_mean"]) / fs["s1_std"]
+        out[0:2] = np.where(frac > 0, z, 0.0)
+        out[2] = frac
+    return out
+
+
+def fine_dem_static(x_raw, fs: dict) -> np.ndarray:
+    """Raw DEM (224,224) m -> (2,112,112) f32: asinh relative relief, then the valid fraction.
+    Relative relief, asinh-compressed (2026-09-29; figures/dem_asinh): the global z-score
+    (elev - 671)/951 left a flat tile's relief at ~0.002 sd and a Tibetan tile as one flat
+    block; absolute elevation already reaches the trunk through the DEM tokens. asinh is
+    linear inside |dh| < DEM_ASINH_KNEE_M and logarithmic beyond. Use only if [1].any()."""
+    out = np.zeros((2, 112, 112), dtype=np.float32)
+    x = np.asarray(x_raw, dtype=np.float32)[None]
+    m = np.isfinite(x[0]) & (x[0] > fs["dem_nodata_below"])
+    if not np.any(x[0][m] != 0):
+        m[:] = False                          # an all-zero raster is the fill value, not sea level
+    pooled, frac = _pool2(np.where(m, x, 0.0), m)                # metres, masked 2x2 mean
+    if frac.any():
+        v = frac > 0
+        rel = np.arcsinh((pooled[0] - pooled[0][v].mean()) / DEM_ASINH_KNEE_M) / DEM_ASINH_SCALE
+        out[0] = np.where(v, np.clip(rel, -DEM_ASINH_CLIP, DEM_ASINH_CLIP), 0.0)
+        out[1] = frac
+    return out
+
+
+def lulc_remap(a) -> np.ndarray:
+    a = np.asarray(a)
+    return np.where((a >= 1) & (a <= 9), a, LULC_PAD).astype(np.uint8)
+
+
+def _pick_s2(dates_ok: list, nv, start_int: int, end_int: int):
+    """dates_ok: [(date_int, raw_row, tok_row[, storage_row])] -> chosen tuple or None (clear
+    preferred). Dates are unique per orbit, so max() orders by date exactly as before."""
+    cands = [c for c in dates_ok if start_int <= c[0] <= end_int and nv[c[2]] > 0]
+    if not cands:
+        return None
+    clear = [c for c in cands if nv[c[2]] == N_TOKENS]
+    return max(clear or cands)
+
+
+def _pick_s1(dates_by_key: dict, start_int: int, end_int: int):
+    best = None
+    for key in ("s1_asc", "s1_desc"):
+        d = dates_by_key[key]
+        sel = np.where((d >= start_int) & (d <= end_int))[0]
+        if len(sel):
+            ri = int(sel[np.argmax(d[sel])])
+            cand = (int(d[ri]), -_ORBIT_ID[key], key, ri)
+            best = cand if best is None or cand > best else best
+    return best
+
+
+def _pick_lulc_year(ly, year: int):
+    before = np.where(ly < year)[0]
+    yi = int(before[np.argmax(ly[before])]) if len(before) else int(np.argmin(ly))
+    return yi, not len(before)
+
+
 def build_fine(raw: dict | None, cache: dict, year: int, doy: int, fs: dict):
     """The 19-channel fine tensor + the 10 m LULC raster for (station, day D).
 
@@ -615,89 +753,66 @@ def build_fine(raw: dict | None, cache: dict, year: int, doy: int, fs: dict):
     LULC the latest year strictly before D's year (causal); if the store has none that early,
          the earliest year it has — a mild look-ahead, reported in `lulc_lookahead`.
 
+    Two paths, identical output (verify_fine_cache.py): if the station cache carries the
+    precomputed per-scene arrays (prepare_fine_cache.py, 2026-09-29) they are looked up and
+    NOTHING is read from the raw store; otherwise the raw scene is read and pooled here.
+    Only the D-dependent channels (ages, orbit) and the scene choice happen per sample.
+
     Returns (fine (19,112,112) fp16, lulc (224,224) u1, info dict).
     """
     fine = np.zeros((FINE_CH, 112, 112), dtype=np.float32)
     lulc = np.full((224, 224), LULC_PAD, dtype=np.uint8)
     info = {"s2": False, "s1": False, "dem": False, "lulc": False, "lulc_lookahead": False}
-    if raw is None:
+    pre = "fine_s2" in cache
+    if raw is None and not pre:
         return torch.from_numpy(fine.astype(np.float16)), torch.from_numpy(lulc), info
-    rg = raw["zg"]
     start_int, end_int = _window_ints(year, doy)
     tdate = _target_date(year, doy)
 
     # ── S2 ──
-    s2_dates = raw["s2"]
-    if len(s2_dates) and "s2_date_ints" in cache and "s2_cm" in cache:
-        tok_idx = {int(d): i for i, d in enumerate(cache["s2_date_ints"])}
-        nv      = cache["s2_nvalid"]
-        cands   = [(int(d), ri, tok_idx[int(d)]) for ri, d in enumerate(s2_dates)
-                   if start_int <= d <= end_int and int(d) in tok_idx and nv[tok_idx[int(d)]] > 0]
-        if cands:
-            clear = [c for c in cands if nv[c[2]] == N_TOKENS]
-            dint, ri, ti = max(clear or cands)
-            x  = np.asarray(rg["s2/data"][ri], dtype=np.float32)[fs["s2_keep"]]   # (10,224,224)
-            cm = np.asarray(cache["s2_cm"][ti])
-            m  = (x != 0).all(axis=0) & ~np.isin(cm, CM_BAD_CLASSES)
-            x  = (x - fs["s2_mean"]) / fs["s2_std"]
-            pooled, frac = _pool2(x, m)
-            if frac.any():
-                fine[0:10] = pooled
-                fine[10]   = frac
-                fine[11]   = (frac > 0) * (tdate - _int_to_date(dint)).days / fs["max_age"]
-                info["s2"] = True
+    if pre:
+        pick = _pick_s2(cache["fine_s2_cands"], cache["s2_nvalid"], start_int, end_int)
+        # cands are (date, raw_row, tok_row, storage_row): the same ordering as the raw path
+        s2 = None if pick is None else np.asarray(cache["fine_s2"][pick[3]], dtype=np.float32)
+    else:
+        s2_dates, pick, s2 = raw["s2"], None, None
+        if len(s2_dates) and "s2_date_ints" in cache and "s2_cm" in cache:
+            tok_idx = {int(d): i for i, d in enumerate(cache["s2_date_ints"])}
+            ok = [(int(d), ri, tok_idx[int(d)]) for ri, d in enumerate(s2_dates) if int(d) in tok_idx]
+            pick = _pick_s2(ok, cache["s2_nvalid"], start_int, end_int)
+            if pick is not None:
+                s2 = fine_s2_scene(raw["zg"]["s2/data"][pick[1]], cache["s2_cm"][pick[2]], fs)
+    if s2 is not None and s2[10].any():
+        fine[0:11] = s2
+        fine[11]   = (s2[10] > 0) * (tdate - _int_to_date(pick[0])).days / fs["max_age"]
+        info["s2"] = True
 
     # ── S1 ──
-    best = None
-    for key in ("s1_asc", "s1_desc"):
-        d = raw[key]
-        sel = np.where((d >= start_int) & (d <= end_int))[0]
-        if len(sel):
-            ri = int(sel[np.argmax(d[sel])])
-            cand = (int(d[ri]), -_ORBIT_ID[key], key, ri)
-            best = cand if best is None or cand > best else best
+    s1_dates = ({k: cache[f"fine_{k}_dates"] for k in ("s1_asc", "s1_desc")} if pre
+                else {k: raw[k] for k in ("s1_asc", "s1_desc")})
+    best = _pick_s1(s1_dates, start_int, end_int)
     if best is not None:
         dint, _, key, ri = best
-        x  = np.asarray(rg[f"{key}/data"][ri], dtype=np.float32)                  # (2,224,224) dB
-        m  = np.isfinite(x).all(axis=0) & (x != 0).all(axis=0)
-        lin = np.where(m, np.power(10.0, np.where(m, x, 0.0) / 10.0), 0.0)
-        pooled, frac = _pool2(lin, m)
-        if frac.any():
-            db = 10.0 * np.log10(np.maximum(pooled, 1e-10))
-            z  = (db - fs["s1_mean"]) / fs["s1_std"]
-            fine[12:14] = np.where(frac > 0, z, 0.0)
-            fine[14]    = frac
-            fine[15]    = (frac > 0) * (tdate - _int_to_date(dint)).days / fs["max_age"]
-            fine[16]    = (frac > 0) * float(_ORBIT_ID[key])
+        s1 = (np.asarray(cache[f"fine_{key}"][ri], dtype=np.float32) if pre
+              else fine_s1_scene(raw["zg"][f"{key}/data"][ri], fs))
+        if s1[2].any():
+            fine[12:15] = s1
+            fine[15]    = (s1[2] > 0) * (tdate - _int_to_date(dint)).days / fs["max_age"]
+            fine[16]    = (s1[2] > 0) * float(_ORBIT_ID[key])
             info["s1"]  = True
 
     # ── DEM ──
-    if raw["has_dem"]:
-        x = np.asarray(rg["dem/data"][0], dtype=np.float32)[None]
-        m = np.isfinite(x[0]) & (x[0] > fs["dem_nodata_below"])
-        if not np.any(x[0][m] != 0):
-            m[:] = False                      # an all-zero raster is the fill value, not sea level
-        # Relative relief, asinh-compressed (2026-09-29; figures/dem_asinh). The global z-score
-        # (elev - 671)/951 left a flat tile's relief at ~0.002 sd and a Tibetan tile as one flat
-        # block; absolute elevation already reaches the trunk through the DEM tokens. asinh is
-        # linear inside |dh| < DEM_ASINH_KNEE_M and logarithmic beyond, so Dutch ditches and
-        # alpine slopes both stay visible, and /DEM_ASINH_SCALE keeps it near +/-2.
-        pooled, frac = _pool2(np.where(m, x, 0.0), m)            # metres, masked 2x2 mean
-        if frac.any():
-            v   = frac > 0
-            rel = np.arcsinh((pooled[0] - pooled[0][v].mean()) / DEM_ASINH_KNEE_M) / DEM_ASINH_SCALE
-            fine[17]    = np.where(v, np.clip(rel, -DEM_ASINH_CLIP, DEM_ASINH_CLIP), 0.0)
-            fine[18]    = frac
-            info["dem"] = True
+    dem = (np.asarray(cache["fine_dem"], dtype=np.float32) if pre
+           else (fine_dem_static(raw["zg"]["dem/data"][0], fs) if raw["has_dem"] else None))
+    if dem is not None and dem[1].any():
+        fine[17:19] = dem
+        info["dem"] = True
 
     # ── LULC ──
-    ly = raw["lulc_years"]
+    ly = cache["fine_lulc_years"] if pre else raw["lulc_years"]
     if len(ly):
-        before = np.where(ly < year)[0]
-        yi = int(before[np.argmax(ly[before])]) if len(before) else int(np.argmin(ly))
-        info["lulc_lookahead"] = not len(before)
-        a = np.asarray(rg["lulc/data"][yi])
-        lulc = np.where((a >= 1) & (a <= 9), a, LULC_PAD).astype(np.uint8)
+        yi, info["lulc_lookahead"] = _pick_lulc_year(ly, year)
+        lulc = (np.asarray(cache["fine_lulc"][yi]) if pre else lulc_remap(raw["zg"]["lulc/data"][yi]))
         info["lulc"] = bool((lulc != LULC_PAD).any())
 
     return torch.from_numpy(fine.astype(np.float16)), torch.from_numpy(lulc), info
@@ -1315,8 +1430,17 @@ class SoilMoistureDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    # Threads per DataLoader worker for building a batch (2026-09-29). One sample costs ~1 s,
+    # almost all of it waiting on ~4 cold GPFS reads (raw S2/S1 chunks, anchor memmap row)
+    # of 100-300 ms each; file reads and blosc release the GIL, so a worker can overlap its
+    # batch's reads. Every cache __getitem__ touches is built in __init__ and only read, so
+    # samples are independent. 1 = the old sequential behaviour. Set after construction.
+    io_threads: int = 1
+
     def __getitems__(self, indices):
-        return [self.__getitem__(i) for i in indices]
+        if self.io_threads <= 1 or len(indices) <= 1:
+            return [self.__getitem__(i) for i in indices]
+        return list(_io_pool(self.io_threads).map(self.__getitem__, indices))
 
     def __getitem__(self, idx):
         s       = self.samples[idx]

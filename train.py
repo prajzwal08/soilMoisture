@@ -187,7 +187,9 @@ class IndexedDataset(Dataset):
         # The DataLoader fetcher prefers __getitems__ when hasattr() finds it, and __getattr__
         # below would forward that lookup to the inner dataset — bypassing __getitem__ and
         # never stamping sample_idx, so val de-duplication silently never ran (review B1).
-        items = [self.ds[i] for i in indices]
+        # Delegate to the inner batch fetch so its I/O thread pool (dataset.io_threads) is used.
+        items = (self.ds.__getitems__(list(indices)) if hasattr(self.ds, "__getitems__")
+                 else [self.ds[i] for i in indices])
         for it, i in zip(items, indices):
             it["sample_idx"] = int(i)
         return items
