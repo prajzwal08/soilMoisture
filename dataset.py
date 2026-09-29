@@ -888,6 +888,17 @@ def load_sif_rolling(cache_entry, year: int, target_doy: int):
 
 # ── TWSA rolling slicer (no file I/O) ────────────────────────────────────────
 
+TWSA_AVAILABLE_AFTER_DAYS = 45   # review A1: GRACE month usable from time_start + 45 d
+
+
+def _ints_to_dt64(a) -> np.ndarray:
+    """YYYYMMDD ints -> datetime64[D] (vectorised)."""
+    a = np.asarray(a, dtype=np.int64)
+    ym = (np.asarray(a // 10000 - 1970, dtype="timedelta64[Y]") + np.datetime64("1970", "Y")
+          ).astype("datetime64[M]") + np.asarray(a // 100 % 100 - 1, dtype="timedelta64[M]")
+    return ym.astype("datetime64[D]") + np.asarray(a % 100 - 1, dtype="timedelta64[D]")
+
+
 def load_twsa_rolling(cache_entry, year: int, target_doy: int):
     """
     Slice pre-loaded TWSA arrays for the 365-day rolling window.
@@ -911,7 +922,13 @@ def load_twsa_rolling(cache_entry, year: int, target_doy: int):
 
     values, date_ints, doy_arr = cache_entry
     start_int, end_int = _window_ints(year, target_doy)
-    mask = (date_ints >= start_int) & (date_ints <= end_int)
+    # Review A1: a GRACE value is a MONTHLY mean stamped with the period's time_start (the
+    # 1st for a regular month), so "stamp <= D" let a sample on 3 March see the March mean —
+    # up to ~30 days of future storage. A month is usable only from time_start + 45 d, which
+    # also covers the irregular mid-month GRACE-FO periods. The window itself stays on the
+    # stamps, so rel_pos (from the mid-month doys) stays within 0..364.
+    avail = _ints_to_dt64(date_ints) + np.timedelta64(TWSA_AVAILABLE_AFTER_DAYS, "D")
+    mask = (date_ints >= start_int) & (avail <= _ints_to_dt64([end_int])[0])
 
     win_vals  = values[mask]
     win_doys  = doy_arr[mask]

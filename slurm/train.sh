@@ -55,6 +55,12 @@ if ! conda run -n terramind --no-capture-output \
   echo "Restore with: sbatch slurm/restore_zarr.sh"
   exit 1
 fi
+# Review B5: the §48 read cache and raw imagery are not covered by the zarr check above; a
+# missing one would only surface after every rank built its datasets.
+if ! conda run -n terramind --no-capture-output python preflight_s48.py; then
+  echo "§48 CACHE / RAW IMAGERY PRE-FLIGHT FAILED -- run prepare_s48_cache.py / restage first."
+  exit 1
+fi
 echo "=== pre-flight passed ==="
 echo
 

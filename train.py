@@ -183,6 +183,15 @@ class IndexedDataset(Dataset):
         item["sample_idx"] = int(i)      # default_collate -> (B,) int64 tensor
         return item
 
+    def __getitems__(self, indices):
+        # The DataLoader fetcher prefers __getitems__ when hasattr() finds it, and __getattr__
+        # below would forward that lookup to the inner dataset — bypassing __getitem__ and
+        # never stamping sample_idx, so val de-duplication silently never ran (review B1).
+        items = [self.ds[i] for i in indices]
+        for it, i in zip(items, indices):
+            it["sample_idx"] = int(i)
+        return items
+
     def __getattr__(self, name):
         # Forward anything else (station lists, caches) to the wrapped dataset. Only called
         # for attributes IndexedDataset itself does not define. The explicit "ds" guard
@@ -191,6 +200,70 @@ class IndexedDataset(Dataset):
         if name == "ds":
             raise AttributeError(name)
         return getattr(self.ds, name)
+
+
+# ── Station-balanced samplers (review A2) ────────────────────────────────────
+# One full pass is ~1.04M station-days (~2,000 steps at 4x128); the previous model peaked at
+# epoch 2, so early stopping had ~2 looks before overfitting and long-record stations
+# dominated the gradient while selection weights stations equally. An "epoch" is now at most
+# K days per station, redrawn every epoch: ~10x finer early-stop resolution, equal station
+# weight. The val subset is drawn ONCE (fixed seed) so the selection metric is comparable
+# across epochs; eval_predict.py still reports on the full val set.
+
+def _by_station(samples) -> dict:
+    groups: dict = {}
+    for i, s in enumerate(samples):
+        groups.setdefault(s["station_key"], []).append(i)
+    return groups
+
+
+class StationBalancedSampler(torch.utils.data.Sampler):
+    """Each epoch: min(n, K) days per station without replacement, shuffled, then sharded.
+    Deterministic in (seed, epoch), so make_resume_loader's list(iter(sampler)) reproduces
+    the issued order. Truncated to a multiple of num_replicas: identical length per rank."""
+
+    def __init__(self, dataset, per_station: int, num_replicas: int = 1, rank: int = 0,
+                 seed: int = 0):
+        self.groups = list(_by_station(dataset.samples).values())
+        self.k, self.W, self.rank, self.seed, self.epoch = int(per_station), num_replicas, rank, seed, 0
+        n = sum(min(len(g), self.k) for g in self.groups)
+        self.num_samples = n // self.W
+
+    def set_epoch(self, epoch: int):
+        self.epoch = int(epoch)
+
+    def __iter__(self):
+        rng = np.random.default_rng(self.seed + 1_000_003 * self.epoch)
+        idx = np.concatenate([np.asarray(g)[rng.permutation(len(g))[: self.k]] for g in self.groups])
+        idx = idx[rng.permutation(len(idx))][: self.num_samples * self.W]
+        return iter(idx[self.rank :: self.W].tolist())
+
+    def __len__(self):
+        return self.num_samples
+
+
+class FixedSubsetDistributedSampler(torch.utils.data.Sampler):
+    """A fixed per-station val subset (min(n, K) days, seed 0), sharded like
+    DistributedSampler(drop_last=False): padded with the head so every rank has the same
+    length; IndexedDataset's sample_idx lets evaluate() drop the padding."""
+
+    def __init__(self, dataset, per_station: int, num_replicas: int = 1, rank: int = 0):
+        rng = np.random.default_rng(0)
+        idx = sorted(i for g in _by_station(dataset.samples).values()
+                     for i in np.asarray(g)[rng.permutation(len(g))[: int(per_station)]].tolist())
+        W = num_replicas
+        n_pad = (-len(idx)) % W
+        idx = idx + idx[:n_pad]
+        self.idx = idx[rank::W]
+
+    def set_epoch(self, epoch: int):
+        pass
+
+    def __iter__(self):
+        return iter(self.idx)
+
+    def __len__(self):
+        return len(self.idx)
 
 
 # ── CUDA prefetcher ───────────────────────────────────────────────────────────
@@ -279,13 +352,17 @@ CONFIG = {
     "num_workers"     : 12,
     "val_num_workers" : 4,    # val uses 4w×pf4; train uses 12w×pf4 → (12+4)×4 ranks = 64 CPUs
     "prefetch_factor" : 4,
-    "max_epochs"      : 100,
+    "max_epochs"      : 150,    # review A2: an epoch is now <=K days per station (~200 steps)
     "lr"              : 2e-4,
     "weight_decay"    : 0.05,
-    "lr_patience"     : 10,
+    "lr_patience"     : 3,
     "lr_factor"       : 0.5,
     "grad_clip"       : 1.0,
-    "early_stop_patience": 20,
+    "early_stop_patience": 8,
+    # Review A2: days per station per epoch (train, redrawn each epoch) and the fixed val
+    # subset used for model selection. 0 = the old full pass / full val.
+    "train_days_per_station": 180,
+    "val_days_per_station"  : 120,
     # Linear LR warmup, in OPTIMIZER STEPS (not epochs).  §35.12: thirteen runs went
     # straight to lr=2e-4 on step 1 with 75.5 M parameters and none of them converged.
     # A transformer that large sees its largest gradients in the first few hundred
@@ -324,6 +401,7 @@ CONFIG = {
     # optimises the same objective. A number fixes it; 0 is the control.
     "lambda_lst"      : "auto",
     "lambda_every"    : 50,
+    "lambda_clamp"    : 10.0,   # review C3: lambda stays within [seed/c, seed*c] of its first post-warmup value
     "lambda_ema"      : 0.9,
     "lst_delta"       : 1.0,    # Huber knee in units of sigma_ST (= 2.71 K, §49.5)
 
@@ -599,20 +677,30 @@ class LambdaLST:
     fixes lambda; 0 is the control, and then no L_lst gradient is ever formed.
     """
 
-    def __init__(self, spec, every: int = 50, beta: float = 0.9):
+    def __init__(self, spec, every: int = 50, beta: float = 0.9, hold_steps: int = 0,
+                 clamp: float = 10.0):
         self.auto  = (str(spec) == "auto")
         self.value = 0.0 if self.auto else float(spec)
         self.every = max(1, int(every))
         self.beta  = float(beta)
+        self.hold_steps = int(hold_steps)
+        self.clamp = float(clamp)
         self.n_updates = 0
         self.last_ratio = float("nan")
+        self.ema_sm = self.ema_lst = 0.0
+        self.seed_value = float("nan")
 
     @property
     def active(self) -> bool:
         return self.auto or self.value != 0.0
 
     def due(self, global_step: int) -> bool:
-        return self.auto and (self.n_updates == 0 or global_step % self.every == 0)
+        # Review C3: frozen (lambda = 0) through LR warmup. With zero-weight SM heads and a
+        # 1/1000 warmup factor, the first g_sm/g_lst ratios are ~1e-6 of steady state, and an
+        # EMA seeded there takes ~1k steps to recover.
+        if not self.auto or global_step < self.hold_steps:
+            return False
+        return self.n_updates == 0 or global_step % self.every == 0
 
     def update(self, l_sm, l_lst, z, ddp_active: bool) -> None:
         g_sm,  = torch.autograd.grad(l_sm,  z, retain_graph=True, allow_unused=True)
@@ -631,18 +719,32 @@ class LambdaLST:
         #               0 would hold lambda near zero for the first ~1/(1-beta) refreshes.
         if g_lst_v <= 0.0 or g_sm_v <= 0.0 or not math.isfinite(g_sm_v / g_lst_v):
             return
-        ratio = g_sm_v / g_lst_v
-        self.last_ratio = ratio
-        self.value = ratio if self.n_updates == 0 else (
-            self.beta * self.value + (1.0 - self.beta) * ratio)
+        self.last_ratio = g_sm_v / g_lst_v
+        # Review C3: EMA the two norms separately and take the ratio of the EMAs — one
+        # noisy small g_lst no longer spikes lambda — then clamp to [seed/c, seed*c] around the
+        # first post-warmup value, so lambda cannot run away as the static LST pattern fits
+        # and g_lst shrinks (parity would otherwise grow lambda without bound).
+        if self.n_updates == 0:
+            self.ema_sm, self.ema_lst = g_sm_v, g_lst_v
+        else:
+            self.ema_sm  = self.beta * self.ema_sm  + (1.0 - self.beta) * g_sm_v
+            self.ema_lst = self.beta * self.ema_lst + (1.0 - self.beta) * g_lst_v
+        raw = self.ema_sm / self.ema_lst
+        if self.n_updates == 0:
+            self.seed_value = raw
+        self.value = min(max(raw, self.seed_value / self.clamp), self.seed_value * self.clamp)
         self.n_updates += 1
 
     def state_dict(self) -> dict:
-        return {"auto": self.auto, "value": self.value, "n_updates": self.n_updates}
+        return {"auto": self.auto, "value": self.value, "n_updates": self.n_updates,
+                "ema_sm": self.ema_sm, "ema_lst": self.ema_lst, "seed_value": self.seed_value}
 
     def load_state_dict(self, st: dict | None) -> None:
         if st and bool(st.get("auto")) == self.auto and self.auto:
             self.value, self.n_updates = float(st["value"]), int(st["n_updates"])
+            self.ema_sm  = float(st.get("ema_sm", 0.0))
+            self.ema_lst = float(st.get("ema_lst", 0.0))
+            self.seed_value = float(st.get("seed_value", self.value))
 
 
 def _per_depth_mean(depth_sum, depth_cnt) -> dict:
@@ -1459,6 +1561,10 @@ def main():
                         help="Stochastic depth rate, linearly scaled across layers (default 0.1)")
     parser.add_argument("--early-stop-patience", type=int, default=None,
                         help="Epochs without val improvement before stopping (default 20)")
+    parser.add_argument("--train-days-per-station", type=int, default=None,
+                        help="Days per station per epoch, redrawn each epoch; 0 = full pass (review A2)")
+    parser.add_argument("--val-days-per-station", type=int, default=None,
+                        help="Fixed val subset per station for selection; 0 = full val (review A2)")
     parser.add_argument("--lr-patience", type=int, default=None,
                         help="ReduceLROnPlateau patience in epochs (default 10)")
     parser.add_argument("--warmup-steps", type=int, default=None,
@@ -1543,6 +1649,8 @@ def main():
     if args.drop_path_rate      is not None: CONFIG["drop_path_rate"]      = args.drop_path_rate
     if args.early_stop_patience is not None: CONFIG["early_stop_patience"] = args.early_stop_patience
     if args.lr_patience         is not None: CONFIG["lr_patience"]         = args.lr_patience
+    if args.train_days_per_station is not None: CONFIG["train_days_per_station"] = args.train_days_per_station
+    if args.val_days_per_station   is not None: CONFIG["val_days_per_station"]   = args.val_days_per_station
     if args.warmup_steps        is not None: CONFIG["warmup_steps"]        = args.warmup_steps
     if args.huber_delta         is not None: CONFIG["huber_delta"]         = args.huber_delta
     if args.log_every           is not None: CONFIG["log_every"]           = args.log_every
@@ -1591,8 +1699,12 @@ def main():
     _lam_on = str(CONFIG["lambda_lst"]) == "auto" or float(CONFIG["lambda_lst"]) != 0.0
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
                                          max_stations=args.max_stations, require_lst=_lam_on)
-    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank,
-                                        shuffle=True, drop_last=True) if is_ddp else None
+    if CONFIG["train_days_per_station"]:
+        train_sampler = StationBalancedSampler(train_dataset, CONFIG["train_days_per_station"],
+                                               num_replicas=world_size, rank=rank, seed=CONFIG["seed"])
+    else:
+        train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank,
+                                            shuffle=True, drop_last=True) if is_ddp else None
 
     # Val dataset on all ranks — DistributedSampler splits it across GPUs.
     # Wrapped so each item carries its dataset index: the val sampler runs drop_last=False
@@ -1601,8 +1713,17 @@ def main():
     val_dataset = IndexedDataset(
         SoilMoistureDataset(**common_kwargs, split_filter=["val"], training=False,
                             max_stations=val_max_stations))
-    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
-                                      shuffle=False, drop_last=False) if is_ddp else None
+    if CONFIG["val_days_per_station"]:
+        val_sampler = FixedSubsetDistributedSampler(val_dataset, CONFIG["val_days_per_station"],
+                                                    num_replicas=world_size, rank=rank)
+    else:
+        val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
+                                          shuffle=False, drop_last=False) if is_ddp else None
+    if is_main:
+        print(f"  samplers: train {len(train_sampler) if train_sampler is not None else len(train_dataset)}"
+              f"/rank per epoch ({CONFIG['train_days_per_station'] or 'all'} d/station), "
+              f"val {len(val_sampler) if val_sampler is not None else len(val_dataset)}/rank "
+              f"({CONFIG['val_days_per_station'] or 'all'} d/station, fixed)")
 
     # §51.1: every station the split assigns must be admitted. A dropped station is a silent
     # inventory lie (565 trained vs 573 reported); smoke runs cap stations, so they are exempt.
@@ -1716,6 +1837,7 @@ def main():
         modality_dropout = CONFIG["modality_dropout"],
     ).to(device)
     lam = LambdaLST(CONFIG["lambda_lst"], every=CONFIG["lambda_every"],
+                    hold_steps=CONFIG["warmup_steps"], clamp=CONFIG["lambda_clamp"],
                     beta=CONFIG["lambda_ema"])
 
     if is_ddp:
