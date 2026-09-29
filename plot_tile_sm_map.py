@@ -443,7 +443,7 @@ def main():
     axes[1].grid(True, color=GRIDC, lw=.5)
     for side in ("top", "right"):
         axes[1].spines[side].set_visible(False)
-    axes[1].legend(fontsize=7, frameon=False, loc="upper right")
+    axes[1].legend(fontsize=7, frameon=True, framealpha=.9, loc="center right")
     axes[1].set_title("(b) spatial spread of the predicted map through time", loc="left")
     fig.suptitle(f"{args.tile} — does the 20 m map carry the station-to-station field?",
                  fontsize=9)
