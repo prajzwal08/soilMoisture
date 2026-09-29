@@ -32,7 +32,7 @@ from model import SoilMoistureModel
 from train import CudaPrefetcher
 from ckpt_utils import load_checkpoint
 from ablation import AblationDataset, MODALITIES     # §24 modality shuffling
-from splits_config import OOT_YEARS, SM_CATEGORIES, TRAIN_YEARS
+from splits_config import MIN_POST_CUT_DAYS, OOT_YEARS, SM_CATEGORIES, TRAIN_YEARS
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
@@ -427,11 +427,23 @@ def main():
         # temporary CSV holding only this chunk's stations, so it preloads
         # only their L12 tokens.
         active_csv = str(SPLITS_CSV)
+        sdf = splits_df
+        # §51.2: a station enters OOT/OOST only with >= MIN_POST_CUT_DAYS post-cut label days;
+        # otherwise its *_stn metric is a seasonal fragment weighted like three full years.
+        if split_name in ("oot", "oost"):
+            in_split = sdf["split"].isin(scfg["split_filter"])
+            short = in_split & (sdf["oot_effective_days"].fillna(0) < MIN_POST_CUT_DAYS)
+            sdf = sdf[~short]
+            post_csv = out_dir / f"_postcut_{split_name}.csv"
+            sdf.to_csv(post_csv, index=False)
+            active_csv = str(post_csv)
+            print(f"  §51.2 post-cut filter: {int(short.sum())} of {int(in_split.sum())} rows "
+                  f"below {MIN_POST_CUT_DAYS} d excluded")
         if pmap is not None:
             # The station set IS the tile set: hand the dataset only those rows so
             # it preloads only their L12 tokens.
-            keys = splits_df.apply(_make_key, axis=1)
-            sub  = splits_df[keys.isin(pmap.keys())]
+            keys = sdf.apply(_make_key, axis=1)
+            sub  = sdf[keys.isin(pmap.keys())]
             miss = set(pmap.keys()) - set(keys[keys.isin(pmap.keys())])
             if miss:
                 print(f"  WARNING {len(miss)} tiles not in station_splits.csv: "
@@ -442,7 +454,7 @@ def main():
             print(f"  Pixel-csv tiles: {len(sub)} stations "
                   f"({dict(sub['split'].value_counts())})")
         if args.station_flag:
-            sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
+            sub = sdf[sdf["split"].isin(scfg["split_filter"])]
             keep = sub[args.station_flag].astype(str).str.lower().isin(
                 ["true", "1", "yes"])
             sub = sub[keep]
@@ -451,7 +463,7 @@ def main():
             active_csv = str(flag_csv)
             print(f"  Station flag {args.station_flag}: {len(sub)} stations")
         if args.csv_start_idx is not None or args.csv_end_idx is not None:
-            sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
+            sub = sdf[sdf["split"].isin(scfg["split_filter"])]
             lo  = args.csv_start_idx or 0
             hi  = args.csv_end_idx if args.csv_end_idx is not None else len(sub)
             sub = sub.iloc[lo:hi]

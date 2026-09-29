@@ -1249,6 +1249,7 @@ class SoilMoistureDataset(Dataset):
             1 for s in self.samples
             if self._lst.get(s["sat_dir"]) is not None and s["date_int"] in self._lst[s["sat_dir"]][0])
         self.n_lst_samples = n_lst_samples
+        self.station_skips = dict(skips)          # §51.1: callers assert this is empty
         print(f"Dataset: {len(self.samples)} samples from {n_stations} stations; "
               f"{n_lst_samples} ({100.0 * n_lst_samples / max(1, len(self.samples)):.1f}%) "
               f"carry a Landsat ST target on their own day")

@@ -195,6 +195,9 @@ def main() -> int:
             print(f"        {name:<5s} {len(ds):>8,d} samples from {n_st:4d} stations, "
                   f"years {yrs_seen[:1]}..{yrs_seen[-1:]}")
             check(len(ds) > 0, f"{name} dataset is non-empty")
+            if args.max_stations is None:        # §51.1: admitted == assigned, not just non-empty
+                check(not ds.station_skips, f"{name}: every assigned station admitted",
+                      str(ds.station_skips))
             if name == "train":
                 bad_year = [y for y in yrs_seen if y >= OOT_CUT_DATE // 10000]
                 check(not bad_year, "no train sample on or after the cut", str(bad_year))
@@ -232,6 +235,10 @@ def main() -> int:
                 n_flag = int(df[flag].astype(str).str.lower().eq("true").sum())
                 print(f"              {flag} says {n_flag}; the dataset yields {n_st}")
             del ds
+        # §51.2: eval_predict.py filters on this column, so it must exist and be filled
+        check("oot_effective_days" in df.columns
+              and not sm.loc[sm["split"].isin(["train", "val", "oos"]), "oot_effective_days"].isna().any(),
+              "oot_effective_days present for every train/val/oos station (eval_predict §51.2 filter)")
         if "oot_effective_days" in df.columns:
             partial = sm[(sm["oot_effective_days"] > 0)
                          & (sm["oot_effective_days"] < MIN_POST_CUT_DAYS)

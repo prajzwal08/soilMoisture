@@ -1604,6 +1604,17 @@ def main():
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank,
                                       shuffle=False, drop_last=False) if is_ddp else None
 
+    # §51.1: every station the split assigns must be admitted. A dropped station is a silent
+    # inventory lie (565 trained vs 573 reported); smoke runs cap stations, so they are exempt.
+    if args.max_stations is None:
+        for _name, _ds in (("train", train_dataset), ("val", val_dataset.ds)):
+            _sk = getattr(_ds, "station_skips", None)
+            if _sk is None:
+                raise RuntimeError(f"§51.1: {_name} dataset has no station_skips; cannot verify admission")
+            if _sk:
+                raise RuntimeError(f"§51.1: {_name} dropped stations the split assigns: {_sk}. "
+                                   f"Fix the data or demote them in station_splits.csv; do not train around it.")
+
     # Freeze all Python objects before DataLoader forks workers.
     # Prevents GC from scanning/dirtying CoW-shared cache pages in worker processes,
     # which would cause the kernel to give each worker a private page copy → RSS blowup.
