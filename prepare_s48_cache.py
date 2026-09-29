@@ -66,6 +66,8 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=64)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--stations", nargs="*", default=None,
+                    help="only these stations (e.g. §50 backfill); combine with --force to rebuild")
     args = ap.parse_args()
 
     df = pd.read_csv(SPLITS_CSV)
@@ -73,6 +75,8 @@ def main() -> int:
     tasks, seen = [], set()
     for _, r in df[df["category"].isin(ALL_CATEGORIES)].iterrows():
         folder = station_dir_name(r)
+        if args.stations and folder not in args.stations:
+            continue
         if folder not in seen:
             seen.add(folder)
             tasks.append(dict(cat=r["category"], folder=folder, force=args.force))
@@ -98,8 +102,10 @@ def main() -> int:
     for col in ("dem_ok", "lulc_ok"):
         if col in idx:
             print(f"  {col:<24s} False at {int((idx[col] == False).sum())} stations")  # noqa: E712
-    idx.to_csv(OUT_INDEX, index=False)
-    print(f"wrote {OUT_INDEX}")
+    # A --stations run must not overwrite the all-station index with a subset.
+    out = OUT_INDEX if not args.stations else OUT_INDEX.with_name("s48_cache_index.partial.csv")
+    idx.to_csv(out, index=False)
+    print(f"wrote {out}")
     return 0
 
 

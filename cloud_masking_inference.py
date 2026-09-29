@@ -238,6 +238,8 @@ def main():
                         help="Root of permanent station directories")
     parser.add_argument("--station",     type=str,  default=None,
                         help="Process a single station (smoke test)")
+    parser.add_argument("--stations-file", type=Path, default=None,
+                        help="Process only the stations listed (one per line); lets concurrent jobs share one staging dir (§50)")
     parser.add_argument("--start-idx",   type=int,  default=0,
                         help="First station index, inclusive (SLURM array slicing)")
     parser.add_argument("--end-idx",     type=int,  default=None,
@@ -262,6 +264,9 @@ def main():
 
     if args.station:
         station_dirs = [args.scratch_dir / args.station]
+    elif args.stations_file:
+        station_dirs = [args.scratch_dir / s for s in args.stations_file.read_text().split()
+                        if (args.scratch_dir / s).is_dir()]
     else:
         station_dirs = sorted(d for d in args.scratch_dir.iterdir() if d.is_dir())
         station_dirs = station_dirs[args.start_idx : args.end_idx]

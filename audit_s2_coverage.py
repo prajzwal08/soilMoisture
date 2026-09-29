@@ -38,6 +38,7 @@ from splits_config import ALL_CATEGORIES, category_of, station_dir_name  # noqa:
 RAW_ROOT   = Path("/projects/prjs1968/satellite_zarr")
 STORE_DATES = REPO / "csvs" / "_s2_store_dates.json"   # written by --dump-store (terramind env)
 DELETE_LOG = REPO / "text" / "cloudy_tile_manifest_delete_log.csv"
+BACKFILL_MANIFEST = REPO / "text" / "s2_backfill_manifest"     # §50 per-station keep/reject
 OUT        = REPO / "csvs" / "s2_coverage_audit.csv"
 YEARS      = list(range(2016, 2026))
 MAX_CLOUD  = 75
@@ -84,7 +85,7 @@ def one(task):
     return rows
 
 
-def dump_store():
+def dump_store(store_json=STORE_DATES):
     """terramind env: the soilmoisture env has pystac but no zarr, so the store dates are
     read in a separate step and handed over as JSON."""
     import zarr
@@ -96,8 +97,8 @@ def dump_store():
                            if "s2/dates" in rg else [])
         except Exception:                               # noqa: BLE001
             out[p.stem] = None
-    STORE_DATES.write_text(json.dumps(out))
-    print(f"store dates for {len(out)} stations -> {STORE_DATES}")
+    store_json.write_text(json.dumps(out))
+    print(f"store dates for {len(out)} stations -> {store_json}")
 
 
 def main():
@@ -106,15 +107,22 @@ def main():
     ap.add_argument("--stations", nargs="*", default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--store-json", type=Path, default=STORE_DATES)
+    ap.add_argument("--out", type=Path, default=OUT)
     args = ap.parse_args()
     if args.dump_store:
-        return dump_store()
-    store_dates = json.loads(STORE_DATES.read_text())
+        return dump_store(args.store_json)
+    store_dates = json.loads(args.store_json.read_text())
 
     dl = pd.read_csv(DELETE_LOG, usecols=["station", "date", "s2_deleted"])
     dl = dl[dl["s2_deleted"].astype(str) == "True"]
     for st, g in dl.groupby("station"):
         _DELETED[st] = set(g["date"].astype(int))
+    # §50 backfill: scenes the backfill cloud filter rejected were obtained, then filtered
+    for p in BACKFILL_MANIFEST.glob("*.csv"):
+        m = pd.read_csv(p, usecols=["station", "date", "verdict"])
+        for st, g in m[m["verdict"] == "reject"].groupby("station"):
+            _DELETED.setdefault(st, set()).update(g["date"].astype(int))
 
     df = pd.read_csv(REPO / "csvs" / "station_splits.csv")
     df["cat"] = df.apply(category_of, axis=1)
@@ -142,7 +150,7 @@ def main():
     # only years the station's own record covers count as "should have been downloaded"
     res["in_window"] = ((res["year"] >= (res["start"] // 10000).clip(lower=2016))
                         & (res["year"] <= res["end"] // 10000))
-    res.to_csv(OUT if not args.stations and not args.limit else OUT.with_suffix(".smoke.csv"),
+    res.to_csv(args.out if not args.stations and not args.limit else args.out.with_suffix(".smoke.csv"),
                index=False)
 
     w = res[res["in_window"] & (res["catalogue"] > 0)]
