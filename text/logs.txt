@@ -7902,3 +7902,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     2x2 pooling) + s1_age + s1_valid. Noted: (VV, VV/VH) holds the same info as (VV, VH); chosen for readability.
   CORRECTION: current fine stack already has s2_age (model.py:142) and orbit -> 17 ch, not 15. Fallback set is
     S2 = NDVI, NDMI, s2_valid, s2_age; S1 = VV, VV/VH, s1_valid, s1_age (+ orbit, VV is incidence-dependent).
+  Fallback: DEM and LULC unchanged (as in the current fine stack).
