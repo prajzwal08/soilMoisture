@@ -8041,3 +8041,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     126 off-centre station readouts over ALL tiles (geometry is computed before the smoke slice), 94 rows, both variants
     fitted (raw: 3115 tile / 3097 cell features). FAILED only at the last print (my f-string braces); rows.csv + pairs CSVs
     were already written. Numbers meaningless at 41 train rows. Fixed (see next commit). Full run needs OK.
+  PROBE FULL SUBMITTED on the user's OK: job 27422021 (code f30f6bc), log logs/probe_offsets_27422021.out.
