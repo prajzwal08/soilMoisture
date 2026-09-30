@@ -7930,3 +7930,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   17:08 v2 ep12-14: SELECT 0.0572 0.0567 0.0563 (ep14 new best, BEATS v1 best 0.0566), push 0.34 0.23 0.37, fine ~0.8e-9, map SD 0.0029 0.0027 0.0039, dT RMSE 4.66 4.39 4.54 K (r 0.81).
   17:10 v2 ep15: SELECT 0.0555 (new best), push 0.53, fine 0.54e-9 (lowest since ep1), map SD 0.0032, dT RMSE 4.41 K r 0.80.
   17:13 v2 ep16: SELECT 0.05557 (no improvement vs ep15 0.05553), push 0.23, fine 0.58e-9, map SD 0.0035, dT RMSE 4.21 K r 0.83 (best dT so far).
+  17:16 v2 ep17-18: SELECT 0.0554 (ep17 new best) 0.0567; push 0.57 0.42; fine 0.72e-9 0.87e-9; map SD 0.0028 0.0040; dT RMSE 4.18 4.14 K r 0.83.
