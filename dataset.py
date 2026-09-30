@@ -1126,8 +1126,13 @@ class SoilMoistureDataset(Dataset):
         driver_stats_path: str | None = None,
         era5_require_full_window: bool = False,
         require_lst:     bool        = False,
+        era5_dropout:    float       = 0.0,
     ):
         self.training = training
+        # §53: whole-ERA5 modality dropout (training only): with this probability per sample the
+        # ENTIRE 365-day window is marked missing, like SIF/TWSA's 0.5, so the model cannot
+        # always lean on the weather. The dT target reads raw t2m from the cache, unaffected.
+        self.era5_dropout = float(era5_dropout)
         # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
         # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
         self.years    = list(years) if years else list(TRAIN_YEARS)
@@ -1548,6 +1553,9 @@ class SoilMoistureDataset(Dataset):
             mask = (torch.rand(era5.shape[0]) < 0.15) & (era5_doys > 0)
             era5[mask] = 0.0
             era5_doys[mask] = 0
+            if self.era5_dropout > 0.0 and random.random() < self.era5_dropout:
+                era5.zero_()
+                era5_doys.zero_()                  # doy 0 = key padding: every row hidden
 
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy)

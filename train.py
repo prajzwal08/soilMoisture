@@ -414,6 +414,7 @@ CONFIG = {
     "lst_level_weight": 0.0,    # §52: weight of the tile LEVEL term (LST - t2m_mean) inside L_lst; 0 = pattern only
     "lst_units"       : "sigma", # §52: "K" = head_lst predicts (LST - t2m) directly in Kelvin (no sigma_ST scaling)
     "lst_target"      : "pattern", # §52: "dT_pixel" = per-cell Huber against (LST_obs - t2m_mean) in K, NOTHING else
+    "era5_dropout"    : 0.0,    # §53: P(whole ERA5 window marked missing) per training sample
 
     # Loss
     "loss_fn"   : "huber",
@@ -1635,6 +1636,12 @@ def main():
                         help="§52 thermal target. pattern (default, s48_full, + optional "
                              "--lst-level-weight) | dT_pixel = every valid cell against "
                              "LST_obs - t2m_mean, Huber in K; forces --lst-units K")
+    parser.add_argument("--era5-dropout", type=float, default=None,
+                        help="§53: per-sample P of dropping the WHOLE ERA5 window in training "
+                             "(default 0; the 15%% per-day mask always applies)")
+    parser.add_argument("--lambda-frac", type=float, default=None,
+                        help="§53: auto lambda targets g_lst = frac x g_sm at the shared map "
+                             "(default 0.3)")
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Parent folder for {run_name}/ (default CONFIG['checkpoint_dir']); "
                              "keeps ablation arms out of the main run folder")
@@ -1692,6 +1699,8 @@ def main():
     if args.lst_level_weight is not None: CONFIG["lst_level_weight"] = args.lst_level_weight
     if args.lst_units        is not None: CONFIG["lst_units"]        = args.lst_units
     if args.lst_target       is not None: CONFIG["lst_target"]       = args.lst_target
+    if args.era5_dropout     is not None: CONFIG["era5_dropout"]     = args.era5_dropout
+    if args.lambda_frac      is not None: CONFIG["lambda_frac"]      = args.lambda_frac
     if CONFIG["lst_target"] == "dT_pixel":
         CONFIG["lst_units"] = "K"                # the target is in K; no sigma_ST anywhere
 
@@ -1790,7 +1799,8 @@ def main():
     # the training set would train on nothing and log nothing wrong (§46.8).
     _lam_on = str(CONFIG["lambda_lst"]) == "auto" or float(CONFIG["lambda_lst"]) != 0.0
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
-                                         max_stations=args.max_stations, require_lst=_lam_on)
+                                         max_stations=args.max_stations, require_lst=_lam_on,
+                                         era5_dropout=CONFIG["era5_dropout"])
     # §52 level target scale, from the TRAINING samples only. Computed for every run so the
     # pattern-only and control runs report the same val level metrics.
     CONFIG["dT_mu"], CONFIG["dT_sd"], _n_dT = train_dataset.lst_dT_stats()
@@ -1988,7 +1998,7 @@ def main():
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
-                 "lst_target", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
+                 "lst_target", "era5_dropout", "lambda_frac", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
                  "select_metric", "input_grad_diag", "git_sha",
