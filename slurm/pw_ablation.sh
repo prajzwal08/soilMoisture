@@ -14,7 +14,7 @@
 
 # EVAL ONLY (user 2026-09-30): did the PATCHWISE model (pw_stage2a_L3 best.pt, ep2) use the
 # TerraMind embeddings at all? Runs the §24 shuffle harness from the patchwise code
-# (worktree at 2b04fe0, the last commit before that checkpoint's eval) on val, paired rows.
+# (worktree at 9a0b208: same model/dataset/splits/stats as 2b04fe0, plus the eval fixes the 2026-08-27 eval ran with uncommitted) on val, paired rows.
 #   0 baseline | 1 sat cross_station | 2 sat within_station | 3 era5 cross_station (positive control)
 # Each condition writes to its own dir (manifest.json is per dir; avoids a write race).
 set -eo pipefail
