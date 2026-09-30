@@ -7983,3 +7983,7 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     train.py prints the [diag] fine-ratio and map-SD lines INSIDE the `if use_wandb:` block (~l.2866-2881), so they are
     silently skipped without W&B. Not recoverable from this run's log; --eval-fine-ablation on its best.pt would give
     map SD + SELECT under shuffle/zero (needs OK). Code fix (move the prints out of the W&B block) not yet made.
+  FIX 341d4ac: train.py [diag] fine-ratio + map-SD prints moved out of the W&B block (rank 0 always prints).
+    Not syntax-checked on login node; the ablation job below runs this code and is the check. Running 27417115 unaffected.
+  NO-LST FINE ABLATION SUBMITTED on the user's OK: job 27418308, afterok:27417115, slurm/eval_fine_ablation_nolst.sh
+    (flags identical to the no-LST run + --eval-fine-ablation --eval-ckpt best.pt), log logs/lst_tmean_diff/fine_ablation_nolst_27418308.out.
