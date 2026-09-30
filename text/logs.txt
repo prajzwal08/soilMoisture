@@ -8061,3 +8061,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     era5 cross_station (positive control); separate out-dirs under eval_output/pw_stage2a_L3_ablation/.
     slurm/pw_ablation_compare.sh = CPU, afterok, compare_ablation.py (paired per-station median delta ubRMSE, r, NSE_anom).
     Note: compare reports ubRMSE/r only -- a level fingerprint would not show there. Needs OK.
+  PATCHWISE ABLATION SUBMITTED on the user's OK: array 27422709 (0 base, 1 sat cross, 2 sat within, 3 era5 cross; logs logs/pw_ablation_27422709_<i>.out), compare 27422713 afterok (logs/pw_ablation_compare_27422713.out).
