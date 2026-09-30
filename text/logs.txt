@@ -7898,3 +7898,5 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   IDEA (not built, after v2): replace fine inputs with compact features. S2: NDVI, NDMI (B8A/B11), NBR2
     (B11/B12) + s2_valid. S1: user REJECTED d_VV (needs a dry reference from fixed years) -> S1 = VV/VH
     ratio (vegetation, cancels most SM) + s1_age + s1_valid; raw VV kept or dropped still open. Wait for v2.
+  FALLBACK (if v2 fails): S2 = NDVI + NDMI (B8A/B11) + s2_valid; S1 = VV + VV/VH (dB diff, after linear
+    2x2 pooling) + s1_age + s1_valid. Noted: (VV, VV/VH) holds the same info as (VV, VH); chosen for readability.
