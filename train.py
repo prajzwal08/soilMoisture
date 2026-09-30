@@ -2800,7 +2800,11 @@ def main():
             # Selection is on val_selection (= val_pooled), NOT val_loss. best_val_loss
             # keeps its name for checkpoint-format continuity but now holds the pooled
             # statistic; "selection_metric" in the state records which it is.
-            if val_selection < best_val_loss:
+            # Review fix (2026-09-30): save best.pt on a real improvement only. A worse WARMUP
+            # epoch leaves no_improve_count at 0, which used to overwrite best.pt with worse
+            # weights under the earlier epoch's metric.
+            _improved = val_selection < best_val_loss
+            if _improved:
                 best_val_loss    = val_selection
                 no_improve_count = 0
             elif not _in_warmup:          # warmup epochs never count toward early stopping
@@ -2829,7 +2833,7 @@ def main():
             if mid_ckpt_path.exists():
                 mid_ckpt_path.unlink()
 
-            if no_improve_count == 0:
+            if _improved:
                 _fsync_save(state, ckpt_dir / "best.pt")
                 print(f"  New best {SELECTION_METRIC}={best_val_loss:.6f} — checkpoint saved")
 
