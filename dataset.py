@@ -1454,6 +1454,10 @@ class SoilMoistureDataset(Dataset):
         v = np.isfinite(f)
         if v.sum() < LST_LEVEL_MIN_CELLS:
             return float("nan")
+        return float(f[v].mean()) - self._t2m(sat_dir, date_int)
+
+    def _t2m(self, sat_dir, date_int: int) -> float:
+        """Raw ERA5-Land t2m_mean (K) on date_int from the cache, or NaN if there is no row."""
         era = self._era5_cache.get(sat_dir)
         if era is None:
             return float("nan")
@@ -1461,7 +1465,7 @@ class SoilMoistureDataset(Dataset):
         k = int(np.searchsorted(date_ints, date_int))
         if k >= len(date_ints) or int(date_ints[k]) != int(date_int):
             return float("nan")
-        return float(f[v].mean()) - float(values[k, T2M_MEAN_IDX])
+        return float(values[k, T2M_MEAN_IDX])
 
     def lst_dT_stats(self) -> tuple[float, float, int]:
         """(mean, std, n) of the dT target over THIS dataset's samples.
@@ -1520,6 +1524,10 @@ class SoilMoistureDataset(Dataset):
         # §52 thermal LEVEL target: dT = tile-mean LST - ERA5-Land t2m_mean on day D (K).
         # Raw t2m from the cache, never the z-scored / 15%-masked input window.
         lst_dT = torch.tensor(self._lst_dT(sat_dir, s["date_int"], lst_obs), dtype=torch.float32)
+        # §52 per-pixel target is lst_obs - lst_t2m; NaN off overpass days (no cell is valid then).
+        lst_t2m = torch.tensor(self._t2m(sat_dir, s["date_int"]) if lst is not None
+                               and lst[0].get(s["date_int"]) is not None else float("nan"),
+                               dtype=torch.float32)
 
         # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
         era5_np, era5_doys_np, era5_rel_np = load_era5_rolling(
@@ -1600,6 +1608,7 @@ class SoilMoistureDataset(Dataset):
             "label"         : label,             # (3,) — NaN where the depth has no obs
             "lst_obs"       : lst_obs,           # (22, 22) Kelvin — all NaN off overpass days
             "lst_dT"        : lst_dT,            # ()  K, tile LST - t2m_mean; NaN if no level
+            "lst_t2m"       : lst_t2m,           # ()  K, raw t2m_mean on a scene day, else NaN
             "station_key"   : s["station_key"],
             "year"          : s["year"],
             "doy"           : s["doy"],

@@ -880,6 +880,43 @@ def lst_level_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor, dT_obs: torch
                         (p * o).sum()]).float()
 
 
+def lst_dT_pixel_loss(
+    lst_pred: torch.Tensor,   # (B, 1, 22, 22) model output, K: predicted LST - t2m per cell
+    lst_obs:  torch.Tensor,   # (B, 22, 22) Kelvin, NaN where no retrieval / no overpass
+    t2m:      torch.Tensor,   # (B,) K, raw ERA5-Land t2m_mean on the scene day, else NaN
+    delta:    float,          # Huber knee, K
+    return_count: bool = False,
+):
+    """§52 thermal target, the straightforward form: every valid 100 m cell against its own
+    (LST_obs - t2m_mean), Huber in Kelvin, mean over all valid cells in the batch. No centring,
+    no tile mean — nothing but the per-cell difference.
+    """
+    pred  = lst_pred[:, 0].float()                                     # (B, 22, 22) K
+    valid = torch.isfinite(lst_obs) & torch.isfinite(t2m).view(-1, 1, 1)
+    tgt   = torch.nan_to_num(lst_obs.float(), nan=0.0) - torch.nan_to_num(
+        t2m.float(), nan=0.0).view(-1, 1, 1)
+    err   = torch.where(valid, pred - tgt, pred.new_zeros(()))         # mask the INPUT (NaN grad)
+    elem  = F.huber_loss(err, torch.zeros_like(err), delta=delta, reduction="none")
+    total = valid.float().sum()
+    loss  = (torch.where(valid, elem, elem.new_zeros(())).sum() / total if total > 0
+             else lst_pred.sum() * 0.0)
+    if return_count:
+        return loss, total.detach()
+    return loss
+
+
+def lst_dT_pixel_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor,
+                       t2m: torch.Tensor) -> torch.Tensor:
+    """Per-cell (LST - t2m) validation sums, float32 (6,): [0] n cells  [1] Σpred  [2] Σobs
+    [3] Σpred²  [4] Σobs²  [5] Σpred·obs  (K) -> lst_level_summary gives r / RMSE / bias / skill."""
+    valid = torch.isfinite(lst_obs) & torch.isfinite(t2m).view(-1, 1, 1)
+    p = torch.where(valid, lst_pred[:, 0].float(), 0.0)
+    o = torch.where(valid, torch.nan_to_num(lst_obs.float(), nan=0.0)
+                    - torch.nan_to_num(t2m.float(), nan=0.0).view(-1, 1, 1), 0.0)
+    return torch.stack([valid.float().sum(), p.sum(), o.sum(), (p * p).sum(), (o * o).sum(),
+                        (p * o).sum()]).float()
+
+
 def lst_level_summary(s) -> dict:
     """lst_level_stats sums -> {n, r, rmse_K, bias_K, skill}."""
     n, sp, so, spp, soo, spo = [float(v) for v in s]

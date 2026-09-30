@@ -67,7 +67,8 @@ import torch.multiprocessing
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
 from model import (SoilMoistureModel, masked_huber_loss, lst_pattern_loss, lst_pattern_stats,
-                   lst_level_loss, lst_level_stats, lst_level_summary)
+                   lst_level_loss, lst_level_stats, lst_level_summary,
+                   lst_dT_pixel_loss, lst_dT_pixel_stats)
 
 # ── Preemption handling ───────────────────────────────────────────────────────
 # _preempted is set by the SIGTERM handler in whichever process SLURM signalled.
@@ -410,6 +411,7 @@ CONFIG = {
     "lst_delta"       : 1.0,    # Huber knee in units of sigma_ST (= 2.71 K, §49.5)
     "lst_level_weight": 0.0,    # §52: weight of the tile LEVEL term (LST - t2m_mean) inside L_lst; 0 = pattern only
     "lst_units"       : "sigma", # §52: "K" = head_lst predicts (LST - t2m) directly in Kelvin (no sigma_ST scaling)
+    "lst_target"      : "pattern", # §52: "dT_pixel" = per-cell Huber against (LST_obs - t2m_mean) in K, NOTHING else
 
     # Loss
     "loss_fn"   : "huber",
@@ -1064,7 +1066,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      global_step=0, warmup=None, is_main=True, log_every=1,
                      ddp_active=False, preempt_check_every=25, use_wandb=False,
                      lam=None, sigma_st=1.0, lst_delta=1.0, lst_level_weight=0.0,
-                     dT_sd=1.0, lvl_delta=1.0):
+                     dT_sd=1.0, lvl_delta=1.0, lst_target="pattern"):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -1146,7 +1148,16 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         # Thermal pattern term, outside autocast (lst_pattern_loss works in fp32). Skipped
         # entirely under the lambda=0 control, so the control forms no L_lst gradient at all.
         total = loss
-        if lam is not None and lam.active:
+        if lam is not None and lam.active and lst_target == "dT_pixel":
+            # §52: the ONLY thermal term — each valid cell vs its own LST_obs - t2m_mean (K).
+            l_lst, n_cells = lst_dT_pixel_loss(out["lst"], batch["lst_obs"], batch["lst_t2m"],
+                                               delta=lvl_delta, return_count=True)
+            if lam.due(global_step):
+                lam.update(loss, l_lst, out["z"], ddp_active)
+            total = loss + lam.value * l_lst
+            lst_sum   += l_lst.detach() * n_cells
+            lst_cells += n_cells
+        elif lam is not None and lam.active:
             l_lst, n_cells = lst_pattern_loss(out["lst"], batch["lst_obs"], sigma_st,
                                               delta=lst_delta, return_count=True)
             if lst_level_weight > 0:
@@ -1344,7 +1355,7 @@ def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
 @torch.no_grad()
 def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False,
              huber_delta=0.05, depth_weights=None, diag_out=None, sigma_st=1.0,
-             lst_delta=1.0, dT_sd=1.0, lvl_delta=1.0):
+             lst_delta=1.0, dT_sd=1.0, lvl_delta=1.0, lst_target="pattern"):
     """Distributed-aware evaluation.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
@@ -1398,6 +1409,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     lst_acc   = torch.zeros(2, device=device)               # [0] Σ loss*cells, [1] Σ cells
     lst_pat   = torch.zeros(7, device=device)               # lst_pattern_stats sums (spatial pattern r, RMSE K, skill)
     lst_lvl   = torch.zeros(8, device=device)               # [0:6] lst_level_stats, [6] Σ level loss*n, [7] Σ n (§52)
+    lst_px    = torch.zeros(8, device=device)               # [0:6] lst_dT_pixel_stats, [6] Σ pixel loss*cells, [7] Σ cells (§52)
     n_ctx_missing = 0
 
     for batch in CudaPrefetcher(loader, device):
@@ -1431,6 +1443,12 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
                                               sigma_st, dT_sd, delta=lvl_delta, return_count=True)
                 lst_lvl[6] += l_lvl.detach() * n_lvl
                 lst_lvl[7] += n_lvl
+            if "lst_t2m" in batch:
+                lst_px[:6] += lst_dT_pixel_stats(out["lst"], batch["lst_obs"], batch["lst_t2m"])
+                l_px, n_px = lst_dT_pixel_loss(out["lst"], batch["lst_obs"], batch["lst_t2m"],
+                                               delta=lvl_delta, return_count=True)
+                lst_px[6] += l_px.detach() * n_px
+                lst_px[7] += n_px
 
         if want_diag:
             if n_batches == 1 and rank == 0:
@@ -1470,6 +1488,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         dist.all_reduce(lst_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_pat, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_lvl, op=dist.ReduceOp.SUM)
+        dist.all_reduce(lst_px, op=dist.ReduceOp.SUM)
         dist.all_reduce(ctx_acc,   op=dist.ReduceOp.SUM)
         dist.all_reduce(ctx_n_acc, op=dist.ReduceOp.SUM)
     if diag_out is not None:
@@ -1491,6 +1510,9 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         diag_out["lst_level"] = lst_level_summary(lst_lvl[:6].tolist())
         diag_out["lst_level"]["loss"] = (float(lst_lvl[6] / lst_lvl[7]) if lst_lvl[7] > 0
                                          else float("nan"))
+        diag_out["lst_px"] = lst_level_summary(lst_px[:6].tolist())
+        diag_out["lst_px"]["loss"] = (float(lst_px[6] / lst_px[7]) if lst_px[7] > 0
+                                      else float("nan"))
         diag_out["depth_ctx_sum"] = ctx_acc.cpu()
         diag_out["depth_ctx_n"]   = float(ctx_n_acc.item())
         diag_out["n_ctx_missing"] = n_ctx_missing
@@ -1604,6 +1626,10 @@ def main():
     parser.add_argument("--lst-units", choices=["sigma", "K"], default=None,
                         help="§52: units of the head_lst output. sigma (default) = sigma_ST units as "
                              "in s48_full; K = LST - t2m directly in Kelvin")
+    parser.add_argument("--lst-target", choices=["pattern", "dT_pixel"], default=None,
+                        help="§52 thermal target. pattern (default, s48_full, + optional "
+                             "--lst-level-weight) | dT_pixel = every valid cell against "
+                             "LST_obs - t2m_mean, Huber in K; forces --lst-units K")
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Parent folder for {run_name}/ (default CONFIG['checkpoint_dir']); "
                              "keeps ablation arms out of the main run folder")
@@ -1660,6 +1686,9 @@ def main():
     if args.checkpoint_dir   is not None: CONFIG["checkpoint_dir"]   = args.checkpoint_dir
     if args.lst_level_weight is not None: CONFIG["lst_level_weight"] = args.lst_level_weight
     if args.lst_units        is not None: CONFIG["lst_units"]        = args.lst_units
+    if args.lst_target       is not None: CONFIG["lst_target"]       = args.lst_target
+    if CONFIG["lst_target"] == "dT_pixel":
+        CONFIG["lst_units"] = "K"                # the target is in K; no sigma_ST anywhere
 
     # Architecture stamp. ckpt_utils refuses anything else: every earlier arm shares key
     # prefixes with this one, so the stamp is the only reliable discriminator.
@@ -1762,8 +1791,10 @@ def main():
     if is_main:
         print(f"  thermal level dT = LST_tile - t2m_mean over train: mean {CONFIG['dT_mu']:.3f} K, "
               f"sd {CONFIG['dT_sd']:.3f} K, n {_n_dT}")
-    if CONFIG["lst_level_weight"] > 0 and not (_n_dT > 100 and CONFIG["dT_sd"] > 0):
-        raise RuntimeError(f"--lst-level-weight {CONFIG['lst_level_weight']} but only {_n_dT} "
+    _dT_on = CONFIG["lst_level_weight"] > 0 or CONFIG["lst_target"] == "dT_pixel"
+    if _dT_on and _lam_on and not (_n_dT > 100 and CONFIG["dT_sd"] > 0):
+        raise RuntimeError(f"dT target on (level weight {CONFIG['lst_level_weight']}, target "
+                           f"{CONFIG['lst_target']}) but only {_n_dT} "
                            f"training samples carry a dT target (sd {CONFIG['dT_sd']})")
     if not (CONFIG["dT_sd"] > 0):
         CONFIG["dT_sd"] = 1.0                    # val metric scale only; no level target
@@ -1913,7 +1944,7 @@ def main():
         fine_skips       = CONFIG["fine_skips"],
         modality_dropout = CONFIG["modality_dropout"],
     ).to(device)
-    if CONFIG["lst_level_weight"] > 0:
+    if CONFIG["lst_level_weight"] > 0 or CONFIG["lst_target"] == "dT_pixel":
         # §52: head_lst now predicts (LST - t2m) per cell in sigma_ST units. Start its level at
         # the training mean so step 1 is not a ~15 K error; a resume overwrites this anyway.
         with torch.no_grad():
@@ -1936,7 +1967,7 @@ def main():
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
-                 "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta",
+                 "lst_target", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
                  "select_metric", "input_grad_diag", "git_sha",
@@ -2251,6 +2282,7 @@ def main():
                     lst_level_weight = CONFIG["lst_level_weight"],
                     dT_sd          = CONFIG["lst_lvl_scale"],
                     lvl_delta      = CONFIG["lst_lvl_delta"],
+                    lst_target     = CONFIG["lst_target"],
                 )
             except _Preempted:
                 # Every rank arrives here on the same batch (the all_reduce(MAX) in
@@ -2313,6 +2345,7 @@ def main():
             lst_delta=CONFIG["lst_pat_delta"],
             dT_sd=CONFIG["lst_lvl_scale"],
             lvl_delta=CONFIG["lst_lvl_delta"],
+            lst_target=CONFIG["lst_target"],
         )
 
         # ── Fine-path attribution (rank 0, no collectives) ──────────────────────────
@@ -2501,6 +2534,13 @@ def main():
                       f"  bias={_ll['bias_K']:+.3f} K  skill={_ll['skill']:.3f}"
                       f"  loss train={_tr_ll:.4f} val={_ll['loss']:.4f}"
                       f"  (val scenes={int(_ll['n'])}, weight={CONFIG['lst_level_weight']})")
+            _lx = val_diag.get("lst_px")
+            if _lx and _lx.get("n", 0) >= 2:
+                # Per cell, LST - t2m_mean in K (the dT_pixel target). Pooled over val cells.
+                print(f"  {'lst_px':>8s}  r={_lx['r']:.3f}  RMSE={_lx['rmse_K']:.3f} K"
+                      f"  bias={_lx['bias_K']:+.3f} K  skill={_lx['skill']:.3f}"
+                      f"  loss val={_lx['loss']:.4f}  (val cells={int(_lx['n'])}, "
+                      f"target={CONFIG['lst_target']}, units={CONFIG['lst_units']})")
             print(f"  {'SELECT':>8s}  {SELECTION_METRIC}={val_selection:.6f}  <-- drives "
                   f"best.pt, early stopping and ReduceLROnPlateau."
                   f"   |  val_huber_pooled={val_pooled:.6f}"
@@ -2614,6 +2654,8 @@ def main():
                     log_dict[f"val/lst_pattern/{_k}"] = _v
                 for _k, _v in (val_diag.get("lst_level") or {}).items():
                     log_dict[f"val/lst_level/{_k}"] = _v
+                for _k, _v in (val_diag.get("lst_px") or {}).items():
+                    log_dict[f"val/lst_px/{_k}"] = _v
                 if train_stats.get("lst_level_n"):
                     log_dict["train/lst_level_loss"] = (train_stats["lst_level_sum"]
                                                          / train_stats["lst_level_n"])
