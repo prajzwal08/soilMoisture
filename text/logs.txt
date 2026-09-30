@@ -8029,3 +8029,9 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     +0.0009, zero/flat_both ~0 (flat_both marginally better). RETRACTS my "160 m info drawn at 20 m" reading and makes
     map SD (incl. the v2-vs-noLST 6x comparison) an unreliable structure metric. Next (not built): average the flat_both
     map over val to see the fixed template, and measure map SD after subtracting it / away from the border.
+  STEP-0 FEASIBILITY BUILT (not run): probe_offsets.py + slurm/probe_offsets.sh (rome, 64 CPU). User plan: tile time series
+    -> 160 m anomaly from TerraMind embeddings -> 20 m. Probe: stage 1 level (and SD) ~ tile features (ERA5 clim 18,
+    soil tile mean 21, PCA16 of tile-mean S2/S1/DEM/LULC L12); stage 2 residual ~ cell-minus-tile (PCA16 per modality,
+    soil diff). Ridge, alpha by GroupKFold over networks, fit on TRAIN own-centre rows. Station cell = bilinear on 14x14
+    (centre = avg of 4 corner cells). Scored: val/oos R2, and ALL within-tile station pairs (any network, common observed
+    days >= 180), r / sign agreement / sd ratio, clean = neither station train, tile-bootstrap CI. Needs OK: smoke then full.
