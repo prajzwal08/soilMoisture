@@ -7874,3 +7874,12 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     g_sm/g_lst 0.0018-0.0046). Literal lambda 1 would give LST ~10,000x SM's push (K^2 vs m3/m3).
   v2 scripts: slurm/train_lst_tmean_diff_v2.sh (+ _smoke.sh), run lst_tmean_diff_era5do05_coarse03_20260930.
   v2 SMOKE SUBMITTED on the user's OK: job 27402598 (20 stn, 4 ep). Full v2 run NOT submitted -- needs the user's OK.
+  v2 SMOKE 27402598 PASSED (6 min, code 63dbedf): config exact (lambda_lst 0.003 fixed, era5 0.5, coarse 0.3,
+    sif/twsa 0, dT_pixel, knee 7.215 K). No errors/NaN. dT in the loss from epoch 1 (lambda 0.003 every epoch).
+    ep:        1       2       3       4
+    SELECT     0.0423  0.0424  0.0426  0.0432   (20-stn noise level)
+    dT train   17.31   15.13   14.59   15.36
+    dT val RMSE 6.23   5.89    5.81    5.85 K
+    fine ratio 0.30    0.49    0.68    0.97     (rising, opposite of v1's collapse; tiny smoke, no conclusion)
+    raw g_sm/g_lst = nan: with a FIXED lambda the push ratio is not measured (LambdaLST only measures in auto).
+  Full v2 run NOT submitted -- waiting for the user's OK.
