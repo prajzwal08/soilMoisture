@@ -8014,3 +8014,18 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     Script slurm/eval_scale_ablation_nolst.sh (no-LST best.pt, ~20 min). Needs user OK to submit. Not syntax-checked (login node).
   SCALE ABLATION SUBMITTED on the user's OK: job 27420155 (slurm/eval_scale_ablation_nolst.sh, code adc1872, no-LST best.pt ep13),
     log logs/lst_tmean_diff/scale_ablation_nolst_27420155.out.
+  20:05 SCALE ABLATION 27420155 COMPLETED (9 min, code adc1872, no-LST best.pt ep13). 0-10 cm (other depths same pattern):
+    mode         SELECT   mapSD   btwSD    inSD    share(between)
+    none         0.04873  0.0243  0.0208  0.0148  0.661
+    shuffle      0.04960  0.0245  0.0210  0.0149  0.665
+    zero         0.04885  0.0227  0.0202  0.0121  0.737
+    flat_coarse  0.05033  0.0230  0.0184  0.0160  0.569
+    flat_both    0.04828  0.0192  0.0161  0.0119  0.646
+    SANITY CHECK FAILED: flat_both (no coarse pattern AND no imagery = no spatial input at all) keeps map SD 0.0192,
+    ~60% of the intact map's variance. -> most of the 20 m map's structure is a FIXED decoder pattern, not information
+    (likely conv zero-padding / tile-border effects; only the centre pixel is supervised, so the rest is unconstrained).
+    Input-driven part (~40% of variance): imagery adds within-cell variance (inSD 0.0121 -> 0.0148), coarse pattern
+    adds between-cell variance (btwSD 0.0184 -> 0.0208). Station pixel: flat_coarse hurts most (+0.0016), shuffle
+    +0.0009, zero/flat_both ~0 (flat_both marginally better). RETRACTS my "160 m info drawn at 20 m" reading and makes
+    map SD (incl. the v2-vs-noLST 6x comparison) an unreliable structure metric. Next (not built): average the flat_both
+    map over val to see the fixed template, and measure map SD after subtracting it / away from the border.
