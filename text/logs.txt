@@ -7987,3 +7987,10 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     Not syntax-checked on login node; the ablation job below runs this code and is the check. Running 27417115 unaffected.
   NO-LST FINE ABLATION SUBMITTED on the user's OK: job 27418308, afterok:27417115, slurm/eval_fine_ablation_nolst.sh
     (flags identical to the no-LST run + --eval-fine-ablation --eval-ckpt best.pt), log logs/lst_tmean_diff/fine_ablation_nolst_27418308.out.
+  19:28 NO-LST 27417115 COMPLETED (45 min, early stop ep21). best.pt = ep13, SELECT 0.0487 (v2 with LST: 0.0537 at ep44).
+    best-epoch val      ubRMSE 0-10 / 10-30 / 30-100      r 0-10 / 10-30 / 30-100
+    no-LST ep13         0.0549 / 0.0508 / 0.0498          0.761 / 0.742 / 0.727
+    v2 (LST) ep44       0.0607 / 0.0566 / 0.0535          0.694 / 0.675 / 0.665
+    -> LST at lambda 0.003 costs ~0.005 ubRMSE and ~0.065 r at every depth, and slows convergence (ep13 vs ep44).
+    Same config otherwise (diff: run name + lambda). Single seed each.
+  No-LST fine ablation 27418308 STARTED 19:29 (first run of the 341d4ac diag fix code).
