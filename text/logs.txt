@@ -7977,3 +7977,9 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     resumes from last.pt (val_pending) -> reruns epoch-1 val. Log logs/lst_tmean_diff/train_nolst_27417115.out.
   18:55 no-LST 27417115 RUNNING since 18:43 (gcn141, git 0387fd4), ~105 s/epoch, no errors; resumed val ran fine (fix works).
     SELECT ep1 0.0682 ep2 0.0633 (v2 at ep1-2: 0.0705 0.0706 -- still warmup, not yet comparable). lambda 0, LST metrics ~chance as expected.
+  19:08 no-LST 27417115 ep1-10 SELECT: 0.0682 0.0633 0.0599 0.0561 0.0544 0.0543 0.0524 0.0496 (ep8 best) 0.0497 0.05xx.
+    ep8 0.0496 ALREADY BEATS v2 best 0.0537 (ep44) -- LST (lambda 0.003) is hurting SM, not helping.
+    FINE RATIO / MAP SD NOT LOGGED for this run: W&B failed to start ("Failed to read port info after 30 s"), and
+    train.py prints the [diag] fine-ratio and map-SD lines INSIDE the `if use_wandb:` block (~l.2866-2881), so they are
+    silently skipped without W&B. Not recoverable from this run's log; --eval-fine-ablation on its best.pt would give
+    map SD + SELECT under shuffle/zero (needs OK). Code fix (move the prints out of the W&B block) not yet made.
