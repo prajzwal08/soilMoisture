@@ -151,6 +151,8 @@ MAX_DEAD_SOIL_CHANNELS = 2
 FINE_CH        = 19          # S2 10 bands + valid + age | S1 VV VH valid age orbit | DEM valid
 LULC_PAD       = 10          # model.py LULC_PAD; TerraMind index 0 (nodata) and >9 map here
 LST_N          = 22
+LST_LEVEL_MIN_CELLS = 10     # §52: min valid 100 m cells for a tile-mean (level) target
+T2M_MEAN_IDX   = ERA5_VARS.index("t2m_mean")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1442,6 +1444,48 @@ class SoilMoistureDataset(Dataset):
             return [self.__getitem__(i) for i in indices]
         return list(_io_pool(self.io_threads).map(self.__getitem__, indices))
 
+    def _lst_dT(self, sat_dir, date_int: int, lst_obs) -> float:
+        """Tile-mean LST - t2m_mean on date_int (K), or NaN.
+
+        NaN when the scene has < LST_LEVEL_MIN_CELLS valid cells (a level from a few cells is
+        a few pixels' temperature, not the tile's) or ERA5 has no row for that day.
+        """
+        f = np.asarray(lst_obs, dtype=np.float32)
+        v = np.isfinite(f)
+        if v.sum() < LST_LEVEL_MIN_CELLS:
+            return float("nan")
+        era = self._era5_cache.get(sat_dir)
+        if era is None:
+            return float("nan")
+        values, date_ints, _ = era
+        k = int(np.searchsorted(date_ints, date_int))
+        if k >= len(date_ints) or int(date_ints[k]) != int(date_int):
+            return float("nan")
+        return float(f[v].mean()) - float(values[k, T2M_MEAN_IDX])
+
+    def lst_dT_stats(self) -> tuple[float, float, int]:
+        """(mean, std, n) of the dT target over THIS dataset's samples.
+
+        Called on the training set only; the values go into CONFIG and the checkpoint so val,
+        eval and a resume use the training distribution. Deterministic, so a resume that
+        recomputes it gets the same numbers.
+        """
+        vals = []
+        for s in self.samples:
+            lst = self._lst.get(s["sat_dir"])
+            if lst is None:
+                continue
+            row = lst[0].get(s["date_int"])
+            if row is None:
+                continue
+            d = self._lst_dT(s["sat_dir"], s["date_int"], lst[1][row])
+            if np.isfinite(d):
+                vals.append(d)
+        if len(vals) < 2:
+            return float("nan"), float("nan"), len(vals)
+        a = np.asarray(vals, dtype=np.float64)
+        return float(a.mean()), float(a.std()), len(a)
+
     def __getitem__(self, idx):
         s       = self.samples[idx]
         sat_dir = s["sat_dir"]
@@ -1473,6 +1517,9 @@ class SoilMoistureDataset(Dataset):
             row = lst[0].get(s["date_int"])
             if row is not None:
                 lst_obs = torch.from_numpy(np.asarray(lst[1][row], dtype=np.float32))
+        # §52 thermal LEVEL target: dT = tile-mean LST - ERA5-Land t2m_mean on day D (K).
+        # Raw t2m from the cache, never the z-scored / 15%-masked input window.
+        lst_dT = torch.tensor(self._lst_dT(sat_dir, s["date_int"], lst_obs), dtype=torch.float32)
 
         # ── ERA5 — rolling 365-day window, numpy slice from cache ─────
         era5_np, era5_doys_np, era5_rel_np = load_era5_rolling(
@@ -1552,6 +1599,7 @@ class SoilMoistureDataset(Dataset):
             # ── Targets and identity ──
             "label"         : label,             # (3,) — NaN where the depth has no obs
             "lst_obs"       : lst_obs,           # (22, 22) Kelvin — all NaN off overpass days
+            "lst_dT"        : lst_dT,            # ()  K, tile LST - t2m_mean; NaN if no level
             "station_key"   : s["station_key"],
             "year"          : s["year"],
             "doy"           : s["doy"],

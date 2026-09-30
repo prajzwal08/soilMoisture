@@ -66,7 +66,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch.multiprocessing
 
 from dataset import SoilMoistureDataset, SM_DEPTHS
-from model import SoilMoistureModel, masked_huber_loss, lst_pattern_loss, lst_pattern_stats
+from model import (SoilMoistureModel, masked_huber_loss, lst_pattern_loss, lst_pattern_stats,
+                   lst_level_loss, lst_level_stats, lst_level_summary)
 
 # ── Preemption handling ───────────────────────────────────────────────────────
 # _preempted is set by the SIGTERM handler in whichever process SLURM signalled.
@@ -407,6 +408,7 @@ CONFIG = {
     "lambda_frac"     : 0.3,    # auto lambda = 0.3 x (g_sm/g_lst): LST pulls on the shared map at 30% of SM, not parity
     "lambda_ema"      : 0.9,
     "lst_delta"       : 1.0,    # Huber knee in units of sigma_ST (= 2.71 K, §49.5)
+    "lst_level_weight": 0.0,    # §52: weight of the tile LEVEL term (LST - t2m_mean) inside L_lst; 0 = pattern only
 
     # Loss
     "loss_fn"   : "huber",
@@ -1060,7 +1062,8 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      mid_ckpt_fn=None, huber_delta=0.05, depth_weights=None,
                      global_step=0, warmup=None, is_main=True, log_every=1,
                      ddp_active=False, preempt_check_every=25, use_wandb=False,
-                     lam=None, sigma_st=1.0, lst_delta=1.0):
+                     lam=None, sigma_st=1.0, lst_delta=1.0, lst_level_weight=0.0,
+                     dT_sd=1.0):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -1081,6 +1084,8 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
     total_tv     = torch.zeros((), device=device)
     lst_sum      = torch.zeros((), device=device)   # Σ (L_lst x cells), for a cell-weighted mean
     lst_cells    = torch.zeros((), device=device)
+    lvl_sum      = torch.zeros((), device=device)   # Σ (L_level x n), §52
+    lvl_n        = torch.zeros((), device=device)
     # clip_grad_norm_ RETURNS the pre-clip total norm and it was being thrown away. It is
     # the first number you want when a run diverges or flatlines: a norm two orders of
     # magnitude above grad_clip every step means the reported lr is fiction (every update is
@@ -1143,6 +1148,14 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         if lam is not None and lam.active:
             l_lst, n_cells = lst_pattern_loss(out["lst"], batch["lst_obs"], sigma_st,
                                               delta=lst_delta, return_count=True)
+            if lst_level_weight > 0:
+                # §52: the level term joins the pattern term INSIDE L_lst, so the auto lambda
+                # balances the whole thermal pull against SM exactly as before.
+                l_lvl, n_lvl = lst_level_loss(out["lst"], batch["lst_obs"], batch["lst_dT"],
+                                              sigma_st, dT_sd, return_count=True)
+                l_lst = l_lst + lst_level_weight * l_lvl
+                lvl_sum += l_lvl.detach() * n_lvl
+                lvl_n   += n_lvl
             if lam.due(global_step):
                 lam.update(loss, l_lst, out["z"], ddp_active)
             total = loss + lam.value * l_lst
@@ -1266,6 +1279,8 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         # Raw sums, reduced across ranks by the caller.
         "lst_sum"       : lst_sum.item(),
         "lst_cells"     : lst_cells.item(),
+        "lst_level_sum" : lvl_sum.item(),
+        "lst_level_n"   : lvl_n.item(),
     }
     if lam is not None:
         stats["lambda_lst"]       = lam.value
@@ -1328,7 +1343,7 @@ def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
 @torch.no_grad()
 def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False,
              huber_delta=0.05, depth_weights=None, diag_out=None, sigma_st=1.0,
-             lst_delta=1.0):
+             lst_delta=1.0, dT_sd=1.0):
     """Distributed-aware evaluation.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
@@ -1381,6 +1396,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     msd_acc   = torch.zeros(n_depths + 1, device=device)    # [:n] Σ SD per depth, [n] count
     lst_acc   = torch.zeros(2, device=device)               # [0] Σ loss*cells, [1] Σ cells
     lst_pat   = torch.zeros(7, device=device)               # lst_pattern_stats sums (spatial pattern r, RMSE K, skill)
+    lst_lvl   = torch.zeros(8, device=device)               # [0:6] lst_level_stats, [6] Σ level loss*n, [7] Σ n (§52)
     n_ctx_missing = 0
 
     for batch in CudaPrefetcher(loader, device):
@@ -1406,6 +1422,14 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
             lst_acc[0] += l_lst.detach() * n_cells
             lst_acc[1] += n_cells
             lst_pat += lst_pattern_stats(out["lst"], batch["lst_obs"], sigma_st)
+            if "lst_dT" in batch:
+                # Always measured, weight or not: the pattern-only run's level is the reference.
+                lst_lvl[:6] += lst_level_stats(out["lst"], batch["lst_obs"], batch["lst_dT"],
+                                               sigma_st)
+                l_lvl, n_lvl = lst_level_loss(out["lst"], batch["lst_obs"], batch["lst_dT"],
+                                              sigma_st, dT_sd, return_count=True)
+                lst_lvl[6] += l_lvl.detach() * n_lvl
+                lst_lvl[7] += n_lvl
 
         if want_diag:
             if n_batches == 1 and rank == 0:
@@ -1444,6 +1468,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         dist.all_reduce(msd_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_pat, op=dist.ReduceOp.SUM)
+        dist.all_reduce(lst_lvl, op=dist.ReduceOp.SUM)
         dist.all_reduce(ctx_acc,   op=dist.ReduceOp.SUM)
         dist.all_reduce(ctx_n_acc, op=dist.ReduceOp.SUM)
     if diag_out is not None:
@@ -1462,6 +1487,9 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
             "obs_sd_K"    : math.sqrt(_p[5] / _p[4]) if _p[4] > 0 else float("nan"),
             "skill"       : 1.0 - _p[3] / _p[5] if _p[5] > 0 else float("nan"),
         }
+        diag_out["lst_level"] = lst_level_summary(lst_lvl[:6].tolist())
+        diag_out["lst_level"]["loss"] = (float(lst_lvl[6] / lst_lvl[7]) if lst_lvl[7] > 0
+                                         else float("nan"))
         diag_out["depth_ctx_sum"] = ctx_acc.cpu()
         diag_out["depth_ctx_n"]   = float(ctx_n_acc.item())
         diag_out["n_ctx_missing"] = n_ctx_missing
@@ -1569,6 +1597,9 @@ def main():
     parser.add_argument("--lambda-lst", type=str, default=None,
                         help="'auto' = EMA(g_sm/g_lst) at the shared map (default); a number "
                              "fixes it; 0 is the control (no thermal gradient at all)")
+    parser.add_argument("--lst-level-weight", type=float, default=None,
+                        help="§52: weight of the thermal LEVEL term (tile LST - t2m_mean, Huber on "
+                             "dT / train SD) added to the pattern term inside L_lst (default 0)")
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Parent folder for {run_name}/ (default CONFIG['checkpoint_dir']); "
                              "keeps ablation arms out of the main run folder")
@@ -1623,6 +1654,7 @@ def main():
             float(args.lambda_lst)
         CONFIG["lambda_lst"] = args.lambda_lst
     if args.checkpoint_dir   is not None: CONFIG["checkpoint_dir"]   = args.checkpoint_dir
+    if args.lst_level_weight is not None: CONFIG["lst_level_weight"] = args.lst_level_weight
 
     # Architecture stamp. ckpt_utils refuses anything else: every earlier arm shares key
     # prefixes with this one, so the stamp is the only reliable discriminator.
@@ -1719,6 +1751,17 @@ def main():
     _lam_on = str(CONFIG["lambda_lst"]) == "auto" or float(CONFIG["lambda_lst"]) != 0.0
     train_dataset = SoilMoistureDataset(**common_kwargs, split_filter=["train"], training=True,
                                          max_stations=args.max_stations, require_lst=_lam_on)
+    # §52 level target scale, from the TRAINING samples only. Computed for every run so the
+    # pattern-only and control runs report the same val level metrics.
+    CONFIG["dT_mu"], CONFIG["dT_sd"], _n_dT = train_dataset.lst_dT_stats()
+    if is_main:
+        print(f"  thermal level dT = LST_tile - t2m_mean over train: mean {CONFIG['dT_mu']:.3f} K, "
+              f"sd {CONFIG['dT_sd']:.3f} K, n {_n_dT}")
+    if CONFIG["lst_level_weight"] > 0 and not (_n_dT > 100 and CONFIG["dT_sd"] > 0):
+        raise RuntimeError(f"--lst-level-weight {CONFIG['lst_level_weight']} but only {_n_dT} "
+                           f"training samples carry a dT target (sd {CONFIG['dT_sd']})")
+    if not (CONFIG["dT_sd"] > 0):
+        CONFIG["dT_sd"] = 1.0                    # val metric scale only; no level target
     if CONFIG["train_days_per_station"]:
         train_sampler = StationBalancedSampler(train_dataset, CONFIG["train_days_per_station"],
                                                num_replicas=world_size, rank=rank, seed=CONFIG["seed"])
@@ -1856,6 +1899,11 @@ def main():
         fine_skips       = CONFIG["fine_skips"],
         modality_dropout = CONFIG["modality_dropout"],
     ).to(device)
+    if CONFIG["lst_level_weight"] > 0:
+        # §52: head_lst now predicts (LST - t2m) per cell in sigma_ST units. Start its level at
+        # the training mean so step 1 is not a ~15 K error; a resume overwrites this anyway.
+        with torch.no_grad():
+            model.decoder.head_lst.bias.fill_(CONFIG["dT_mu"] / CONFIG["sigma_st"])
     lam = LambdaLST(CONFIG["lambda_lst"], every=CONFIG["lambda_every"],
                     hold_steps=CONFIG["warmup_steps"], clamp=CONFIG["lambda_clamp"],
                     frac=CONFIG["lambda_frac"],
@@ -1874,6 +1922,7 @@ def main():
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
+                 "lst_level_weight", "dT_mu", "dT_sd",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
                  "select_metric", "input_grad_diag", "git_sha",
@@ -2185,6 +2234,8 @@ def main():
                     lam            = lam,
                     sigma_st       = CONFIG["sigma_st"],
                     lst_delta      = CONFIG["lst_delta"],
+                    lst_level_weight = CONFIG["lst_level_weight"],
+                    dT_sd          = CONFIG["dT_sd"],
                 )
             except _Preempted:
                 # Every rank arrives here on the same batch (the all_reduce(MAX) in
@@ -2245,6 +2296,7 @@ def main():
             diag_out=val_diag,
             sigma_st=CONFIG["sigma_st"],
             lst_delta=CONFIG["lst_delta"],
+            dT_sd=CONFIG["dT_sd"],
         )
 
         # ── Fine-path attribution (rank 0, no collectives) ──────────────────────────
@@ -2287,9 +2339,12 @@ def main():
             dist.all_reduce(train_depth_cnt, op=dist.ReduceOp.SUM)
             # Thermal term: raw sums, same rule. Unconditional so every rank joins.
             _lst_t = torch.tensor([train_stats.get("lst_sum", 0.0),
-                                   train_stats.get("lst_cells", 0.0)], device=device)
+                                   train_stats.get("lst_cells", 0.0),
+                                   train_stats.get("lst_level_sum", 0.0),
+                                   train_stats.get("lst_level_n", 0.0)], device=device)
             dist.all_reduce(_lst_t, op=dist.ReduceOp.SUM)
-            train_stats["lst_sum"], train_stats["lst_cells"] = _lst_t.tolist()
+            (train_stats["lst_sum"], train_stats["lst_cells"],
+             train_stats["lst_level_sum"], train_stats["lst_level_n"]) = _lst_t.tolist()
             if is_main:
                 train_loss = t_loss.item()
                 train_tv   = t_tv.item()
@@ -2420,6 +2475,16 @@ def main():
                 print(f"  {'lst_pat':>8s}  r={_lp['r_mean']:.3f}  r>0 in {100 * _lp['r_pos_frac']:.0f}%"
                       f"  RMSE={_lp['rmse_K']:.3f} K vs obs sd {_lp['obs_sd_K']:.3f} K"
                       f"  skill={_lp['skill']:.3f}  (val scenes={int(_lp['n_scenes'])})")
+            _ll = val_diag.get("lst_level")
+            if _ll and _ll.get("n", 0) >= 2:
+                _tr_ll = (train_stats["lst_level_sum"] / train_stats["lst_level_n"]
+                          if train_stats.get("lst_level_n") else float("nan"))
+                # Pooled over val scenes (stations + seasons mixed), K. skill vs predicting the
+                # val mean. Measured whether or not the level is trained (weight 0 = reference).
+                print(f"  {'lst_lvl':>8s}  r={_ll['r']:.3f}  RMSE={_ll['rmse_K']:.3f} K"
+                      f"  bias={_ll['bias_K']:+.3f} K  skill={_ll['skill']:.3f}"
+                      f"  loss train={_tr_ll:.4f} val={_ll['loss']:.4f}"
+                      f"  (val scenes={int(_ll['n'])}, weight={CONFIG['lst_level_weight']})")
             print(f"  {'SELECT':>8s}  {SELECTION_METRIC}={val_selection:.6f}  <-- drives "
                   f"best.pt, early stopping and ReduceLROnPlateau."
                   f"   |  val_huber_pooled={val_pooled:.6f}"
@@ -2531,6 +2596,11 @@ def main():
                 log_dict["val/lst_cells"]  = val_diag.get("lst_cells", 0.0)
                 for _k, _v in (val_diag.get("lst_pattern") or {}).items():
                     log_dict[f"val/lst_pattern/{_k}"] = _v
+                for _k, _v in (val_diag.get("lst_level") or {}).items():
+                    log_dict[f"val/lst_level/{_k}"] = _v
+                if train_stats.get("lst_level_n"):
+                    log_dict["train/lst_level_loss"] = (train_stats["lst_level_sum"]
+                                                         / train_stats["lst_level_n"])
                 for depth, m in metrics.items():
                     log_dict[f"val/{depth}/ubRMSE"] = m["ubRMSE"]
                     log_dict[f"val/{depth}/MAE"]    = m["MAE"]

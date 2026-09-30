@@ -823,3 +823,70 @@ def lst_pattern_loss(
     if return_count:
         return loss, total.detach()
     return loss
+
+
+def _lst_level_pred(lst_pred: torch.Tensor, lst_obs: torch.Tensor, sigma_st: float):
+    """Predicted tile level in K: mean of pred x sigma_ST over the scene's OWN valid cells.
+
+    §52: head_lst is read as (LST - t2m) per 100 m cell in units of sigma_ST. Its centred part
+    is the pattern (lst_pattern_loss, unchanged: a constant cancels there), its mean over the
+    same cells the observed level was taken over is the level. One map, two terms.
+    """
+    pred = lst_pred[:, 0].float() * sigma_st                           # (B, 22, 22) K
+    vf   = torch.isfinite(lst_obs).to(pred.dtype)
+    cnt  = vf.flatten(1).sum(1).clamp_min(1.0)
+    return (pred * vf).flatten(1).sum(1) / cnt                         # (B,)
+
+
+def lst_level_loss(
+    lst_pred: torch.Tensor,   # (B, 1, 22, 22) model output, units of sigma_ST
+    lst_obs:  torch.Tensor,   # (B, 22, 22) Kelvin, NaN where no retrieval / no overpass
+    dT_obs:   torch.Tensor,   # (B,) K, tile LST - t2m_mean; NaN where no level target
+    sigma_st: float,
+    dT_sd:    float,
+    delta:    float = 1.0,
+    return_count: bool = False,
+):
+    """Thermal LEVEL loss (§52): Huber on (pred level - dT_obs) / dT_sd, mean over samples.
+
+    dT_sd (training-set SD of dT) puts the level on the same ~unit scale as the pattern term,
+    so a fixed weight between them means something. Samples without a level target (no
+    overpass, < 10 valid cells, no ERA5 row) contribute nothing.
+    """
+    ok   = torch.isfinite(dT_obs)
+    lvl  = _lst_level_pred(lst_pred, lst_obs, sigma_st)
+    res  = (lvl - torch.nan_to_num(dT_obs.float(), nan=0.0)) / dT_sd
+    res  = torch.where(ok, res, res.new_zeros(()))                     # mask the INPUT (NaN grad)
+    elem = F.huber_loss(res, torch.zeros_like(res), delta=delta, reduction="none")
+    n    = ok.float().sum()
+    loss = (torch.where(ok, elem, elem.new_zeros(())).sum() / n if n > 0
+            else lst_pred.sum() * 0.0)
+    if return_count:
+        return loss, n.detach()
+    return loss
+
+
+def lst_level_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor, dT_obs: torch.Tensor,
+                    sigma_st: float) -> torch.Tensor:
+    """Validation sums for the thermal LEVEL, all-reducible.
+
+    Returns float32 (6,): [0] n  [1] Σpred  [2] Σobs  [3] Σpred²  [4] Σobs²  [5] Σpred·obs  (K)
+    -> pooled r, RMSE (K), bias (K), skill = 1 - MSE / var(obs).
+    """
+    ok  = torch.isfinite(dT_obs)
+    p   = torch.where(ok, _lst_level_pred(lst_pred, lst_obs, sigma_st), 0.0)
+    o   = torch.where(ok, dT_obs.float(), 0.0)
+    return torch.stack([ok.float().sum(), p.sum(), o.sum(), (p * p).sum(), (o * o).sum(),
+                        (p * o).sum()]).float()
+
+
+def lst_level_summary(s) -> dict:
+    """lst_level_stats sums -> {n, r, rmse_K, bias_K, skill}."""
+    n, sp, so, spp, soo, spo = [float(v) for v in s]
+    if n < 2:
+        return {"n": n}
+    mp, mo = sp / n, so / n
+    vp, vo, cov = spp / n - mp * mp, soo / n - mo * mo, spo / n - mp * mo
+    mse = (spp - 2 * spo + soo) / n
+    return {"n": n, "r": cov / max(vp * vo, 1e-12) ** 0.5, "rmse_K": max(mse, 0.0) ** 0.5,
+            "bias_K": mp - mo, "skill": 1.0 - mse / vo if vo > 0 else float("nan")}
