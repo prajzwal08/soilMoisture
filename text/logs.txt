@@ -7973,3 +7973,5 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     better). LST DOES read it: pattern skill 0.70 -> 0.22 shuffled, level RMSE +1 K. The 20 m map SD
     (0.004) is noise-level and not driven by imagery. So the fine path serves dT only; SM comes from the coarse
     transformer. No-LST 27414928 still FAILED (no_grad bug, fixed 5e2029c); resubmit resumes from its last.pt -- needs OK.
+  NO-LST RESUBMITTED on the user's OK: job 27417115 (nolst_era5do05_coarse03_20260930, code 03e0294, includes no_grad fix 5e2029c),
+    resumes from last.pt (val_pending) -> reruns epoch-1 val. Log logs/lst_tmean_diff/train_nolst_27417115.out.
