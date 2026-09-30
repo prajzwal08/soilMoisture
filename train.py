@@ -1365,10 +1365,94 @@ def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
 
 
 @torch.no_grad()
+class FineAblation:
+    """Batch hook for --eval-fine-ablation: replaces everything the fine encoder reads
+    (`fine` = 20 m S2/S1/DEM stack with its valid/age flags, and `lulc` at 10 m).
+
+    none    — unchanged.
+    zero    — all 19 channels 0 (so every valid flag says "missing") and lulc = LULC_PAD: the
+              same thing the model sees for a station with no raw imagery, so on-distribution.
+    shuffle — each sample gets the fine inputs of a sample from a DIFFERENT station (same batch
+              or the previous one; val batches hold ~4-5 stations since the sampler is sorted).
+              Kills site identity while keeping realistic imagery (§24: shuffle, not zero).
+    Targets (label, lst_obs) are never touched, so a drop means the model read the fine path.
+    """
+
+    def __init__(self, mode: str, seed: int = 0):
+        from model import LULC_PAD
+        self.mode, self.pad = mode, LULC_PAD
+        self.gen  = np.random.default_rng(seed)
+        self.prev = None
+        self.n_swapped = self.n_kept = 0
+
+    def __call__(self, batch):
+        if self.mode == "none":
+            return batch
+        b = dict(batch)
+        if self.mode == "zero":
+            b["fine"] = torch.zeros_like(batch["fine"])
+            b["lulc"] = torch.full_like(batch["lulc"], self.pad)
+            return b
+        keys = list(batch["station_key"])
+        pf, pl, pk = batch["fine"], batch["lulc"], keys
+        if self.prev is not None:
+            pf = torch.cat([pf, self.prev[0]]); pl = torch.cat([pl, self.prev[1]]); pk = keys + self.prev[2]
+        donors = []
+        for i, k in enumerate(keys):
+            cand = [j for j, kk in enumerate(pk) if kk != k]
+            if cand:
+                donors.append(cand[int(self.gen.integers(len(cand)))]); self.n_swapped += 1
+            else:
+                donors.append(i); self.n_kept += 1
+        idx = torch.as_tensor(donors, device=pf.device)
+        b["fine"], b["lulc"] = pf[idx], pl[idx]
+        self.prev = (batch["fine"], batch["lulc"], keys)
+        return b
+
+
+def run_fine_ablation(raw_model, val_loader, device, world_size, rank, is_main, depth_weights,
+                      ckpt_path):
+    """--eval-fine-ablation: score val with the fine path intact / shuffled / zeroed. Read-only."""
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    raw_model.load_state_dict(ckpt["model"])
+    if is_main:
+        print(f"\n=== FINE-PATH ABLATION  ckpt={ckpt_path}  epoch={ckpt.get('epoch')} ===", flush=True)
+    rows = []
+    for mode in ("none", "shuffle", "zero"):
+        hook = FineAblation(mode, seed=rank)
+        diag = {}
+        _, _, per_station, _, _ = evaluate(
+            raw_model, val_loader, device, world_size=world_size, rank=rank,
+            per_depth=CONFIG["per_depth_loss"], huber_delta=CONFIG["huber_delta"],
+            depth_weights=depth_weights, diag_out=diag, sigma_st=CONFIG["lst_sig_eff"],
+            lst_delta=CONFIG["lst_pat_delta"], dT_sd=CONFIG["lst_lvl_scale"],
+            lvl_delta=CONFIG["lst_lvl_delta"], lst_target=CONFIG["lst_target"],
+            batch_hook=hook)
+        if not is_main:
+            continue
+        nan = float("nan")
+        lp, ll, lx = diag.get("lst_pattern") or {}, diag.get("lst_level") or {}, diag.get("lst_px") or {}
+        msd = diag.get("map_sd") or [nan] * len(SM_DEPTHS)
+        rows.append((mode, _ubrmse_selection(per_station), msd[0],
+                     lp.get("r_mean", nan), lp.get("rmse_K", nan), lp.get("skill", nan),
+                     ll.get("rmse_K", nan), lx.get("rmse_K", nan), lx.get("r", nan)))
+        print(f"  [{mode:7s}] done  (rank-0 swapped {hook.n_swapped}, kept {hook.n_kept})", flush=True)
+    if is_main:
+        print("\n  mode     SELECT    mapSD0-10  pat_r  pat_RMSE  pat_skill  lvl_RMSE  px_RMSE  px_r")
+        for m, s, sd, pr, pe, pk, le, xe, xr in rows:
+            print(f"  {m:7s}  {s:.5f}   {sd:.5f}   {pr:.3f}  {pe:.3f} K   {pk:.3f}     "
+                  f"{le:.3f} K  {xe:.3f} K  {xr:.3f}")
+        print("  pat_* = within-tile LST pattern (centred per scene); lvl = tile mean; px = per pixel dT.\n"
+              "  A big drop under shuffle/zero = that output reads the 20 m path.", flush=True)
+
+
 def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False,
              huber_delta=0.05, depth_weights=None, diag_out=None, sigma_st=1.0,
-             lst_delta=1.0, dT_sd=1.0, lvl_delta=1.0, lst_target="pattern"):
+             lst_delta=1.0, dT_sd=1.0, lvl_delta=1.0, lst_target="pattern", batch_hook=None):
     """Distributed-aware evaluation.
+
+    batch_hook: optional callable(batch) -> batch applied to every batch on device before the
+            forward (the --eval-fine-ablation input swap). None = unchanged behaviour.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
     are gathered to rank 0 for metric computation.  Keeps all GPUs active so
@@ -1427,6 +1511,8 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     for batch in CudaPrefetcher(loader, device):
         if max_batches is not None and n_batches >= max_batches:
             break
+        if batch_hook is not None:
+            batch = batch_hook(batch)
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             out = model(batch)
@@ -1692,6 +1778,13 @@ def main():
     parser.add_argument("--no-input-grad-diag", action="store_true",
                         help="Disable the once-per-epoch fine-vs-rest input-gradient ratio "
                              "(rank 0, one val batch). On by default")
+    parser.add_argument("--eval-fine-ablation", action="store_true",
+                        help="EVAL ONLY, writes nothing: load --eval-ckpt of --run-name and score "
+                             "val three times -- fine path intact, shuffled across stations, "
+                             "zeroed -- printing SM SELECT, map SD and the LST pattern/level/pixel "
+                             "stats for each. Answers whether the 20 m path drives LST and SM")
+    parser.add_argument("--eval-ckpt", default="best.pt",
+                        help="checkpoint file inside the run's checkpoint dir for --eval-fine-ablation")
     args = parser.parse_args()
 
     if args.lr          is not None: CONFIG["lr"]         = args.lr
@@ -2226,6 +2319,17 @@ def main():
 
     if is_ddp:
         dist.barrier()
+
+    # ── Eval-only fine-path ablation: runs here, BEFORE W&B and the loop, writes nothing ──
+    if args.eval_fine_ablation:
+        _dw = (torch.tensor(depth_weights_list, device=device, dtype=torch.float32)
+               if (CONFIG["per_depth_loss"] and depth_weights_list) else None)
+        run_fine_ablation(raw_model, val_loader, device, world_size, rank, is_main, _dw,
+                          ckpt_dir / args.eval_ckpt)
+        if is_ddp:
+            dist.barrier()
+            dist.destroy_process_group()
+        return
 
     # ── W&B ───────────────────────────────────────────────────────────
     use_wandb = False
