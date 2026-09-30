@@ -1569,6 +1569,9 @@ def main():
     parser.add_argument("--lambda-lst", type=str, default=None,
                         help="'auto' = EMA(g_sm/g_lst) at the shared map (default); a number "
                              "fixes it; 0 is the control (no thermal gradient at all)")
+    parser.add_argument("--checkpoint-dir", type=str, default=None,
+                        help="Parent folder for {run_name}/ (default CONFIG['checkpoint_dir']); "
+                             "keeps ablation arms out of the main run folder")
     # Regularisation overrides — CONFIG keeps the baseline values so comparison runs
     # stay clean; pass these on the sbatch line to make a run self-documenting.
     parser.add_argument("--weight-decay", type=float, default=None,
@@ -1619,6 +1622,7 @@ def main():
         if args.lambda_lst != "auto":
             float(args.lambda_lst)
         CONFIG["lambda_lst"] = args.lambda_lst
+    if args.checkpoint_dir   is not None: CONFIG["checkpoint_dir"]   = args.checkpoint_dir
 
     # Architecture stamp. ckpt_utils refuses anything else: every earlier arm shares key
     # prefixes with this one, so the stamp is the only reliable discriminator.
