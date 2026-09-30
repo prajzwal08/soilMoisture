@@ -7848,3 +7848,29 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   FULL RUN SUBMITTED on the user's OK: job 27397389 (lst_tmean_diff_era5do03_20260930, code ccc2de0).
   NEXT: read the full run -- best epoch, val SELECT, lst_px RMSE (should fall well below 7.2 K = constant
     guess), fine grad ratio per epoch; then decide on eval (ask before submitting any eval job).
+
+2026-09-30 (late) -- lst_tmean_diff v1 RESULT; v2 designed; v2 smoke submitted
+  v1 FULL RUN 27397389 (lst_tmean_diff_era5do03_20260930, 36 min, early stop ep12):
+    best.pt = EPOCH 4, SELECT 0.0566 -- BEFORE LST switched on (lambda 0 until ep5), so best.pt has NO dT training.
+    ep:      1       3       4       5       6       9       12
+    SELECT   0.0695  0.0596  0.0566  0.0573  0.0710  0.0626  0.0613
+    SM train 0.0032  0.0016  0.0013  0.0011  0.0027  0.0025  0.0020
+    dT RMSE  7.41    7.41    7.41    7.31    6.03    5.20    4.71 K   (r 0.78, skill 0.59 at ep12)
+    fine ratio 0.125 0.182   0.060   0.013   0.0009  0.006   0.004
+    map SD   0.032   0.032   0.031   0.020   0.005   0.003   0.003
+    -> dT learned well, but LST switch-on (frac 1) doubled SM train loss, val 0.057 -> 0.071, 20 m map
+       collapsed ~10x, fine ratio ~0. Confounded with LR warmup end (same step). Early stop may have cut recovery.
+  Explained: fine-imagery ratio = RMS d(L_sm)/d(20 m inputs) / RMS d(L_sm)/d(all other inputs), one val batch,
+    SM loss only; ~0 = SM ignores the imagery. Why imagery is ignored: weather + coarse tokens explain station SM,
+    loss touches one pixel, raw S1 dB is a weak/stale SM signal; LST competed for the fine path.
+  User REJECTED stopping the LST gradient at the fine encoder. User CHOSE: ERA5 whole dropout 0.5,
+    NEW coarse-path dropout 0.3, dT from the START.
+  NEW --coarse-dropout (commit 51b7406): per training sample, with p, ALL 160 m satellite tokens withheld --
+    anchor replaced by fresh zeros + anchor_found False + rel_pos 0 + orbit 0 (identical to a real "no scene"),
+    S2/S1 history zeroed + invalid. Zero AND mask: key-padding stops others attending, but the residual would
+    carry a padded token's own content into the bottleneck. Fresh arrays, never written into the shm cache.
+    Combined with ERA5 0.5: ~35% full, 35% no ERA5, 15% no coarse, 15% neither (only 20 m + statics + SIF/TWSA).
+  dT from start: FIXED --lambda-lst 0.003 (auto cannot run from step 0; 0.003 ~ equal push, v1 measured
+    g_sm/g_lst 0.0018-0.0046). Literal lambda 1 would give LST ~10,000x SM's push (K^2 vs m3/m3).
+  v2 scripts: slurm/train_lst_tmean_diff_v2.sh (+ _smoke.sh), run lst_tmean_diff_era5do05_coarse03_20260930.
+  v2 SMOKE SUBMITTED on the user's OK: job 27402598 (20 stn, 4 ep). Full v2 run NOT submitted -- needs the user's OK.
