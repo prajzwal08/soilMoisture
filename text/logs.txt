@@ -8071,3 +8071,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     committed later in 9a0b208 (2026-09-15). Checked: 2b04fe0..9a0b208 changes ONLY eval_predict.py + ckpt_utils.py (model,
     dataset, splits, era5/driver stats identical). Worktree moved to 9a0b208, my print patch discarded. ckpt loads (epoch 2,
     trained at 1ad49dfa). Resubmit needs OK.
+  PATCHWISE ABLATION RESUBMITTED (3rd, worktree 9a0b208) on the user's OK: array 27422859, compare 27422860 afterok.
