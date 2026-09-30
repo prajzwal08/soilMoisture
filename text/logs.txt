@@ -7910,3 +7910,12 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   SESSION END 2026-09-30: v2 full 27404065 still PENDING (Resources). NEXT SESSION: read
     logs/lst_tmean_diff/train_v2_27404065.out -- best epoch, SELECT, push lst/sm (must be a number now),
     fine grad ratio + map SD per epoch, dT RMSE. If fine ratio ~0 / map flat -> propose §54 build (ask first).
+
+2026-09-30 16:50 -- v2 FULL 27404065 RUNNING since 16:30 (gcn160), ~100 s/epoch. First 4 epochs (still in LR warmup, wu 0.9 at ep5 start):
+    ep:          1       2       3       4
+    SELECT       0.0705  0.0706  0.0703  0.0671   (v1 at ep4 was 0.0566 -- v2 has heavier dropout)
+    push lst/sm  0.89    1.40    0.81    0.14     (measured, works; ep4 drop = g_sm grew ~6x)
+    fine ratio   0.117   0.222   0.011   0.011
+    map SD 0-10  0.0045  0.0075  0.0058  0.0129
+    dT RMSE      -       -       6.10    5.89 K   (r 0.63, skill 0.36)
+  No errors (only DDP grad-stride warnings). Too early for a verdict; warmup ends ~ep5.
