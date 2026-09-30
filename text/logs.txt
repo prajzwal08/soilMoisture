@@ -8092,3 +8092,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     + --era5-dropout 0.5; smoke 20 stn / 2 ep), pw_era5do_eval.sh (array 0-4) + pw_era5do_compare.sh.
     A/B check: 1ad49dfa (baseline trained) -> 9a0b208 differs ONLY in train.py's shm preload moving to shm_preload.py
     (I/O, no training semantics); model/dataset/splits/stats identical. Smoke needs OK.
+  §55 SMOKE SUBMITTED on the user's OK: job 27423547 (worktree 235d382), log logs/train_pw_era5do05_smoke_27423547.out.
