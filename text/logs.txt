@@ -8012,3 +8012,5 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
       population variances so total = between + within exactly; printed as btwSD / inSD / share per depth.
       Reference for "pure upsampling" within-cell SD = the `zero` row.
     Script slurm/eval_scale_ablation_nolst.sh (no-LST best.pt, ~20 min). Needs user OK to submit. Not syntax-checked (login node).
+  SCALE ABLATION SUBMITTED on the user's OK: job 27420155 (slurm/eval_scale_ablation_nolst.sh, code adc1872, no-LST best.pt ep13),
+    log logs/lst_tmean_diff/scale_ablation_nolst_27420155.out.
