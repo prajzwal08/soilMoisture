@@ -17111,7 +17111,7 @@ loss does not reward the fine path, indices are ignored too. It is a regulariser
 | group | now (§48, `model.py:142-145`) | fallback |
 |---|---|---|
 | S2 | 10 bands, s2_valid, s2_age (12) | **NDVI, NDMI, s2_valid, s2_age (4)** |
-| S1 | VV, VH, s1_valid, s1_age, orbit (5) | unchanged (5) |
+| S1 | VV, VH, s1_valid, s1_age, orbit (5) | **VV, VH/VV, s1_valid, s1_age, orbit (5)** (§54.4) |
 | DEM | DEM, dem_valid (2) | unchanged (2) |
 | LULC | 8-d learned embedding at 10 m, 2x2 mean | unchanged |
 
@@ -17196,5 +17196,9 @@ Steps:
 6. **Read-out:** SELECT vs the matching bands run, 20 m map SD, fine grad ratio, and
    `--eval-fine-ablation` on its best.pt (does SM now read the fine path?).
 
-S1 stays VV + VH. A VV/VH channel would be a linear rewrite of the same two numbers in dB (no new
-information); it can be added later as a one-line change in the same layout lookup if wanted.
+**S1 = VV + VH/VV (user decision 2026-09-30, amends §54.2 item 3).** Replaces VH. Same information
+as VV + VH (a linear rewrite in dB) but each channel reads cleanly: VV = wetness + roughness,
+VH/VV = cross-pol ratio (vegetation volume scattering, the literature convention). Computed from
+the cached z-scored pooled dB: VV_dB = z*4.391 - 10.93, VH_dB = z*4.459 - 17.329,
+CR = VH_dB - VV_dB, fed as (CR + 6.4) / 3.0 -- mean from the TerraMind means, fixed 3 dB scale,
+NO new stats file. 0 where s1_valid == 0. Verification job adds: CR range mostly -12..-2 dB.
