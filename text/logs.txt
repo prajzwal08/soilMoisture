@@ -8036,3 +8036,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     (centre = avg of 4 corner cells). Scored: val/oos R2, and ALL within-tile station pairs (any network, common observed
     days >= 180), r / sign agreement / sd ratio, clean = neither station train, tile-bootstrap CI. Needs OK: smoke then full.
     probe amended 71898f9: main = ridge on all 768 dims per modality (user: no PCA), PCA16 run alongside as comparison; outputs pairs_{raw,pca16}_{level,amp}.csv.
+  PROBE SMOKE SUBMITTED on the user's OK: job 27421810 (probe_offsets.py --max-tiles 80, code 4beb520), log logs/probe_offsets_27421810.out.
