@@ -18,5 +18,5 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 rm -rf /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/s48_tune/s53_smoke_20260930
 bash slurm/train.sh --run-name s53_smoke_20260930 \
     --checkpoint-dir /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/s48_tune \
-    --lst-target dT_pixel --era5-dropout 0.3 --lambda-frac 1 \
+    --lst-target dT_pixel --era5-dropout 0.3 --sif-twsa-dropout 0 --lambda-frac 1 \
     --max-stations 20 --max-epochs 4 --warmup-steps 20 --max-val-batches 50

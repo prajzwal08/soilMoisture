@@ -17059,3 +17059,37 @@ L_total = L_sm + lambda * L_lst                                                 
 - The user keeps 7.2 K; it is NOT a tuning axis. It is not an RMSE floor: 7.21 K is the RMSE of a
   constant-mean prediction.
 - The 20-station smoke's 5.3 K was a tile-mean SD from 20 stations. It is superseded.
+
+## §53 Hyperparameter tuning plan (Session 45, 2026-09-30)
+
+Rule: every run is judged on **val SELECT ubRMSE only** (station-mean, depth-mean, 89 val
+stations). OOS/OOT are untouched until the one final model. Seed noise is ~0.001, so any
+winner closer than that needs a second seed.
+
+Fixed for all stages:
+- `--lst-target dT_pixel` (knee 7.215 K frozen, §52.8)
+- whole-ERA5 dropout 0.3 (new, training only; the 15% per-day mask still applies)
+- SIF/TWSA dropout 0 (was a hard-coded 0.5; user: both are already scarce)
+- checkpoints in `checkpoints/soilmoisture/s48_tune/`, logs in `logs/s48_tune/`
+
+```
+ smoke (20 stn, 4 ep, frac 1)  --afterok-->  STAGE 1: lambda_frac 0.3 | 1 | 3   (3 runs, array)
+                                                   │ keep best frac
+                                                   ▼
+                                  STAGE 2: lr 1e-4|2e-4|4e-4 x wd 0.05|0.1, then
+                                           modality dropout 0.2|0.4, drop path 0.1|0.2,
+                                           decoder dropout 0.15|0.3, era5 dropout 0|0.2|0.3,
+                                           sif/twsa dropout 0|0.2   (staged, ~8-10 runs)
+                                                   │ top 2 configs
+                                                   ▼
+                                  STAGE 3: second seed for the top 2 (4 runs)
+                                                   │
+                                                   ▼
+                                  ONE final model -> full eval (val/oos/oot/oost, TxSON)
+```
+
+- Flags: `--lambda-frac`, `--era5-dropout`, `--sif-twsa-dropout` (commits b01a882 and the one after).
+  Decoder dropout has no flag yet; add it before stage 2.
+- Each stage is launched only with the user's OK.
+- Masking vs dropping ERA5: masking hides ~15% of the days inside a window, so the model still
+  has the weather. Dropping hides the whole window for 30% of samples (a sample = one station-day).

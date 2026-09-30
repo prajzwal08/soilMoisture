@@ -15,7 +15,7 @@
 #SBATCH --requeue
 
 # §53 tuning STAGE 1: lambda_frac in {0.3, 1, 3}. Fixed: --lst-target dT_pixel (knee 7.215 K
-# frozen in csvs/lst_dT_stats.json), --era5-dropout 0.3, everything else = s48_full.
+# frozen in csvs/lst_dT_stats.json), --era5-dropout 0.3, --sif-twsa-dropout 0, rest = s48_full.
 # Judged on val SELECT ubRMSE only (OOS/OOT untouched). One 4-GPU node per task, so two tasks
 # never share a node's /dev/shm staging (train.sh clears /dev/shm/s48_* on start).
 set -euo pipefail
@@ -28,4 +28,4 @@ echo "array task ${SLURM_ARRAY_TASK_ID}: lambda_frac=${FRAC} run=${RUN}"
 
 bash slurm/train.sh --run-name "${RUN}" \
     --checkpoint-dir /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/s48_tune \
-    --lst-target dT_pixel --era5-dropout 0.3 --lambda-frac "${FRAC}"
+    --lst-target dT_pixel --era5-dropout 0.3 --sif-twsa-dropout 0 --lambda-frac "${FRAC}"

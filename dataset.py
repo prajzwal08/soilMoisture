@@ -1127,12 +1127,16 @@ class SoilMoistureDataset(Dataset):
         era5_require_full_window: bool = False,
         require_lst:     bool        = False,
         era5_dropout:    float       = 0.0,
+        sif_twsa_dropout: float      = 0.5,
     ):
         self.training = training
         # §53: whole-ERA5 modality dropout (training only): with this probability per sample the
         # ENTIRE 365-day window is marked missing, like SIF/TWSA's 0.5, so the model cannot
         # always lean on the weather. The dT target reads raw t2m from the cache, unaffected.
         self.era5_dropout = float(era5_dropout)
+        # §53: SIF and TWSA are already scarce (<= 50 / 12 values per window); their whole-modality
+        # dropout was a hard-coded 0.5. Default kept for reproducibility; the §53 sweep uses 0.
+        self.sif_twsa_dropout = float(sif_twsa_dropout)
         # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
         # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
         self.years    = list(years) if years else list(TRAIN_YEARS)
@@ -1559,12 +1563,12 @@ class SoilMoistureDataset(Dataset):
 
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy)
-        if self.training and random.random() < 0.5:
+        if self.training and random.random() < self.sif_twsa_dropout:
             sif_valid[:] = False
 
         twsa_vals, twsa_doys, twsa_rel_pos, twsa_valid = load_twsa_rolling(
             self._twsa_cache.get(sat_dir), year, doy)
-        if self.training and random.random() < 0.5:
+        if self.training and random.random() < self.sif_twsa_dropout:
             twsa_valid[:] = False
 
         # ── ISMN labels — observed values only (qc==0) ───────────────
