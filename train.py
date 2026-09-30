@@ -2786,6 +2786,18 @@ def main():
                               f"({e}) — writing this epoch's rows only")
                 new_df.to_csv(csv_path, index=False)
 
+            # Fine-path diagnostics print whether or not W&B started: they used to sit inside
+            # the W&B block and vanished when W&B failed (no-LST 27417115).
+            if gr_diag:
+                print(f"  [diag] input-grad RMS  fine={gr_diag['fine_sum']:.3e}"
+                      f"  rest={gr_diag['rest_sum']:.3e}"
+                      f"  ratio={gr_diag['ratio']:.4f}   <-- ~0 means the SM loss is "
+                      f"being minimised without reading the fine imagery at all")
+            if val_diag.get("map_sd"):
+                print("  [diag] within-tile SD of the 112x112 SM map  " +
+                      "  ".join(f"{d}={s:.5f}" for d, s in zip(SM_DEPTHS, val_diag["map_sd"])) +
+                      "   <-- ~0 means the 20 m map is flat")
+
             if use_wandb:
                 log_dict = {
                     "epoch"        : epoch,
@@ -2864,20 +2876,14 @@ def main():
                         log_dict[f"diag/depth_token_cos_{a}{b}"] = cos[a, b].item()
 
                 # ── Fine-path attribution and map flatness (§48) ──────────────────
+                # (printed above, outside the W&B block)
                 if gr_diag:
                     for _k, _v in gr_diag.items():
                         log_dict[f"diag/grad_{_k}"] = _v
-                    print(f"  [diag] input-grad RMS  fine={gr_diag['fine_sum']:.3e}"
-                          f"  rest={gr_diag['rest_sum']:.3e}"
-                          f"  ratio={gr_diag['ratio']:.4f}   <-- ~0 means the SM loss is "
-                          f"being minimised without reading the fine imagery at all")
                 _msd = val_diag.get("map_sd")
                 if _msd:
                     for _d, _s in zip(SM_DEPTHS, _msd):
                         log_dict[f"diag/map_sd_{_d}"] = _s
-                    print("  [diag] within-tile SD of the 112x112 SM map  " +
-                          "  ".join(f"{d}={s:.5f}" for d, s in zip(SM_DEPTHS, _msd)) +
-                          "   <-- ~0 means the 20 m map is flat")
 
                 # depth_ctx: the transformer OUTPUT for each depth slot, summed over the
                 # whole val epoch. The input depth_tokens can stay near-orthogonal while the
