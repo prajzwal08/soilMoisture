@@ -8083,3 +8083,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     temporal share ~7% at 0-10 (U-Net §24.12 was 39%). Dynamics come from ERA5 (4x the satellite effect).
     Bears on the user's idea (patchwise + ERA5 dropout 0.5): the tokens' date-specific content is unused, so dropout would
     test whether the model CAN learn it when ERA5 is withheld.
+  RUNBOOK §55 written (plan only): patchwise retrain, whole-window ERA5 dropout 0.5, clean A/B vs pw_stage2a_L3 (same config + pre-§47 splits/stats), branch feat/pw-era5-dropout from 9a0b208, new --ablate-mode remove for a no-ERA5 eval. Build needs OK.
