@@ -712,7 +712,12 @@ class LambdaLST:
         # Review C3: frozen (lambda = 0) through LR warmup. With zero-weight SM heads and a
         # 1/1000 warmup factor, the first g_sm/g_lst ratios are ~1e-6 of steady state, and an
         # EMA seeded there takes ~1k steps to recover.
-        if not self.auto or global_step < self.hold_steps:
+        # §53: a FIXED non-zero lambda is never changed, but its push ratio is MEASURED every
+        # `every` steps (from step 0; step 0 itself is skipped in update since g_sm == 0) so the
+        # log shows whether the fixed value stays near equal pull. Same step on every rank.
+        if not self.auto:
+            return self.value != 0.0 and global_step % self.every == 0
+        if global_step < self.hold_steps:
             return False
         return self.n_updates == 0 or global_step % self.every == 0
 
@@ -734,6 +739,8 @@ class LambdaLST:
         if g_lst_v <= 0.0 or g_sm_v <= 0.0 or not math.isfinite(g_sm_v / g_lst_v):
             return
         self.last_ratio = g_sm_v / g_lst_v
+        if not self.auto:
+            return                                  # measure only: a fixed lambda stays fixed
         # Review C3: EMA the two norms separately and take the ratio of the EMAs — one
         # noisy small g_lst no longer spikes lambda — then clamp to [seed/c, seed*c] around the
         # first post-warmup value, so lambda cannot run away as the static LST pattern fits
@@ -2567,6 +2574,7 @@ def main():
                   f"{int(val_diag.get('lst_cells', 0))})"
                   f"  lambda={train_stats.get('lambda_lst', 0.0):.4e}"
                   f"  raw g_sm/g_lst={train_stats.get('lambda_raw_ratio', float('nan')):.4e}"
+                  f"  push lst/sm={train_stats.get('lambda_lst', 0.0) / train_stats['lambda_raw_ratio'] if train_stats.get('lambda_raw_ratio', 0.0) and math.isfinite(train_stats['lambda_raw_ratio']) else float('nan'):.2f}"
                   f"   <-- NOT in the selection scalar")
             _lp = val_diag.get("lst_pattern")
             if _lp:
