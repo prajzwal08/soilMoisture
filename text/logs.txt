@@ -7888,3 +7888,10 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     "push lst/sm" = lambda * g_lst / g_sm (1.00 = equal pull). Needs a re-smoke before the full v2 run.
   v2 RE-SMOKE SUBMITTED on the user OK: job 27403363 (code f96b928, push-ratio logging). Full v2 run approved
     by the user to follow if this smoke passes.
+  v2 RE-SMOKE 27403363 PASSED (5 min, code 5aced49): identical epochs to smoke 27402598 (SELECT 0.0423 ->
+    0.0432, dT val RMSE 6.23 -> 5.85 K, fine ratio 0.30 -> 0.98). push lst/sm = nan because the smoke has
+    ~7 steps/epoch (28 total) and the measurement runs every 50 steps (step 0 is skipped: g_sm == 0).
+    The full run (~200 steps/epoch) measures ~4x per epoch. Measurement never changes lambda.
+  v2 FULL RUN SUBMITTED on the user's OK ("submit smoke, then full run"): job 27404065,
+    lst_tmean_diff_era5do05_coarse03_20260930, log logs/lst_tmean_diff/train_v2_27404065.out,
+    ckpt checkpoints/soilmoisture/lst_tmean_diff/lst_tmean_diff_era5do05_coarse03_20260930/ (no backup).
