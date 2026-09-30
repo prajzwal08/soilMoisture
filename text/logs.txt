@@ -8037,3 +8037,7 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     days >= 180), r / sign agreement / sd ratio, clean = neither station train, tile-bootstrap CI. Needs OK: smoke then full.
     probe amended 71898f9: main = ridge on all 768 dims per modality (user: no PCA), PCA16 run alongside as comparison; outputs pairs_{raw,pca16}_{level,amp}.csv.
   PROBE SMOKE SUBMITTED on the user's OK: job 27421810 (probe_offsets.py --max-tiles 80, code 4beb520), log logs/probe_offsets_27421810.out.
+  PROBE SMOKE 27421810 (80 tiles, 1 min): pipeline OK end to end -- 886 SM stations (573/89/224), 80/80 tile features,
+    126 off-centre station readouts over ALL tiles (geometry is computed before the smoke slice), 94 rows, both variants
+    fitted (raw: 3115 tile / 3097 cell features). FAILED only at the last print (my f-string braces); rows.csv + pairs CSVs
+    were already written. Numbers meaningless at 41 train rows. Fixed (see next commit). Full run needs OK.
