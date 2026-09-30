@@ -409,6 +409,7 @@ CONFIG = {
     "lambda_ema"      : 0.9,
     "lst_delta"       : 1.0,    # Huber knee in units of sigma_ST (= 2.71 K, §49.5)
     "lst_level_weight": 0.0,    # §52: weight of the tile LEVEL term (LST - t2m_mean) inside L_lst; 0 = pattern only
+    "lst_units"       : "sigma", # §52: "K" = head_lst predicts (LST - t2m) directly in Kelvin (no sigma_ST scaling)
 
     # Loss
     "loss_fn"   : "huber",
@@ -1063,7 +1064,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      global_step=0, warmup=None, is_main=True, log_every=1,
                      ddp_active=False, preempt_check_every=25, use_wandb=False,
                      lam=None, sigma_st=1.0, lst_delta=1.0, lst_level_weight=0.0,
-                     dT_sd=1.0):
+                     dT_sd=1.0, lvl_delta=1.0):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -1152,7 +1153,7 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                 # §52: the level term joins the pattern term INSIDE L_lst, so the auto lambda
                 # balances the whole thermal pull against SM exactly as before.
                 l_lvl, n_lvl = lst_level_loss(out["lst"], batch["lst_obs"], batch["lst_dT"],
-                                              sigma_st, dT_sd, return_count=True)
+                                              sigma_st, dT_sd, delta=lvl_delta, return_count=True)
                 l_lst = l_lst + lst_level_weight * l_lvl
                 lvl_sum += l_lvl.detach() * n_lvl
                 lvl_n   += n_lvl
@@ -1343,7 +1344,7 @@ def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
 @torch.no_grad()
 def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False,
              huber_delta=0.05, depth_weights=None, diag_out=None, sigma_st=1.0,
-             lst_delta=1.0, dT_sd=1.0):
+             lst_delta=1.0, dT_sd=1.0, lvl_delta=1.0):
     """Distributed-aware evaluation.
 
     All ranks process their shard in parallel; loss is all_reduced; predictions
@@ -1427,7 +1428,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
                 lst_lvl[:6] += lst_level_stats(out["lst"], batch["lst_obs"], batch["lst_dT"],
                                                sigma_st)
                 l_lvl, n_lvl = lst_level_loss(out["lst"], batch["lst_obs"], batch["lst_dT"],
-                                              sigma_st, dT_sd, return_count=True)
+                                              sigma_st, dT_sd, delta=lvl_delta, return_count=True)
                 lst_lvl[6] += l_lvl.detach() * n_lvl
                 lst_lvl[7] += n_lvl
 
@@ -1600,6 +1601,9 @@ def main():
     parser.add_argument("--lst-level-weight", type=float, default=None,
                         help="§52: weight of the thermal LEVEL term (tile LST - t2m_mean, Huber on "
                              "dT / train SD) added to the pattern term inside L_lst (default 0)")
+    parser.add_argument("--lst-units", choices=["sigma", "K"], default=None,
+                        help="§52: units of the head_lst output. sigma (default) = sigma_ST units as "
+                             "in s48_full; K = LST - t2m directly in Kelvin")
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Parent folder for {run_name}/ (default CONFIG['checkpoint_dir']); "
                              "keeps ablation arms out of the main run folder")
@@ -1655,6 +1659,7 @@ def main():
         CONFIG["lambda_lst"] = args.lambda_lst
     if args.checkpoint_dir   is not None: CONFIG["checkpoint_dir"]   = args.checkpoint_dir
     if args.lst_level_weight is not None: CONFIG["lst_level_weight"] = args.lst_level_weight
+    if args.lst_units        is not None: CONFIG["lst_units"]        = args.lst_units
 
     # Architecture stamp. ckpt_utils refuses anything else: every earlier arm shares key
     # prefixes with this one, so the stamp is the only reliable discriminator.
@@ -1762,6 +1767,15 @@ def main():
                            f"training samples carry a dT target (sd {CONFIG['dT_sd']})")
     if not (CONFIG["dT_sd"] > 0):
         CONFIG["dT_sd"] = 1.0                    # val metric scale only; no level target
+    # Units of the thermal head. "sigma": output x sigma_ST = K, pattern knee 1 sigma, level
+    # residual / dT_sd (s48_full). "K": output IS K; same knees expressed in K (pattern
+    # sigma_ST K, level dT_sd K), so both loss terms are plain Kelvin Huber.
+    if CONFIG["lst_units"] == "K":
+        CONFIG["lst_sig_eff"], CONFIG["lst_pat_delta"] = 1.0, CONFIG["sigma_st"]
+        CONFIG["lst_lvl_scale"], CONFIG["lst_lvl_delta"] = 1.0, CONFIG["dT_sd"]
+    else:
+        CONFIG["lst_sig_eff"], CONFIG["lst_pat_delta"] = CONFIG["sigma_st"], CONFIG["lst_delta"]
+        CONFIG["lst_lvl_scale"], CONFIG["lst_lvl_delta"] = CONFIG["dT_sd"], 1.0
     if CONFIG["train_days_per_station"]:
         train_sampler = StationBalancedSampler(train_dataset, CONFIG["train_days_per_station"],
                                                num_replicas=world_size, rank=rank, seed=CONFIG["seed"])
@@ -1903,7 +1917,7 @@ def main():
         # §52: head_lst now predicts (LST - t2m) per cell in sigma_ST units. Start its level at
         # the training mean so step 1 is not a ~15 K error; a resume overwrites this anyway.
         with torch.no_grad():
-            model.decoder.head_lst.bias.fill_(CONFIG["dT_mu"] / CONFIG["sigma_st"])
+            model.decoder.head_lst.bias.fill_(CONFIG["dT_mu"] / CONFIG["lst_sig_eff"])
     lam = LambdaLST(CONFIG["lambda_lst"], every=CONFIG["lambda_every"],
                     hold_steps=CONFIG["warmup_steps"], clamp=CONFIG["lambda_clamp"],
                     frac=CONFIG["lambda_frac"],
@@ -1922,7 +1936,7 @@ def main():
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
-                 "lst_level_weight", "dT_mu", "dT_sd",
+                 "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
                  "select_metric", "input_grad_diag", "git_sha",
@@ -2232,10 +2246,11 @@ def main():
                     preempt_check_every = CONFIG["preempt_check_every"],
                     use_wandb      = use_wandb,
                     lam            = lam,
-                    sigma_st       = CONFIG["sigma_st"],
-                    lst_delta      = CONFIG["lst_delta"],
+                    sigma_st       = CONFIG["lst_sig_eff"],
+                    lst_delta      = CONFIG["lst_pat_delta"],
                     lst_level_weight = CONFIG["lst_level_weight"],
-                    dT_sd          = CONFIG["dT_sd"],
+                    dT_sd          = CONFIG["lst_lvl_scale"],
+                    lvl_delta      = CONFIG["lst_lvl_delta"],
                 )
             except _Preempted:
                 # Every rank arrives here on the same batch (the all_reduce(MAX) in
@@ -2294,9 +2309,10 @@ def main():
             huber_delta=CONFIG["huber_delta"],
             depth_weights=depth_weights,
             diag_out=val_diag,
-            sigma_st=CONFIG["sigma_st"],
-            lst_delta=CONFIG["lst_delta"],
-            dT_sd=CONFIG["dT_sd"],
+            sigma_st=CONFIG["lst_sig_eff"],
+            lst_delta=CONFIG["lst_pat_delta"],
+            dT_sd=CONFIG["lst_lvl_scale"],
+            lvl_delta=CONFIG["lst_lvl_delta"],
         )
 
         # ── Fine-path attribution (rank 0, no collectives) ──────────────────────────

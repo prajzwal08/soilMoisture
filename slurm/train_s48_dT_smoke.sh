@@ -24,5 +24,5 @@ conda run -n terramind --no-capture-output python verify_lst_level.py
 rm -rf /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/s48_lst_ablation/s48_dT_smoke_20260930
 bash slurm/train.sh --run-name s48_dT_smoke_20260930 \
     --checkpoint-dir /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/s48_lst_ablation \
-    --lst-level-weight 1.0 \
+    --lst-level-weight 1.0 --lst-units K \
     --max-stations 20 --max-epochs 4 --warmup-steps 20 --max-val-batches 50
