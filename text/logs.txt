@@ -7924,3 +7924,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     ratio 0.003-0.006; map SD 0-10 0.0062 0.0056 0.0046 (drifting down, v1 ended 0.003); dT RMSE 5.77 5.34 5.07 K.
     No v1-style jump at warmup end. Discussed (not written up, user's choice): stop-grad split -- SM from
     transformer, decoder trained on dT only; optional DisPATCh-style SM_20m = SM_stn + beta*(dT - tile mean).
+  16:58 v2 ep8: SELECT 0.0579 (new best), push 0.54, fine grad 0.8e-9, map SD 0-10 0.0029 (v1-level flat), dT RMSE 4.94 K r 0.75.
