@@ -17202,3 +17202,76 @@ VH/VV = cross-pol ratio (vegetation volume scattering, the literature convention
 the cached z-scored pooled dB: VV_dB = z*4.391 - 10.93, VH_dB = z*4.459 - 17.329,
 CR = VH_dB - VV_dB, fed as (CR + 6.4) / 3.0 -- mean from the TerraMind means, fixed 3 dB scale,
 NO new stats file. 0 where s1_valid == 0. Verification job adds: CR range mostly -12..-2 dB.
+
+## §55 Patchwise retrain with whole-window ERA5 dropout 0.5 (Session 45, 2026-09-30, PLANNED, nothing built)
+
+### 55.1 Why
+
+The patchwise shuffle ablation (logs 2026-09-30, jobs 27422859/27422860, val, 85 stations) showed
+`pw_stage2a_L3` uses the TerraMind tokens only as a **site fingerprint**:
+
+| condition | d ubRMSE 0-10 | stations worse |
+|---|---|---|
+| ERA5 from another station (control) | +0.0419 | 100% |
+| satellite from another station | +0.0103 | 98% |
+| satellite, same station, wrong date (147 d) | **+0.0007** | 56% (chance) |
+
+Day-to-day dynamics come from ERA5 alone. The U-Net arm (§24.12) drew 39% of its satellite effect from
+date-specific content, so the tokens CAN carry it; patchwise never had to learn it because ERA5 was
+always present. Withholding the whole ERA5 window on half the training samples forces the question.
+
+### 55.2 Design — a clean A/B against `pw_stage2a_L3`
+
+ONE change: whole-window ERA5 dropout p = 0.5. Everything else identical to `pw_stage2a_L3`
+(CONFIG from `logs/train_26083217.out`): driver_mode memory, driver_layers 2, token_sel station,
+n_layers 3, lr 2e-4, warmup 1000, huber 0.05, batch 128, wd 0.05, drop_path 0.1, lr_patience 5,
+early_stop_patience 20, select ubRMSE, **pre-§47 splits and stats** (era5_stats_sha 572028af,
+driver_stats_sha 34ade6b9 — the files at 9a0b208; §35.28 checks them at load). The existing 15%
+per-day value mask and the hard-coded 0.5 SIF/TWSA dropout stay as they were.
+
+Not using the §47 splits is deliberate: switching splits would make the comparison two changes.
+
+### 55.3 Build (branch `feat/pw-era5-dropout` from 9a0b208; main and feat/lst-level-dT untouched)
+
+1. `dataset.py`: `era5_dropout` kwarg. In training, with probability p, `era5.zero_()` AND
+   `era5_doys.zero_()` — doy 0 is key padding in the driver memory, so all 365 rows leave it
+   (zero values alone would read as 365 climatological-mean days). The memory never goes fully
+   empty: the 4 soil tokens are never padded, so the cross-attention softmax stays defined.
+2. `train.py`: `--era5-dropout` (default 0.0 = old behaviour), into CONFIG and the checkpoint cfg.
+3. `ablation.py` / `eval_predict.py`: new `--ablate-mode remove` — ERA5 zeroed and padded exactly as
+   in (1), at eval. This is the "no ERA5" test the dropout trains for.
+4. `slurm/train_pw_era5do05{,_smoke}.sh`: run `pw_era5do05_L3`, same resources as 26083217
+   (4 H100, ~150 s/epoch; 20-epoch patience -> ~22-30 epochs, ~1-1.5 h).
+
+### 55.4 Evaluation (all on val, paired rows, compare_ablation.py)
+
+| run | condition | question |
+|---|---|---|
+| baseline + new | none | does dropout cost accuracy when ERA5 is present? (baseline SELECT 0.04899) |
+| baseline + new | era5 **remove** | how good is each model with NO ERA5? |
+| new | sat within_station | does date-specific token content now matter? (baseline +0.0007) |
+| new | sat cross_station | site fingerprint, for the temporal share |
+
+### 55.5 Reading
+
+```
+                    new model, ERA5 removed
+                   /                        \
+      clearly beats baseline-removed      ~ baseline-removed (collapses)
+                 |                                  |
+     sat within_station now hurts?        tokens carry no usable dynamics
+        /                 \               (patchwise + L12 history) -> stop
+      yes                  no
+ tokens carry dynamics   gain came from
+ the model can learn     SIF/TWSA/soil or
+ -> keep, test OOS       fingerprint-seasonality
+```
+
+Also report SELECT with ERA5 present: a large loss there means the dropout is too strong (try 0.3),
+not that the tokens are empty.
+
+### 55.6 Gates
+
+Build -> smoke (20 stations, 2 epochs; check the dropout fires ~50% and the memory is never empty)
+-> full -> eval. Each submission needs the user's OK. No store is written; checkpoints go to a new
+run dir (no backup exists, §checkpoint-backup).
