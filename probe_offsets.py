@@ -327,7 +327,7 @@ def main():
             prow = []
             for (i, j), preds in pairs.items():
                 si, sj = series[i], series[j]
-                both = pd.concat([si, sj], axis=1).dropna()
+                both = pd.concat([si, sj], axis=1, sort=True).dropna()
                 if len(both) < MIN_COMMON:
                     continue
                 obs = (both.iloc[:, 0].mean() - both.iloc[:, 1].mean() if tgt == "level"
@@ -365,7 +365,7 @@ def main():
 
     df.drop(columns=[c for c in df.columns if c.startswith(("T_", "C_"))]).to_csv(
         OUT_DIR / "rows.csv", index=False)
-    print(f"\nwrote {OUT_DIR}/rows.csv, pairs_{raw,pca16}_{level,amp}.csv", flush=True)
+    print(f"\nwrote {OUT_DIR}/rows.csv, pairs_{{raw,pca16}}_{{level,amp}}.csv", flush=True)
 
 
 if __name__ == "__main__":
