@@ -269,98 +269,103 @@ def main():
         return np.stack([np.asarray(v, np.float32) if v is not None and np.isfinite(v).all()
                          else np.full(dim, np.nan, np.float32) for v in df[col]])
 
-    def pca_block(col):
+    def emb_block(col, n_pca):
+        """n_pca 0 = all 768 dims, ridge does the shrinkage; else PCA fit on train rows."""
         X = stack(col, 768)
         ok = np.isfinite(X).all(1)
-        p = PCA(N_PCA, random_state=0).fit(X[fit_mask & ok])
-        Z = np.zeros((len(X), N_PCA), np.float32)
+        if n_pca == 0:
+            Z = np.where(ok[:, None], X, np.nanmean(X[fit_mask & ok], 0))   # missing -> train mean
+            return Z.astype(np.float32), ok
+        p = PCA(n_pca, random_state=0).fit(X[fit_mask & ok])
+        Z = np.zeros((len(X), n_pca), np.float32)
         Z[ok] = p.transform(X[ok])                   # missing modality -> 0 = train mean
         return Z, ok
 
-    T_blocks, C_blocks = [stack("T_era5", 18), stack("T_soil", 21)], [stack("C_soil", 21)]
-    for m in MODS:
-        Zt, okt = pca_block(f"T_{m}")
-        Zc, okc = pca_block(f"C_{m}")
-        T_blocks += [Zt, okt[:, None].astype(np.float32)]
-        C_blocks += [Zc, okc[:, None].astype(np.float32)]
-    XT = np.nan_to_num(np.concatenate(T_blocks, 1))
-    XC = np.nan_to_num(np.concatenate(C_blocks, 1))
     groups = df["network"].to_numpy()
-    print(f"features: tile {XT.shape[1]}, cell {XC.shape[1]}; train fit rows {fit_mask.sum()}",
-          flush=True)
+    # raw = main result (ridge alone shrinks weak directions softly); pca16 = comparison only
+    for tag, n_pca in (("raw", 0), ("pca16", N_PCA)):
+        T_blocks, C_blocks = [stack("T_era5", 18), stack("T_soil", 21)], [stack("C_soil", 21)]
+        for m in MODS:
+            Zt, okt = emb_block(f"T_{m}", n_pca)
+            Zc, okc = emb_block(f"C_{m}", n_pca)
+            T_blocks += [Zt, okt[:, None].astype(np.float32)]
+            C_blocks += [Zc, okc[:, None].astype(np.float32)]
+        XT = np.nan_to_num(np.concatenate(T_blocks, 1))
+        XC = np.nan_to_num(np.concatenate(C_blocks, 1))
+        print(f"\n################ VARIANT {tag}: features tile {XT.shape[1]}, cell {XC.shape[1]}; "
+              f"train fit rows {fit_mask.sum()}", flush=True)
 
-    report = []
-    for tgt in ("level", "amp"):
-        y = df[tgt].to_numpy()
-        m1, a1, cv1 = ridge_fit(XT[fit_mask], y[fit_mask], groups[fit_mask])
-        p1 = m1.predict(XT)
-        res1 = y - p1
-        m2, a2, cv2 = ridge_fit(XC[fit_mask], res1[fit_mask], groups[fit_mask])
-        p2 = m2.predict(XC)
-        df[f"{tgt}_p1"], df[f"{tgt}_p2"] = p1, p2
-        print(f"\n=== TARGET {tgt} (0-10 cm)   stage-1 alpha {a1:.3g}   stage-2 alpha {a2:.3g}")
-        print(f"  train-CV  stage-1 R2 {1 - cv1 / y[fit_mask].var():.3f}   "
-              f"stage-2 R2 on residual {1 - cv2 / res1[fit_mask].var():.3f}")
-        for s in ("val", "oos"):
-            mk = (df["centre"] & (df["split"] == s)).to_numpy()
-            print(f"  {s:4s} n={mk.sum():4d}  stage-1 R2 {r2(y[mk], p1[mk]):.3f}   "
-                  f"stage-2 R2 on residual {r2(res1[mk], p2[mk]):.3f}   "
-                  f"level SD {y[mk].std():.4f}  residual SD {res1[mk].std():.4f}")
-
-        # B. within-tile pairs, both orderings merged; prediction averaged over the tiles
-        pairs = {}
-        for tile, g in df.groupby("tile"):
-            if len(g) < 2:
-                continue
-            recs = g.to_dict("records")
-            for a in range(len(recs)):
-                for b in range(a + 1, len(recs)):
-                    i, j = sorted((recs[a]["station"], recs[b]["station"]))
-                    pi = recs[a] if recs[a]["station"] == i else recs[b]
-                    pj = recs[b] if pi is recs[a] else recs[a]
-                    pairs.setdefault((i, j), []).append((tile, pi[f"{tgt}_p2"] - pj[f"{tgt}_p2"]))
-        prow = []
-        for (i, j), preds in pairs.items():
-            si, sj = series[i], series[j]
-            both = pd.concat([si, sj], axis=1).dropna()
-            if len(both) < MIN_COMMON:
-                continue
-            obs = (both.iloc[:, 0].mean() - both.iloc[:, 1].mean() if tgt == "level"
-                   else both.iloc[:, 0].std() - both.iloc[:, 1].std())
-            prow.append({"a": i, "b": j, "tile": preds[0][0], "n_tiles": len(preds),
-                         "n_common": len(both), "obs": obs, "pred": float(np.mean([p for _, p in preds])),
-                         "clean": meta.at[i, "split"] != "train" and meta.at[j, "split"] != "train",
-                         "network": meta.at[i, "network"]})
-        P = pd.DataFrame(prow)
-        P.to_csv(OUT_DIR / f"pairs_{tgt}.csv", index=False)
-        rng = np.random.default_rng(0)
-        for lab, sub in (("all", P), ("clean", P[P["clean"]] if len(P) else P)):
-            if len(sub) < 3:
-                print(f"  pairs {lab}: n={len(sub)} (too few)")
-                continue
-            r = np.corrcoef(sub["obs"], sub["pred"])[0, 1]
-            sign = (np.sign(sub["obs"]) == np.sign(sub["pred"])).mean()
-            tiles = sub["tile"].unique()
-            bs = []
-            for _ in range(1000):
-                pick = rng.choice(tiles, len(tiles))
-                bb = pd.concat([sub[sub["tile"] == t] for t in pick])
-                if bb["obs"].std() > 0 and bb["pred"].std() > 0:
-                    bs.append(np.corrcoef(bb["obs"], bb["pred"])[0, 1])
-            lo, hi = np.percentile(bs, [2.5, 97.5]) if bs else (np.nan, np.nan)
-            print(f"  pairs {lab:5s}: n={len(sub):4d} over {len(tiles):3d} tiles, "
-                  f"{sub['network'].nunique()} networks   r={r:+.3f} [95% tile-bootstrap {lo:+.3f},{hi:+.3f}]   "
-                  f"sign agree {sign:.2f}   sd(pred)/sd(obs) {sub['pred'].std() / sub['obs'].std():.2f}   "
-                  f"obs |diff| median {sub['obs'].abs().median():.4f}")
-            if lab == "clean":
-                by = sub.groupby("network").apply(
-                    lambda g: pd.Series({"n": len(g), "sign": (np.sign(g.obs) == np.sign(g.pred)).mean(),
-                                         "r": np.corrcoef(g.obs, g.pred)[0, 1] if len(g) > 2 else np.nan}))
-                print("    by network (clean):\n" + by.sort_values("n", ascending=False).to_string())
+        for tgt in ("level", "amp"):
+            y = df[tgt].to_numpy()
+            m1, a1, cv1 = ridge_fit(XT[fit_mask], y[fit_mask], groups[fit_mask])
+            p1 = m1.predict(XT)
+            res1 = y - p1
+            m2, a2, cv2 = ridge_fit(XC[fit_mask], res1[fit_mask], groups[fit_mask])
+            p2 = m2.predict(XC)
+            df[f"{tag}_{tgt}_p1"], df[f"{tag}_{tgt}_p2"] = p1, p2
+            print(f"\n=== [{tag}] TARGET {tgt} (0-10 cm)   stage-1 alpha {a1:.3g}   stage-2 alpha {a2:.3g}")
+            print(f"  train-CV  stage-1 R2 {1 - cv1 / y[fit_mask].var():.3f}   "
+                  f"stage-2 R2 on residual {1 - cv2 / res1[fit_mask].var():.3f}")
+            for s in ("val", "oos"):
+                mk = (df["centre"] & (df["split"] == s)).to_numpy()
+                print(f"  {s:4s} n={mk.sum():4d}  stage-1 R2 {r2(y[mk], p1[mk]):.3f}   "
+                      f"stage-2 R2 on residual {r2(res1[mk], p2[mk]):.3f}   "
+                      f"level SD {y[mk].std():.4f}  residual SD {res1[mk].std():.4f}")
+    
+            # B. within-tile pairs, both orderings merged; prediction averaged over the tiles
+            pairs = {}
+            for tile, g in df.groupby("tile"):
+                if len(g) < 2:
+                    continue
+                recs = g.to_dict("records")
+                for a in range(len(recs)):
+                    for b in range(a + 1, len(recs)):
+                        i, j = sorted((recs[a]["station"], recs[b]["station"]))
+                        pi = recs[a] if recs[a]["station"] == i else recs[b]
+                        pj = recs[b] if pi is recs[a] else recs[a]
+                        pairs.setdefault((i, j), []).append((tile, pi[f"{tag}_{tgt}_p2"] - pj[f"{tag}_{tgt}_p2"]))
+            prow = []
+            for (i, j), preds in pairs.items():
+                si, sj = series[i], series[j]
+                both = pd.concat([si, sj], axis=1).dropna()
+                if len(both) < MIN_COMMON:
+                    continue
+                obs = (both.iloc[:, 0].mean() - both.iloc[:, 1].mean() if tgt == "level"
+                       else both.iloc[:, 0].std() - both.iloc[:, 1].std())
+                prow.append({"a": i, "b": j, "tile": preds[0][0], "n_tiles": len(preds),
+                             "n_common": len(both), "obs": obs, "pred": float(np.mean([p for _, p in preds])),
+                             "clean": meta.at[i, "split"] != "train" and meta.at[j, "split"] != "train",
+                             "network": meta.at[i, "network"]})
+            P = pd.DataFrame(prow)
+            P.to_csv(OUT_DIR / f"pairs_{tag}_{tgt}.csv", index=False)
+            rng = np.random.default_rng(0)
+            for lab, sub in (("all", P), ("clean", P[P["clean"]] if len(P) else P)):
+                if len(sub) < 3:
+                    print(f"  pairs {lab}: n={len(sub)} (too few)")
+                    continue
+                r = np.corrcoef(sub["obs"], sub["pred"])[0, 1]
+                sign = (np.sign(sub["obs"]) == np.sign(sub["pred"])).mean()
+                tiles = sub["tile"].unique()
+                bs = []
+                for _ in range(1000):
+                    pick = rng.choice(tiles, len(tiles))
+                    bb = pd.concat([sub[sub["tile"] == t] for t in pick])
+                    if bb["obs"].std() > 0 and bb["pred"].std() > 0:
+                        bs.append(np.corrcoef(bb["obs"], bb["pred"])[0, 1])
+                lo, hi = np.percentile(bs, [2.5, 97.5]) if bs else (np.nan, np.nan)
+                print(f"  pairs {lab:5s}: n={len(sub):4d} over {len(tiles):3d} tiles, "
+                      f"{sub['network'].nunique()} networks   r={r:+.3f} [95% tile-bootstrap {lo:+.3f},{hi:+.3f}]   "
+                      f"sign agree {sign:.2f}   sd(pred)/sd(obs) {sub['pred'].std() / sub['obs'].std():.2f}   "
+                      f"obs |diff| median {sub['obs'].abs().median():.4f}")
+                if lab == "clean":
+                    by = sub.groupby("network").apply(
+                        lambda g: pd.Series({"n": len(g), "sign": (np.sign(g.obs) == np.sign(g.pred)).mean(),
+                                             "r": np.corrcoef(g.obs, g.pred)[0, 1] if len(g) > 2 else np.nan}))
+                    print("    by network (clean):\n" + by.sort_values("n", ascending=False).to_string())
 
     df.drop(columns=[c for c in df.columns if c.startswith(("T_", "C_"))]).to_csv(
         OUT_DIR / "rows.csv", index=False)
-    print(f"\nwrote {OUT_DIR}/rows.csv, pairs_level.csv, pairs_amp.csv", flush=True)
+    print(f"\nwrote {OUT_DIR}/rows.csv, pairs_{raw,pca16}_{level,amp}.csv", flush=True)
 
 
 if __name__ == "__main__":
