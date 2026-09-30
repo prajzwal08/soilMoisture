@@ -7961,3 +7961,6 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     (started on older code). Ablation 27414852 still pending -> will start on the fixed code.
     no-LST left last.pt (val_pending) + mid_epoch.pt: a resubmit resumes, reruns epoch-1 val. Needs user OK.
   v2 ep39-43: SELECT 0.0544 0.0540 (best) 0.0542 0.0545 0.0545; map SD ~0.0035; fine ratio 0.001-0.002.
+  v2 27404065 COMPLETED (1h47, early stop ep52). best.pt = SELECT 0.0537 (ep44, see log). Final: map SD 0-10
+    ~0.004, fine ratio ~0.001-0.002, dT px RMSE ~3.6 K r 0.87, pattern RMSE 1.46 K skill 0.71, level RMSE 3.6 K.
+  Fine ablation 27414852 STARTED on the fixed code (5e2029c).
