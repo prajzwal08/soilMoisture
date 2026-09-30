@@ -17275,3 +17275,57 @@ not that the tokens are empty.
 Build -> smoke (20 stations, 2 epochs; check the dropout fires ~50% and the memory is never empty)
 -> full -> eval. Each submission needs the user's OK. No store is written; checkpoints go to a new
 run dir (no backup exists, §checkpoint-backup).
+
+### 55.7 Status at session end (2026-09-30)
+
+- BUILT on `feat/pw-era5-dropout` (worktree `/gpfs/work3/0/prjs1968/wt_pw_era5do`): 235d382 (dropout, `--ablate-mode
+  remove`, scripts), **2b11951** (csv-path fix, below), feeddb1 (re-smoke run name `pw_era5do05_L3_smoke2`).
+- Smoke 27423547: mechanics correct (`era5_dropout=0.5`, `era5_withheld=50%`, finite loss) but **ran on the wrong
+  split**. At 9a0b208, `train.py` CONFIG and `eval_predict.py` hard-code `/gpfs/work3/0/prjs1968/soilMoisture/csvs`
+  (the MAIN repo: §47 split 328cdac2, post-§47 driver stats b7bd19b3) instead of the worktree's own (old split
+  5ed81686, driver 34ade6b9; era5_stats 572028af identical). ckpt_utils' §35.28 provenance check hashes the csvs/ next
+  to ITS file, so it said OK. Fixed in 2b11951 (paths = `Path(__file__).parent / "csvs"`).
+- **The first patchwise ablation (27422859) is INVALID** for the same reason (§47 val = 85 stations incl. possible
+  pw_stage2a_L3 train stations; wrong SIF/TWSA/soil normalisation). Its "site fingerprint" reading is withdrawn.
+- NEXT (each needs the user's OK): re-smoke (check split/era5/driver shas = baseline log `train_26083217.out`), baseline
+  eval `sbatch --array=0-4 slurm/pw_era5do_eval.sh` + `pw_era5do_compare.sh base`, then full run, then `--array=5-8` +
+  `compare all`. Submit from the worktree.
+
+## §56 Session 45 results — where the 20 m map comes from, and whether embeddings know wet spots (2026-09-30)
+
+### 56.1 LST arm hurts SM (v2 vs its no-LST control, identical config otherwise, val, single seed)
+
+| run | best ep | SELECT | ubRMSE 0-10/10-30/30-100 | r 0-10/10-30/30-100 |
+|---|---|---|---|---|
+| v2 `lst_tmean_diff_era5do05_coarse03` (27404065, lambda 0.003) | 44 | 0.0537 | 0.0607/0.0566/0.0535 | 0.694/0.675/0.665 |
+| no-LST `nolst_era5do05_coarse03` (27417115, lambda 0) | 13 | **0.0487** | 0.0549/0.0508/0.0498 | 0.761/0.742/0.727 |
+
+### 56.2 Fine-path and scale ablations (eval-only, `--eval-fine-ablation`, adc1872)
+
+v2 (27414852): SM SELECT unchanged when the 20 m inputs are shuffled/zeroed (0.0537/0.0538/0.0536); LST pattern skill
+0.70 -> 0.22 shuffled (LST reads the fine path, SM does not). no-LST (27418308, 27420155), 0-10:
+
+| mode | SELECT | map SD | between-160 m SD | within SD |
+|---|---|---|---|---|
+| intact | 0.0487 | 0.0243 | 0.0208 | 0.0148 |
+| fine shuffled | 0.0496 | 0.0245 | 0.0210 | 0.0149 |
+| fine zeroed | 0.0489 | 0.0227 | 0.0202 | 0.0121 |
+| bottleneck flattened | 0.0503 | 0.0230 | 0.0184 | 0.0160 |
+| both removed | 0.0483 | **0.0192** | 0.0161 | 0.0119 |
+
+With NO spatial input the map keeps ~60% of its variance: a FIXED decoder pattern (only the centre pixel is supervised;
+edge/padding artefacts were already seen in §23). Map SD is therefore not a structure metric. s48_full TxSON CR200-18:
+predicted level spread 0.028 vs observed 0.158, r -0.12 — within-tile variation has never been right.
+
+Also: train.py `[diag]` fine-ratio / map-SD prints were inside `if use_wandb:` and vanished when W&B failed; moved out (341d4ac).
+
+### 56.3 Step-0 probe — do TerraMind cell embeddings know which spots are wetter? (probe_offsets.py, 27422021)
+
+Ridge (alpha by GroupKFold over networks, fit on 573 train stations; main = all 768 dims per modality, PCA16 comparison).
+Stage 1 level ~ tile features (ERA5 climatology, soil, tile-mean L12): R2 0.45 val / 0.29 oos. Stage 2 residual ~
+cell-minus-tile embeddings + soil: R2 ~0.01, alpha at the grid maximum. 60 within-tile pairs (26 tiles, 11 networks,
+38 TxSON, all clean): r +0.17 [-0.13,+0.44], wetter station picked 50%. Amplitude: r +0.40 [-0.02,+0.67], predictions
+~4% of observed spread. NO-GO for the hierarchical tile -> 160 m -> 20 m downscaling on these embeddings.
+Not yet a proof of absence: needs positive controls (predict cell-minus-tile DEM/LULC) and a noise ceiling (same pair
+test with terrain/soil predictors); cf. arXiv 2602.18083 (Prithvi embeddings add nothing over S2 indices + S1, R2
+0.514 vs 0.515, patch-averaged). §24.12 (U-Net) had shown 39% of the satellite effect at 0-10 is date-specific.

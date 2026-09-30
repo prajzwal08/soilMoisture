@@ -8105,3 +8105,13 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     FIXED 2b11951 (branch feat/pw-era5-dropout): paths = Path(__file__).parent/csvs. Eval array now 0-8 (0-4 baseline:
     none, sat cross, sat within, era5 cross, era5 remove; 5-8 new model); compare script "base"/"all". Re-smoke run name
     pw_era5do05_L3_smoke2 (1b... see git). Resubmits need OK: re-smoke, baseline eval 0-4 + compare base.
+
+SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening:
+  - no-LST control beat v2 at every depth (SELECT 0.0487 vs 0.0537) -> LST at lambda 0.003 hurts SM.
+  - fine/scale ablations: SM ignores the 20 m path; ~60% of the 20 m map variance is a fixed decoder pattern with no
+    spatial input at all -> map SD is not a structure metric; within-tile variation has never been right.
+  - step-0 ridge probe (27422021): cell-minus-tile TerraMind embeddings do not predict which station is wetter
+    (pair sign 0.50) -> no-go for embedding-driven downscaling; proof-of-absence needs positive controls + noise ceiling.
+  - patchwise ablation 27422859 INVALID (worktree read main-repo csvs); §55 patchwise + ERA5 dropout 0.5 BUILT and
+    path-fixed (feat/pw-era5-dropout 2b11951/feeddb1), smoke mechanics OK on the wrong split.
+  Runbook: §55.7 (status + next steps), §56 (results). NEXT SESSION: user's OK for re-smoke and baseline eval 0-4.
