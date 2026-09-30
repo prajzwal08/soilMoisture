@@ -8072,3 +8072,14 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     dataset, splits, era5/driver stats identical). Worktree moved to 9a0b208, my print patch discarded. ckpt loads (epoch 2,
     trained at 1ad49dfa). Resubmit needs OK.
   PATCHWISE ABLATION RESUBMITTED (3rd, worktree 9a0b208) on the user's OK: array 27422859, compare 27422860 afterok.
+  PATCHWISE ABLATION 27422859 + compare 27422860 COMPLETED (3 min each; worktree 9a0b208, pw_stage2a_L3 best.pt ep2).
+    val, 85 stations, 402,736 paired rows. Donors 100%, 0 fallbacks (cross: different station, |doy| 4 d; within: same station, |doy| 147 d).
+                          d ubRMSE 0-10 / 10-30 / 30-100     r 0-10 (base 0.77)   stations worse 0-10
+    era5 cross (control)  +0.0419 / +0.0339 / +0.0261         0.25                 100%
+    sat cross_station     +0.0103 / +0.0125 / +0.0170         0.67                 98%
+    sat within_station    +0.0007 / +0.0007 / +0.0010         0.76                 56%  (coin flip)
+    VERDICT: patchwise USES the embeddings, but as a SITE FINGERPRINT, not as soil-moisture information: wrong-station
+    tokens hurt (+0.010), same-station wrong-date tokens (147 d off) cost nothing (+0.0007, 56% worse = chance) ->
+    temporal share ~7% at 0-10 (U-Net §24.12 was 39%). Dynamics come from ERA5 (4x the satellite effect).
+    Bears on the user's idea (patchwise + ERA5 dropout 0.5): the tokens' date-specific content is unused, so dropout would
+    test whether the model CAN learn it when ERA5 is withheld.
