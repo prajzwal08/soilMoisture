@@ -7994,3 +7994,14 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     -> LST at lambda 0.003 costs ~0.005 ubRMSE and ~0.065 r at every depth, and slows convergence (ep13 vs ep44).
     Same config otherwise (diff: run name + lambda). Single seed each.
   No-LST fine ablation 27418308 STARTED 19:29 (first run of the 341d4ac diag fix code).
+  19:44 NO-LST FINE ABLATION 27418308 COMPLETED (best.pt ep13, code 341d4ac):
+    mode     SELECT   mapSD0-10  (LST cols ~chance, head untrained: pat skill -0.006, px RMSE 7.45 K)
+    none     0.04873  0.02425
+    shuffle  0.04960  0.02449
+    zero     0.04885  0.02266
+    VERDICT: SM barely uses the 20 m path. Shuffle +0.0009 SELECT (~2%), zero +0.0001. Map SD 0.024 is ~6x v2's 0.004
+    (LST was flattening the map) but ZEROING the imagery keeps 93% of it (0.0227) -> the within-tile structure comes
+    mostly from elsewhere (coarse tokens / decoder), not the fine imagery. Shuffle keeps SD but costs SELECT a little
+    -> a small real dependence at the station pixel.
+    NOTE: this job confirms train.py 341d4ac imports/runs, but --eval-fine-ablation exits BEFORE the epoch loop, so the
+    moved [diag] prints themselves are not yet exercised -- first training run will be the check.
