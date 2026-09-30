@@ -7907,3 +7907,6 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     VV/VH needs a train-split stat). PLANNED only; triggers only if v2 27404065 collapses like v1.
   §54 amended: S1 LEFT AS IS (VV, VH, s1_valid, s1_age, orbit); only S2 bands -> NDVI, NDMI. No new stats.
   User APPROVED §54 as the next run IF v2 27404065 fails (fine ratio ~0 / map flattens like v1). Build + smoke + full still each need the user's OK.
+  SESSION END 2026-09-30: v2 full 27404065 still PENDING (Resources). NEXT SESSION: read
+    logs/lst_tmean_diff/train_v2_27404065.out -- best epoch, SELECT, push lst/sm (must be a number now),
+    fine grad ratio + map SD per epoch, dT RMSE. If fine ratio ~0 / map flat -> propose §54 build (ask first).
