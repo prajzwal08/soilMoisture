@@ -8084,3 +8084,11 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     Bears on the user's idea (patchwise + ERA5 dropout 0.5): the tokens' date-specific content is unused, so dropout would
     test whether the model CAN learn it when ERA5 is withheld.
   RUNBOOK §55 written (plan only): patchwise retrain, whole-window ERA5 dropout 0.5, clean A/B vs pw_stage2a_L3 (same config + pre-§47 splits/stats), branch feat/pw-era5-dropout from 9a0b208, new --ablate-mode remove for a no-ERA5 eval. Build needs OK.
+  §55 BUILT (not run): branch feat/pw-era5-dropout @235d382 (from 9a0b208), worktree /gpfs/work3/0/prjs1968/wt_pw_era5do.
+    dataset.py --era5-dropout: whole window, values 0 AND doys 0 (key-padded; soil tokens keep memory non-empty).
+    train.py: flag + CONFIG echo + per-epoch "era5_withheld=%" (rank 0) next to the grad line.
+    ablation.py/eval_predict.py: --ablate-mode remove (era5 only) = the no-ERA5 eval.
+    slurm/train.sh cds to ${PW_REPO:-main repo}; scripts train_pw_era5do05{_smoke,}.sh (flags = pw_stage2a_L3 CONFIG
+    + --era5-dropout 0.5; smoke 20 stn / 2 ep), pw_era5do_eval.sh (array 0-4) + pw_era5do_compare.sh.
+    A/B check: 1ad49dfa (baseline trained) -> 9a0b208 differs ONLY in train.py's shm preload moving to shm_preload.py
+    (I/O, no training semantics); model/dataset/splits/stats identical. Smoke needs OK.
