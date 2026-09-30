@@ -7883,3 +7883,6 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     fine ratio 0.30    0.49    0.68    0.97     (rising, opposite of v1's collapse; tiny smoke, no conclusion)
     raw g_sm/g_lst = nan: with a FIXED lambda the push ratio is not measured (LambdaLST only measures in auto).
   Full v2 run NOT submitted -- waiting for the user's OK.
+  User: "yes lets see push ratio". Code (next commit): a FIXED lambda is now MEASURED every 50 steps
+    (g_sm/g_lst at the shared map, same as auto, all ranks), value never changed; thermal log line adds
+    "push lst/sm" = lambda * g_lst / g_sm (1.00 = equal pull). Needs a re-smoke before the full v2 run.
