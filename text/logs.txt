@@ -7964,3 +7964,12 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   v2 27404065 COMPLETED (1h47, early stop ep52). best.pt = SELECT 0.0537 (ep44, see log). Final: map SD 0-10
     ~0.004, fine ratio ~0.001-0.002, dT px RMSE ~3.6 K r 0.87, pattern RMSE 1.46 K skill 0.71, level RMSE 3.6 K.
   Fine ablation 27414852 STARTED on the fixed code (5e2029c).
+  18:32 FINE ABLATION 27414852 COMPLETED (15 min, code 1fb3a04, v2 best.pt ep44), val:
+    mode     SELECT   mapSD0-10  pat_r  pat_RMSE  pat_skill  lvl_RMSE  px_RMSE  px_r
+    none     0.05372  0.00412    0.725  1.500 K   0.695      3.575 K   3.649 K  0.870
+    shuffle  0.05382  0.00397    0.455  2.396 K   0.223      4.551 K   4.994 K  0.739
+    zero     0.05359  0.00186    0.623  1.866 K   0.529      4.188 K   4.407 K  0.807
+    VERDICT: SM IGNORES the 20 m path (SELECT moves <0.0002 under shuffle AND zero; zero is marginally
+    better). LST DOES read it: pattern skill 0.70 -> 0.22 shuffled, level RMSE +1 K. The 20 m map SD
+    (0.004) is noise-level and not driven by imagery. So the fine path serves dT only; SM comes from the coarse
+    transformer. No-LST 27414928 still FAILED (no_grad bug, fixed 5e2029c); resubmit resumes from its last.pt -- needs OK.
