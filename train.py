@@ -340,6 +340,8 @@ CONFIG = {
     # (§49). Both are model contracts: SHA'd into the checkpoint beside the two above.
     "fine_stats"    : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/fine_stats.json",
     "lst_stats"     : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/lst_stats.json",
+    # §52 dT_pixel knee + head bias, frozen from the train set by compute_lst_dT_stats.py
+    "lst_dT_stats"  : "/gpfs/work3/0/prjs1968/soilMoisture/csvs/lst_dT_stats.json",
     # Each run saves checkpoints under {checkpoint_dir}/{run_name}/
     "checkpoint_dir": "/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only",
 
@@ -1723,7 +1725,8 @@ def main():
                         ("driver_stats", str(Path(CONFIG["era5_stats"]).with_name(
                             "driver_stats.json"))),
                         ("fine_stats", CONFIG["fine_stats"]),
-                        ("lst_stats",  CONFIG["lst_stats"])):
+                        ("lst_stats",  CONFIG["lst_stats"]),
+                        ("lst_dT_stats", CONFIG["lst_dT_stats"])):
         try:
             CONFIG[f"{_key}_sha"] = hashlib.sha256(
                 Path(_path).read_bytes()).hexdigest()[:16]
@@ -1810,6 +1813,20 @@ def main():
     else:
         CONFIG["lst_sig_eff"], CONFIG["lst_pat_delta"] = CONFIG["sigma_st"], CONFIG["lst_delta"]
         CONFIG["lst_lvl_scale"], CONFIG["lst_lvl_delta"] = CONFIG["dT_sd"], 1.0
+    CONFIG["dT_bias_init"] = CONFIG["dT_mu"]
+    if CONFIG["lst_target"] == "dT_pixel":
+        # §52: the knee and the head's starting bias are FROZEN from the full training set
+        # (csvs/lst_dT_stats.json), not recomputed from whatever stations this run loaded.
+        # Fail closed: without the file the knee would silently depend on --max-stations.
+        with open(CONFIG["lst_dT_stats"]) as _f:
+            _ds = json.load(_f)
+        CONFIG["dT_pixel_mean"], CONFIG["dT_pixel_sd"] = (float(_ds["dT_pixel_mean"]),
+                                                          float(_ds["dT_pixel_sd"]))
+        CONFIG["lst_lvl_delta"] = CONFIG["dT_pixel_sd"]          # Huber knee c, K
+        CONFIG["dT_bias_init"]  = CONFIG["dT_pixel_mean"]
+        if is_main:
+            print(f"  dT_pixel (frozen, {Path(CONFIG['lst_dT_stats']).name}): knee c = "
+                  f"{CONFIG['dT_pixel_sd']:.3f} K, head bias = {CONFIG['dT_pixel_mean']:.3f} K")
     if CONFIG["train_days_per_station"]:
         train_sampler = StationBalancedSampler(train_dataset, CONFIG["train_days_per_station"],
                                                num_replicas=world_size, rank=rank, seed=CONFIG["seed"])
@@ -1948,11 +1965,11 @@ def main():
         modality_dropout = CONFIG["modality_dropout"],
     ).to(device)
     if ((CONFIG["lst_level_weight"] > 0 or CONFIG["lst_target"] == "dT_pixel")
-            and math.isfinite(CONFIG["dT_mu"])):
+            and math.isfinite(CONFIG["dT_bias_init"])):
         # §52: head_lst now predicts (LST - t2m) per cell (K, or sigma_ST units). Start its level at
         # the training mean so step 1 is not a ~15 K error; a resume overwrites this anyway.
         with torch.no_grad():
-            model.decoder.head_lst.bias.fill_(CONFIG["dT_mu"] / CONFIG["lst_sig_eff"])
+            model.decoder.head_lst.bias.fill_(CONFIG["dT_bias_init"] / CONFIG["lst_sig_eff"])
     lam = LambdaLST(CONFIG["lambda_lst"], every=CONFIG["lambda_every"],
                     hold_steps=CONFIG["warmup_steps"], clamp=CONFIG["lambda_clamp"],
                     frac=CONFIG["lambda_frac"],
@@ -1971,11 +1988,11 @@ def main():
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
-                 "lst_target", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta",
+                 "lst_target", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
                  "select_metric", "input_grad_diag", "git_sha",
-                 "era5_stats_sha", "driver_stats_sha", "fine_stats_sha", "lst_stats_sha"]
+                 "era5_stats_sha", "driver_stats_sha", "fine_stats_sha", "lst_stats_sha", "lst_dT_stats_sha"]
         print("CONFIG: " + "  ".join(f"{k}={CONFIG.get(k)}" for k in _echo))
 
     # ── Optimiser ─────────────────────────────────────────────────────
