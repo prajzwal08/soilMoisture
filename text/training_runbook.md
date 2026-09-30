@@ -17044,3 +17044,18 @@ L_total = L_sm + lambda * L_lst                                                 
   `checkpoints/soilmoisture/s48_lst_ablation/`, log `logs/s48_lst_ablation/dT_smoke_<id>.out`.
 - Two read-only reviews are running (code/architecture; loss-target trace). The full run needs the
   user's OK after both.
+
+### §52.8 dT_pixel Huber knee, frozen (user decision 2026-09-30)
+
+`compute_lst_dT_stats.py` (job 27394387) covered 573 train stations, 2016-2022, 45,592 scenes and
+15.4 M cells:
+- per-cell dT = LST_obs - t2m_mean: mean 12.608 K, SD 7.215 K
+- tile-mean dT: mean 11.522 K, SD 7.043 K (reference only)
+
+- The knee is c = 7.215 K (Huber is quadratic below c and linear above). The head bias starts at
+  12.608 K.
+- Both are frozen in `csvs/lst_dT_stats.json`. train.py reads them in dT_pixel mode, fails closed if
+  the file is missing, and records its SHA. They are no longer recomputed per run.
+- The user keeps 7.2 K; it is NOT a tuning axis. It is not an RMSE floor: 7.21 K is the RMSE of a
+  constant-mean prediction.
+- The 20-station smoke's 5.3 K was a tile-mean SD from 20 stations. It is superseded.
