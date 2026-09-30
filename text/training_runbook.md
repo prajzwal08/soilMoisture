@@ -16988,3 +16988,59 @@ eval_predict 27377488 took 2 h 58 min in total. The times below come from the lo
 - Possible fixes (not done): parallel per-station build (I/O-bound, so use a thread pool);
   build once and share across splits. Worth ~2 h per ablation eval. First time one station to see
   where the 10 s goes.
+
+### §52.4 SM level and LST level (2026-09-30)
+
+- SM: the loss is Huber on ABSOLUTE SM at the station pixel, so the level IS trained. Only `best.pt`
+  selection (ubRMSE) ignores it. s48_full val mean |bias| is 0.047 / 0.056 / 0.059 at ep8, about equal to
+  ubRMSE; RMSE incl. bias is 0.077-0.085. The level stops improving after ~ep5.
+- LST: `lst_pattern_loss` centres both fields, so a constant shift cancels. `head_lst.bias` gets no
+  gradient and the head's level is meaningless.
+
+### §52.5 Probe: LST - T2m level vs within-tile pattern (observed data only)
+
+`probe_lst_level_pattern.py` / `slurm/probe_lst_level_pattern.sh`. Smoke 27386018 covered 28 train/val
+stations + 40 TxSON. The full run was NOT done.
+
+| signal vs SM 0-10 (within station, monthly climatology removed) | median r | r < 0 |
+|---|---|---|
+| LST_tile - t2m_mean | -0.37 | 93% |
+| LST_tile | -0.32 | 86% |
+| LST(station cell) - LST_tile (pattern) | +0.02 | 50% |
+
+- TxSON CR200-18 tile (6 stations): pattern vs SM gives r +0.76, the wrong sign. It is driven by one
+  leveraged station (CR200-6, a +8 K cell at the edge of a no-retrieval band). Across the network:
+  dT -0.15, pattern +0.21 (land-cover confound, as in §29).
+- CR200-18 scatter (`figures/probe_lst_level_pattern/B3_scatter_CR200-18.png`): dT r -0.56 (-0.47
+  deseasonalised); pattern r -0.15 (-0.10).
+- Not circular: t2m is an input, and subtracting it removes the part the model could copy. The open risk
+  is redundancy with ERA5 inputs (residual test vs observed - predicted SM, not run).
+
+### §52.6 Thermal target switched to per-pixel dT (user decision)
+
+The pattern term, the tile-mean level and sigma_ST are all dropped for this arm:
+
+```
+L_lst   = mean over valid cells of Huber_c( D[i,j] - (LST_obs[i,j] - t2m_mean) )    K, c = dT_sd
+L_total = L_sm + lambda * L_lst                                                    auto lambda unchanged
+```
+
+- D = `head_lst` output read directly in K. Its bias is initialised to dT_mu (train mean).
+- valid = LST_obs finite AND an ERA5 row exists. t2m is RAW t2m_mean from the cache, same day.
+- Flag `--lst-target dT_pixel` (forces `--lst-units K`). Branch `feat/lst-level-dT`, commit 4763416.
+  The default path (pattern, sigma units) is unchanged.
+- For MSE, per-pixel = tile level + within-tile pattern. The user chose the per-pixel form knowingly.
+- Validation logs `lst_px` (per-cell r, RMSE K, bias, skill, loss) and `lst_lvl` for every run.
+- No comparison with other baselines (user). The no-LST control 27385835 was cancelled.
+
+### §52.7 Verification and smoke
+
+- `verify_lst_level.py` (CPU job 27392904): ALL PASS.
+  - pixel loss equals a hand-written Huber
+  - no gradient on invalid cells or where t2m is missing
+  - era5 dates sorted in 887 stores
+  - dataset dT == probe dT on 1,136 scenes (max diff 3.6e-15 K)
+- GPU smoke 27392906 (`s48_dT_smoke_20260930`, 20 stations, 4 epochs, warmup 20): running. Output in
+  `checkpoints/soilmoisture/s48_lst_ablation/`, log `logs/s48_lst_ablation/dT_smoke_<id>.out`.
+- Two read-only reviews are running (code/architecture; loss-target trace). The full run needs the
+  user's OK after both.

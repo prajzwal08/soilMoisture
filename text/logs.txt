@@ -7773,3 +7773,28 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   Eval slowness: ~2h15 of 2h58 was dataset BUILD (~10 s/station, serial GPFS), inference only ~45 min. Not the
     training set; OOT = train+val stations by design. Fix ideas (parallel build, share across splits) not done.
   NEXT: when 27385835 finishes, compare fine grad ratio curve, SELECT ubRMSE, TxSON CR200-18 vs s48_full.
+
+2026-09-30 (later) -- LST - T2m probe; thermal target switched to per-pixel dT (runbook §52.4-52.7)
+  LST head level: the pattern loss centres both fields, so head_lst.bias gets zero gradient and the level
+    is meaningless (alpha = 0). SM level IS trained (Huber on absolute SM), only selection is ubRMSE; val
+    mean |bias| ~0.047-0.059 m3/m3 at best ep8, as large as ubRMSE, flat after ep5.
+  PROBE (probe_lst_level_pattern.py, smoke 27386018, 28 train/val stn + 40 TxSON, observed data only):
+    within-station deseasonalised r(SM 0-10): LST_tile - t2m_mean -0.37 (93% neg) | raw tile LST -0.32 |
+    pattern at station cell +0.02. dT varies ~3.5 K (deseas.), station-cell pattern ~0.8 K; pattern stability 0.84.
+    TxSON B1 (6 stn in CR200-18 tile): +0.76 "warm cell = wet" is ONE leveraged station (CR200-6, +8 K edge
+    cell) -- land-cover confound. B2 network: dT -0.15, pattern +0.21.
+    CR200-18 scatter (plot_lst_level_pattern_scatter.py): dT r -0.56 (des -0.47); pattern r -0.15 (des -0.10).
+  Circularity: subtracting the input t2m from the target is NOT leakage; real risk is redundancy with ERA5
+    inputs (residual test not run -- user declined the full probe for now).
+  DESIGN: user rejected pattern+level split and sigma_ST; wants the straightforward target:
+    L_lst = mean_valid Huber_K( D[i,j] - (LST_obs[i,j] - t2m_mean) ),  knee = dT_sd K, head in K, bias = dT_mu.
+    L_total = L_sm + lambda * L_lst (auto lambda unchanged). `--lst-target dT_pixel`.
+  Branch feat/lst-level-dT: d55cdc8 (level term), b9bd55b (--lst-units K), 4763416 (dT_pixel).
+    Default path unchanged (pattern, level weight 0, sigma units). Val logs lst_lvl + lst_px for every run.
+  VERIFY 27392904 (CPU) ALL PASS: pixel loss == hand Huber, no grad on invalid cells / missing t2m,
+    era5 date_ints sorted in 887 stores, dataset dT == probe dT on 1,136 scenes (max diff 3.6e-15 K).
+  JOBS: old smoke 27392544 CANCELLED (obsolete design; verify sat 17 min on a GPU node).
+    No-LST control 27385835 CANCELLED on user OK -- user does NOT want baseline comparisons.
+    GPU smoke 27392906 (s48_dT_smoke_20260930, 20 stn, 4 ep, warmup 20) RUNNING.
+    Two read-only review agents running: code/architecture, and a trace that the loss is exactly LST - t2m_mean.
+  NEXT: read smoke + reviews; fix anything found; ASK before the full dT_pixel run.
