@@ -7955,3 +7955,9 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   Baseline s48_full_20260929 (train_27369825) map SD 0-10: ep1-5 0.027-0.037, best ep8 0.0150, ep16 0.0081; fine ratio 0.12-0.17 -> 0.04-0.07. v2 map SD ~0.004 (4x flatter at best epoch), fine ratio ~0.003-0.01.
   §54.4 BUILD PLAN written (not built): S2 indices from the EXISTING fine cache (DN = z*std+mean, B04=2 B08=6 B8A=7 B11=8, -1000 offset), --fine-s2 {bands,indices}, fine_layout(mode) 19->11 ch, verify job, smoke, full; S1 stays VV+VH.
   §54 amended: S1 = VV + VH/VV (cross-pol ratio, user decision), CR fed as (VH_dB - VV_dB + 6.4)/3, no new stats.
+  18:02 BUG (mine): no-LST 27414928 FAILED at its first val (11 min): "Can't call numpy() on Tensor that requires
+    grad" in evaluate. Cause: e24f974 inserted FineAblation/run_fine_ablation between @torch.no_grad() and
+    def evaluate, so evaluate lost no_grad. FIXED 5e2029c (decorator back on evaluate). v2 27404065 unaffected
+    (started on older code). Ablation 27414852 still pending -> will start on the fixed code.
+    no-LST left last.pt (val_pending) + mid_epoch.pt: a resubmit resumes, reruns epoch-1 val. Needs user OK.
+  v2 ep39-43: SELECT 0.0544 0.0540 (best) 0.0542 0.0545 0.0545; map SD ~0.0035; fine ratio 0.001-0.002.
