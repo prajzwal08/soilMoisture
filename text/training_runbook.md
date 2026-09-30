@@ -17140,8 +17140,9 @@ NDMI  = (B8A - B11) / (B8A + B11)    SWIR water absorption; canopy + surface moi
 
 - **Harmonisation offset.** S2 DN carry the +1000 offset (min DN 1002, `project_training_blockers`).
   Subtract 1000 from each band BEFORE any ratio, or every index is biased toward 0.
-- **Resolution order.** NDVI: compute at 10 m, then 2x2 mean to 20 m (as §43.4 did). NDMI: B8A and
-  B11 are native 20 m, compute there.
+- **Resolution order.** Superseded by §54.4 step 1: both indices are computed from the 2x2-POOLED
+  20 m bands already in the fine cache (ratio of means, not mean of ratios). B8A and B11 are
+  native 20 m anyway; for NDVI the difference is small and it avoids rebuilding the cache.
 - **Normalisation.** NDVI/NDMI are already in [-1, 1]; no TerraMind constants apply, no new stats.
 - **Invalid pixels.** 0 is a real NDVI/NDMI value, so the valid flags carry "missing", as now.
   Guard the division where B8 + B4 or B8A + B11 is ~0.
@@ -17149,3 +17150,51 @@ NDMI  = (B8A - B11) / (B8A + B11)    SWIR water absorption; canopy + surface moi
   the fine encoder's first conv changes width, so no checkpoint reuse.
 - **Everything else identical to v2** (dT from start, lambda 0.003 fixed, ERA5 dropout 0.5, coarse
   dropout 0.3), so the only change is the fine inputs. Smoke, then full run, each on the user's OK.
+
+### §54.4 Build plan (written 2026-09-30, nothing built)
+
+**Key fact that makes this cheap.** The fine cache (`prepare_fine_cache.py`) stores each S2 scene as
+the 10 kept bands, TerraMind z-scored, then masked-2x2-POOLED to 20 m, in fp16 (`fine_s2_scene`,
+`dataset.py:661`). z-scoring is affine and the pool is a masked mean, so they commute: the pooled
+20 m DN are recovered exactly as `DN = z * std + mean`. So NO cache rebuild and NO new download.
+Band order is confirmed from `csvs/fine_stats.json`: kept = B02 B03 B04 B05 B06 B07 B08 B8A B11 B12,
+so **B04 = 2, B08 = 6, B8A = 7, B11 = 8**.
+
+```
+                 fine cache (unchanged)                      new, per sample in build_fine
+  S2 scene ──► 10 z-scored pooled bands + valid ──► DN = z*std + mean ──► R = (DN - 1000)/10000
+                                                                         NDVI = (R8 - R4)/(R8 + R4)
+                                                                         NDMI = (R8A - R11)/(R8A + R11)
+                                                    ──► [NDVI, NDMI, s2_valid, s2_age]   (4 ch)
+  S1, DEM, LULC ─────────────────────────────────── unchanged (VV, VH, s1_valid, s1_age, orbit;
+                                                              DEM asinh relief, dem_valid; LULC)
+```
+
+Steps:
+1. **`dataset.py` — a flag, default unchanged.** `fine_s2_mode = "bands" | "indices"`. In
+   `build_fine`, after the S2 scene is picked, if `indices`: de-normalise channels 2, 6, 7, 8,
+   subtract the +1000 offset, form NDVI and NDMI, set 0 where `s2_valid == 0` or where the
+   denominator is below a small floor, clip to [-1, 1]. Same helper for the cached and raw paths.
+2. **Layout as a function of the mode.** `FINE_CH`, `FINE_S2`, `FINE_S1`, `FINE_DEM`, `FINE_VALID`
+   (`model.py:142-146`, used 18x in model.py, 2x in dataset.py, 7x in verify_s48.py) become a
+   `fine_layout(mode)` lookup: bands = 19 ch (as now), indices = 11 ch
+   (S2 0:4, S1 4:9, DEM 9:11; valid flags at 2, 6, 10). The fine encoder's first conv takes its width
+   from it. Everything that zeroes or reads by slice (coarse dropout, `FineAblation`, input-grad
+   diag) must go through the lookup, not a hard-coded index.
+3. **`train.py --fine-s2 {bands,indices}`**, stamped into CONFIG and the checkpoint; the resume guard
+   refuses a mode mismatch (as it already does for `lst_target`).
+4. **Verification job (one sbatch, nothing on the login node).** For ~200 random (station, day)
+   samples: (a) the index path equals NDVI/NDMI computed straight from the raw 10 m store after
+   2x2 pooling, to fp16 tolerance -- this is what catches a wrong band index or a missing offset;
+   (b) value ranges: NDVI mostly 0-0.9 over land, NDMI mostly -0.3-0.6, water NDVI < 0;
+   (c) the offset: min raw DN of pre- and post-2022-01-25 scenes both >= 1000, else the -1000 is
+   wrong for the older scenes (§50 found harmonisation happened, min DN 1002 -- re-check per era);
+   (d) `bands` mode output bit-identical to before (default unchanged).
+5. **Smoke (20 stations, 4 epochs), then full run** -- each on the user's OK. Config: whatever wins
+   between v2 and the no-LST control (27414928), with only `--fine-s2 indices` changed. Coarse
+   dropout: 0.3 as v2, unless the user raises it (then two things change at once -- say so).
+6. **Read-out:** SELECT vs the matching bands run, 20 m map SD, fine grad ratio, and
+   `--eval-fine-ablation` on its best.pt (does SM now read the fine path?).
+
+S1 stays VV + VH. A VV/VH channel would be a linear rewrite of the same two numbers in dB (no new
+information); it can be added later as a one-line change in the same layout lookup if wanted.

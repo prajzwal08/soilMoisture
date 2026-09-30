@@ -7953,3 +7953,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     NEXT SESSION: (1) v2 final best epoch + SELECT; (2) read fine_ablation_v2_27414852.out -- LST pattern skill and
     SELECT under shuffle/zero vs intact; (3) no-LST SELECT vs v2 best -> is LST helping SM. Decide on §54 / LST after.
   Baseline s48_full_20260929 (train_27369825) map SD 0-10: ep1-5 0.027-0.037, best ep8 0.0150, ep16 0.0081; fine ratio 0.12-0.17 -> 0.04-0.07. v2 map SD ~0.004 (4x flatter at best epoch), fine ratio ~0.003-0.01.
+  §54.4 BUILD PLAN written (not built): S2 indices from the EXISTING fine cache (DN = z*std+mean, B04=2 B08=6 B8A=7 B11=8, -1000 offset), --fine-s2 {bands,indices}, fine_layout(mode) 19->11 ch, verify job, smoke, full; S1 stays VV+VH.
