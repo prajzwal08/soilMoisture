@@ -8005,3 +8005,10 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     -> a small real dependence at the station pixel.
     NOTE: this job confirms train.py 341d4ac imports/runs, but --eval-fine-ablation exits BEFORE the epoch loop, so the
     moved [diag] prints themselves are not yet exercised -- first training run will be the check.
+  BUILT adc1872 (not run): tests 1 + 3 in --eval-fine-ablation. Question: is the no-LST SM map 160 m info drawn at 20 m?
+    test 1: model.flatten_bottleneck (default off) replaces the 14x14 bottleneck with its tile mean; new modes
+      flat_coarse (fine intact) and flat_both (+fine zeroed, sanity: map should be ~flat).
+    test 3: evaluate() splits each SM map's variance into between-8x8-block (= 160 m token cell) and within-block,
+      population variances so total = between + within exactly; printed as btwSD / inSD / share per depth.
+      Reference for "pure upsampling" within-cell SD = the `zero` row.
+    Script slurm/eval_scale_ablation_nolst.sh (no-LST best.pt, ~20 min). Needs user OK to submit. Not syntax-checked (login node).
