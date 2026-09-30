@@ -8065,3 +8065,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   PATCHWISE ABLATION 27422709 FAILED all 4 tasks in 17 s (compare 27422713 cancelled by dependency): NameError 'arch' in
     ckpt_utils.load_checkpoint's final print at 2b04fe0 (undefined variable in a print-only line; the checkpoint loaded
     fine before it). Patched in the WORKTREE only (uncommitted, detached): arch={cfg.get('arch','?')}. Resubmit needs OK.
+  PATCHWISE ABLATION RESUBMITTED on the user's OK: array 27422772, compare 27422773 afterok (worktree patched print).
