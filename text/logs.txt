@@ -7948,3 +7948,7 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   NO-LST control PREPARED, NOT submitted: slurm/train_nolst_v2cfg.sh, run nolst_era5do05_coarse03_20260930,
     identical to v2 except --lambda-lst 0 (diff checked: run name + lambda only). Needs the user's OK.
   NO-LST control SUBMITTED on the user's OK: job 27414928 (nolst_era5do05_coarse03_20260930, code 48e8970), log logs/lst_tmean_diff/train_nolst_27414928.out, ckpt .../lst_tmean_diff/nolst_era5do05_coarse03_20260930/ (own folder).
+  17:49 v2 ep33-36: SELECT 0.0549 0.0542 0.0545 0.0543; map SD 0.0034-0.0043; dT px RMSE 3.92 3.73 3.87 3.70 K.
+  SESSION END 2026-09-30 evening: v2 27404065 still running (~1h20); ablation 27414852 afterok v2; no-LST 27414928 pending.
+    NEXT SESSION: (1) v2 final best epoch + SELECT; (2) read fine_ablation_v2_27414852.out -- LST pattern skill and
+    SELECT under shuffle/zero vs intact; (3) no-LST SELECT vs v2 best -> is LST helping SM. Decide on §54 / LST after.
