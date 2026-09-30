@@ -677,6 +677,9 @@ class SoilMoistureModel(nn.Module):
         self._last_depth_ctx_n = B
 
         bottleneck = ctx[:, sp:sp + 196, :].reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
+        if getattr(self, "flatten_bottleneck", False):
+            # --eval-fine-ablation only: keep each tile's mean, remove its 160 m pattern.
+            bottleneck = bottleneck.mean((2, 3), keepdim=True).expand_as(bottleneck).contiguous()
 
         # FiLM context: mean of valid rows, excluding the CLS prefix and the spatial block
         keep = (~pad).clone()

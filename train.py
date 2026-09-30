@@ -1417,8 +1417,12 @@ def run_fine_ablation(raw_model, val_loader, device, world_size, rank, is_main, 
     if is_main:
         print(f"\n=== FINE-PATH ABLATION  ckpt={ckpt_path}  epoch={ckpt.get('epoch')} ===", flush=True)
     rows = []
-    for mode in ("none", "shuffle", "zero"):
-        hook = FineAblation(mode, seed=rank)
+    # (name, fine-path mode, flatten the 14x14 bottleneck to its tile mean)
+    modes = (("none", "none", False), ("shuffle", "shuffle", False), ("zero", "zero", False),
+             ("flat_coarse", "none", True), ("flat_both", "zero", True))
+    for mode, fine_mode, flat in modes:
+        hook = FineAblation(fine_mode, seed=rank)
+        raw_model.flatten_bottleneck = flat
         diag = {}
         _, _, per_station, _, _ = evaluate(
             raw_model, val_loader, device, world_size=world_size, rank=rank,
@@ -1427,6 +1431,7 @@ def run_fine_ablation(raw_model, val_loader, device, world_size, rank, is_main, 
             lst_delta=CONFIG["lst_pat_delta"], dT_sd=CONFIG["lst_lvl_scale"],
             lvl_delta=CONFIG["lst_lvl_delta"], lst_target=CONFIG["lst_target"],
             batch_hook=hook)
+        raw_model.flatten_bottleneck = False
         if not is_main:
             continue
         nan = float("nan")
@@ -1434,15 +1439,25 @@ def run_fine_ablation(raw_model, val_loader, device, world_size, rank, is_main, 
         msd = diag.get("map_sd") or [nan] * len(SM_DEPTHS)
         rows.append((mode, _ubrmse_selection(per_station), msd[0],
                      lp.get("r_mean", nan), lp.get("rmse_K", nan), lp.get("skill", nan),
-                     ll.get("rmse_K", nan), lx.get("rmse_K", nan), lx.get("r", nan)))
-        print(f"  [{mode:7s}] done  (rank-0 swapped {hook.n_swapped}, kept {hook.n_kept})", flush=True)
+                     ll.get("rmse_K", nan), lx.get("rmse_K", nan), lx.get("r", nan),
+                     diag.get("map_scale") or [(nan, nan, nan)] * len(SM_DEPTHS)))
+        print(f"  [{mode:11s}] done  (rank-0 swapped {hook.n_swapped}, kept {hook.n_kept})", flush=True)
     if is_main:
-        print("\n  mode     SELECT    mapSD0-10  pat_r  pat_RMSE  pat_skill  lvl_RMSE  px_RMSE  px_r")
-        for m, s, sd, pr, pe, pk, le, xe, xr in rows:
-            print(f"  {m:7s}  {s:.5f}   {sd:.5f}   {pr:.3f}  {pe:.3f} K   {pk:.3f}     "
+        print("\n  mode         SELECT    mapSD0-10  pat_r  pat_RMSE  pat_skill  lvl_RMSE  px_RMSE  px_r")
+        for m, s, sd, pr, pe, pk, le, xe, xr, _ in rows:
+            print(f"  {m:11s}  {s:.5f}   {sd:.5f}   {pr:.3f}  {pe:.3f} K   {pk:.3f}     "
                   f"{le:.3f} K  {xe:.3f} K  {xr:.3f}")
         print("  pat_* = within-tile LST pattern (centred per scene); lvl = tile mean; px = per pixel dT.\n"
-              "  A big drop under shuffle/zero = that output reads the 20 m path.", flush=True)
+              "  A big drop under shuffle/zero = that output reads the 20 m path.\n"
+              "  flat_coarse = 14x14 bottleneck replaced by its tile mean (160 m pattern removed, fine path intact);\n"
+              "  flat_both = flat_coarse + fine zeroed (sanity: map should be ~flat).", flush=True)
+        print("\n  SCALE SPLIT of the SM map (8x8 block = one 160 m token cell); SD in m3/m3, share = between/total variance")
+        print("  mode         " + "   ".join(f"{d:>6s}: btwSD   inSD  share" for d in SM_DEPTHS))
+        for r in rows:
+            print(f"  {r[0]:11s}  " + "   ".join(f"      {b:.5f} {w:.5f} {f:5.3f}" for b, w, f in r[9]))
+        print("  share ~1 = the map only varies between 160 m cells (coarse info drawn at 20 m).\n"
+              "  Bilinear upsampling alone leaves some within-cell SD: compare inSD to the `zero` row.",
+              flush=True)
 
 
 @torch.no_grad()
@@ -1502,6 +1517,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     ctx_acc   = torch.zeros(diag_nd, diag_dim, device=device)
     ctx_n_acc = torch.zeros(1, device=device)
     msd_acc   = torch.zeros(n_depths + 1, device=device)    # [:n] Σ SD per depth, [n] count
+    scale_acc = torch.zeros(2, n_depths, device=device)     # [0] Σ total var, [1] Σ between-8x8-block var
     lst_acc   = torch.zeros(2, device=device)               # [0] Σ loss*cells, [1] Σ cells
     lst_pat   = torch.zeros(7, device=device)               # lst_pattern_stats sums (spatial pattern r, RMSE K, skill)
     lst_lvl   = torch.zeros(8, device=device)               # [0:6] lst_level_stats, [6] Σ level loss*n, [7] Σ n (§52)
@@ -1527,6 +1543,10 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         sm = out["sm"].float()
         msd_acc[:n_depths] += sm.flatten(2).std(dim=2).sum(0)
         msd_acc[n_depths]  += sm.shape[0]
+        # Scale split: 112 = 14 x 8, so each 8x8 block is one 160 m token cell. With
+        # population variances, total = between-block + within-block exactly.
+        scale_acc[0] += sm.flatten(2).var(dim=2, unbiased=False).sum(0)
+        scale_acc[1] += F.avg_pool2d(sm, 8).flatten(2).var(dim=2, unbiased=False).sum(0)
         if "lst_obs" in batch:
             l_lst, n_cells = lst_pattern_loss(out["lst"], batch["lst_obs"], sigma_st,
                                               delta=lst_delta, return_count=True)
@@ -1586,6 +1606,7 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
     # Unconditional collectives: every rank allocated these above.
     if world_size > 1:
         dist.all_reduce(msd_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(scale_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_acc, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_pat, op=dist.ReduceOp.SUM)
         dist.all_reduce(lst_lvl, op=dist.ReduceOp.SUM)
@@ -1596,6 +1617,11 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
         _n = float(msd_acc[n_depths])
         diag_out["map_sd"]        = ([float(v) / _n for v in msd_acc[:n_depths]] if _n > 0
                                      else [float("nan")] * n_depths)
+        # Per depth: (between-cell SD, within-cell SD, between share of variance), sample-averaged.
+        diag_out["map_scale"] = [
+            (math.sqrt(b / _n), math.sqrt(max(t - b, 0.0) / _n), (b / t) if t > 0 else float("nan"))
+            if _n > 0 else (float("nan"),) * 3
+            for t, b in zip(scale_acc[0].tolist(), scale_acc[1].tolist())]
         diag_out["lst_loss"]      = (float(lst_acc[0] / lst_acc[1]) if lst_acc[1] > 0
                                      else float("nan"))
         diag_out["lst_cells"]     = float(lst_acc[1])
