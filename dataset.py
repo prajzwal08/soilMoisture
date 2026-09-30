@@ -849,6 +849,11 @@ def _load_lst22(cat: str, dir_name: str):
         arr, dates = z["lst22"], z["dates"]
     return {int(d): i for i, d in enumerate(dates)}, arr
 
+def _zeros_like(x):
+    """A NEW all-zero (or all-False) array / tensor of x's shape and dtype (never a view)."""
+    return torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
+
+
 # ── Soil patch helpers ───────────────────────────────────────────────────────
 
 def fill_soil_nans_with_validity(patch: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1128,6 +1133,7 @@ class SoilMoistureDataset(Dataset):
         require_lst:     bool        = False,
         era5_dropout:    float       = 0.0,
         sif_twsa_dropout: float      = 0.5,
+        coarse_dropout:  float       = 0.0,
     ):
         self.training = training
         # §53: whole-ERA5 modality dropout (training only): with this probability per sample the
@@ -1137,6 +1143,11 @@ class SoilMoistureDataset(Dataset):
         # §53: SIF and TWSA are already scarce (<= 50 / 12 values per window); their whole-modality
         # dropout was a hard-coded 0.5. Default kept for reproducibility; the §53 sweep uses 0.
         self.sif_twsa_dropout = float(sif_twsa_dropout)
+        # §53: coarse-path dropout (training only): with this probability per sample ALL 160 m
+        # TerraMind satellite tokens are withheld — the anchor (-> the 14x14 bottleneck) and the
+        # S2/S1 history — so any spatial structure in the SM map must come from the 20 m fine
+        # path. Reuses the "no scene in the window" path (zero anchor, anchor_found False).
+        self.coarse_dropout = float(coarse_dropout)
         # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
         # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
         self.years    = list(years) if years else list(TRAIN_YEARS)
@@ -1516,6 +1527,14 @@ class SoilMoistureDataset(Dataset):
         s1_pyr, s1_doys, s1_valid, s1_rel_pos, s1_orbit = load_history(
             cache, ("s1_asc", "s1_desc"), year, doy, MAX_S1)
         anchor_l12, anchor_rp, anchor_orbit, anchor_found = select_anchor(cache, year, doy)
+        if self.training and self.coarse_dropout > 0.0 and random.random() < self.coarse_dropout:
+            # FRESH zero arrays, never in-place: these may be views into the shared /dev/shm cache.
+            # The anchor content must be zeroed, not only key-padded: a padded query token still
+            # carries its own input through the residual into the bottleneck.
+            # identical to select_anchor's own not-found return: (zeros, rel_pos 0, orbit 0, False)
+            anchor_l12, anchor_rp, anchor_orbit, anchor_found = _zeros_like(anchor_l12), 0, 0, False
+            s2_pyr, s2_valid = _zeros_like(s2_pyr), _zeros_like(s2_valid)
+            s1_pyr, s1_valid = _zeros_like(s1_pyr), _zeros_like(s1_valid)
 
         _static    = self._static_cache[sat_dir]
         soil_patch = _static["soil"]
