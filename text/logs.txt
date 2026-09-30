@@ -8093,3 +8093,15 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     A/B check: 1ad49dfa (baseline trained) -> 9a0b208 differs ONLY in train.py's shm preload moving to shm_preload.py
     (I/O, no training semantics); model/dataset/splits/stats identical. Smoke needs OK.
   §55 SMOKE SUBMITTED on the user's OK: job 27423547 (worktree 235d382), log logs/train_pw_era5do05_smoke_27423547.out.
+  §55 SMOKE 27423547 COMPLETED (2 min): mechanics OK -- repo = worktree 235d382, CONFIG era5_dropout=0.5, era5_withheld=50%
+    of samples, losses finite, SELECT 0.069 at ep1 (20 stn). BUT provenance caught a CONFOUND: driver_stats_sha b7bd19b3
+    (post-§47) vs baseline 34ade6b9. Cause: train.py CONFIG and eval_predict.py SPLITS_CSV/ERA5_STATS are HARD-CODED to
+    /gpfs/work3/0/prjs1968/soilMoisture/csvs (the MAIN repo = §47 split 328cdac2 + post-§47 driver stats), not the
+    worktree's own csvs (old split 5ed81686, driver 34ade6b9; era5_stats identical 572028af). ckpt_utils' provenance
+    check hashes csvs/ next to ITS file, so it reported OK while the dataset read other files.
+    => PATCHWISE ABLATION 27422859 IS INVALID: it ran on the §47 val split (85 stations; the 2026-08-27 eval had 74) with
+    post-§47 SIF/TWSA/soil normalisation; §47 val can contain stations that were TRAIN for pw_stage2a_L3. Its
+    "site fingerprint" verdict is withdrawn until rerun.
+    FIXED 2b11951 (branch feat/pw-era5-dropout): paths = Path(__file__).parent/csvs. Eval array now 0-8 (0-4 baseline:
+    none, sat cross, sat within, era5 cross, era5 remove; 5-8 new model); compare script "base"/"all". Re-smoke run name
+    pw_era5do05_L3_smoke2 (1b... see git). Resubmits need OK: re-smoke, baseline eval 0-4 + compare base.
