@@ -7,7 +7,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=00:30:00
 #SBATCH --output=logs/s48_lst_ablation/verify_lst_level_%j.out
-#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
 # §52 dT checks, CPU only (never on a GPU node: check 4 opens every station store).

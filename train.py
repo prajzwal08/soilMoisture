@@ -1444,9 +1444,12 @@ def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_
                 lst_lvl[6] += l_lvl.detach() * n_lvl
                 lst_lvl[7] += n_lvl
             if "lst_t2m" in batch:
-                lst_px[:6] += lst_dT_pixel_stats(out["lst"], batch["lst_obs"], batch["lst_t2m"])
-                l_px, n_px = lst_dT_pixel_loss(out["lst"], batch["lst_obs"], batch["lst_t2m"],
-                                               delta=lvl_delta, return_count=True)
+                # Review fix: head output x sigma_st = K in every unit mode (sigma_st is 1.0 under
+                # K units); knee dT_sd K in both (dT_sd x lvl_delta), so lst_px is comparable.
+                _lst_K = out["lst"].float() * sigma_st
+                lst_px[:6] += lst_dT_pixel_stats(_lst_K, batch["lst_obs"], batch["lst_t2m"])
+                l_px, n_px = lst_dT_pixel_loss(_lst_K, batch["lst_obs"], batch["lst_t2m"],
+                                               delta=dT_sd * lvl_delta, return_count=True)
                 lst_px[6] += l_px.detach() * n_px
                 lst_px[7] += n_px
 
@@ -1944,8 +1947,9 @@ def main():
         fine_skips       = CONFIG["fine_skips"],
         modality_dropout = CONFIG["modality_dropout"],
     ).to(device)
-    if CONFIG["lst_level_weight"] > 0 or CONFIG["lst_target"] == "dT_pixel":
-        # §52: head_lst now predicts (LST - t2m) per cell in sigma_ST units. Start its level at
+    if ((CONFIG["lst_level_weight"] > 0 or CONFIG["lst_target"] == "dT_pixel")
+            and math.isfinite(CONFIG["dT_mu"])):
+        # §52: head_lst now predicts (LST - t2m) per cell (K, or sigma_ST units). Start its level at
         # the training mean so step 1 is not a ~15 K error; a resume overwrites this anyway.
         with torch.no_grad():
             model.decoder.head_lst.bias.fill_(CONFIG["dT_mu"] / CONFIG["lst_sig_eff"])
@@ -2024,6 +2028,13 @@ def main():
         if is_main:
             print(f"Checkpoint found — resuming from {ckpt_last}")
         ckpt = torch.load(ckpt_last, map_location=device, weights_only=False)
+        # Review fix: the thermal target and head units must match the checkpoint, or a resume
+        # silently changes what head_lst means mid-run.
+        _cc = ckpt.get("config", {}) or {}
+        for _k, _dflt in (("lst_target", "pattern"), ("lst_units", "sigma")):
+            if _cc.get(_k, _dflt) != CONFIG[_k]:
+                raise RuntimeError(f"resume mismatch: checkpoint {_k}={_cc.get(_k, _dflt)!r}, "
+                                   f"this run {_k}={CONFIG[_k]!r}. Use a new --run-name.")
         try:
             raw_model.load_state_dict(ckpt["model"])
         except RuntimeError as e:
@@ -2512,7 +2523,8 @@ def main():
                        if train_stats.get("lst_cells") else float("nan"))
             print(f"  {'thermal':>8s}  train_lst={_tr_lst:.4f}"
                   f"  val_lst={val_diag.get('lst_loss', float('nan')):.4f}"
-                  f"  (pattern Huber, sigma_ST units; val cells="
+                  f"  (train_lst = the trained thermal loss, target={CONFIG['lst_target']}; "
+                  f"val_lst = centred PATTERN Huber -- compare lst_px for dT_pixel; val cells="
                   f"{int(val_diag.get('lst_cells', 0))})"
                   f"  lambda={train_stats.get('lambda_lst', 0.0):.4e}"
                   f"  raw g_sm/g_lst={train_stats.get('lambda_raw_ratio', float('nan')):.4e}"
