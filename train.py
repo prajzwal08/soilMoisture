@@ -1364,7 +1364,6 @@ def input_grad_ratio(raw_model, batch, device, huber_delta, depth_weights=None):
     return res
 
 
-@torch.no_grad()
 class FineAblation:
     """Batch hook for --eval-fine-ablation: replaces everything the fine encoder reads
     (`fine` = 20 m S2/S1/DEM stack with its valid/age flags, and `lulc` at 10 m).
@@ -1446,6 +1445,7 @@ def run_fine_ablation(raw_model, val_loader, device, world_size, rank, is_main, 
               "  A big drop under shuffle/zero = that output reads the 20 m path.", flush=True)
 
 
+@torch.no_grad()
 def evaluate(model, loader, device, world_size=1, rank=0, max_batches=None, per_depth=False,
              huber_delta=0.05, depth_weights=None, diag_out=None, sigma_st=1.0,
              lst_delta=1.0, dT_sd=1.0, lvl_delta=1.0, lst_target="pattern", batch_hook=None):
