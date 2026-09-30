@@ -7919,3 +7919,8 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     map SD 0-10  0.0045  0.0075  0.0058  0.0129
     dT RMSE      -       -       6.10    5.89 K   (r 0.63, skill 0.36)
   No errors (only DDP grad-stride warnings). Too early for a verdict; warmup ends ~ep5.
+  16:57 v2 ep5-7 (past warmup): SELECT 0.0636 0.0606 0.0598 (each a new best.pt, still falling);
+    push lst/sm 0.77 0.41 0.46; fine grad flat ~1e-9 (ep1-7 range 0.35-1.7e-9), rest grew ~100x so
+    ratio 0.003-0.006; map SD 0-10 0.0062 0.0056 0.0046 (drifting down, v1 ended 0.003); dT RMSE 5.77 5.34 5.07 K.
+    No v1-style jump at warmup end. Discussed (not written up, user's choice): stop-grad split -- SM from
+    transformer, decoder trained on dT only; optional DisPATCh-style SM_20m = SM_stn + beta*(dT - tile mean).
