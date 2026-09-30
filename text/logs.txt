@@ -7895,3 +7895,6 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   v2 FULL RUN SUBMITTED on the user's OK ("submit smoke, then full run"): job 27404065,
     lst_tmean_diff_era5do05_coarse03_20260930, log logs/lst_tmean_diff/train_v2_27404065.out,
     ckpt checkpoints/soilmoisture/lst_tmean_diff/lst_tmean_diff_era5do05_coarse03_20260930/ (no backup).
+  IDEA (not built, after v2): replace fine inputs with compact features. S2: NDVI, NDMI (B8A/B11), NBR2
+    (B11/B12) + s2_valid. S1: user REJECTED d_VV (needs a dry reference from fixed years) -> S1 = VV/VH
+    ratio (vegetation, cancels most SM) + s1_age + s1_valid; raw VV kept or dropped still open. Wait for v2.
