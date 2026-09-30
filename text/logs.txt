@@ -8062,3 +8062,6 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     slurm/pw_ablation_compare.sh = CPU, afterok, compare_ablation.py (paired per-station median delta ubRMSE, r, NSE_anom).
     Note: compare reports ubRMSE/r only -- a level fingerprint would not show there. Needs OK.
   PATCHWISE ABLATION SUBMITTED on the user's OK: array 27422709 (0 base, 1 sat cross, 2 sat within, 3 era5 cross; logs logs/pw_ablation_27422709_<i>.out), compare 27422713 afterok (logs/pw_ablation_compare_27422713.out).
+  PATCHWISE ABLATION 27422709 FAILED all 4 tasks in 17 s (compare 27422713 cancelled by dependency): NameError 'arch' in
+    ckpt_utils.load_checkpoint's final print at 2b04fe0 (undefined variable in a print-only line; the checkpoint loaded
+    fine before it). Patched in the WORKTREE only (uncommitted, detached): arch={cfg.get('arch','?')}. Resubmit needs OK.
