@@ -8054,3 +8054,10 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     (R2 0.29-0.45), cell-minus-tile embeddings add ~1% and pick the wetter station of a pair at coin-flip (0.50).
     Amplitude: a hint (r +0.40, CI touches 0) but predictions are near-zero in size. Caveats: 60 pairs / 26 tiles, 38 from
     TxSON; station level differences include sensor calibration; stage 2 learns from CROSS-station residuals.
+  PATCHWISE ABLATION SET UP (not submitted): did pw_stage2a_L3 (best.pt ep2) use the TerraMind embeddings? Never measured
+    (§35.24 fixed the --ablate no-op on patchwise, then the run was never done). Worktree /gpfs/work3/0/prjs1968/wt_pw_ablation
+    at 2b04fe0 (last commit before that checkpoint's 2026-08-27 eval; its own pre-§47 splits + stats, which the ckpt's
+    §35.28 SHA binding checks). slurm/pw_ablation.sh = GPU array 0-3 on val: base | sat cross_station | sat within_station |
+    era5 cross_station (positive control); separate out-dirs under eval_output/pw_stage2a_L3_ablation/.
+    slurm/pw_ablation_compare.sh = CPU, afterok, compare_ablation.py (paired per-station median delta ubRMSE, r, NSE_anom).
+    Note: compare reports ubRMSE/r only -- a level fingerprint would not show there. Needs OK.
