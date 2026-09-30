@@ -8066,3 +8066,8 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     ckpt_utils.load_checkpoint's final print at 2b04fe0 (undefined variable in a print-only line; the checkpoint loaded
     fine before it). Patched in the WORKTREE only (uncommitted, detached): arch={cfg.get('arch','?')}. Resubmit needs OK.
   PATCHWISE ABLATION RESUBMITTED on the user's OK: array 27422772, compare 27422773 afterok (worktree patched print).
+  PATCHWISE ABLATION 27422772 FAILED again (14 s): eval_predict at 2b04fe0 passes use_mmap= which that dataset.py no
+    longer accepts -- 2b04fe0's eval_predict/ckpt_utils were never runnable; the 2026-08-27 eval ran uncommitted fixes,
+    committed later in 9a0b208 (2026-09-15). Checked: 2b04fe0..9a0b208 changes ONLY eval_predict.py + ckpt_utils.py (model,
+    dataset, splits, era5/driver stats identical). Worktree moved to 9a0b208, my print patch discarded. ckpt loads (epoch 2,
+    trained at 1ad49dfa). Resubmit needs OK.
