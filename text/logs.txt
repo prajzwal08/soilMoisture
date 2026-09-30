@@ -7903,3 +7903,5 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   CORRECTION: current fine stack already has s2_age (model.py:142) and orbit -> 17 ch, not 15. Fallback set is
     S2 = NDVI, NDMI, s2_valid, s2_age; S1 = VV, VV/VH, s1_valid, s1_age (+ orbit, VV is incidence-dependent).
   Fallback: DEM and LULC unchanged (as in the current fine stack).
+  Fallback written into the runbook as §54 (fine inputs 19 -> 11 ch; +1000 DN offset before ratios;
+    VV/VH needs a train-split stat). PLANNED only; triggers only if v2 27404065 collapses like v1.
