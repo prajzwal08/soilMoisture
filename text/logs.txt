@@ -7942,3 +7942,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     prints SELECT, map SD, LST pattern r/RMSE/skill, level RMSE, pixel RMSE; exits before W&B, writes nothing.
     Script slurm/eval_fine_ablation_v2.sh. Question: does the 20 m path drive LST (and SM)? Needs user OK;
     run after v2 27404065 ends. Not syntax-checked (no python on login node) -- the job is the check.
+  17:41 v2 ep27-32: SELECT 0.0551 0.0548 0.0552 0.0546 0.0544 (ep31 best) 0.0547; map SD 0.0036-0.0048; dT px RMSE 3.90 3.87 4.07 3.97 3.76 3.69 K; pattern r 0.70-0.71; push 0.27-0.43.
