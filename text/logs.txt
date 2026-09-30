@@ -7933,3 +7933,12 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   17:16 v2 ep17-18: SELECT 0.0554 (ep17 new best) 0.0567; push 0.57 0.42; fine 0.72e-9 0.87e-9; map SD 0.0028 0.0040; dT RMSE 4.18 4.14 K r 0.83.
   dT error split (already logged each epoch, last 4 epochs): TILE MEAN (lst_lvl) RMSE 4.0-4.4 K, bias +0.5..+1.7 K, r 0.82-0.84; WITHIN-TILE (lst_pat) RMSE 1.6-1.7 K vs obs within-tile sd 2.72 K, r 0.67-0.69, skill 0.63. -> the ~4 K pixel error is mostly tile-mean (weather), pattern is decent.
   17:21 v2 ep19-21: SELECT 0.0573 0.0551 (ep20 new best) 0.0557; map SD 0.0042 0.0033 0.0036; dT px RMSE 4.33 4.55 4.15 K; pattern r 0.67-0.70, RMSE 1.59-1.66 K.
+  17:34 v2 at ep28, SELECT best now 0.0548 (still improving slowly).
+  B3 scatter (CR200-18, existing figure): LEVEL (tile - T2m) vs SM r -0.56 (deseas -0.47); PATTERN (cell - tile) vs SM
+    r -0.15 (deseas -0.10), station cell a near-constant 0.5-1.5 K cooler. -> SM info is in the LEVEL, pattern is static
+    (one station). Retracted my "pattern-only dT" suggestion; also weakens the beta/DisPATCh idea.
+  BUILT e24f974 (not run): train.py --eval-fine-ablation [--eval-ckpt best.pt]: loads the ckpt, scores val 3x with the
+    fine-encoder inputs (fine 19 ch + lulc 10 m) intact / shuffled to another station / zeroed (= "no imagery"),
+    prints SELECT, map SD, LST pattern r/RMSE/skill, level RMSE, pixel RMSE; exits before W&B, writes nothing.
+    Script slurm/eval_fine_ablation_v2.sh. Question: does the 20 m path drive LST (and SM)? Needs user OK;
+    run after v2 27404065 ends. Not syntax-checked (no python on login node) -- the job is the check.
