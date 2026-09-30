@@ -8042,3 +8042,15 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     fitted (raw: 3115 tile / 3097 cell features). FAILED only at the last print (my f-string braces); rows.csv + pairs CSVs
     were already written. Numbers meaningless at 41 train rows. Fixed (see next commit). Full run needs OK.
   PROBE FULL SUBMITTED on the user's OK: job 27422021 (code f30f6bc), log logs/probe_offsets_27422021.out.
+  20:31 PROBE FULL 27422021 COMPLETED (4 min, code 983b3ac). 886 tiles, 0 failed, 1011 rows, 60 within-tile pairs over
+    26 tiles / 11 networks (TxSON 38, FMI 9, AmeriFlux 4, rest 1-2). ALL 60 pairs are clean (no train station in a multi-station tile).
+                     stage-1 R2 val/oos   stage-2 R2 (resid) val/oos   pairs r [tile-boot CI]    sign   sd ratio
+    raw   level      0.453 / 0.289        0.010 / 0.013                +0.165 [-0.13,+0.44]      0.50   0.04
+    raw   amp        0.367 / 0.120       -0.008 / 0.002                +0.400 [-0.02,+0.67]      0.57   0.04
+    pca16 level      0.505 / 0.267        0.027 / 0.021                +0.168 [-0.18,+0.55]      0.62   0.25
+    pca16 amp        0.386 / 0.098        0.016 / 0.020                +0.155 [-0.07,+0.51]      0.55   0.25
+    raw stage-2 alpha = 1e5 = TOP of the grid for level and amp: CV shrank the cell weights to ~0 (pred sd 4% of obs).
+    VERDICT (go = clean-pair r CI above 0 and sign > 0.5): NO-GO for level -- tile features predict level well
+    (R2 0.29-0.45), cell-minus-tile embeddings add ~1% and pick the wetter station of a pair at coin-flip (0.50).
+    Amplitude: a hint (r +0.40, CI touches 0) but predictions are near-zero in size. Caveats: 60 pairs / 26 tiles, 38 from
+    TxSON; station level differences include sensor calibration; stage 2 learns from CROSS-station residuals.
