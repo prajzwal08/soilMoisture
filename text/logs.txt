@@ -7975,3 +7975,5 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     transformer. No-LST 27414928 still FAILED (no_grad bug, fixed 5e2029c); resubmit resumes from its last.pt -- needs OK.
   NO-LST RESUBMITTED on the user's OK: job 27417115 (nolst_era5do05_coarse03_20260930, code 03e0294, includes no_grad fix 5e2029c),
     resumes from last.pt (val_pending) -> reruns epoch-1 val. Log logs/lst_tmean_diff/train_nolst_27417115.out.
+  18:55 no-LST 27417115 RUNNING since 18:43 (gcn141, git 0387fd4), ~105 s/epoch, no errors; resumed val ran fine (fix works).
+    SELECT ep1 0.0682 ep2 0.0633 (v2 at ep1-2: 0.0705 0.0706 -- still warmup, not yet comparable). lambda 0, LST metrics ~chance as expected.
