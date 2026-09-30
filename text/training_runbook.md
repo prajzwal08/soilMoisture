@@ -17094,7 +17094,7 @@ Fixed for all stages:
 - Masking vs dropping ERA5: masking hides ~15% of the days inside a window, so the model still
   has the weather. Dropping hides the whole window for 30% of samples (a sample = one station-day).
 
-## §54 Fallback fine inputs — indices instead of raw bands (Session 45, 2026-09-30, PLANNED, nothing built)
+## §54 Fallback fine inputs — S2 indices instead of raw bands (Session 45, 2026-09-30, PLANNED, nothing built)
 
 **Trigger.** Only if the v2 run (job 27404065, `lst_tmean_diff_era5do05_coarse03_20260930`) fails
 the same way v1 did: the fine-imagery gradient ratio drops to ~0 and the 20 m map flattens. If v2
@@ -17111,14 +17111,13 @@ loss does not reward the fine path, indices are ignored too. It is a regulariser
 | group | now (§48, `model.py:142-145`) | fallback |
 |---|---|---|
 | S2 | 10 bands, s2_valid, s2_age (12) | **NDVI, NDMI, s2_valid, s2_age (4)** |
-| S1 | VV, VH, s1_valid, s1_age, orbit (5) | **VV, VV/VH, s1_valid, s1_age, orbit (5)** |
+| S1 | VV, VH, s1_valid, s1_age, orbit (5) | unchanged (5) |
 | DEM | DEM, dem_valid (2) | unchanged (2) |
 | LULC | 8-d learned embedding at 10 m, 2x2 mean | unchanged |
 
 ```
 NDVI  = (B8  - B4 ) / (B8  + B4 )    vegetation amount; how much soil the sensor sees
 NDMI  = (B8A - B11) / (B8A + B11)    SWIR water absorption; canopy + surface moisture
-VV/VH = VV_dB - VH_dB                vegetation / volume scattering (dB difference)
 ```
 
 ### §54.2 Decisions and why
@@ -17130,26 +17129,23 @@ VV/VH = VV_dB - VH_dB                vegetation / volume scattering (dB differen
 2. **No d_VV (change from a dry reference).** User rejected it: it needs a dry reference computed
    from fixed training years. Consequence: S1's wetness signal is only in the raw VV level, mixed
    with roughness and geometry.
-3. **VV kept, not ratio-only.** The ratio cancels most of the SM signal (wet soil raises VV and VH
-   together) and behaves like an S1 NDVI. Without d_VV, raw VV is the only S1 wetness carrier.
-4. **VV + VV/VH instead of VV + VH.** Same information (a linear rewrite in dB); chosen because each
-   channel reads cleanly (VV = wetness + roughness, ratio = vegetation).
-5. **s2_age, s1_age, orbit kept.** A stale scene says less about today; VV depends on incidence,
-   which differs between ascending and descending passes.
-6. **DEM and LULC unchanged.**
+3. **S1 left as it is now (VV, VH, s1_valid, s1_age, orbit).** Considered and set aside: a VV/VH
+   ratio (cancels most of the SM signal since wet soil raises VV and VH together; behaves like an
+   S1 NDVI), and VV + VV/VH (same information as VV + VH, a linear rewrite in dB, and the ratio has
+   no TerraMind constant). Without d_VV, raw VV is the only S1 wetness carrier.
+4. **s2_age kept.** A stale scene says less about today.
+5. **DEM and LULC unchanged.**
 
 ### §54.3 Things to get right when building
 
 - **Harmonisation offset.** S2 DN carry the +1000 offset (min DN 1002, `project_training_blockers`).
   Subtract 1000 from each band BEFORE any ratio, or every index is biased toward 0.
 - **Resolution order.** NDVI: compute at 10 m, then 2x2 mean to 20 m (as §43.4 did). NDMI: B8A and
-  B11 are native 20 m, compute there. VV/VH: 2x2 mean in LINEAR power first, then take dB and the
-  difference (keeps speckle down, §48.2 item 7).
-- **Normalisation.** NDVI/NDMI are already in [-1, 1]; no TerraMind constants apply. VV keeps its
-  TerraMind constant; VV/VH has none and needs a train-split mean/std (new stats file, train only).
+  B11 are native 20 m, compute there.
+- **Normalisation.** NDVI/NDMI are already in [-1, 1]; no TerraMind constants apply, no new stats.
 - **Invalid pixels.** 0 is a real NDVI/NDMI value, so the valid flags carry "missing", as now.
   Guard the division where B8 + B4 or B8A + B11 is ~0.
-- **Layout.** `FINE_CH` 19 -> 11, `FINE_S2`/`FINE_S1`/`FINE_DEM`/`FINE_VALID` slices re-indexed;
+- **Layout.** `FINE_CH` 19 -> 11, `FINE_S2` 12 -> 4 wide so `FINE_S1`/`FINE_DEM`/`FINE_VALID` shift;
   the fine encoder's first conv changes width, so no checkpoint reuse.
 - **Everything else identical to v2** (dT from start, lambda 0.003 fixed, ERA5 dropout 0.5, coarse
   dropout 0.3), so the only change is the fine inputs. Smoke, then full run, each on the user's OK.

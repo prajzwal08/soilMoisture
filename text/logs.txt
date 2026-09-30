@@ -7905,3 +7905,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
   Fallback: DEM and LULC unchanged (as in the current fine stack).
   Fallback written into the runbook as §54 (fine inputs 19 -> 11 ch; +1000 DN offset before ratios;
     VV/VH needs a train-split stat). PLANNED only; triggers only if v2 27404065 collapses like v1.
+  §54 amended: S1 LEFT AS IS (VV, VH, s1_valid, s1_age, orbit); only S2 bands -> NDVI, NDMI. No new stats.
