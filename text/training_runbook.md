@@ -16927,3 +16927,64 @@ imports it AND a verification asserts on it.
 3. CONFIG hashes: era5_stats18 960780057c67d5d2, driver_stats 52436829f08bf963
 4. If the thermal head is on: sigma_ST present in CONFIG and hashed           (§51.4)
 ```
+
+## §52 LST-aux control run and eval build cost (Session 45, 2026-09-30)
+
+### §52.1 What s48_full_20260929 showed about the LST term
+
+Source: `logs/train_27369825.out`, wandb run `s48_full_20260929`.
+
+- lambda_lst stays 0 through warmup (1000 steps, ~ep5). After warmup it is set automatically and settles at ~6.0e-3.
+- The LST pattern skill jumps from -0.04 to 0.69 at ep8, then reaches 0.73. At best ep8, val (477 scenes):
+  r 0.74, RMSE 1.46 K vs obs SD 2.72 K. This is probably the static LULC/terrain pattern (§29), not SM.
+- **The fine input-grad ratio drops at the same moment: 0.12-0.17 (ep1-6) -> 0.04-0.06 (ep7-16).**
+  Once LST pulls, SM depends ~3x less on the 20 m imagery.
+- Best SM epoch = ep8 (SELECT 0.0522), right after LST turns on; after that it overfits.
+- TxSON CR200-18 is still not fixed: pred level spread ~17-18% of observed, r(level) -0.12.
+
+Confound: LST switching on and warmup ending are the same event, so this run cannot say whether the
+drop is LST interference or normal post-warmup dynamics. Only a lambda=0 control can separate them.
+
+### §52.2 The control: s48_nolst_20260930
+
+| item | value |
+|---|---|
+| job | 27385835 (`slurm/train_s48_nolst.sh`, 4x H100, 30 h walltime) |
+| code | 4c104e9, tag `run/s48_nolst_20260930` |
+| diff vs 6f57bdf | only `--checkpoint-dir` (new flag, default unchanged) |
+| flags | `--lambda-lst 0` (no thermal gradient; `require_lst` off) |
+| checkpoints | `/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/s48_lst_ablation/s48_nolst_20260930/` |
+| log | `logs/s48_lst_ablation/train_<jobid>.out` |
+
+Ablation arms go in their own checkpoint/log folders, never in `phase1_sm_only/`.
+
+Compare against s48_full_20260929:
+1. **Fine input-grad ratio per epoch.** If it still falls ~0.15 -> ~0.05 around ep7, the drop is
+   post-warmup dynamics, not LST.
+2. SELECT ubRMSE per depth (vs 0.0570 / 0.0527 / 0.0562, mean 0.0522); within-r; best epoch; overfit onset.
+3. TxSON CR200-18: spread ratio (~0.18) and r(level) (-0.12).
+
+Caveat: one seed per arm. If the difference is below ~0.001 ubRMSE, add a second seed per arm before calling it.
+
+**Before evaluating:** the eval scripts assume `phase1_sm_only/` as the checkpoint dir.
+Point them at `s48_lst_ablation/` first.
+
+### §52.3 Eval cost: dataset build dominates, not inference
+
+eval_predict 27377488 took 2 h 58 min in total. The times below come from the log and the parquet save times:
+
+| split | stations | build | inference |
+|---|---|---|---|
+| val | 89 | ~12 min | 5.0 min |
+| oos | 222 | ~42 min | 13.4 min |
+| oot | 362 | ~59 min | 18.6 min |
+| oost | 115 | ~20 min | 7.5 min |
+
+- Building takes ~10 s per station in every split, reading sequentially from GPFS.
+  Eval unsets `S48_CACHE_ROOT` on purpose, so it cannot use the fast in-RAM copy.
+- It does NOT load the training set. OOT uses the train+val stations by definition
+  (same stations, 2023-2025).
+- Each split is rebuilt from scratch, so val stations are built twice (val, then OOT).
+- Possible fixes (not done): parallel per-station build (I/O-bound, so use a thread pool);
+  build once and share across splits. Worth ~2 h per ablation eval. First time one station to see
+  where the 10 s goes.

@@ -7696,3 +7696,80 @@ NEITHER BLOCKS TRAINING.  Both corrupt what gets REPORTED.
 NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admission in
   eval_predict.py), then the alpha=0 gate -- R2 of tile-mean ST on the 18 ERA5 drivers, input
   already written to csvs/lst_tile_means.csv so it needs no re-read of the 4.5 GB archive.
+
+2026-09-29 (late) -- fine cache DONE, GPU smoke queued
+  fine_cache 27353053 COMPLETED (1h23m): 984 ok + 6 skip_done = 990/990 stations.
+    VERIFY PASS: precompute 60 stn / 1,800 samples bit-identical to raw path;
+    staging 12 stn x 360 dates x 4 checks identical.
+  Committed 6f57bdf: train.sh stages train+val (<=2022, ~186 GB) to /dev/shm/s48_$JOBID via
+    stage_shm.py, exports S48_CACHE_ROOT, trap-removes on exit; preflight requires fine_meta.npz.
+  GPU SMOKE 27355300 (s48_smoke_20260929d, 20 stn, 4 ep, warmup 20, 50 val batches, 3 h),
+    afterok on the cache job; pending on Resources at sign-off. Stages ALL train+val, so it
+    also times staging.
+  NEXT (same day): read smoke -- staging time, samples/s vs old ~40/s GPFS cap, GPU util, loss
+    sanity -- report, then submit the full run on the user's OK.
+
+2026-09-29 (evening) -- GPU smoke 27355300 (s48_smoke_20260929d) PASSED, 9m56s on gcn101
+  preflight: store 993/993 PASS, preflight_s48 886 stn 0 problems.
+  staging: 662 stn, 186.3 GB -> /dev/shm in 243 s (177 GB tmpfs, RAM 272/811 GB).
+  throughput: 4 ranks x 900 samples/epoch in ~5 s (data 1 s, compute 4 s) ~ 700 samples/s vs old ~40/s GPFS cap;
+    gpu_util 80-83%, peak VRAM 39.7/100 GB, grad never clipped, no NaN.
+  learning: select ubRMSE 0.0437 -> 0.0418 (ep3->4), within-station r 0.08 -> 0.24; lambda seeded 4.53e-3
+    after warmup (0.3 x g ratio 0.0151); fine input-grad ratio 0.05-0.10 (reading imagery, weakly); map SD > 0.
+  wandb diag/grad_* "0.0" in the run summary = console rounding to 5 decimals of ~1e-9..1e-8 values, NOT a bug.
+  full-run estimate: 573 x 180 = ~103k samples/epoch -> ~2.5 min train/epoch + staging 4 min.
+  NEXT: user OK -> submit full run.
+  FULL RUN: 27369795 (120 h) held by a maintenance reservation ~Oct 1 evening -> cancelled, resubmitted as 27369825 with --time=30:00:00 (s48_full_20260929, code 6f57bdf, tag run/s48_full_20260929).
+
+2026-09-29 (night) -- FULL RUN 27369825 s48_full_20260929 DONE, early-stopped ep16, best ep8 (57 min)
+  staging 186 GB in 218 s; 573 train (1.10M samples) / 89 val; ~200 steps/epoch, ~98 s compute, gpu 98-99%.
+  best ep8: SELECT ubRMSE depth-mean 0.0522 (0-10 0.0570 | 10-30 0.0527 | 30-100 0.0562);
+    within-station r 0.749 / 0.733 / 0.685, R2_within -0.01 / -0.39 / -0.95 (amplitude off at depth).
+  after ep8 train loss halves (0.00073 -> 0.00039), val flat -> overfitting; LR plateau cut 2e-4 -> 1e-4 at ep13.
+  LST aux: lambda 0 until warmup end (1000 steps ~ ep5), then pattern skill -0.04 -> 0.69 (ep8) -> 0.73; lambda 6.0e-3.
+  fine input-grad ratio 0.12-0.17 (ep1-6) -> 0.04-0.06 (ep7-16): drops right after LST switches on. Unexplained.
+  worst val stations: SNOTEL (mountain/snow) dominate the top of the per-station ubRMSE list.
+  NOT comparable to pw_stage2a (0.0507 @0-10): different split (§47).
+  NEXT: eval_predict on OOT/OOS (fix §51 OOT admission first); look at fine-ratio drop + SNOTEL.
+
+2026-09-29 (late night) -- s48 EVAL built + smoked
+  commit ce1b310: plot_tile_sm_map.py s48 path (full 112x112 map/date, field figure, map/eval check),
+    plot_txson_map --network-ts (all 40, train = squares), eval_metrics per-year OOT/OOST + skip
+    network/ablation parquets, eval_predict manifest git_sha, S48_CACHE_ROOT unset in all eval jobs,
+    new slurm/eval_tilemap.sh, eval_txson_figures.sh, eval_s48_smoke.sh.
+  SMOKE 27377379 PASS (4 min): val+oot 5 stn finite, 0.02-0.47; OOT years 2023-25; CR200-18 6 readouts;
+    map pixel (56,56) == eval_predict on 365 dates (max diff 1.4e-4); every figure renders.
+  first TxSON look (CR200-18, 6 oos stations): predicted station-mean spread 20% of observed (0.012 vs 0.060),
+    r(level) -0.05 over 2016-22; 2019 map: within-tile SD ~0.014, pattern blobby, not landscape-shaped.
+    Same verdict as §26.11 (15-19%, r -0.135) -- the 20 m map does not carry the station field.
+  NEXT: full eval on the user's OK (eval_predict.sh, eval_txson.sh, eval_tilemap.sh, then figures).
+  FULL EVAL submitted (code 185697a): eval_predict 27377488, eval_txson 27377489, tilemap 27377492 (afterok B), eval_figures 27377493 (afterok A), txson_figures 27377494 (afterok B) -> eval_output/s48_full_20260929, figures/eval/s48_full_20260929
+  User logged off 23:45. Eval ETA ~01:30. NEXT SESSION: read the 5 eval jobs, write the §35.33-format report
+    (+ TxSON block) into the runbook as a new §. Session summary for today: s48 smoke -> full train
+    (best ep8, 0.0522) -> eval tooling (ce1b310, 185697a) -> eval smoke PASS -> full eval submitted.
+
+2026-09-30 (early) -- s48 full eval partial read, TWENTE time series queued
+  DONE: eval_txson 27377489, eval_tilemap 27377492, txson_figures 27377494. RUNNING: eval_predict 27377488
+    (val saved, OOS/OOT/OOST in progress); eval_figures 27377493 waits on it.
+  CR200-18 (6 oos): pred level spread 0.028 vs obs 0.158 (~17%), r(obs level, pred level) -0.12; wettest/driest
+    swapped (CR200-25 obs 0.12 -> pred 0.21, CR200-6 obs 0.29 -> pred 0.20). NOT fixed vs patchwise / §27
+    (within one tile ratio 0.19, r -0.18). TxSON 0-10 ubRMSE 0.03-0.06; tile choice moves ubRMSE <=0.014.
+  val LST pattern (477 scenes) best ep8: r 0.74, RMSE 1.46 K vs obs sd 2.72 K, skill 0.71 -- at/below Landsat
+    noise; likely the static LULC/terrain pattern (§29), so it shows the trunk resolves sub-tile structure, not SM.
+  Discussed lambda_frac 0.3 -> 1.0 (LST parity): argued unlikely to fix the SM map (SM head ignores shared
+    structure; LST pattern is not SM). SM-vs-LST coupling check at CR200-18 proposed, user declined for now.
+  NEW slurm/eval_twente_ts.sh: 8 NL TWENTE stations (all oos since §47, end 2020-12, no OOT) -> job 27378798
+    afterok:27377488 -> figures/eval/s48_full_20260929/timeseries_twente/.
+  Patchwise TxSON figures for side-by-side: figures/eval/pw_stage2a_L3/{txson_map_pred_vs_obs.png, tile/ISMN_TxSON_CR200-18_*}.
+  NEXT SESSION: sacct 27377488/27377493/27378798; tie-back vs 0.0522; write the §35.33-format report + TxSON + TWENTE block as a runbook §.
+
+2026-09-30 (day) -- LST-aux control submitted; eval cost diagnosed (runbook §52)
+  eval_predict 27377488 DONE (2h58); eval_figures 27377493 + eval_twente_ts 27378798 DONE. Full report § still to write.
+  LST in s48_full: lambda 0 until warmup end (~ep5), skill -> 0.69 (ep8) / 0.73; fine grad ratio 0.12-0.17 -> 0.04-0.06
+    at the same moment -- confounded with warmup end, so run a lambda=0 control.
+  CONTROL SUBMITTED: job 27385835, run s48_nolst_20260930, --lambda-lst 0, commit 4c104e9 (adds --checkpoint-dir),
+    tag run/s48_nolst_20260930. Own folders: ckpt .../checkpoints/soilmoisture/s48_lst_ablation/, log logs/s48_lst_ablation/.
+    PENDING at time of writing. Eval scripts assume phase1_sm_only -- repoint before evaluating.
+  Eval slowness: ~2h15 of 2h58 was dataset BUILD (~10 s/station, serial GPFS), inference only ~45 min. Not the
+    training set; OOT = train+val stations by design. Fix ideas (parallel build, share across splits) not done.
+  NEXT: when 27385835 finishes, compare fine grad ratio curve, SELECT ubRMSE, TxSON CR200-18 vs s48_full.
