@@ -7926,3 +7926,4 @@ NEXT: fix the two §51 items (assert admitted == expected; filter OOT/OOST admis
     transformer, decoder trained on dT only; optional DisPATCh-style SM_20m = SM_stn + beta*(dT - tile mean).
   16:58 v2 ep8: SELECT 0.0579 (new best), push 0.54, fine grad 0.8e-9, map SD 0-10 0.0029 (v1-level flat), dT RMSE 4.94 K r 0.75.
   17:01 v2 ep9-10: SELECT 0.0577 0.0573 (new bests), push 0.64 0.45, fine grad 0.95e-9 1.09e-9 (back up), map SD 0-10 0.0042 0.0036, dT RMSE 5.14 4.87 K.
+  17:04 v2 ep11: SELECT 0.0580 (no improvement, best stays ep10 0.0573), push 0.50, fine 1.21e-9, map SD 0.0036, dT RMSE 4.64 K r 0.80 (beats v1 final 4.71).
