@@ -17329,3 +17329,39 @@ cell-minus-tile embeddings + soil: R2 ~0.01, alpha at the grid maximum. 60 withi
 Not yet a proof of absence: needs positive controls (predict cell-minus-tile DEM/LULC) and a noise ceiling (same pair
 test with terrain/soil predictors); cf. arXiv 2602.18083 (Prithvi embeddings add nothing over S2 indices + S1, R2
 0.514 vs 0.515, patch-averaged). §24.12 (U-Net) had shown 39% of the satellite effect at 0-10 is date-specific.
+
+## §57 Final run — index fine inputs on the v2 config (Session 46, 2026-10-01, BUILT, nothing submitted)
+
+**Decision (user).** One last run: v2 (`lst_tmean_diff_era5do05_coarse03_20260930`: SM + LST dT_pixel from
+the start, lambda 0.003 fixed, ERA5 whole-window dropout 0.5, coarse dropout 0.3, SIF/TWSA dropout 0) with
+ONE change, the 20 m decoder inputs. The user first said ERA5 0.4, then chose 0.5 so that the fine inputs
+are the only difference from v2. This is §54 carried out, with the S1 choice from §54.4.
+
+| group | v2 (§48 bands, 19 ch) | §57 indices (11 ch) |
+|---|---|---|
+| S2 | 10 bands, s2_valid, s2_age | NDVI, NDMI, s2_valid, s2_age |
+| S1 | VV, VH, s1_valid, s1_age, orbit | VV (cached z), CR = VH/VV in dB as (CR+6.4)/3, s1_valid, s1_age, orbit |
+| DEM | asinh relief, dem_valid | unchanged |
+| LULC | 8-d embedding | unchanged |
+
+S1 discussion (user asked "VV, VV/VH or what?"): VV is the soil-moisture channel (surface scattering,
+dielectric). VH is mostly canopy volume scattering. VH/VV largely cancels SM because wet soil raises both,
+so it is a vegetation descriptor that lets the network judge how far to trust VV. RVI = 4r/(1+r) with
+r = VH/VV is a monotone rewrite of the same information, so it was not added. User: no new S1
+normalisation stats (VV keeps the cached TerraMind z, CR gets fixed constants).
+
+**Implementation: on the device, not precomputed.** `model.fine_to_indices` converts the 19-ch tensor AFTER
+modality dropout inside `FineEncoder.forward`, so dataset.py, the fine cache, FineAblation and eval are
+untouched. The pooled DN are recovered exactly (z-score is affine, the pool is a masked mean); -1000 DN
+(baseline-4.0 store) before the ratios; index = 0 where the valid fraction is 0 or |a+b| < 10 DN. Layout via
+`fine_layout(mode)`. `train.py --fine-inputs {bands,indices}` (default bands), stamped in CONFIG, echoed,
+resume guard refuses a mismatch; `ckpt_utils` builds the right model for eval. Precomputing would need a new
+~150 GB cache to save a few element-wise ops per batch; the smoke compares s/step with v2's smoke.
+
+**Gates.** `sbatch slurm/verify_s57.sh` (compile + verify_s48 for bands mode + verify_s57: constants vs
+fine_stats.json, synthetic encoder, all-zero -> zero, modality dropout, NDVI/NDMI/CR vs the raw store,
+ranges, DN<1000 rate before/after 2022-01-25, real samples, v2 best.pt still loads) -> OK ->
+`slurm/train_lst_dT_idx_smoke.sh` -> OK -> `slurm/train_lst_dT_idx.sh` (run
+`lst_dT_idx_era5do05_coarse03_20261001`, tag `run/...` at submit). Read-out: val SELECT vs v2 0.0537 (and
+no-LST 0.0487 for context), dT px RMSE, fine grad ratio, then `--eval-fine-ablation` on best.pt.
+Expectation: §53 showed SM ignores the 20 m path, so indices are a regulariser, not a cure.

@@ -8115,3 +8115,11 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   - patchwise ablation 27422859 INVALID (worktree read main-repo csvs); §55 patchwise + ERA5 dropout 0.5 BUILT and
     path-fixed (feat/pw-era5-dropout 2b11951/feeddb1), smoke mechanics OK on the wrong split.
   Runbook: §55.7 (status + next steps), §56 (results). NEXT SESSION: user's OK for re-smoke and baseline eval 0-4.
+
+2026-10-01 SESSION 46 — §57 final run BUILT (nothing submitted).
+  User: last run = v2 config (dT_pixel, lambda 0.003, coarse 0.3, ERA5 whole dropout 0.5 — user moved 0.4 -> 0.5
+  so only the fine inputs change) with decoder inputs NDVI, NDMI, VV, VH/VV (dB), DEM asinh, LULC.
+  S1: VV carries SM; VH/VV is a vegetation descriptor (RVI = same info, not added). No new S1 stats.
+  Built in model.py (fine_to_indices on GPU after modality dropout, fine_layout), train.py --fine-inputs,
+  ckpt_utils. Scripts: slurm/verify_s57.sh, slurm/train_lst_dT_idx_smoke.sh, slurm/train_lst_dT_idx.sh. Runbook §57.
+  NEXT: verify job (needs OK) -> smoke (OK) -> full (OK).

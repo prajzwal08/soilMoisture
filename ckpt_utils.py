@@ -92,6 +92,7 @@ def load_checkpoint(ckpt_path: Path, device):
         drop_path_rate   = cfg.get("drop_path_rate", 0.0),
         fine_skips       = cfg.get("fine_skips", "cnn"),
         modality_dropout = cfg.get("modality_dropout", 0.2),
+        fine_inputs      = cfg.get("fine_inputs", "bands"),
     ).to(device)
 
     # strict=True, deliberately: a mismatched checkpoint must never become a randomly

@@ -145,6 +145,67 @@ FINE_DEM   = slice(17, 19)   # DEM | dem_valid
 FINE_CH    = 19
 FINE_VALID = {"s2": 10, "s1": 14, "dem": 18}     # absolute channel index of each flag
 
+# §57 "indices" fine inputs (19 -> 11 ch). The dataset still delivers the 19-ch tensor above;
+# FineEncoder converts it on the device, AFTER modality dropout, so every caller (dataset,
+# cache, FineAblation, eval) is unchanged. Layout of the converted tensor:
+FINE_IDX_S2    = slice(0, 4)     # NDVI | NDMI | s2_valid | s2_age
+FINE_IDX_S1    = slice(4, 9)     # VV (cached z) | CR = VH/VV in dB, (CR+6.4)/3 | s1_valid | s1_age | orbit
+FINE_IDX_DEM   = slice(9, 11)    # DEM | dem_valid
+FINE_IDX_CH    = 11
+FINE_IDX_VALID = {"s2": 2, "s1": 6, "dem": 10}
+
+# De-normalisation constants: TerraMind's, as in csvs/fine_stats.json (SHA'd into CONFIG;
+# verify_s57.py asserts these equal the file). Kept bands B02 B03 B04 B05 B06 B07 B08 B8A B11 B12.
+_S2_IDX  = {"B04": 2, "B08": 6, "B8A": 7, "B11": 8}
+_S2_MEAN = {"B04": 1853.91,  "B08": 3083.234, "B8A": 3132.22,  "B11": 2424.884}
+_S2_STD  = {"B04": 2134.138, "B08": 1871.918, "B8A": 1753.829, "B11": 1434.261}
+S2_BOA_OFFSET = 1000.0           # baseline-4.0 store: 1000 DN = 0 reflectance, every scene
+_S1_MEAN = (-10.93, -17.329)     # VV, VH dB
+_S1_STD  = (4.391, 4.459)
+CR_SHIFT, CR_SCALE = 6.4, 3.0    # fixed, not fitted: (CR + 6.4) / 3 (§54.4)
+_IDX_DEN_FLOOR = 10.0            # DN: |a + b| under 0.001 reflectance -> index 0
+
+
+def fine_to_indices(fine: torch.Tensor) -> torch.Tensor:
+    """(B, 19, H, W) z-scored fine tensor -> (B, 11, H, W) index tensor (§57).
+
+    NDVI = (B08 - B04)/(B08 + B04), NDMI = (B8A - B11)/(B8A + B11) on the pooled DN with the
+    +1000 offset removed (ratio of 2x2 means). CR = VH_dB - VV_dB. Index and CR channels are 0
+    wherever their valid fraction is 0, so a dropped or ablated modality stays "missing".
+    """
+    f = fine.float()
+
+    def dn(b):
+        return f[:, _S2_IDX[b]] * _S2_STD[b] + _S2_MEAN[b] - S2_BOA_OFFSET
+
+    def nd(a, b):
+        num, den = a - b, a + b
+        ok = den.abs() > _IDX_DEN_FLOOR
+        return torch.where(ok, num / torch.where(ok, den, torch.ones_like(den)),
+                           torch.zeros_like(den)).clamp(-1.0, 1.0)
+
+    s2v = (f[:, FINE_VALID["s2"]] > 0).to(f.dtype)
+    s1v = (f[:, FINE_VALID["s1"]] > 0).to(f.dtype)
+    ndvi  = nd(dn("B08"), dn("B04")) * s2v
+    ndmi  = nd(dn("B8A"), dn("B11")) * s2v
+    vv_db = f[:, 12] * _S1_STD[0] + _S1_MEAN[0]
+    vh_db = f[:, 13] * _S1_STD[1] + _S1_MEAN[1]
+    cr    = (vh_db - vv_db + CR_SHIFT) / CR_SCALE * s1v
+    return torch.stack([
+        ndvi, ndmi, f[:, 10], f[:, 11],                     # S2
+        f[:, 12] * s1v, cr, f[:, 14], f[:, 15], f[:, 16],   # S1
+        f[:, 17], f[:, 18],                                 # DEM
+    ], dim=1)
+
+
+def fine_layout(fine_inputs: str = "bands") -> dict:
+    if fine_inputs == "bands":
+        return {"s2": FINE_S2, "s1": FINE_S1, "dem": FINE_DEM, "ch": FINE_CH, "valid": FINE_VALID}
+    if fine_inputs == "indices":
+        return {"s2": FINE_IDX_S2, "s1": FINE_IDX_S1, "dem": FINE_IDX_DEM, "ch": FINE_IDX_CH,
+                "valid": FINE_IDX_VALID}
+    raise ValueError(f"fine_inputs must be 'bands' or 'indices', got {fine_inputs!r}")
+
 LULC_N_CLASSES = 10          # TerraMind LULC indices 0..9
 LULC_PAD       = 10          # nodata; maps to a fixed zero embedding
 LULC_EMB_DIM   = 8
@@ -224,25 +285,28 @@ class FineEncoder(nn.Module):
     so train and eval batches from the dataset are identical.
     """
 
-    def __init__(self, fine_skips: str = "cnn", modality_dropout: float = 0.2):
+    def __init__(self, fine_skips: str = "cnn", modality_dropout: float = 0.2,
+                 fine_inputs: str = "bands"):
         super().__init__()
         if fine_skips not in ("cnn", "pool"):
             raise ValueError(f"fine_skips must be 'cnn' or 'pool', got {fine_skips!r}")
         self.fine_skips       = fine_skips
         self.modality_dropout = modality_dropout
+        self.fine_inputs      = fine_inputs
+        L = self.layout       = fine_layout(fine_inputs)   # §57: "bands" 19 ch | "indices" 11 ch
 
         self.lulc_emb = nn.Embedding(LULC_N_CLASSES + 1, LULC_EMB_DIM, padding_idx=LULC_PAD)
 
         if fine_skips == "cnn":
-            self.stem_s2   = _stem(FINE_S2.stop - FINE_S2.start, 16)
-            self.stem_s1   = _stem(FINE_S1.stop - FINE_S1.start, 8)
-            self.stem_dem  = _stem_dem(FINE_DEM.stop - FINE_DEM.start, 4)
+            self.stem_s2   = _stem(L["s2"].stop - L["s2"].start, 16)
+            self.stem_s1   = _stem(L["s1"].stop - L["s1"].start, 8)
+            self.stem_dem  = _stem_dem(L["dem"].stop - L["dem"].start, 4)
             self.stem_lulc = _stem(LULC_EMB_DIM, 4)
             self.enc1 = _ConvBlock(32, ENC_CH[0])
             self.enc2 = _ConvBlock(ENC_CH[0], ENC_CH[1], stride=2)
             self.enc3 = _ConvBlock(ENC_CH[1], ENC_CH[2], stride=2)
         else:
-            n_in = FINE_CH + LULC_EMB_DIM
+            n_in = L["ch"] + LULC_EMB_DIM
             self.pool_proj = nn.ModuleList([nn.Conv2d(n_in, c, 1) for c in ENC_CH])
 
     def _drop_modality(self, fine: torch.Tensor) -> torch.Tensor:
@@ -264,14 +328,17 @@ class FineEncoder(nn.Module):
 
     def forward(self, fine: torch.Tensor, lulc: torch.Tensor):
         """Returns [E1 (B,32,112,112), E2 (B,64,56,56), E3 (B,128,28,28)]."""
-        fine = self._drop_modality(fine.float())
+        fine = self._drop_modality(fine.float())          # on the 19-ch tensor in both modes
+        if self.fine_inputs == "indices":
+            fine = fine_to_indices(fine)
         lulc = self._lulc_20m(lulc.long())
+        L = self.layout
 
         if self.fine_skips == "cnn":
             x = torch.cat([
-                self.stem_s2(fine[:, FINE_S2]),
-                self.stem_s1(fine[:, FINE_S1]),
-                self.stem_dem(fine[:, FINE_DEM]),
+                self.stem_s2(fine[:, L["s2"]]),
+                self.stem_s1(fine[:, L["s1"]]),
+                self.stem_dem(fine[:, L["dem"]]),
                 self.stem_lulc(lulc),
             ], dim=1)                                                  # (B, 32, 112, 112)
             e1 = self.enc1(x)
@@ -283,9 +350,10 @@ class FineEncoder(nn.Module):
         # cloudy 20 m pixel is the mean of the other three, not diluted toward zero.
         x = torch.cat([fine, lulc], dim=1)                             # (B, 27, 112, 112)
         m = torch.ones_like(x[:, :1]).expand_as(x).clone()
-        for name, sl in (("s2", FINE_S2), ("s1", FINE_S1), ("dem", FINE_DEM)):
-            m[:, sl] = fine[:, FINE_VALID[name]:FINE_VALID[name] + 1]
-        m[:, FINE_CH:] = (lulc.abs().sum(1, keepdim=True) > 0).to(x.dtype)
+        for name in ("s2", "s1", "dem"):
+            v = L["valid"][name]
+            m[:, L[name]] = fine[:, v:v + 1]
+        m[:, L["ch"]:] = (lulc.abs().sum(1, keepdim=True) > 0).to(x.dtype)
         outs = []
         for k, proj in zip((1, 2, 4), self.pool_proj):
             outs.append(proj(x if k == 1 else _masked_avg_pool(x, m, k)))
@@ -486,6 +554,7 @@ class SoilMoistureModel(nn.Module):
         head_bias_init:   list[float] | None = None,
         fine_skips:       str   = "cnn",
         modality_dropout: float = 0.2,
+        fine_inputs:      str   = "bands",
     ):
         super().__init__()
         self.d_model  = d_model
@@ -553,7 +622,8 @@ class SoilMoistureModel(nn.Module):
 
         # ── Fine path + decoder ───────────────────────────────────────
         self.fine_encoder = FineEncoder(fine_skips=fine_skips,
-                                        modality_dropout=modality_dropout)
+                                        modality_dropout=modality_dropout,
+                                        fine_inputs=fine_inputs)
         self.decoder = UNetDecoder(in_ch=d_model, n_depths=n_depths, d_context=d_model,
                                    head_bias_init=head_bias_init)
 
