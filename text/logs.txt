@@ -8123,3 +8123,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   Built in model.py (fine_to_indices on GPU after modality dropout, fine_layout), train.py --fine-inputs,
   ckpt_utils. Scripts: slurm/verify_s57.sh, slurm/train_lst_dT_idx_smoke.sh, slurm/train_lst_dT_idx.sh. Runbook §57.
   NEXT: verify job (needs OK) -> smoke (OK) -> full (OK).
+  §57 verify job 27439912 submitted on OK (log logs/verify_s57_27439912.out).
+  27439912 PENDING: ReqNodeNotAvail, Reserved for maintenance.
