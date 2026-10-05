@@ -14,10 +14,10 @@ SPLIT_LS, SPLIT_MARKER, HEX_CMAP, PRED_COLOR, OBS_COLOR, OOT_SHADE, BW, FS, XROT
 """
 import matplotlib.pyplot as plt
 
-# Nature / NPG (user pick 2026-10-05, from the seven-palette sheet): navy / green / red.
-# Colour-blind safe (dataviz validate_palette.js: worst CVD dE 11.6 deutan, normal-vision dE 23.1).
-# BLUE=OOS (navy), GREEN=OOT, RED=OOST.
-BLUE, GREEN, RED = "#3C5488", "#00A087", "#E64B35"
+# Option H (user pick 2026-10-05, replaces Nature/NPG): dark blue / light blue / orange.
+# Colour-blind safe (dataviz validate_palette.js: worst CVD dE 22.3 deutan, normal-vision dE 28.8).
+# BLUE=OOS (dark blue), GREEN=OOT (light blue), RED=OOST (orange).
+BLUE, GREEN, RED = "#08519C", "#6BAED6", "#E6550D"
 
 GREYS = {"oos": "0.15", "oot": "0.45", "oost": "0.70", "val": "0.88", "train": "0.30"}
 HATCH = {"oos": "", "oot": "////", "oost": "....", "val": "xxxx", "train": "\\\\\\\\"}
