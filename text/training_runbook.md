@@ -17522,3 +17522,18 @@ Reading: ~0.049 with gap ~2.4x -> wd caused §60's loss and static dropout is a 
 Compare at ep10 against §59 ep10 (0.0488).
 
 Status: built, NOT submitted. Smoke and full each need the user's OK.
+
+## §65 No-LST, 3 layers, weight decay 0.3 ONLY (Session 47, 2026-10-05)
+
+Why: depth sweep done (§63): 1L 0.0510 / 2L 0.0494 / 3L 0.0488 / 6L 0.0500 at ep10, gap 2.7-2.9x at every depth, so
+3 layers stays and depth is not what drives memorisation. Weight decay was never tested cleanly: 0.05 (§59) is the only
+clean point; 0.2 (§61) and 0.5 (§60) were bundled with other changes. §65 = §59 + `--weight-decay 0.3`, nothing else.
+
+Why 0.3 and not 0.1: AdamW shrinks weights by at most lr * wd * steps over the run. With lr 2e-4 and ~2000 steps in
+10 epochs that is ~2% at 0.05, ~4% at 0.1 (likely inside seed noise), ~12% at 0.3, ~20% at 0.5.
+
+Run nolst_L3_wu200_wd03_20261005, slurm/train_s65.sh, 4x H100, 10 epochs (~420 SBU). Compare at ep10 vs §59 0.0488 /
+gap 2.89x. Reading: gap clearly below 2.9x at SELECT <= ~0.049 -> wd is a free cut to memorisation; SELECT worse ->
+wd costs skill (and §60's loss was at least partly wd, not static dropout).
+
+Status: built, NOT submitted. Needs the user's OK.
