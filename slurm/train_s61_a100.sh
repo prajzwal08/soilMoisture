@@ -21,7 +21,7 @@
 set -euo pipefail
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
-bash slurm/train.sh --run-name nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005 \
+bash slurm/train.sh --run-name nolst_L3_idx_nzi_cd05_wd02_lr1e4_a100_20261005 \
     --checkpoint-dir /gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff \
     --lst-target dT_pixel --lambda-lst 0 \
     --era5-dropout 0.5 --coarse-dropout 0.5 --sif-twsa-dropout 0 \
