@@ -37,7 +37,7 @@ MIN_N_UBRMSE = 2    # anomalies need at least two points
 
 META_COLS = [
     "station_key", "latitude", "longitude", "IGBP", "igbp_macro",
-    "koppen_geiger", "kg_macro", "elevation_band", "n_years",
+    "koppen_geiger", "kg_macro", "elevation_band", "network", "n_years",
     "start_date", "end_date", "split",
 ]
 

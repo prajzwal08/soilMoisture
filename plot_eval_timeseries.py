@@ -53,6 +53,11 @@ DEPTH_LABELS = {"0-10": "0-10 cm", "10-30": "10-30 cm", "30-100": "30-100 cm"}
 SPLITS_CSV   = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
 RANK_DEPTH   = "0-10"
 GAP_DAYS     = 15      # break the prediction line across gaps longer than this
+# replaced by plot_style_bw.apply under --style bw (None = depth colour / the defaults below)
+PRED_COLOR   = None
+OBS_COLOR    = "black"
+OOT_SHADE    = "#9b59b6"
+BW           = False
 
 
 def select_stations(df: pd.DataFrame, n: int, min_n: int, rank_metric: str,
@@ -193,10 +198,11 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
         gap   = np.diff(dates).astype("timedelta64[D]").astype(int) > GAP_DAYS
         pred[np.append(gap, False)] = np.nan
 
-        ax.plot(dates, pred, "-", lw=0.9, color=DEPTH_COLORS[depth],
-                label="predicted", zorder=2)
-        ax.plot(g["date"], g["obs"], ".", ms=1.9, color="black",
-                label="observed", zorder=3)
+        # BW: observed grey dots UNDER a black prediction line, so the line stays readable
+        ax.plot(dates, pred, "-", lw=0.9, color=PRED_COLOR or DEPTH_COLORS[depth],
+                label="predicted", zorder=3 if BW else 2)
+        ax.plot(g["date"], g["obs"], ".", ms=1.9, color=OBS_COLOR,
+                label="observed", zorder=2 if BW else 3)
 
         m = metrics_from_arrays(g["pred"].to_numpy(np.float64),
                                 g["obs"].to_numpy(np.float64))
@@ -210,8 +216,8 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
         # OOS stations continue into 2023 as OOST -- mark the boundary
         if split == "oos" and g["date"].max() >= pd.Timestamp("2023-01-01"):
             ax.axvspan(pd.Timestamp("2023-01-01"), g["date"].max(),
-                       color="#9b59b6", alpha=0.08, lw=0, zorder=0)
-            ax.axvline(pd.Timestamp("2023-01-01"), color="#9b59b6",
+                       color=OOT_SHADE, alpha=0.08, lw=0, zorder=0)
+            ax.axvline(pd.Timestamp("2023-01-01"), color=OOT_SHADE,
                        lw=0.8, ls="--", zorder=1)
 
         ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nSM (m$^3$/m$^3$)",
@@ -260,7 +266,12 @@ def main():
                    help="depth whose metric decides best/worst or below/above")
     p.add_argument("--seed",        type=int, default=0,
                    help="--select median: seed for the random draw")
+    p.add_argument("--style", choices=["color", "bw"], default="color",
+                   help="bw = black-and-white publication style (plot_style_bw.py)")
     args = p.parse_args()
+    if args.style == "bw":
+        import plot_style_bw
+        plot_style_bw.apply(globals())
     if args.select == "named" and not args.stations:
         p.error("--select named requires --stations")
 
@@ -317,7 +328,7 @@ def main():
                                split, n_total)
             name = (f"{info['rank']}_{info['rank_idx']:02d}_"
                     f"{info['station_key']}.png")
-            fig.savefig(split_dir / name, dpi=300, bbox_inches="tight")
+            fig.savefig(split_dir / name, dpi=600 if BW else 300, bbox_inches="tight")
             figs.append(fig)
             print(f"    {info['rank']:>5s} {info['rank_idx']:>2d}  "
                   f"{info['station_key']:<45s} "

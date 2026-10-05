@@ -33,7 +33,7 @@ export PYTHONUNBUFFERED=1
 RUN="${1:?usage: sbatch slurm/eval_figures.sh <run-name> [extra plot args]}"
 shift
 IN="eval_output/${RUN}"
-OUT="figures/eval/${RUN}"
+OUT="${OUT:-figures/eval/${RUN}}"      # e.g. OUT=figures/eval/<run>_bw for --style bw
 RUN_PY="conda run -n terramind --no-capture-output python"
 
 echo "=== eval_figures  job ${SLURM_JOB_ID}  started $(date) ==="
@@ -67,9 +67,13 @@ echo ""; echo "───────── ubRMSE by depth x split ────�
 # run's own early stopping used, so it is the tie-back to the training log.
 $RUN_PY plot_eval_boxplot.py --in-dir "${IN}" --out-dir "${OUT}" \
     --splits ${SPLITS} "$@"
+for M in RMSE bias; do                 # §66: level error next to the dynamics error
+    $RUN_PY plot_eval_boxplot.py --in-dir "${IN}" --out-dir "${OUT}" \
+        --splits ${SPLITS} --metric ${M} "$@"
+done
 
 echo ""; echo "───────── ubRMSE by land cover / climate ─────────"
-for BY in igbp_macro kg_macro; do
+for BY in igbp_macro kg_macro elevation_band network; do
     echo "--- --by ${BY} ---"
     $RUN_PY plot_eval_ecosystem.py --in-dir "${IN}" --out-dir "${OUT}" \
         --by "${BY}" "$@"
@@ -90,7 +94,7 @@ $RUN_PY plot_eval_timeseries.py --in-dir "${IN}" \
     --out-dir "${OUT}/timeseries" --splits oos \
     --select named --stations \
         ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25 ISMN_TxSON_CR1000-2 \
-        ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6
+        ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6 "$@"
 
 echo ""
 echo "=== All done $(date) ==="

@@ -37,17 +37,21 @@ DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
 DEPTH_LABELS = {"0-10": "0-10 cm", "10-30": "10-30 cm", "30-100": "30-100 cm"}
 SPLIT_COLORS = {"oos": "#1a6faf", "oot": "#e8851a", "oost": "#9b59b6", "val": "#7f8c8d"}
 SPLIT_LABELS = {"oos": "OOS (novel stations, 2016-2022)",
-                "oot": "OOT (seen stations, 2023)",
-                "oost": "OOST (novel stations, 2023)",
+                "oot": "OOT (seen stations, 2023-2025)",
+                "oost": "OOST (novel stations, 2023-2025)",
                 "val": "val (internal)"}
 HELD_OUT = ["oos", "oot", "oost"]
+HEX_CMAP    = "viridis"     # these four are replaced by plot_style_bw.apply under --style bw
+SPLIT_MARKER = {}
+SPLIT_LS    = {}
+BW          = False
 SM_LIM   = (0.0, 0.62)
 
 
 def save(fig, out_dir: Path, name: str):
     out_dir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{name}.{ext}", dpi=300, bbox_inches="tight")
+        fig.savefig(out_dir / f"{name}.{ext}", dpi=600 if BW else 300, bbox_inches="tight")
     plt.close(fig)
     print(f"  → {out_dir/name}.png")
 
@@ -85,7 +89,7 @@ def fig_pred_obs(preds: dict, out_dir: Path):
             p = g["pred"].to_numpy(np.float64)
             t = g["obs"].to_numpy(np.float64)
             hb = ax.hexbin(t, p, gridsize=55, extent=(*SM_LIM, *SM_LIM),
-                           bins="log", mincnt=1, cmap="viridis", linewidths=0)
+                           bins="log", mincnt=1, cmap=HEX_CMAP, linewidths=0)
             ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
 
             m = metrics_from_arrays(p, t)
@@ -219,7 +223,8 @@ def fig_ubrmse_vs_offset(ps_all: pd.DataFrame, out_dir: Path):
             if g.empty:
                 continue
             ax.scatter(g["ubRMSE"], g["bias"].abs(), s=13, alpha=0.65,
-                       c=SPLIT_COLORS[split], edgecolors="none",
+                       c=SPLIT_COLORS[split], edgecolors="k" if BW else "none",
+                       linewidths=0.3, marker=SPLIT_MARKER.get(split, "o"),
                        label=split.upper())
         lim = (0, 0.2)
         ax.plot(lim, lim, "k--", lw=0.8, zorder=1)
@@ -276,8 +281,9 @@ def fig_oot_error_vs_doy(preds: dict, out_dir: Path, n_bins: int = 24):
                 (g["z"].to_numpy()[idx == b].std(ddof=1) /
                  max(np.sqrt((idx == b).sum()), 1)) if (idx == b).sum() > 1 else np.nan
                 for b in range(n_bins)])
-            ax.plot(centers, mean, "-o", ms=2.5, lw=1.1,
-                    color=SPLIT_COLORS[split], label=split.upper())
+            ax.plot(centers, mean, ms=2.5, lw=1.1,
+                    color=SPLIT_COLORS[split], ls=SPLIT_LS.get(split, "-"),
+                    marker=SPLIT_MARKER.get(split, "o"), label=split.upper())
             ax.fill_between(centers, mean - se, mean + se, alpha=0.18,
                             color=SPLIT_COLORS[split], lw=0)
 
@@ -297,7 +303,12 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--in-dir",  default="eval_output")
     p.add_argument("--out-dir", default="figures/eval")
+    p.add_argument("--style", choices=["color", "bw"], default="color",
+                   help="bw = black-and-white publication style (plot_style_bw.py)")
     args = p.parse_args()
+    if args.style == "bw":
+        import plot_style_bw
+        plot_style_bw.apply(globals())
 
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
     preds = load_predictions(in_dir)

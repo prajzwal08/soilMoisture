@@ -37,9 +37,11 @@ DEPTH_COLS   = {"0-10": "0_10", "10-30": "10_30", "30-100": "30_100"}
 DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
 DEPTH_LABELS = {"0-10": "0-10 cm", "10-30": "10-30 cm", "30-100": "30-100 cm"}
 SPLIT_COLORS = {"oos": "#1a6faf", "oot": "#e8851a", "oost": "#9b59b6", "val": "#7f8c8d"}
+SPLIT_HATCH  = {}          # filled by plot_style_bw.apply under --style bw
+BW           = False
 SPLIT_LABELS = {"oos": "OOS (novel stations, 2016-2022)",
-                "oot": "OOT (seen stations, 2023)",
-                "oost": "OOST (novel stations, 2023)",
+                "oot": "OOT (seen stations, 2023-2025)",
+                "oost": "OOST (novel stations, 2023-2025)",
                 "val": "val (internal)"}
 METRIC_LABELS = {"ubRMSE": "per-station ubRMSE (m$^3$/m$^3$)",
                  "RMSE":   "per-station RMSE (m$^3$/m$^3$)",
@@ -50,7 +52,7 @@ METRIC_LABELS = {"ubRMSE": "per-station ubRMSE (m$^3$/m$^3$)",
 def save(fig, out_dir: Path, name: str):
     out_dir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{name}.{ext}", dpi=300, bbox_inches="tight")
+        fig.savefig(out_dir / f"{name}.{ext}", dpi=600 if BW else 300, bbox_inches="tight")
     plt.close(fig)
     print(f"  → {out_dir/name}.png")
 
@@ -109,7 +111,8 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
                         capprops=dict(lw=0.7))
         for patch in bp["boxes"]:
             patch.set_facecolor(SPLIT_COLORS[split])
-            patch.set_alpha(0.55)
+            patch.set_hatch(SPLIT_HATCH.get(split, ""))
+            patch.set_alpha(1.0 if BW else 0.55)
             patch.set_edgecolor("k")
 
         # median on a clean row at the top, station count below the axis
@@ -119,7 +122,7 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
             ax.annotate(f"{np.median(v):.3f}", xy=(x, 0.985),
                         xycoords=("data", "axes fraction"),
                         ha="center", va="top", fontsize=5.5,
-                        color=SPLIT_COLORS[split])
+                        color="black" if BW else SPLIT_COLORS[split])
             ax.annotate(f"n={len(v)}", xy=(x, 0), xycoords=("data", "axes fraction"),
                         xytext=(0, -14), textcoords="offset points",
                         ha="center", va="top", fontsize=5.5, color="grey")
@@ -139,7 +142,8 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
     ax.set_ylabel(METRIC_LABELS.get(metric, metric))
     ax.grid(axis="y", lw=0.4, alpha=0.35)
     ax.set_axisbelow(True)
-    ax.legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=0.55,
+    ax.legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=1.0 if BW else 0.55,
+                             hatch=SPLIT_HATCH.get(s, ""),
                              label=SPLIT_LABELS.get(s, s.upper()))
                        for s in splits],
               fontsize=6, frameon=False, loc="upper left",
@@ -174,7 +178,12 @@ def main():
                    choices=["ubRMSE", "RMSE", "MAE", "bias"])
     p.add_argument("--no-points", action="store_true",
                    help="boxes only, no per-station dots")
+    p.add_argument("--style", choices=["color", "bw"], default="color",
+                   help="bw = black-and-white publication style (plot_style_bw.py)")
     args = p.parse_args()
+    if args.style == "bw":
+        import plot_style_bw
+        plot_style_bw.apply(globals())
 
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
     long = load_long(in_dir, args.splits, args.metric)
