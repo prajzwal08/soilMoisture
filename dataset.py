@@ -1134,6 +1134,7 @@ class SoilMoistureDataset(Dataset):
         era5_dropout:    float       = 0.0,
         sif_twsa_dropout: float      = 0.5,
         coarse_dropout:  float       = 0.0,
+        static_dropout:  float       = 0.0,
     ):
         self.training = training
         # §53: whole-ERA5 modality dropout (training only): with this probability per sample the
@@ -1148,6 +1149,11 @@ class SoilMoistureDataset(Dataset):
         # S2/S1 history — so any spatial structure in the SM map must come from the 20 m fine
         # path. Reuses the "no scene in the window" path (zero anchor, anchor_found False).
         self.coarse_dropout = float(coarse_dropout)
+        # §60: static dropout (training only): DEM, LULC and soil are each withheld independently
+        # with this probability per sample — trunk tokens zeroed + key-padded via {dem,lulc,soil}_valid,
+        # and the SAME group in the fine path (DEM channels, LULC map), so the station fingerprint
+        # cannot route through the other path.
+        self.static_dropout = float(static_dropout)
         # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
         # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
         self.years    = list(years) if years else list(TRAIN_YEARS)
@@ -1542,6 +1548,20 @@ class SoilMoistureDataset(Dataset):
         # ── Fine path: most recent raw imagery on or before day D ─────────
         fine, lulc, _ = build_fine(self._raw.get(sat_dir), cache, year, doy, self._fine_stats)
 
+        # §60 static dropout: FRESH tensors, never in-place on the cached statics.
+        dem_pyr, lulc_pyr = _static["dem_pyr"], _static["lulc_pyr"]
+        dem_valid = lulc_valid = soil_valid = True
+        if self.training and self.static_dropout > 0.0:
+            if random.random() < self.static_dropout:
+                dem_pyr, dem_valid = _zeros_like(dem_pyr), False
+                fine = fine.clone()
+                fine[FINE_DEM] = 0                    # DEM | dem_valid
+            if random.random() < self.static_dropout:
+                lulc_pyr, lulc_valid = _zeros_like(lulc_pyr), False
+                lulc = torch.full_like(lulc, LULC_PAD)
+            if random.random() < self.static_dropout:
+                soil_patch, soil_valid = _zeros_like(soil_patch), False
+
         # ── Thermal target: the Landsat scene on day D itself, or all-NaN ──
         lst_obs = torch.full((LST_N, LST_N), float("nan"), dtype=torch.float32)
         lst = self._lst.get(sat_dir)
@@ -1614,8 +1634,12 @@ class SoilMoistureDataset(Dataset):
             "anchor_rel_pos": torch.tensor(anchor_rp, dtype=torch.long),
             "anchor_orbit"  : torch.tensor(anchor_orbit, dtype=torch.long),  # 0 S2, 1 asc, 2 desc
             "anchor_found"  : torch.tensor(bool(anchor_found)),  # False = zero map, key-padded in model.py
-            "dem_pyr"       : _static["dem_pyr"],    # (4, 768) fp32
-            "lulc_pyr"      : _static["lulc_pyr"],   # (4, 768) fp32
+            "dem_pyr"       : dem_pyr,           # (4, 768) fp32
+            "lulc_pyr"      : lulc_pyr,          # (4, 768) fp32
+            # §60: False = withheld by --static-dropout (key-padded in model.py); always True at eval
+            "dem_valid"     : torch.tensor(dem_valid),
+            "lulc_valid"    : torch.tensor(lulc_valid),
+            "soil_valid"    : torch.tensor(soil_valid),
 
             # ── Fine path (model.py FINE_* layout) ──
             "fine"          : fine,              # (19, 112, 112) fp16

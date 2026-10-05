@@ -669,12 +669,18 @@ class SoilMoistureModel(nn.Module):
         static_w = self.static_modality_emb.weight                             # (2, d)
 
         # statics: DEM and LULC pyramids (pooled frozen TerraMind L12), then soil
-        for i, key in enumerate(("dem_pyr", "lulc_pyr")):
+        # §60 --static-dropout: a withheld group arrives zeroed with {dem,lulc,soil}_valid False and
+        # is key-padded here. Batches without the flags (older callers) pad nothing, as before.
+        def _static_pad(name):
+            v = batch.get(f"{name}_valid")
+            return _nopad(4) if v is None else (~v.to(device).bool()).unsqueeze(1).expand(B, 4)
+
+        for i, (key, name) in enumerate((("dem_pyr", "dem"), ("lulc_pyr", "lulc"))):
             toks.append(batch[key].to(device).float() + scale_e + static_w[i])
-            pads.append(_nopad(4))
+            pads.append(_static_pad(name))
         soil = self.soil_encoder(batch["soil_patch"].to(device).float())
         toks.append(soil + self.soil_modality_emb.weight)
-        pads.append(_nopad(4))
+        pads.append(_static_pad("soil"))
 
         # anchor spatial tokens
         spatial_start = sum(t.shape[1] for t in toks)

@@ -17433,3 +17433,26 @@ Built:
 - slurm/train_nolst_L3_wu200_smoke.sh (20 stn, 3 ep, warmup 20) → slurm/train_nolst_L3_wu200.sh
   (run nolst_L3_wu200_20261005; identical to train_nolst_v2cfg.sh + `--n-layers 3 --warmup-steps 200
   --save-every-epoch`). Smoke and full each need the user's OK.
+
+## §60 Anti-memorisation: static dropout (trunk + fine) + weight decay 0.5 (Session 47, 2026-10-05)
+
+Why: §59 (3 layers, warmup 200, 27575211, stopped after ep11) matched the 6-layer best (SELECT 0.0488 ep10
+vs 0.0487) but the val/train gap grew just as fast (0.95x -> 3.06x): memorisation of the 573 train
+stations does not come from trunk depth. DEM, LULC and soil (trunk tokens AND the fine DEM/LULC) are a
+station fingerprint. User chose: stronger dropout on the statics, and weight decay 0.05 -> 0.5. A
+level/anomaly split was discussed and DROPPED by the user.
+
+Built (flags default off, old runs unchanged):
+- dataset.py `static_dropout`: training only, DEM / LULC / soil each withheld independently with p.
+  DEM: dem_pyr zeroed + fine FINE_DEM channels zeroed; LULC: lulc_pyr zeroed + fine lulc = LULC_PAD;
+  soil: soil_patch zeroed. Fresh tensors; returns dem_valid / lulc_valid / soil_valid.
+- model.py `_build_sequence`: those flags key-pad the 4 DEM / 4 LULC / 4 soil tokens (absent -> no pad).
+  The 3 depth-CLS rows are never padded, so attention always has a key even when everything else is out.
+- train.py `--static-dropout`, CONFIG echo, and a one-off rank-0 check before the workers fork:
+  withheld fraction per group over 64 train samples + trunk/fine tie (untied must be 0).
+- wd 0.5 with lr 2e-4 over ~2000 steps ~ 18% total weight shrink (0.05 ~ 2%); norms/biases excluded.
+Run nolst_L3_wu200_sd05_wd05_20261005 = §59 flags + `--static-dropout 0.5 --weight-decay 0.5 --max-epochs 15`.
+Scripts slurm/train_s60_smoke.sh -> slurm/train_s60.sh; each needs the user's OK.
+Judge on SELECT first (§59: 0.0488), then gap / fine ratio / map SD per epoch. Two changes in one run,
+so their effects are not separable (user's choice); if wd hurts SELECT, back off to 0.2.
+Existing dropouts unchanged: ERA5 15% per-day + whole-window 0.5, coarse 0.3, fine modality 0.2.
