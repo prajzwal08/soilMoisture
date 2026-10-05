@@ -8158,3 +8158,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   DISCUSSED, NOT PLANNED (user: "leave it"): two-stage downscaling = patchwise C per 160 m patch + decoder (NDVI, DEM,
     LULC; no S1) trained on zero-mean S1 change-detection anomaly. My odds low-moderate (CD weak at 20 m, decoder
     may learn vegetation). Plan text kept at ~/.claude/plans/the-probelm-with-our-golden-flame.md history only.
+  Plot re-run 27573906 on OK (fixes 2bfe413): figure OK except best label overlaps the val curve -> moved below the
+    ring (next commit, not re-rendered). No-LST ckpt dir has ONLY best.pt (ep13) + last.pt (ep21): no ep8 weights,
+    and per-epoch fine-path diag was never logged for this run (W&B-block bug, fixed later in 341d4ac).

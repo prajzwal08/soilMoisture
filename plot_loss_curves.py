@@ -182,7 +182,8 @@ def main():
 
     ax1.plot(ep[best_i], va[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=6)
     ax1.annotate(best_txt, (ep[best_i], va[best_i]),
-                 textcoords="offset points", xytext=(0, 12),
+                 # below the ring: above it the label sits on the flat val curve
+                 textcoords="offset points", xytext=(0, -18),
                  # right half of the axis: anchor right so the label stays inside panel (a)
                  ha="right" if ep[best_i] > 0.5 * ep[-1] else "left",
                  fontsize=7, color=MUTED)
