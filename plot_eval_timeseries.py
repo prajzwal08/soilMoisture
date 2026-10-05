@@ -192,9 +192,9 @@ def _paper_ylim(vals: np.ndarray) -> tuple[float, float]:
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
         return 0.0, 0.5
-    lo, hi = float(vals.min()), float(vals.max())
+    lo, hi = float(np.percentile(vals, 0.5)), float(np.percentile(vals, 99.5))   # one bad reading cannot stretch the axis
     pad = 0.05 * max(hi - lo, 0.02)
-    ylo = max(0.0, lo - pad) if lo - pad > 0.05 else 0.0
+    ylo = min(0.0, lo) - pad * 0.6            # always just below 0: zeros stay visible, floors consistent
     return ylo, hi * 1.12 + 0.005
 
 

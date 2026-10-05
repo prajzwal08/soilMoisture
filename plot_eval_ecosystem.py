@@ -160,7 +160,7 @@ def _rotation(labels, default):
     if not PAPER:
         return default
     lens = [max((len(p) for p in str(s).split("\n")), default=0) for s in labels]
-    crowded = sum(lens) > 45 or max(lens, default=0) > 14
+    crowded = (len(labels) > 5 and sum(lens) > 45) or max(lens, default=0) > 14   # <= 5 classes stay flat
     return 90 if crowded else 0
 
 
@@ -361,6 +361,11 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
         # dots may be clipped.  Negative values (bias) keep a zero line.
         if w_hi:
             lo, hi = min(min(w_lo), 0.0), max(w_hi)
+            if PAPER:                   # also keep the plotted dots in view (99.5th pct), not only whiskers
+                vals = long[long["depth"] == depth]["value"].to_numpy(float)
+                if vals.size:
+                    hi = max(hi, float(np.nanpercentile(vals, 99.5)))
+                    lo = min(lo, float(np.nanpercentile(vals, 0.5)), 0.0)
             pad = 0.08 * max(hi - lo, 1e-6)
             ax.set_ylim(lo - pad if lo < 0 else 0.0, hi + pad)
             if lo < 0:
@@ -369,9 +374,11 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
         ax.grid(axis="y", lw=0.4, alpha=0.35)
         ax.set_axisbelow(True)
 
+    leg_kw = (dict(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=_count_fs(len(order)))
+              if PAPER else dict(loc="upper right", fontsize=6 * FS))   # paper: legend above, never on data
     axes[0].legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=BOX_ALPHA,
                                   hatch=SPLIT_HATCH.get(s, ""), label=s.upper()) for s in splits],
-                   fontsize=6 * FS, frameon=False, loc="upper right", ncol=len(splits))
+                   frameon=False, ncol=len(splits), **leg_kw)
     axes[-1].set_xticks(range(n_cls))
     labels, rot = _class_labels(by, order, 15)
     axes[-1].set_xticklabels(labels, rotation=rot, ha="center" if rot in (0, 90) else "right")

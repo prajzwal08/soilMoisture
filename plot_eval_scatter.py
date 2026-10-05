@@ -121,7 +121,7 @@ def fig_pred_obs(preds: dict, out_dir: Path):
                         f"bias {m['bias']:+.3f}\nn {m['n']:,}",
                         transform=ax.transAxes, va="bottom", ha="right",
                         fontsize=_afs(6), zorder=4,
-                        bbox=dict(fc="white", ec="none", alpha=0.6, pad=1.5))
+                        bbox=dict(fc="white", ec="none", alpha=0.8, pad=1.5))
             else:
                 ax.text(0.03, 0.97,
                         f"RMSE {m['RMSE']:.3f}\nubRMSE {m['ubRMSE']:.3f}\n"
@@ -139,7 +139,7 @@ def fig_pred_obs(preds: dict, out_dir: Path):
                 ax.set_xlabel("observed SM (m$^3$/m$^3$)")
 
     fig.colorbar(hb, ax=axes[:, -1].tolist(), label="samples per bin (log)",
-                 shrink=0.9 if PAPER else 0.6)   # paper: span the full column height
+                 shrink=1.0 if PAPER else 0.6)   # paper: span the full column height
     if not PAPER:
         fig.suptitle("Predicted vs observed soil moisture -- held-out splits", y=1.01)
     save(fig, out_dir, "scatter_pred_obs")
@@ -294,12 +294,18 @@ def fig_ubrmse_vs_offset(ps_all: pd.DataFrame, out_dir: Path):
         ax.set_xlabel("ubRMSE (dynamics error)")
         ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
         # upper-left = above the diagonal = the (sparse) level-limited region
-        ax.text(0.04, 0.96, "above line:\nlevel-limited", transform=ax.transAxes,
+        ax.text(0.04, 0.96, "above line:\nlevel-limited", transform=ax.transAxes, zorder=6,
+                bbox=dict(fc="white", ec="none", alpha=0.85, pad=1.5),
                 ha="left", va="top", fontsize=_afs(6), color=_note_color())
         if j == 0:
             ax.set_ylabel("|per-station bias| (level error)")
             # "best" avoids the points and the note above (drawn first)
-            ax.legend(fontsize=_afs(6), frameon=False, loc="best")
+            if not PAPER:
+                ax.legend(fontsize=_afs(6), frameon=False, loc="best")
+    if PAPER:                           # one legend above the panels, never on the points
+        h, l = axes[0][0].get_legend_handles_labels()
+        fig.legend(h, l, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(l),
+                   fontsize=_afs(6), frameon=False, markerscale=1.5)
 
     if not PAPER:
         fig.suptitle("Dynamics error vs absolute-level error, per station", y=1.03)
