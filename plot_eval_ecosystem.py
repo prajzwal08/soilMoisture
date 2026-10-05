@@ -220,7 +220,7 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
                             xycoords=("data", "axes fraction"),
                             xytext=(0, -9 * CS), textcoords="offset points",
                             ha="center", va="top", fontsize=5 * FS * CS,
-                            color="black" if BW else SPLIT_COLORS[split])
+                            color="black" if (BW or PAPER) else SPLIT_COLORS[split])
             bp = ax.boxplot([d if len(d) else [np.nan] for d in data],
                             positions=pos, widths=width * 0.62, showfliers=False,
                             patch_artist=True, zorder=3,

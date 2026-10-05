@@ -128,14 +128,14 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
             ax.annotate(f"{np.median(v):.3f}", xy=(x, 0.985),
                         xycoords=("data", "axes fraction"),
                         ha="center", va="top", fontsize=5.5 * FS * CS,
-                        color="black" if BW else SPLIT_COLORS[split])
-            ax.annotate(f"n={len(v)}", xy=(x, 0), xycoords=("data", "axes fraction"),
-                        xytext=(0, -14), textcoords="offset points",
-                        ha="center", va="top", fontsize=5.5 * FS * CS, color="grey")
+                        color="black" if (BW or PAPER) else SPLIT_COLORS[split])
+            ax.annotate(f"{len(v)}" if PAPER else f"n={len(v)}", xy=(x, 0), xycoords=("data", "axes fraction"),
+                        xytext=(0, -14 * CS), textcoords="offset points",
+                        ha="center", va="top", fontsize=5.5 * FS * CS, color="black" if PAPER else "grey")
 
     ax.annotate("median", xy=(0, 0.985), xycoords=("axes fraction", "axes fraction"),
                 xytext=(-4, 0), textcoords="offset points",
-                ha="right", va="top", fontsize=5.5 * FS * CS, color="grey")
+                ha="right", va="top", fontsize=5.5 * FS * CS, color="black" if PAPER else "grey")
     for i in range(len(depths) - 1):                # separate the depth groups
         ax.axvline(i + 0.5, color="grey", lw=0.5, ls=":", zorder=1)
 
@@ -154,8 +154,9 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
                        for s in splits],
               fontsize=6 * FS, frameon=False, loc="upper left",
               bbox_to_anchor=(0.005, 0.955), ncol=1)
-    ax.set_title(f"Per-station {metric} by depth and held-out split "
-                 "(one dot = one station)", fontsize=9 * FS)
+    if not PAPER:
+        ax.set_title(f"Per-station {metric} by depth and held-out split "
+                     "(one dot = one station)", fontsize=9 * FS)
     save(fig, out_dir, f"box_{metric.lower()}_by_depth")
 
 
