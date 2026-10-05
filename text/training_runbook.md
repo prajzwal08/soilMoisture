@@ -17365,3 +17365,47 @@ ranges, DN<1000 rate before/after 2022-01-25, real samples, v2 best.pt still loa
 `lst_dT_idx_era5do05_coarse03_20261001`, tag `run/...` at submit). Read-out: val SELECT vs v2 0.0537 (and
 no-LST 0.0487 for context), dT px RMSE, fine grad ratio, then `--eval-fine-ablation` on best.pt.
 Expectation: §53 showed SM ignores the 20 m path, so indices are a regulariser, not a cure.
+
+## §58 Patchwise with a 180-day ERA5 window + whole-window ERA5 dropout 0.3 (Session 47, 2026-10-05, BUILT, nothing submitted)
+
+**Why.** The patchwise model seemed to read the TerraMind tokens only as a site fingerprint (§56).
+The aim is to force it to use the embeddings by giving it less forcing history. Caveat: the
+measurement behind that premise (27422859) is INVALID (§55.7), so the valid baseline eval 0-4
+must run first.
+
+**Theory.** The ERA5 tail tells the model the storage / initial condition. Soil-moisture memory
+is about 1–4 weeks at 0–10 cm, 1–3 months at 10–30 cm, and a season or more at 30–100 cm.
+180 d is longer than the surface and mid memory, so the truncation hides almost nothing at
+0–10 and 10–30 cm. The expected cost is at 30–100 cm, where S2 vegetation state (which
+integrates root-zone water) is the only image channel that could compensate. The whole-window
+dropout 0.3 (§55 code) is the stronger push. Prediction: small loss at depth; the sat-within
+delta rises only if the model compensates from the tokens.
+
+**Design.** Branch `feat/pw-era5-180d` from feeddb1 (§55, pre-§47 splits/stats), worktree
+`/gpfs/work3/0/prjs1968/wt_pw_era5w180`, commit 879d582.
+- `--era5-window-days N` (default 365). In `dataset.__getitem__`, right after `load_era5_rolling`,
+  rows with `rel_pos < 365-N` get values 0, doys 0 and rel 0 (key-padded, the same path short
+  records use). This happens BEFORE the 15% mask and the §55 dropout. Train AND eval: CONFIG
+  stores it, `eval_predict` reads `cfg.get("era5_window_days", 365)`, and the patch-map diag
+  inherits it through common_kwargs. S2/S1/SIF/TWSA windows stay at 365.
+- Config = pw_stage2a_L3 (3 layers, lr 2e-4, lr_patience 5, …) + `--era5-window-days 180
+  --era5-dropout 0.3`. Two changes vs the baseline, so the A/B measures their joint effect.
+- Why 3 layers: it is the ablation baseline's depth. L6 was only slightly better (0.0477 vs
+  0.0490 select), both memorised, and L3 is 39% fewer parameters and 1.4x faster.
+
+**Order (each needs the user's OK).**
+0. Baseline eval 0-4 + compare base (§55: `wt_pw_era5do/slurm/pw_era5do_eval.sh --array=0-4`,
+   then `pw_era5do_compare.sh base`).
+1. `slurm/verify_s58.sh` (CPU, 3 val stations): kept rows identical to the 365 window, full windows
+   pad exactly 185, train withheld fraction about 0.3, eval reads cfg.
+2. `slurm/train_pw_era5w180_do03_smoke.sh` (20 stn / 2 ep). Check that CONFIG has
+   era5_window_days=180, era5_dropout=0.3, era5_withheld about 30%, and that the shas match the
+   baseline log (feedback: worktree paths).
+3. `slurm/train_pw_era5w180_do03.sh` (run `pw_era5w180_do03_L3`), tag `run/pw_era5w180_do03_L3`.
+4. `slurm/pw_era5w180_eval.sh` (array 0-4: none / sat cross / sat within / era5 cross /
+   era5 remove), then `pw_era5w180_compare.sh`.
+
+**Verdict.** Primary: the sat-within delta ubRMSE and the temporal share, vs the baseline.
+Success = a clear rise (CI off zero, more than 60% of stations worse). Secondary: per-depth cost
+of the truncation (expected at 30–100 cm), and the era5-cross delta (should shrink if the
+dependence moved to the tokens).

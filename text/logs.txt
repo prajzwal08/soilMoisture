@@ -8125,3 +8125,13 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   NEXT: verify job (needs OK) -> smoke (OK) -> full (OK).
   §57 verify job 27439912 submitted on OK (log logs/verify_s57_27439912.out).
   27439912 PENDING: ReqNodeNotAvail, Reserved for maintenance.
+
+2026-10-05 SESSION 47 — §58 BUILT (nothing submitted).
+  User: patchwise with only 180 d of ERA5 history to force embedding use, + whole-window ERA5 dropout 0.3, 3 layers.
+  Theory noted: 180 d > surface/mid SM memory, so truncation should bite mainly at 30-100 cm; premise ablation 27422859
+  is INVALID, so baseline eval 0-4 (§55) must run first.
+  Built: branch feat/pw-era5-180d @879d582 (from feeddb1), worktree /gpfs/work3/0/prjs1968/wt_pw_era5w180.
+  --era5-window-days (dataset key-pads rel_pos < 365-N before the 15% mask/dropout; train AND eval via ckpt cfg).
+  Scripts: verify_s58.sh -> train_pw_era5w180_do03_smoke.sh -> train_pw_era5w180_do03.sh -> pw_era5w180_eval.sh (0-4)
+  -> pw_era5w180_compare.sh. Runbook §58. Commit trailer is now the user (Co-Authored-By: Prajwal Khanal).
+  NEXT (each needs OK): baseline eval 0-4 + compare base; verify_s58.
