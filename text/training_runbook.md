@@ -17494,3 +17494,18 @@ Built (no code change, `--n-layers` exists): slurm/train_s62_smoke.sh (20 stn, 3
 slurm/train_s62.sh (run nolst_L2_wu200_20261005). Smoke and full each need the user's OK. Eval/ablation of
 these checkpoints needs `--n-layers 2` on the CLI. Compare to the §59/§60/§61 table: SELECT, ubRMSE and r
 per depth, gap, fine-grad ratio, within-tile SD.
+
+## §63 No-LST, 1 transformer layer, raw bands (Session 47, 2026-10-05)
+
+Why: completes the trunk-depth sweep. §62 (2 layers) at ep11: best SELECT 0.0494 (ep10), gap 2.9x, i.e. the same as
+§59 (3 layers, 0.0488, 2.9x) and the 6-layer no-LST run 27417115 (0.0487). Depth has not moved val or the memorisation gap.
+Expectation: same again; a clear drop would only mean 1 layer is under capacity, not explain the gap.
+
+Change vs §59: `--n-layers 1` only. Fine inputs = raw bands (19 ch), warmup 200, every epoch kept.
+Scripts: slurm/train_s63_smoke.sh, slurm/train_s63.sh; run nolst_L1_wu200_20261005. model.py drop-path schedule
+uses max(n_layers - 1, 1), so n_layers = 1 is valid. Ablating an epoch needs `--n-layers 1`.
+
+Depth sweep, caveat: 1/2/3 layers (§63/§62/§59) share one config. The 6-layer point (27417115) is NOT a clean member:
+warmup 1000 (not 200), older code (git 0387fd4), no per-epoch weights. Report it as "6L, different warmup".
+
+Status: built, NOT submitted. Smoke and full each need the user's OK.
