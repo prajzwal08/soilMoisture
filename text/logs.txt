@@ -8150,3 +8150,11 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   VERDICT CONFIRMED on the correct split (the withdrawn 27422859 said the same): tokens = SITE FINGERPRINT; same-station
   wrong-date tokens cost ~nothing (coin-flip station counts). ERA5 carries the dynamics. Without ERA5, r drops 0.75 -> 0.26.
   This is the §58 reference. NEXT: §58 smoke (needs OK).
+  LOSS-CURVE FIGURE SUBMITTED on the user's OK: job 27573858 (CPU, rome), plot_loss_curves.py on the no-LST baseline
+    log logs/lst_tmean_diff/train_nolst_27417115.out -> figures/loss_curves_nolst_era5do05_coarse03_20260930.{png,pdf}.
+    No-LST train/val (Huber): ep1 0.00339/0.00330, ep8 0.00093/0.00222, ep13 (best, SELECT 0.0487) 0.00065/0.00223,
+    ep21 0.00048/0.00220 -> val flat from ep8, train keeps falling (gap 1x -> 4.6x) = memorisation; train has
+    ERA5 dropout 0.5 + coarse 0.3 on, val off, so the gap is a lower bound.
+  DISCUSSED, NOT PLANNED (user: "leave it"): two-stage downscaling = patchwise C per 160 m patch + decoder (NDVI, DEM,
+    LULC; no S1) trained on zero-mean S1 change-detection anomaly. My odds low-moderate (CD weak at 20 m, decoder
+    may learn vegetation). Plan text kept at ~/.claude/plans/the-probelm-with-our-golden-flame.md history only.
