@@ -8295,3 +8295,7 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   depth sweep plot SUBMITTED on the user's OK: job 27620795 (slurm/plot_depth_sweep.sh, code 04a579e).
   §65 wd 0.3 SUBMITTED on the user's OK: job 27621051 (slurm/train_s65.sh, run nolst_L3_wu200_wd03_20261005, 10 epochs).
     User: report wd 0.05 (§59) / 0.2 (§61) / 0.3 (§65) / 0.5 (§60) together as the wd comparison (0.2 and 0.5 bundled; footnote).
+  §65 wd 0.3 DONE (27621051, H100, 20 min). SELECT ep1-10: .0631 .0556 .0538 .0511 .0508 .0511 .0502 .0504 .0489 (best ep9) .0493;
+    ep10 ubRMSE 0.0552/0.0516/0.0504, r 0.750/0.735/0.723, gap 2.90x (§59 wd 0.05: 0.0488, gap 2.89x).
+    WD SERIES @ep10: 0.05 0.0488 (2.89x) | 0.2* 0.0517 (2.5x) | 0.3 0.0493 (2.90x) | 0.5* 0.0513 (2.4x); *bundled (§61, §60).
+    VERDICT: wd 0.3 changes neither skill (+1%, within likely seed noise) nor the gap -> wd does not touch memorisation; keep 0.05.
