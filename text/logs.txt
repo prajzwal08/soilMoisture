@@ -8288,3 +8288,7 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     VERDICT: an LST-T2m input is NOT worth building (expected gain negligible). Figure figures/probe_lst_residual/R1_*.
   §63 A100 copy SUBMITTED on the user's OK: job 27618809 (slurm/train_s63_a100.sh, run nolst_L1_wu200_a100_20261005, 480G, 8 w), raced vs H100 27613769; watcher cancels whichever is still pending when the other starts.
   §63 race: H100 27613769 STARTED first (18:13); A100 27618809 cancelled by the watcher (never ran).
+  §63 1L DONE (27613769, H100, 16 min, 12.5 M params, stats shas = baseline). SELECT ep1-10:
+    .0612 .0560 .0524 .0528 .0524 .0512 .0507 .0508 .0502 (best ep9) .0510; ep10 ubRMSE 0.0574/0.0528/0.0515, r 0.746/0.730/0.713, gap 2.74x.
+    DEPTH SWEEP @ep10: 1L 0.0510 (12.5M, gap 2.74) | 2L 0.0494 (19.6M, 2.73) | 3L 0.0488 (26.7M, 2.89) | 6L 0.0500 (48.0M, 2.81; warmup 1000).
+    3L best; 1L ~4.5% worse; gap ~2.7-2.9x at every depth -> memorisation not driven by trunk depth.
