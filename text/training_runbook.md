@@ -17475,3 +17475,22 @@ Run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005 = §59 flags + `--fine-inputs indi
 --coarse-dropout 0.5 --weight-decay 0.2 --lr 1e-4 --max-epochs 10` (user: 10 epochs only). Order: verify -> smoke -> full, each
 needs the user's OK. Eval/ablation of these checkpoints needs `--fine-inputs indices --n-layers 3`.
 Success = fine ablation cost clearly above §59's at similar SELECT.
+
+## §62 No-LST, 2 transformer layers, raw bands (Session 47, 2026-10-05)
+
+Why: depth does not bind val: 6 layers (27417115) SELECT 0.0487 vs 3 layers (§59) 0.0488. §59 still
+memorises (gap 2.9x). §60 (static dropout + wd) and §61 (indices + 4 more changes) both came out ~5% worse.
+User: run with 2 transformer layers, on the raw image (bands), not indices.
+
+Single change vs §59: `--n-layers 2` (fine inputs = raw bands, the default, written explicitly).
+Everything else = slurm/train_nolst_L3_wu200.sh (warmup 200, era5 dropout 0.5, coarse 0.3, static dropout
+off, wd/lr default, `--save-every-epoch`, H100).
+
+Reading: SELECT ~unchanged -> depth irrelevant at this data size, 2 L is the cheaper default. Gap still ~2.9x
+-> memorisation is not in trunk depth (statics / decoder / embeddings). Expectation: SELECT ~0.049-0.050,
+peak ep8-10, gap a little under 2.9x, fine path still largely ignored.
+
+Built (no code change, `--n-layers` exists): slurm/train_s62_smoke.sh (20 stn, 3 ep, warmup 20) and
+slurm/train_s62.sh (run nolst_L2_wu200_20261005). Smoke and full each need the user's OK. Eval/ablation of
+these checkpoints needs `--n-layers 2` on the CLI. Compare to the §59/§60/§61 table: SELECT, ubRMSE and r
+per depth, gap, fine-grad ratio, within-tile SD.

@@ -8245,3 +8245,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §61 within-tile SD of the 112x112 SM map (0-10/10-30/30-100), best epoch: §61 ep9 0.0152/0.0179/0.0162 (ep10 0.0137/0.0151/0.0143,
     falling every epoch from 0.028/0.028/0.042 at ep1) vs §59 ep10 0.0232/0.0253/0.0196 vs §60 ep10 0.0349/0.0349/0.0282.
     §61 has the FLATTEST map of the three (~35% below §59): indices + no zero-init did not put more 20 m structure in the map.
+  §62 PLANNED (user): §59 config with --n-layers 2, raw bands (not indices); only change vs §59. Built
+    slurm/train_s62_smoke.sh + slurm/train_s62.sh (run nolst_L2_wu200_20261005); runbook §62. Nothing submitted.
