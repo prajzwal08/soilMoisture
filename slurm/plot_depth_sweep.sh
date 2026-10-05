@@ -13,6 +13,6 @@
 # Submit with --dependency=afterany:<1L job id> so the 1-layer run is included.
 set -euo pipefail
 cd /gpfs/work3/0/prjs1968/soilMoisture
-source ~/miniforge3/etc/profile.d/conda.sh
-conda activate terramind
-python plot_depth_sweep.py
+
+
+conda run -n terramind --no-capture-output python plot_depth_sweep.py
