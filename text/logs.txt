@@ -8338,3 +8338,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §67 SMOKE 27627468 PASS (2m50s, 13 passes): donors 100% assigned, cross-station 100% other station (median 4 d), within-station same station (median 146 d). ERA5 cross: 0-10 +10.3% [CI>0], 10-30 +13.7% [CI>0], 30-100 n=1 no CI -> control 'FAIL' was a check bug (NaN), fixed.
     Baseline match vs Phase A (27627524): 91 of 17,316 rows differ, max 9.2e-5, mean 9e-8 (bf16 batch-composition noise) -> NOT bit-identical.
     OOS depth coverage: 222 stations; 0-10 221, 10-30 144, 30-100 119; all three 112; 0-10 only 71; 0-10+10-30 only 31.
+  §67 FULL ablation SUBMITTED on the user's OK ('yes go on'): job 27627597, 13 passes on OOS (baseline pass KEPT: smoke baseline not bit-identical to Phase A, max 9e-5).
