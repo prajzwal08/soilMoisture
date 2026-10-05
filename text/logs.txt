@@ -8311,3 +8311,10 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     SANITY FAIL: preds outside [0,0.6] — min -0.025 (all splits slightly <0), OOT max 1.017. Diagnostic added to eval_figures.sh.
     Folder renamed eval_output/baseline_selected_20261005 (+ symlink from old name, README.txt); git tag baseline/selected-20261005 -> a01decf.
   §66 BW figures SUBMITTED on the user's OK: job 27624052 (eval_figures.sh baseline_selected_20261005 --style bw, SPLITS oos oot oost, NO_VAL=1, OUT figures/eval/baseline_selected_20261005_bw).
+  §66 BW figures 27624052 DONE (3 min) -> figures/eval/baseline_selected_20261005_bw/. Station-mean metrics (eval_metrics _stn):
+    ubRMSE 0-10/10-30/30-100: OOS .0523/.0483/.0471 | OOT .0490/.0433/.0437 | OOST .0535/.0474/.0495
+    R:                        OOS .722/.708/.634  | OOT .763/.768/.720  | OOST .732/.741/.688
+    bias:                     OOS +.003/+.010/-.003 | OOT +.014/+.010/+.003 | OOST .000/+.011/-.018
+    Out of range: negatives <=-0.023 at dry SNOTEL/SCAN sites (0.1-1% rows); >0.6 ONLY ICOS_FI-Sii (peat, WET) in OOT, preds .60-1.02 vs obs ~.85.
+    Model head is linear (bias=label mean), Huber loss: nothing bounds the output. Proposed: clip [0,1] at eval (awaiting user).
+    Figure defect: igbp_macro bottom-panel class labels collide with the n-counts.
