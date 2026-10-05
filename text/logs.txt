@@ -8247,3 +8247,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     §61 has the FLATTEST map of the three (~35% below §59): indices + no zero-init did not put more 20 m structure in the map.
   §62 PLANNED (user): §59 config with --n-layers 2, raw bands (not indices); only change vs §59. Built
     slurm/train_s62_smoke.sh + slurm/train_s62.sh (run nolst_L2_wu200_20261005); runbook §62. Nothing submitted.
+  §62 SUBMITTED on the user's OK (full, no smoke): job 27611631, slurm/train_s62.sh, run nolst_L2_wu200_20261005.
