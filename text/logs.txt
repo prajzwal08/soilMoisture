@@ -8275,3 +8275,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     LEVEL (LST tile - T2m) vs SM 0-10: pooled r -0.36 (n 6619), per-station median -0.38 (58 stn, IQR -0.46..-0.26; 54/58 negative).
     PATTERN (cell - tile): pooled r -0.09, per-station median -0.04 (55 stn, IQR -0.30..+0.14). Level carries the SM signal, pattern does not.
     Empty panels: Berlin_PSA4Heerstrasse, TxSON_CR200-23 (< 20 scenes). Figures C1/C2 in figures/probe_lst_level_pattern/.
+  LST deseason TRAIN plot SUBMITTED on the user's OK: job 27614277 (slurm/probe_lst_deseason_train.sh, code edcf608): full probe -> _full folders, then plot --split train.
+    TxSON-only result (27614230): level per-station median r -0.42 (37/39 neg), pattern -0.06.
