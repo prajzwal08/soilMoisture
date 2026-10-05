@@ -163,7 +163,9 @@ S2_BOA_OFFSET = 1000.0           # baseline-4.0 store: 1000 DN = 0 reflectance, 
 _S1_MEAN = (-10.93, -17.329)     # VV, VH dB
 _S1_STD  = (4.391, 4.459)
 CR_SHIFT, CR_SCALE = 6.4, 3.0    # fixed, not fitted: (CR + 6.4) / 3 (§54.4)
-_IDX_DEN_FLOOR = 10.0            # DN: |a + b| under 0.001 reflectance -> index 0
+_IDX_DEN_FLOOR = 200.0           # DN: |a + b| under 0.02 reflectance -> index 0. Was 10: fp16 z-scores
+                                 # carry ~few-DN rounding, which blew near-zero ratios up to 0.8 (§61,
+                                 # verify 27439912 check 5b)
 
 
 def fine_to_indices(fine: torch.Tensor) -> torch.Tensor:
@@ -404,6 +406,7 @@ class UNetDecoder(nn.Module):
         n_depths:  int   = 3,
         d_context: int   = 768,
         head_bias_init: list[float] | None = None,
+        skip_zero_init: bool = True,
     ):
         super().__init__()
         c = dec_ch
@@ -416,9 +419,12 @@ class UNetDecoder(nn.Module):
         self.conv1 = _ConvBlock(c[0] + ENC_CH[2], c[1], dropout=0.15)   # @28
         self.conv2 = _ConvBlock(c[1] + ENC_CH[1], c[2], dropout=0.15)   # @56
         self.conv3 = _ConvBlock(c[2] + ENC_CH[0], c[3], dropout=0.15)   # @112
-        with torch.no_grad():
-            for conv, c_path in ((self.conv1, c[0]), (self.conv2, c[1]), (self.conv3, c[2])):
-                conv.net[0].weight[:, c_path:].zero_()
+        # §61 --no-skip-zero-init keeps the default (Kaiming) init on the skip columns, so the fine
+        # path is switched on from step 0 instead of having to be pulled in by the gradient.
+        if skip_zero_init:
+            with torch.no_grad():
+                for conv, c_path in ((self.conv1, c[0]), (self.conv2, c[1]), (self.conv3, c[2])):
+                    conv.net[0].weight[:, c_path:].zero_()
 
         self.pre_head_drop = nn.Dropout(0.1)
 
@@ -555,6 +561,7 @@ class SoilMoistureModel(nn.Module):
         fine_skips:       str   = "cnn",
         modality_dropout: float = 0.2,
         fine_inputs:      str   = "bands",
+        skip_zero_init:   bool  = True,
     ):
         super().__init__()
         self.d_model  = d_model
@@ -625,7 +632,8 @@ class SoilMoistureModel(nn.Module):
                                         modality_dropout=modality_dropout,
                                         fine_inputs=fine_inputs)
         self.decoder = UNetDecoder(in_ch=d_model, n_depths=n_depths, d_context=d_model,
-                                   head_bias_init=head_bias_init)
+                                   head_bias_init=head_bias_init,
+                                   skip_zero_init=skip_zero_init)
 
     # ── Sequence ─────────────────────────────────────────────────────────────
 

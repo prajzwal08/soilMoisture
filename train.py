@@ -401,6 +401,7 @@ CONFIG = {
     # the one-run ablation that says whether the encoder earns its parameters.
     "fine_skips"      : "cnn",
     "fine_inputs"     : "bands",  # §57: "indices" = NDVI, NDMI, VV, VH/VV (CR) instead of 10 S2 bands + VH
+    "skip_zero_init"  : True,     # §61: False = decoder skip columns keep their default init (fine path on from step 0)
     "modality_dropout": 0.2,    # per-sample P(zero S2 or S1 in the fine path), train only
 
     # Thermal aux (§46.5 items 27-28, §48.9 item 4). "auto" = EMA(g_sm / g_lst) at the shared
@@ -1744,6 +1745,9 @@ def main():
     parser.add_argument("--fine-skips", choices=["cnn", "pool"], default=None,
                         help="cnn: the light fine encoder (default). pool: §46's masked pool + "
                              "1x1, the ablation")
+    parser.add_argument("--no-skip-zero-init", action="store_true",
+                        help="§61: do not zero the decoder skip columns at init, so the fine path is "
+                             "used from step 0 (default: zeroed, §48.4)")
     parser.add_argument("--fine-inputs", choices=["bands", "indices"], default=None,
                         help="bands: 10 S2 bands + VV/VH (default). indices (§57): NDVI, NDMI, "
                              "VV, VH/VV in dB; converted on the device from the same cache")
@@ -1836,6 +1840,7 @@ def main():
     if args.per_depth_loss: CONFIG["per_depth_loss"] = True
     if args.fine_skips       is not None: CONFIG["fine_skips"]       = args.fine_skips
     if args.fine_inputs      is not None: CONFIG["fine_inputs"]      = args.fine_inputs
+    if args.no_skip_zero_init: CONFIG["skip_zero_init"] = False
     if args.modality_dropout is not None: CONFIG["modality_dropout"] = args.modality_dropout
     if args.lambda_lst       is not None:
         # Validate here, before anything is allocated: a typo would otherwise surface as a
@@ -2145,6 +2150,7 @@ def main():
         fine_skips       = CONFIG["fine_skips"],
         modality_dropout = CONFIG["modality_dropout"],
         fine_inputs      = CONFIG["fine_inputs"],
+        skip_zero_init   = CONFIG.get("skip_zero_init", True),
     ).to(device)
     if ((CONFIG["lst_level_weight"] > 0 or CONFIG["lst_target"] == "dT_pixel")
             and math.isfinite(CONFIG["dT_bias_init"])):
@@ -2168,7 +2174,7 @@ def main():
         # Echo the run-defining config. It is saved into the checkpoint too, but a job
         # log should be readable on its own — otherwise which flags a run actually used
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
-        _echo = ["run_name", "fine_skips", "fine_inputs", "modality_dropout", "lambda_lst", "sigma_st",
+        _echo = ["run_name", "fine_skips", "fine_inputs", "skip_zero_init", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
                  "lst_target", "era5_dropout", "sif_twsa_dropout", "coarse_dropout", "static_dropout", "lambda_frac", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
                  "batch_size", "weight_decay", "drop_path_rate",

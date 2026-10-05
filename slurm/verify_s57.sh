@@ -17,7 +17,7 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 rc=0
 echo "== py_compile"
 conda run -n terramind --no-capture-output python -m py_compile \
-    model.py train.py ckpt_utils.py verify_s57.py && echo "compile OK" || rc=1
+    model.py train.py dataset.py ckpt_utils.py verify_s57.py && echo "compile OK" || rc=1
 echo "== verify_s48.py (bands mode)"
 conda run -n terramind --no-capture-output python verify_s48.py || rc=1
 echo "== verify_s57.py (indices mode)"

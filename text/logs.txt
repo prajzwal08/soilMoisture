@@ -8196,3 +8196,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     VERDICT: static dropout 0.5 + wd 0.5 cut the gap ~17% at the same epoch but cost ~5% SELECT (worse at every depth);
     fine-grad ratio fell to 0.004-0.03 (vs 0.05-0.14). Less memorisation did not buy better generalisation.
     Effects of sd and wd not separable (one run).
+  §61 BUILT (not submitted): found §57 verify 27439912 FAILED 5b (fp16 NDVI/NDMI max err 0.80, never read); floor 10->200 DN + 5b on p99/fraction; --no-skip-zero-init; slurm/train_s61{_smoke,}.sh. Next: verify_s57.sh (needs OK).

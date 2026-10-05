@@ -17456,3 +17456,22 @@ Scripts slurm/train_s60_smoke.sh -> slurm/train_s60.sh; each needs the user's OK
 Judge on SELECT first (§59: 0.0488), then gap / fine ratio / map SD per epoch. Two changes in one run,
 so their effects are not separable (user's choice); if wd hurts SELECT, back off to 0.2.
 Existing dropouts unchanged: ERA5 15% per-day + whole-window 0.5, coarse 0.3, fine modality 0.2.
+
+## §61 Make the decoder use the 20 m path: indices + no skip zero-init + coarse 0.5 + wd 0.2 + lr 1e-4 (Session 47, 2026-10-05)
+
+Why: SM ignores the fine path in every run (fine ablation +2% shuffled / +0.2% zeroed; fine-grad ratio
+0.05-0.14 in §59, ~0.01 in §60). §60 (static dropout 0.5 + wd 0.5) cut the gap ~17% but cost SELECT
+(0.0513 vs §59 0.0488). User chose, on the §59 config with static dropout OFF: §57 index inputs
+(NDVI, NDMI, VV, VH/VV + DEM, LULC), no zero-init of the decoder skip columns, coarse dropout 0.5,
+weight decay 0.2, lr 1e-4. Five changes in one run (user's choice) -> effects not separable.
+
+Step 0 (blocker found 2026-10-05): §57 verify 27439912 had FAILED check 5b and was never read —
+NDVI/NDMI through the fp16 cache path off by up to 0.80 vs direct DN (fp32 path 3.5e-5). Fix:
+`_IDX_DEN_FLOOR` 10 -> 200 DN (a+b < 0.02 reflectance -> index 0); 5b now judged on p99 |d| < 0.02 and
+fraction of pixels with |d| > 0.02 < 1e-3 (the max is still printed). Re-verify via slurm/verify_s57.sh.
+
+Built: model.py/train.py `--no-skip-zero-init` (CONFIG skip_zero_init, default True = unchanged).
+Run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005 = §59 flags + `--fine-inputs indices --no-skip-zero-init
+--coarse-dropout 0.5 --weight-decay 0.2 --lr 1e-4 --max-epochs 20`. Order: verify -> smoke -> full, each
+needs the user's OK. Eval/ablation of these checkpoints needs `--fine-inputs indices --n-layers 3`.
+Success = fine ablation cost clearly above §59's at similar SELECT.
