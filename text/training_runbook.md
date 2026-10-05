@@ -17805,3 +17805,19 @@ Keep the SAME source as training: S5P-PAL `L2B_SIF___`, 5 km sounding mean per d
 The ~17 h cost scales with DAYS, not stations. C3 therefore becomes a SLURM array split by YEAR (2018-2025, 8 tasks;
 needs a `--years` / date-range flag in `download_sif_tropomi.py`), ~2-3 h if S5P-PAL does not throttle parallel
 clients. The smoke run measures one year-task first.
+
+### 68.11 Download once for the WHOLE Netherlands, keep permanently (user 2026-10-05)
+
+**SIF (C3):**
+- Each day's global L2B file is read anyway, so extract ALL 7,005 NL tiles (`csvs/nl_tiles.csv` keep==True), not
+  just the 682 in Overijssel. The cost is unchanged.
+- Per-tile `SIF/sif_{YYYY}.nc` goes under `data_nl/` (permanent work3, a few hundred MB).
+- ALSO save every sounding inside the NL box (lon 3.3-7.3, lat 50.7-53.6: sif, sif_uncertainty, lat, lon, time,
+  plus the QC fields the extractor uses) to `data_nl/sif_soundings/sif_soundings_{YYYY}.parquet`, ~1-3 GB.
+  Any later grid or footprint is then re-extracted without the ~1.1 TB global re-download.
+- `chmod a-w` after a verified pass (count days per year == catalogue days).
+
+**ERA5-Land meteo + radiation + TWSA (C1/C2):** download per unique 0.1° pixel for ALL NL tiles (~400-500 pixels),
+which is a few hours. Overijssel just uses its subset.
+
+Imagery (B1-B4) and tokens (D) stay Overijssel-only. They scale with tiles and are the real NL-wide cost (§68.4 ×10).
