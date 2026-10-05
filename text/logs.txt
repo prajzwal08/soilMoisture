@@ -8230,13 +8230,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   CORRECTION: the any-GPU submit FAILED (no job id): Snellius rejects gpu_h100,gpu_a100 in one job ("combination of
     partitions is not supported for shared jobs"; with --exclusive: "not supported for exclusive jobs"). Option B is
     impossible here. NOTHING §61 is queued now (27608079 and 27607454 were cancelled). slurm/train_s61_anygpu.sh unusable.
-  §61 RACE resubmitted on the user's OK (option A): H100 sbatch: Single-node jobs run on a shared node by default. Add --exclusive if you want to use a node exclusively.
-sbatch: A full node consists of 64 CPU cores, 737280 MiB of memory and 4 GPUs and can be shared by up to 4 jobs.
-sbatch: By default shared jobs get 11520 MiB of memory per CPU core, unless explicitly overridden with --mem-per-cpu, --mem-per-gpu or --mem.
-sbatch: You will be charged for 4 GPUs, based on the number of CPUs, GPUs and the amount memory that you've requested.
-27608107 (run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005, 720G, 12 w)
-    + A100 sbatch: Single-node jobs run on a shared node by default. Add --exclusive if you want to use a node exclusively.
-sbatch: A full node consists of 72 CPU cores, 491520 MiB of memory and 4 GPUs and can be shared by up to 4 jobs.
-sbatch: By default shared jobs get 6826 MiB of memory per CPU core, unless explicitly overridden with --mem-per-cpu, --mem-per-gpu or --mem.
-sbatch: You will be charged for 4 GPUs, based on the number of CPUs, GPUs and the amount memory that you've requested.
-27608108 (run ..._a100_20261005, 480G, 8 w); a watcher cancels whichever is still pending when the other starts.
+  §61 RACE resubmitted on the user's OK (option A): H100 27608107 (run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005, 720G, 12 w)
+    + A100 27608108 (run ..._a100_20261005, 480G, 8 w); a watcher cancels whichever is still pending when the other starts.
