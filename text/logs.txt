@@ -8262,3 +8262,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §62 CANCELLED by the user after ep19 (27611631, 28.5 min). Compare at ep10: SELECT 0.0494, gap 2.73x (vs §59 ep10 0.0488, 2.9x).
     All epoch weights kept (epochs/epoch_001..019.pt); best.pt = ep15 (0.0493). User: runs are 10 epochs from now on.
   §63 script capped: --max-epochs 10 added to slurm/train_s63.sh (§64 already has it). Still not submitted.
+  §63 SUBMITTED on the user's OK (plan approved; full, no smoke): job 27613769, slurm/train_s63.sh, run nolst_L1_wu200_20261005,
+    4x H100, 10 epochs, log logs/lst_tmean_diff/train_nolst_L1_wu200_27613769.out. Ablation scope cut to this one run for now
+    (user: full design ~26.6k SBU "consumes too much"; seeds/wd/attribution deferred).
