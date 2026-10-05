@@ -8380,3 +8380,15 @@ Job 27628469: + province column (tile centre, nearest province for water centres
 §68 Overijssel plan WRITTEN (runbook §68, commits f34b2c3 + 9b5bcd3): flowchart, steps/traps, budget ~7k SBU,
   ~1.5 TB scratch, smoke gates S1-S5 (2 TWENTE control tiles + 1 grid tile), code build list, day plan.
   User: start Tue 2026-10-06 morning, nothing submitted tonight. SIF = TROPOMI (revisit after §67 SIF ablation).
+--- 2026-10-05 late (Session 47) -- §68 downloads ---
+SIF global L2B keep (§68.12): smoke 27629786 (5 days 2018: 4 done + 1 no_data, ~290 MB/day, files open, carry
+  cloud_fraction_L2 for later QA) -> FULL array 27629867_[0-7] (one task per year 2018-2025, user-approved
+  "launch full if smoke passes"). Files -> /projects/prjs1968/sif_tropomi_l2b/{YYYY}/YYYYMMDD_<uuid>.nc
+  (renamed: the server basename is a bare UUID). Project quota: 2.1/5 TiB bytes, INODES 99.6 % -> per-tile
+  outputs must go to scratch (nl/), not /projects.
+Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; download_s2_mpc.py got §50 fixes
+  (fresh sign, TOKEN_CACHE clear, fillna(0) before int16, baseline recorded, SOIL_S2_HARMONISE=1 -> +1000 if
+  pb<04.00, "partial" status) + SOIL_TASK_INDEX/N_TASKS; download_s1_lulc_mpc.py got env roots + task split.
+  Smoke 27629967 + afterok arrays 27629968 (S2) / 27629969 (S1) were SUBMITTED by mistake on a misread
+  ("please use permission") and CANCELLED within a minute after the user said permission NOT granted.
+  Nothing imagery-related ran. Code is NOT yet committed or reviewed.
