@@ -8259,3 +8259,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §62 progress (27611631 RUNNING, 28 min, ep18 done): SELECT ep12 0.0493 | ep13 0.0508 | ep14 0.0502 | ep15 0.0493 (best, 0.049263)
     | ep16 0.0513 | ep17 0.0502 | ep18 0.0499. Gap 2.89x -> 3.44x. Plateaued since ep8 (~0.049-0.051) while the gap keeps growing;
     best 0.0493 vs §59 3L 0.0488. Early stop (patience 8) ends it after ep23 unless it improves.
+  §62 CANCELLED by the user after ep19 (27611631, 28.5 min). Compare at ep10: SELECT 0.0494, gap 2.73x (vs §59 ep10 0.0488, 2.9x).
+    All epoch weights kept (epochs/epoch_001..019.pt); best.pt = ep15 (0.0493). User: runs are 10 epochs from now on.
+  §63 script capped: --max-epochs 10 added to slurm/train_s63.sh (§64 already has it). Still not submitted.
