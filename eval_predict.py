@@ -281,16 +281,22 @@ def to_long_frame_pixels(res: dict, pmap: PixelMap) -> pd.DataFrame:
                "year", "doy", "date", "depth", "pred"]]
 
 
-def to_long_frame(res: dict, split_name: str, train_split_map: dict) -> pd.DataFrame:
+def to_long_frame(res: dict, split_name: str, train_split_map: dict,
+                  keep_unobserved: bool = False) -> pd.DataFrame:
     """Wide (N, n_depths) arrays -> long format, one row per (sample, depth).
 
     Rows where the observation is NaN (depth absent at that station) are dropped.
+    keep_unobserved (time-series plots only, user 2026-10-05): keep EVERY day of a depth the
+    station observes at least once, obs NaN where unobserved -- so the model output can be
+    drawn through observation gaps. Never point a metric at such a file.
     """
     n_samples, n_depths = res["preds"].shape
     frames = []
     for d, depth in enumerate(SM_DEPTHS[:n_depths]):
         obs = res["targets"][:, d]
         keep = ~np.isnan(obs)
+        if keep_unobserved and keep.any():
+            keep = np.isin(res["keys"], np.unique(res["keys"][keep]))
         if not keep.any():
             continue
         frames.append(pd.DataFrame({
@@ -348,6 +354,10 @@ def main():
                         "cross_station | within_station, default --ablate-mode); 'none' = "
                         "the plain baseline pass. All passes share ONE dataset build per "
                         "split (§67), e.g. --ablate none era5 sat era5:within_station")
+    p.add_argument("--keep-unobserved", action="store_true",
+                   help="keep predictions on days without an observation (obs NaN), for every "
+                        "depth the station measures -- for time-series plots only; write to a "
+                        "SEPARATE --out-dir, metrics must not read it")
     p.add_argument("--ablate-mode", default="cross_station",
                    choices=["cross_station", "within_station"],
                    help="cross_station: different site, same season (kills site "
@@ -571,7 +581,8 @@ def main():
                 key_col = "station"
             else:
                 res = run_split(model, loader, device)
-                df  = to_long_frame(res, split_name, train_split_map)
+                df  = to_long_frame(res, split_name, train_split_map,
+                                    keep_unobserved=args.keep_unobserved)
                 key_col = "station_key"
             mins = (time.time() - t0) / 60
     

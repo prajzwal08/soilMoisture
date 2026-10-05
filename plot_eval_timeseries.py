@@ -63,6 +63,7 @@ DPI          = 300
 PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
 CS           = 1.0         # extra multiplier for count / median annotations (paper style)
 BOX_ALPHA    = 0.55        # box fill opacity (bw + paper: 1.0, solid)
+LINE_DF      = None        # every-day predictions for the line (--line-dir); None = observed days only
 XROT         = None        # category tick rotation override (paper style: 90)
 
 
@@ -235,11 +236,21 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
             ax.set_yticks([])
             continue
 
+        # Prediction line: from the every-day predictions (--line-dir, eval_predict.py
+        # --keep-unobserved) when available, so the model output continues through gaps in
+        # the observed record (user 2026-10-05). Dots + metrics stay on observed days only.
+        gl = g
+        if LINE_DF is not None:
+            ll = LINE_DF[(LINE_DF["station_key"] == station) & (LINE_DF["depth"] == depth)]
+            if len(ll):
+                gl = ll.sort_values("date")
+        g = g[g["obs"].notna()]
+
         # Break the line across data gaps -- otherwise matplotlib draws a
         # straight segment across months of missing record, which reads as a
         # confident flat prediction that was never made.
-        dates = g["date"].to_numpy()
-        pred  = g["pred"].to_numpy(np.float64).copy()
+        dates = gl["date"].to_numpy()
+        pred  = gl["pred"].to_numpy(np.float64).copy()
         gap   = np.diff(dates).astype("timedelta64[D]").astype(int) > GAP_DAYS
         pred[np.append(gap, False)] = np.nan
 
@@ -278,7 +289,8 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
 
         if PAPER:
             ax.set_ylabel(DEPTH_LABELS[depth], color="black")
-            ax.set_ylim(*_paper_ylim(g[["pred", "obs"]].to_numpy(np.float64).ravel()))
+            ax.set_ylim(*_paper_ylim(np.concatenate([gl["pred"].to_numpy(np.float64),
+                                                     g["obs"].to_numpy(np.float64)])))
         else:
             ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nSM (m$^3$/m$^3$)",
                           color=DEPTH_COLORS[depth])
@@ -359,6 +371,10 @@ def main():
                    help="--select median: seed for the random draw")
     p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
                    help="bw = black-and-white; paper = blue/green/red, Times (plot_style_bw.py)")
+    p.add_argument("--line-dir", default=None,
+                   help="dir with every-day predictions (eval_predict.py --keep-unobserved); the "
+                        "prediction LINE is drawn from it so it continues through gaps in the "
+                        "observed record. Dots, metrics and ranking still use --in-dir.")
     args = p.parse_args()
     if args.style != "color":
         import plot_style_bw
@@ -381,6 +397,17 @@ def main():
 
         df = clip_pred(pd.read_parquet(path))
         df_rank = df        # rank on this split alone, before OOST is merged in
+        global LINE_DF
+        LINE_DF = None
+        if args.line_dir:
+            lines = [Path(args.line_dir) / f"predictions_{s}.parquet"
+                     for s in ([split, "oost"] if split == "oos" else [split])]
+            lines = [p_ for p_ in lines if p_.exists()]
+            if lines:
+                LINE_DF = clip_pred(pd.concat([pd.read_parquet(p_) for p_ in lines],
+                                              ignore_index=True))
+                print(f"    line from every-day predictions: {', '.join(p_.name for p_ in lines)} "
+                      f"({len(LINE_DF):,} rows)")
 
         # An OOS station continues into 2023 as OOST; show both in one figure
         # so the temporal extrapolation is visible on the same axes.
