@@ -317,7 +317,7 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
         if meta:
             lat = meta.get("latitude", float("nan"))
             lon = meta.get("longitude", float("nan"))
-            title += (f"   {meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')}"
+            title += (f" — {meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')}"
                       f" | {lat:.2f}°, {lon:.2f}°")
         fig.suptitle(title, fontsize=plt.rcParams["figure.titlesize"],
                      fontweight="bold")
