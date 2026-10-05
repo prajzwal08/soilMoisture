@@ -8170,3 +8170,13 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     fine ratio 0.63/1.06/0.07, map SD 0-10 0.006/0.015/0.018, epochs/epoch_00{1,2,3}.pt 107 MB each. Numbers meaningless at 20 stn.
   §59 FULL RUN SUBMITTED on the user's OK ("then full run if it passes"): job 27575211, nolst_L3_wu200_20261005,
     log logs/lst_tmean_diff/train_nolst_L3_wu200_27575211.out, ckpt .../lst_tmean_diff/nolst_L3_wu200_20261005/{best,last}.pt + epochs/.
+  §59 FULL 27575211 STOPPED by the user after epoch 11 ("lets just run for the 10 epochs"; scancel, 30 min).
+    best.pt = ep10 SELECT 0.0488 (6-layer baseline best 0.0487 ep13). epochs/epoch_001..011.pt kept.
+    ep  train    val      gap    SELECT   ub0-10  r0-10  fine_ratio  mapSD0-10
+     1  0.00304  0.00289  0.95x  0.0635   0.0689  0.583  0.143       0.042
+     4  0.00116  0.00236  2.05x  0.0509   0.0574  0.725  0.064       0.026
+     7  0.00093  0.00240  2.58x  0.0495   0.0562  0.738  0.087       0.025
+    10  0.00079  0.00230  2.89x  0.0488   0.0554  0.756  0.046       0.023
+    11  0.00076  0.00232  3.06x  0.0511   0.0562  0.759  0.055       0.028
+    Read: 3 layers + warmup 200 reaches the 6-layer best 3 epochs sooner; gap grows as fast (memorisation not
+    from trunk depth); fine-grad ratio noisy 0.05-0.14, no rise vs 6 layers.
