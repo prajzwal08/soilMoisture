@@ -35,6 +35,8 @@ SM = "sm_0-10"
 SIGNALS = [("dT_mean", "LST tile − T2m mean, anomaly (K)", "Level"),
            ("P_stn", "Cell − tile mean, anomaly (K)", "Pattern")]
 MIN_SCENES = 20          # per-station r needs this many scenes with both values (probe's MIN_SCENES)
+HEXBIN_ABOVE = 15000     # pooled panels switch from dots to a density hexbin above this many scenes
+C2_MAX_STATIONS = 80     # one-panel-per-station grid only below this
 INK, MUTED, GRID = "#1f1f1e", "#6b6a66", "#d9d8d4"
 TXSON, OTHER = "#2a78d6", "#d0822c"   # identity: TxSON network vs the rest
 
@@ -131,14 +133,22 @@ def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--txson-only", action="store_true", help="TxSON stations only (outputs get a _TxSON suffix)")
+    ap.add_argument("--out-suffix", default="", help="read csvs/probe_lst_level_pattern<suffix>/scenes.csv, write there too")
+    ap.add_argument("--split", default=None, help="keep only this split (e.g. train)")
     a = ap.parse_args()
-    tag = "_TxSON" if a.txson_only else ""
+    global SCENES, OUT_FIG, OUT_CSV
+    OUT_CSV = OUT_CSV.with_name(OUT_CSV.name + a.out_suffix)
+    OUT_FIG = OUT_FIG.with_name(OUT_FIG.name + a.out_suffix)
+    SCENES = OUT_CSV / "scenes.csv"
+    tag = ("_TxSON" if a.txson_only else "") + (f"_{a.split}" if a.split else "")
     from multiprocessing import Pool
     from splits_config import category_of, station_dir_name
 
     s = pd.read_csv(SCENES)
     if a.txson_only:
         s = s[s["txson"].astype(str).str.lower() == "true"].copy()
+    if a.split:
+        s = s[s["split"] == a.split].copy()
     sp = pd.read_csv("csvs/station_splits.csv")          # pandas: quoted commas
     sp["dir"] = sp.apply(station_dir_name, axis=1)
     sp["cat"] = sp.apply(category_of, axis=1)
@@ -175,14 +185,21 @@ def main():
                              gridspec_kw={"width_ratios": [1, 1, 0.8]})
     for ax, (c, lab, name) in zip(axes[:2], SIGNALS):
         style(ax)
-        for flag, col, lbl in ((False, OTHER, "Other networks"), (True, TXSON, "TxSON")):
-            g = d[d["is_txson"] == flag]
-            if g.empty:
-                continue
-            ax.scatter(g[SM], g[c], s=7, color=col, alpha=0.35, linewidths=0, label=lbl, rasterized=True)
+        m = d[c].notna() & d[SM].notna()
+        if m.sum() > HEXBIN_ABOVE:          # too many dots to read: density, one-hue sequential
+            xlo, xhi = d.loc[m, SM].quantile([.002, .998])
+            ylo, yhi = d.loc[m, c].quantile([.005, .995])
+            hb = ax.hexbin(d.loc[m, SM], d.loc[m, c], gridsize=60, cmap="Blues", bins="log", mincnt=1,
+                           extent=(xlo, xhi, ylo, yhi), linewidths=0, rasterized=True)
+            fig.colorbar(hb, ax=ax, label="scenes per cell", shrink=0.8)
+        else:
+            for flag, col, lbl in ((False, OTHER, "Other networks"), (True, TXSON, "TxSON")):
+                g = d[d["is_txson"] == flag]
+                if g.empty:
+                    continue
+                ax.scatter(g[SM], g[c], s=7, color=col, alpha=0.35, linewidths=0, label=lbl, rasterized=True)
         r, n = r_of(d[c], d[SM])
         rs = per[f"r_{c}"].dropna()
-        m = d[c].notna() & d[SM].notna()
         k, b = np.polyfit(d.loc[m, SM], d.loc[m, c], 1)
         xx = np.linspace(d.loc[m, SM].quantile(.01), d.loc[m, SM].quantile(.99), 2)
         ax.plot(xx, k * xx + b, color=INK, lw=1.5)
@@ -193,7 +210,8 @@ def main():
         ax.set_ylabel(lab, fontsize=9, color=INK)
         lo, hi = d[c].quantile([.005, .995])
         ax.set_ylim(lo - 0.1 * (hi - lo), hi + 0.1 * (hi - lo))
-    axes[0].legend(frameon=False, fontsize=8, markerscale=2.5, loc="upper right")
+    if axes[0].get_legend_handles_labels()[0]:
+        axes[0].legend(frameon=False, fontsize=8, markerscale=2.5, loc="upper right")
 
     ax = axes[2]
     style(ax, zero_x=False)
@@ -202,8 +220,9 @@ def main():
         p = per.dropna(subset=[f"r_{c}"])
         for flag, col in ((False, OTHER), (True, TXSON)):
             q = p[p["txson"] == flag]
-            ax.scatter(i + rng.uniform(-0.15, 0.15, len(q)), q[f"r_{c}"], s=16, color=col,
-                       alpha=0.8, edgecolors="white", linewidths=0.4)
+            ax.scatter(i + rng.uniform(-0.15, 0.15, len(q)), q[f"r_{c}"], s=16 if len(p) < 150 else 6,
+                       color=col, alpha=0.8 if len(p) < 150 else 0.5, edgecolors="white",
+                       linewidths=0.4 if len(p) < 150 else 0)
         med = p[f"r_{c}"].median()
         ax.plot([i - 0.28, i + 0.28], [med, med], color=INK, lw=2)
         ax.annotate(f"{med:+.2f}", (i + 0.3, med), va="center", fontsize=8, color=INK)
@@ -211,7 +230,7 @@ def main():
     ax.set_xlim(-0.6, 1.8)
     ax.set_ylabel("Per-station deseasonalised r with SM 0-10", fontsize=9, color=INK)
     ax.set_title(f"(c) One dot per station (≥ {MIN_SCENES} scenes)", fontsize=9, color=INK, loc="left")
-    fig.suptitle(("TxSON only. " if a.txson_only else "") + "Landsat scene days 2016-2022, anomalies from smooth per-station climatologies "
+    fig.suptitle(("TxSON only. " if a.txson_only else "") + (f"{a.split} stations. " if a.split else "") + "Landsat scene days 2016-2022, anomalies from smooth per-station climatologies "
                  "(SM: full daily record; thermal: harmonic fit)",
                  fontsize=10, color=INK)
     OUT_FIG.mkdir(parents=True, exist_ok=True)
@@ -220,6 +239,11 @@ def main():
     plt.close(fig)
 
     # ---- C2: small multiples, level only --------------------------------------------------
+    if len(per) > C2_MAX_STATIONS:
+        print(f"C2 skipped: {len(per)} stations > {C2_MAX_STATIONS} (unreadable grid)")
+        print(per[["r_dT_mean", "r_P_stn"]].describe().round(3).to_string())
+        print(f"wrote {OUT_FIG}/C1_*{tag}  and {OUT_CSV}/partC_deseason_r_per_station{tag}.csv")
+        return
     c, lab, _ = SIGNALS[0]
     order = per.sort_values(["txson", f"r_{c}"], na_position="last")["station"].tolist()
     ncol = 8

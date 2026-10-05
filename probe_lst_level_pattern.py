@@ -169,10 +169,16 @@ def spatial_anom(df: pd.DataFrame, cols: list[str], min_st: int) -> pd.DataFrame
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    global OUT_CSV, OUT_FIG
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=64)
     ap.add_argument("--max-stations", type=int, default=None, help="smoke test")
+    ap.add_argument("--out-suffix", default="",
+                    help="write to csvs/probe_lst_level_pattern<suffix>/ (and figures/...) so a "
+                         "full run does not overwrite the 2026-09-30 60-station outputs")
     args = ap.parse_args()
+    OUT_CSV = OUT_CSV.with_name(OUT_CSV.name + args.out_suffix)
+    OUT_FIG = OUT_FIG.with_name(OUT_FIG.name + args.out_suffix)
     OUT_CSV.mkdir(parents=True, exist_ok=True)
     OUT_FIG.mkdir(parents=True, exist_ok=True)
 
