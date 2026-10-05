@@ -8197,3 +8197,10 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     fine-grad ratio fell to 0.004-0.03 (vs 0.05-0.14). Less memorisation did not buy better generalisation.
     Effects of sd and wd not separable (one run).
   §61 BUILT (not submitted): found §57 verify 27439912 FAILED 5b (fp16 NDVI/NDMI max err 0.80, never read); floor 10->200 DN + 5b on p99/fraction; --no-skip-zero-init; slurm/train_s61{_smoke,}.sh. Next: verify_s57.sh (needs OK).
+  NDVI/NDMI visual check SUBMITTED on the user's request: job 27588891 (plot_fine_indices.py, 4 stations) -> figures/fine_indices/
+  NDVI/NDMI visual check 27588891 (51 s): clearest Jun-Aug scene at REMEDHUS_Canizal, US-Ne1, FI-Hyy, SE-Deg.
+    Indices look physically right (US-Ne1 pivots NDVI ~0.85, roads/bare low; NDMI follows). fp16 model path vs direct
+    fp64: p99 |d| 1e-4..1.5e-3, 0 pixels > 0.02, 0 pixels under either floor -> in CLEAR summer scenes the fp16 path is
+    fine and the floor never binds. So verify 5b's 0.80 max came from rarer scenes (winter/low sun/cloud edge/snow?);
+    the 200 DN floor is a guess until verify reports where the worst pixels are. FI-Hyy lake NDVI ~+0.1 in BOTH paths
+    (data, not code).
