@@ -8321,3 +8321,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §66 paper-style TEST figure (job 27625538, 44 s): metrics re-run with EVAL_CLIP=0,1 (clipped val 952 / OOS 1,190 / OOT 8,099 / OOST 319 rows);
     figures/eval/baseline_selected_20261005_paper/box_ubrmse_by_igbp_macro.png (blue/green/red, Nimbus Roman = Times clone; Times New Roman not installed). Awaiting user verdict before all figures.
   §66 paper style v3 (job 27625711): Okabe-Ito #0072B2/#009E73/#D55E00 (validator: all checks pass, worst CVD dE 11.0; previous red/green FAILED dE 2.5), bold axes/labels/ticks, big station counts, no titles.
+  §66 palette chooser (jobs 27625807, 27625858): figures/eval/baseline_selected_20261005_paper/palette_options/palette_options.png, six CVD-safe palettes
+    A NPG navy/green/red, B Tol bright, C Tol high-contrast blue/gold/rose, D Dark2, E navy/teal/gold, F navy/grey/brick; solid fills (alpha 0.9). Awaiting user pick.
