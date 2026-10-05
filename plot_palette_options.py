@@ -4,7 +4,7 @@
 Reads the backing CSV that plot_eval_ecosystem.py already wrote (no metrics recomputed) and draws one
 panel per palette, same data, same paper fonts (Times-like serif, bold), solid fills (no transparency
 wash-out). All candidates pass the colour-blind check (dataviz validate_palette.js, worst CVD dE >= 8.9)
-except the matplotlib default, shown last as the reference that FAILS (dE 3.9).
+(the plain matplotlib blue/green/red FAILS, dE 3.9, and is not offered).
 """
 from pathlib import Path
 
@@ -20,12 +20,13 @@ import plot_style_bw
 SRC = Path("figures/eval/baseline_selected_20261005_paper/box_ubrmse_by_igbp_macro.csv")
 OUT = Path("figures/eval/baseline_selected_20261005_paper/palette_options")
 SPLITS = ["oos", "oot", "oost"]
-PALETTES = [  # (name, OOS, OOT, OOST)
-    ("A  Nature (NPG)",        "#3C5488", "#00A087", "#E64B35"),
-    ("B  Paul Tol bright",     "#4477AA", "#228833", "#EE6677"),
-    ("C  Paul Tol muted",      "#332288", "#117733", "#CC6677"),
-    ("D  Okabe-Ito",           "#0072B2", "#009E73", "#D55E00"),
-    ("E  matplotlib default (fails colour-blind check)", "#1F77B4", "#2CA02C", "#D62728"),
+PALETTES = [  # (name, OOS, OOT, OOST) — all pass the colour-blind check (worst CVD dE >= 8.9)
+    ("A  Nature (NPG): navy / green / red",          "#3C5488", "#00A087", "#E64B35"),
+    ("B  Paul Tol bright: blue / green / rose",      "#4477AA", "#228833", "#EE6677"),
+    ("C  Paul Tol high-contrast: blue / gold / rose", "#004488", "#DDAA33", "#BB5566"),
+    ("D  ColorBrewer Dark2: teal / orange / purple", "#1B9E77", "#D95F02", "#7570B3"),
+    ("E  navy / teal / gold",                        "#0F4C81", "#5AA9A6", "#E1B12C"),
+    ("F  navy / grey / brick",                       "#2E5A87", "#A3A3A3", "#C8553D"),
 ]
 
 
