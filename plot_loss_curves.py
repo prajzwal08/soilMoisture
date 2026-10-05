@@ -117,7 +117,7 @@ def main():
     # is epoch 14 while best.pt is epoch 2 -- ranking on the wrong one mislabels the plot.
     if sel:
         best_i   = min(range(len(sel)), key=lambda i: sel[i])
-        best_txt = f"best.pt  ep{ep[best_i]}  ubRMSE {sel[best_i]:.6f}"
+        best_txt = f"Best epoch {ep[best_i]}, ubRMSE {sel[best_i]:.4f} m$^3$ m$^{{-3}}$"
     else:
         best_i   = min(range(len(va)), key=lambda i: va[i])
         best_txt = f"min val_loss {va[best_i]:.6f}"
@@ -168,19 +168,23 @@ def main():
                  lw=1.6, zorder=3, label=f"Train (median, {MEDIAN_WINDOW} pts)")
     # Epoch-mean train loss: the number the run itself reported, as a check that the
     # batch cloud lands where it should.
-    ax1.plot(ep, tr, "o", color=C_TRAIN, ms=3.2, mfc="white", mew=0.9, zorder=4,
-             label="Train (epoch mean)")
+    # Without batch lines the epoch means are the only train series -- draw them as a line.
+    ax1.plot(ep, tr, "o" if bx else "-o", color=C_TRAIN, lw=1.8, ms=3.2, mfc="white",
+             mew=0.9, zorder=4, label="Train (epoch mean)")
     ax1.plot(ep, va, "-s", color=C_VAL, lw=1.8, ms=4.5, mec="white", mew=0.8,
              label="Validation (per epoch)", zorder=5)
 
     ax1.set_yscale("log")
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Huber loss (per-depth mean)")
-    ax1.set_title("(a) Per-batch train vs. validation loss", loc="left", pad=8)
+    ax1.set_title("(a) Per-batch train vs. validation loss" if bx
+                  else "(a) Train vs. validation loss", loc="left", pad=8)
 
     ax1.plot(ep[best_i], va[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=6)
     ax1.annotate(best_txt, (ep[best_i], va[best_i]),
-                 textcoords="offset points", xytext=(8, 10), ha="left",
+                 textcoords="offset points", xytext=(0, 12),
+                 # right half of the axis: anchor right so the label stays inside panel (a)
+                 ha="right" if ep[best_i] > 0.5 * ep[-1] else "left",
                  fontsize=7, color=MUTED)
 
     ax1.set_xlim(0, ep[-1] + 0.35)
@@ -201,7 +205,7 @@ def main():
     ax2.set_xlim(ep[0] - 0.35, ep[-1] + 0.35)
     # Annotating all 22 would be unreadable; label the ends and the best epoch.
     for i in {0, best_i, len(ep) - 1}:
-        ax2.annotate(f"{ratio[i]:.0f}x", (ep[i], ratio[i]), textcoords="offset points",
+        ax2.annotate(f"{ratio[i]:.1f}x", (ep[i], ratio[i]), textcoords="offset points",
                      xytext=(0, 8), ha="center", fontsize=7, color=MUTED)
 
     for ax in (ax1, ax2):
