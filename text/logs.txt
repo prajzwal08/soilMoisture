@@ -8204,3 +8204,10 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     fine and the floor never binds. So verify 5b's 0.80 max came from rarer scenes (winter/low sun/cloud edge/snow?);
     the 200 DN floor is a guess until verify reports where the worst pixels are. FI-Hyy lake NDVI ~+0.1 in BOTH paths
     (data, not code).
+  §61 VERIFY SUBMITTED on the user's OK: job 27589857 (slurm/verify_s57.sh; 5b now p99/fraction + 8 worst pixels at floor 10 and 200)
+  §61 VERIFY 27589857 ALL PASS (70 s; verify_s48 bands mode + verify_s57 indices). 5b at floor 200 DN: p99 |d| 2.8e-4,
+    5.5e-7 of 1.8 M px > 0.02. Worst-pixel table explains 27439912's 0.80: a THRESHOLD FLIP, not rounding — SCAN_ElsberryPMC
+    2019-01-09 pixel with den 10.2 DN sits just above the old 10 DN floor in fp64 (ref +0.805) and just below it in fp16
+    (got 0). Real fp16 rounding errors were 0.02-0.14 only for den 10-66 DN (dark lake/winter pixels, SNOTEL TonyGroveLake);
+    at floor 200 the largest real error is 0.007, and the one remaining 0.44 is the same flip at den 200.2 (NGARI SQ21).
+    Decision: keep computing NDVI/NDMI on the GPU from the fp16 tensor; no cache rebuild. Next: §61 smoke (needs OK).
