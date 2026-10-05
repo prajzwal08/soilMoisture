@@ -8348,3 +8348,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   timing (~0.74 ms/sample, H100). LST-T2m deseasonalised analyses (60 stn, TxSON, 571 train stn) + residual check ->
   LST not worth adding. Predictions clipped to [0,1]. Paper figure style settled (palette H) and all baseline figures
   rendered + agent-reviewed twice. §67 input ablation built, smoke passed, full run 27627597 running.
+  TWENTE time series (job 27627623, paper style, clipped): figures/eval/baseline_selected_20261005_paper/timeseries_twente/named/oos/ (8 PNG + contact PDF). Hupsel: model +0.22/+0.15/+0.10 bias at 0-10/10-30/30-100; observed 0-10 sits ~0.01 for months (likely sensor/calibration issue, flag only). ITCSM-16b: dynamics tracked, winter peaks 0.4-0.6 underestimated.
