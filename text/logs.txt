@@ -8377,3 +8377,6 @@ Job 27628469: + province column (tile centre, nearest province for water centres
   Zeeland 373, Utrecht 310, Flevoland 297.  Map shows Overijssel filled; 2-3 TWENTE stations fall just SOUTH
   of the border in Gelderland (Achterhoek), so "all TWENTE inside Overijssel" was wrong.
   Overijssel pilot sizing (x682/7005): ~17 A100-h tokens (~2.2k GPU SBU) + ~0.2k predict + ~0.5k CPU, 1-2 days.
+§68 Overijssel plan WRITTEN (runbook §68, commits f34b2c3 + 9b5bcd3): flowchart, steps/traps, budget ~7k SBU,
+  ~1.5 TB scratch, smoke gates S1-S5 (2 TWENTE control tiles + 1 grid tile), code build list, day plan.
+  User: start Tue 2026-10-06 morning, nothing submitted tonight. SIF = TROPOMI (revisit after §67 SIF ablation).
