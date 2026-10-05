@@ -73,13 +73,38 @@ MODALITY_KEYS_UNET["sat"] = (MODALITY_KEYS_UNET["s2"] + MODALITY_KEYS_UNET["s1"]
                              + MODALITY_KEYS_UNET["dem"] + MODALITY_KEYS_UNET["lulc"]
                              + MODALITY_KEYS_UNET["anchor"])
 
-KEY_MAPS = {"patchwise": MODALITY_KEYS, "unet": MODALITY_KEYS_UNET}
+# ── The §48 / §59 (s48) model: the final baseline_selected_20261005 ────────────────────────
+# Keys from dataset.py SoilMoistureDataset.__getitem__ (the return dict). A tuple
+# (key, start, stop) swaps only those CHANNELS of a stacked tensor: the 20 m `fine` patch
+# holds S2 (0:12) | S1 (12:17) | DEM (17:19) (model.py FINE_S2/FINE_S1/FINE_DEM, raw-band
+# fine inputs), so "imagery" and "DEM" can be ablated separately. Checked STRICTLY: every
+# listed key must exist (a partial swap is incoherence, not absence — see below).
+_S2_160   = ["s2_pyr", "s2_doys", "s2_valid", "s2_rel_pos"]
+_S1_160   = ["s1_pyr", "s1_doys", "s1_valid", "s1_rel_pos", "s1_orbit"]
+_ANCHOR   = ["anchor_l12", "anchor_rel_pos", "anchor_orbit", "anchor_found"]
+_FINE_IMG = [("fine", 0, 17)]                       # 20 m S2 + S1 channels, DEM channel kept
+MODALITY_KEYS_S48 = {
+    "era5":   ["era5", "era5_doys", "era5_rel_pos"],
+    "s2":     _S2_160,                              # 160 m S2 history (anchor untouched)
+    "s1":     _S1_160,                              # 160 m S1 history (anchor untouched)
+    "sat160": _S2_160 + _S1_160 + _ANCHOR,          # every 160 m satellite token
+    "fine":   _FINE_IMG,                            # 20 m imagery
+    "sat":    _S2_160 + _S1_160 + _ANCHOR + _FINE_IMG,   # all satellite, 160 m + 20 m
+    "dem":    ["dem_pyr", "dem_valid", ("fine", 17, 19)],
+    "lulc":   ["lulc_pyr", "lulc_valid", "lulc"],   # 160 m tokens + the 10 m class map
+    "soil":   ["soil_patch", "soil_valid"],
+    "sif":    ["sif", "sif_doys", "sif_rel_pos", "sif_valid"],
+    "twsa":   ["twsa", "twsa_doys", "twsa_rel_pos", "twsa_valid"],
+}
+
+KEY_MAPS = {"patchwise": MODALITY_KEYS, "unet": MODALITY_KEYS_UNET, "s48": MODALITY_KEYS_S48}
+_STRICT_ARMS = {"unet", "s48"}
 
 # Every modality must match at least one key in every sample. Silence means a stale key list,
 # which is a SILENT NO-OP ablation -- see AblationDataset.__getitem__.
 _OPTIONAL_MODALITIES: set[str] = set()
 
-MODALITIES = sorted(set(MODALITY_KEYS) | set(MODALITY_KEYS_UNET))
+MODALITIES = sorted(set(MODALITY_KEYS) | set(MODALITY_KEYS_UNET) | set(MODALITY_KEYS_S48))
 
 
 def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
@@ -187,17 +212,24 @@ class AblationDataset(torch.utils.data.Dataset):
         d = self.base[j]
         n_swapped = 0
         for k in self.keys:
-            if k in d:
+            if isinstance(k, tuple):              # channel slice of a stacked tensor
+                name, a, b = k
+                if name in d and name in item:
+                    t = item[name].clone()        # FRESH tensor: never edit a cached array
+                    t[a:b] = d[name][a:b]
+                    item[name] = t
+                    n_swapped += 1
+            elif k in d:
                 item[k] = d[k]
                 n_swapped += 1
-        if self.arm == "unet" and n_swapped != len(self.keys):
+        if self.arm in _STRICT_ARMS and n_swapped != len(self.keys):
             # STRICT on the U-Net arm. `n_swapped == 0` catches a wholly stale key list but not
             # a PARTIALLY stale one, and the partial case is the dangerous one: with the
             # patchwise map, `s2` matches s2_doys/s2_valid/s2_rel_pos on this arm and passes the
             # loose guard while `s2_pyr` -- the tokens themselves -- never moves. The model then
             # sees a donor's timestamps on its own imagery, which is incoherence rather than
             # absence and is uninterpretable (§24.2). A modality MOVES AS A WHOLE or not at all.
-            missing = [k for k in self.keys if k not in d]
+            missing = [k for k in self.keys if (k[0] if isinstance(k, tuple) else k) not in d]
             raise KeyError(
                 f"ablation '{self.modality}' (arm={self.arm}) swapped {n_swapped} of "
                 f"{len(self.keys)} keys; missing {missing}. A partial swap is incoherence, "

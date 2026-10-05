@@ -343,9 +343,11 @@ def main():
     # §24 modality shuffling.  Run --ablate era5 FIRST as the positive control: if
     # shuffling ERA5 does not move the metrics, the permutation never reached the
     # model and every satellite condition would be a false negative.
-    p.add_argument("--ablate",      default="none",
-                   choices=["none"] + MODALITIES,
-                   help="replace this modality with another sample's (§24)")
+    p.add_argument("--ablate",      nargs="+", default=["none"],
+                   help="one or more passes, each MODALITY or MODALITY:MODE (MODE = "
+                        "cross_station | within_station, default --ablate-mode); 'none' = "
+                        "the plain baseline pass. All passes share ONE dataset build per "
+                        "split (§67), e.g. --ablate none era5 sat era5:within_station")
     p.add_argument("--ablate-mode", default="cross_station",
                    choices=["cross_station", "within_station"],
                    help="cross_station: different site, same season (kills site "
@@ -374,7 +376,7 @@ def main():
 
     pmap = None
     if args.pixel_csv:
-        if args.ablate != "none":
+        if any(a != "none" for a in args.ablate):
             raise SystemExit("--pixel-csv and --ablate are not supported together")
         pix = pd.read_csv(args.pixel_csv)
         if args.pixel_tiles:
@@ -389,10 +391,21 @@ def main():
               f"{len(pix) - (int(pix['is_centre'].sum()) if 'is_centre' in pix else 0)}"
               f" off-centre")
 
-    # auto-tag so an ablation can never overwrite the baseline artefacts
-    if args.ablate != "none":
-        abl_tag = f"{args.ablate}_{args.ablate_mode}_s{args.seed}"
-        args.tag = f"{args.tag}_{abl_tag}" if args.tag else abl_tag
+    # Ablation passes. Each ablated pass is auto-tagged (modality_mode_sSEED) so it can never
+    # overwrite the baseline artefacts; 'none' keeps the plain tag.
+    ablations = []
+    for a in args.ablate:
+        if a == "none":
+            ablations.append(None)
+            continue
+        mod, _, mode = a.partition(":")
+        mode = mode or args.ablate_mode
+        if mod not in MODALITIES:
+            raise SystemExit(f"--ablate {a!r}: unknown modality {mod!r}; have {MODALITIES}")
+        if mode not in ("cross_station", "within_station"):
+            raise SystemExit(f"--ablate {a!r}: unknown mode {mode!r}")
+        ablations.append((mod, mode))
+    print("Passes:", ["baseline" if x is None else f"{x[0]}:{x[1]}" for x in ablations])
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -528,88 +541,96 @@ def main():
             print("  No samples -- skipping")
             continue
 
-        if args.ablate != "none":
-            ds = AblationDataset(ds, args.ablate, args.ablate_mode, args.seed)
-            print(ds.report())
+        base_ds = ds
+        for abl in ablations:              # None = the plain (baseline) pass; dataset built once
+            if abl is None:
+                ds, tag = base_ds, args.tag
+            else:
+                mod, mode = abl
+                ds = AblationDataset(base_ds, mod, mode, args.seed, arm="s48")
+                print(f"\n  ── ablation pass: {mod} / {mode} ──")
+                print(ds.report())
+                at = f"{mod}_{mode}_s{args.seed}"
+                tag = f"{args.tag}_{at}" if args.tag else at
 
-        loader = DataLoader(
-            ds,
-            batch_size         = args.batch_size,
-            shuffle            = False,
-            num_workers        = args.num_workers,
-            pin_memory         = True,
-            worker_init_fn     = worker_init_fn,
-            persistent_workers = False,
-            prefetch_factor    = 2 if args.num_workers > 0 else None,
-        )
-
-        t0 = time.time()
-        if pmap is not None:
-            res = run_split_pixels(model, loader, device, pmap)
-            df  = to_long_frame_pixels(res, pmap)
-            key_col = "station"
-        else:
-            res = run_split(model, loader, device)
-            df  = to_long_frame(res, split_name, train_split_map)
-            key_col = "station_key"
-        mins = (time.time() - t0) / 60
-
-        if df.empty:
-            print("  All observations NaN -- nothing written")
-            continue
-
-        n_nan_pred = int(df["pred"].isna().sum())
-        if n_nan_pred:
-            print(f"  WARNING -- {n_nan_pred} NaN predictions")
-
-        suffix   = f"_{args.tag}" if args.tag else ""
-        out_path = out_dir / f"predictions_{split_name}{suffix}.parquet"
-        df.to_parquet(out_path, index=False, compression="snappy")
-
-        print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
-              f"{mins:.1f} min")
-        print(f"  TIMING {split_name}{('_' + args.tag) if args.tag else ''}: dataset init {init_s:.0f} s | "
-              f"loop {mins*60:.0f} s ({len(ds)/max(mins*60,1e-9):.0f} samples/s incl. loading) | "
-              f"GPU forward {res['fwd_s']:.1f} s = {1e3*res['fwd_s']/max(len(ds),1):.3f} ms/sample "
-              f"(batch {args.batch_size}, {torch.cuda.get_device_name(0)})")
-        if pmap is not None:
-            print(f"  readouts: {df.groupby(['tile','station']).ngroups} "
-                  f"(tile, station) pairs | "
-                  f"centre {int(df.is_centre.sum()):,} rows / "
-                  f"off-centre {int((~df.is_centre).sum()):,} rows")
-        print(f"  rows per depth: "
-              f"{df.groupby('depth', observed=True).size().to_dict()}")
-        print(f"  Saved: {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
-
-        manifest["splits"][f"{split_name}{suffix}"] = {
-            "split_filter": scfg["split_filter"],
-            "years":        [int(scfg["years"][0]), int(scfg["years"][-1])],
-            "n_stations":   int(df[key_col].nunique()),
-            "n_rows":       int(len(df)),
-            "n_samples":    int(len(ds)),
-            "rows_by_depth": {str(k): int(v) for k, v in
-                              df.groupby("depth", observed=True).size().items()},
-            "nan_pred":     n_nan_pred,
-            "minutes":      round(mins, 1),
-            # inference timing (user 2026-10-05): dataset build, full loop (incl. data loading),
-            # and pure GPU forward time from CUDA events; bf16 autocast, batch size as below
-            "timing": {
-                "gpu":                 torch.cuda.get_device_name(0),
-                "batch_size":          args.batch_size,
-                "num_workers":         args.num_workers,
-                "dataset_init_s":      round(init_s, 1),
-                "loop_s":              round(mins * 60, 1),
-                "gpu_forward_s":       round(res["fwd_s"], 2),
-                "n_samples":           int(len(ds)),
-                "samples_per_s_loop":  round(len(ds) / max(mins * 60, 1e-9), 1),
-                "ms_per_sample_gpu":   round(1e3 * res["fwd_s"] / max(len(ds), 1), 3),
-            },
-            **({"pixel_csv":   args.pixel_csv,
-                "n_readouts":  int(df.groupby(["tile", "station"]).ngroups),
-                "n_offcentre": int(df.groupby(["tile", "station"])
-                                   .is_centre.first().eq(False).sum())}
-               if pmap is not None else {}),
-        }
+            loader = DataLoader(
+                ds,
+                batch_size         = args.batch_size,
+                shuffle            = False,
+                num_workers        = args.num_workers,
+                pin_memory         = True,
+                worker_init_fn     = worker_init_fn,
+                persistent_workers = False,
+                prefetch_factor    = 2 if args.num_workers > 0 else None,
+            )
+    
+            t0 = time.time()
+            if pmap is not None:
+                res = run_split_pixels(model, loader, device, pmap)
+                df  = to_long_frame_pixels(res, pmap)
+                key_col = "station"
+            else:
+                res = run_split(model, loader, device)
+                df  = to_long_frame(res, split_name, train_split_map)
+                key_col = "station_key"
+            mins = (time.time() - t0) / 60
+    
+            if df.empty:
+                print("  All observations NaN -- nothing written")
+                continue
+    
+            n_nan_pred = int(df["pred"].isna().sum())
+            if n_nan_pred:
+                print(f"  WARNING -- {n_nan_pred} NaN predictions")
+    
+            suffix   = f"_{tag}" if tag else ""
+            out_path = out_dir / f"predictions_{split_name}{suffix}.parquet"
+            df.to_parquet(out_path, index=False, compression="snappy")
+    
+            print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
+                  f"{mins:.1f} min")
+            print(f"  TIMING {split_name}{('_' + tag) if tag else ''}: dataset init {init_s:.0f} s | "
+                  f"loop {mins*60:.0f} s ({len(ds)/max(mins*60,1e-9):.0f} samples/s incl. loading) | "
+                  f"GPU forward {res['fwd_s']:.1f} s = {1e3*res['fwd_s']/max(len(ds),1):.3f} ms/sample "
+                  f"(batch {args.batch_size}, {torch.cuda.get_device_name(0)})")
+            if pmap is not None:
+                print(f"  readouts: {df.groupby(['tile','station']).ngroups} "
+                      f"(tile, station) pairs | "
+                      f"centre {int(df.is_centre.sum()):,} rows / "
+                      f"off-centre {int((~df.is_centre).sum()):,} rows")
+            print(f"  rows per depth: "
+                  f"{df.groupby('depth', observed=True).size().to_dict()}")
+            print(f"  Saved: {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
+    
+            manifest["splits"][f"{split_name}{suffix}"] = {
+                "split_filter": scfg["split_filter"],
+                "years":        [int(scfg["years"][0]), int(scfg["years"][-1])],
+                "n_stations":   int(df[key_col].nunique()),
+                "n_rows":       int(len(df)),
+                "n_samples":    int(len(ds)),
+                "rows_by_depth": {str(k): int(v) for k, v in
+                                  df.groupby("depth", observed=True).size().items()},
+                "nan_pred":     n_nan_pred,
+                "minutes":      round(mins, 1),
+                # inference timing (user 2026-10-05): dataset build, full loop (incl. data loading),
+                # and pure GPU forward time from CUDA events; bf16 autocast, batch size as below
+                "timing": {
+                    "gpu":                 torch.cuda.get_device_name(0),
+                    "batch_size":          args.batch_size,
+                    "num_workers":         args.num_workers,
+                    "dataset_init_s":      round(init_s, 1),
+                    "loop_s":              round(mins * 60, 1),
+                    "gpu_forward_s":       round(res["fwd_s"], 2),
+                    "n_samples":           int(len(ds)),
+                    "samples_per_s_loop":  round(len(ds) / max(mins * 60, 1e-9), 1),
+                    "ms_per_sample_gpu":   round(1e3 * res["fwd_s"] / max(len(ds), 1), 3),
+                },
+                **({"pixel_csv":   args.pixel_csv,
+                    "n_readouts":  int(df.groupby(["tile", "station"]).ngroups),
+                    "n_offcentre": int(df.groupby(["tile", "station"])
+                                       .is_centre.first().eq(False).sum())}
+                   if pmap is not None else {}),
+            }
 
     manifest_path = out_dir / "manifest.json"
     with open(manifest_path, "w") as f:

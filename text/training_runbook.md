@@ -17537,3 +17537,34 @@ gap 2.89x. Reading: gap clearly below 2.9x at SELECT <= ~0.049 -> wd is a free c
 wd costs skill (and §60's loss was at least partly wd, not static dropout).
 
 Status: built, NOT submitted. Needs the user's OK.
+
+## §66 Final-model evaluation — selected baseline (Session 47, 2026-10-05, DONE)
+
+Final model FROZEN by the user: §59 `nolst_L3_wu200_20261005` (3 layers, wd 0.05, best.pt = ep10, val SELECT 0.0488);
+renamed for reporting `baseline_selected_20261005` (eval_output/, figures/eval/; README.txt; git tag
+`baseline/selected-20261005` -> a01decf). Eval job 27621948: OOS 222 / OOT 362 / OOST 115 stations; GPU forward
+0.73-0.75 ms/sample (H100, bf16, batch 128), timing in manifest.json. Predictions clipped to [0, 1] for all metrics
+and figures (EVAL_CLIP=0,1; 0.1-0.9 % of rows; linear unbounded head; FI-Sii peat reaches 1.02 in OOT).
+Station-mean ubRMSE 0-10/10-30/30-100: OOS .052/.048/.047, OOT .049/.043/.044, OOST .054/.047/.050.
+Paper figures (palette H, Times bold, no titles, agent-reviewed twice): figures/eval/baseline_selected_20261005_paper/.
+
+## §67 Input attribution of the frozen baseline (Session 47, 2026-10-05, BUILT, nothing submitted)
+
+Question: how much does the trained model RELY on each input (eval-only; no retraining). OOS only (standard set
+for analysing a final model). 13 passes from one dataset build (`eval_predict.py --ablate ...` now takes a list):
+baseline; cross-station same-season shuffles of ERA5, all satellite, S2 160 m, S1 160 m, 20 m imagery, DEM, LULC,
+soil, SIF, TWSA; within-station other-time shuffles of ERA5 and S1. Groups = ablation.py MODALITY_KEYS_S48 (channel
+swaps inside the 20 m patch: imagery 0:17, DEM 17:19). Metrics per soil layer: paired per-station median delta of
+ubRMSE, RMSE, |bias|, r with 95 % bootstrap CI (compare_ablation.py). ERA5 cross-station is the positive control.
+
+Theory (agreed before running): ERA5 = water-balance dynamics (largest); S1 = surface wetness on overpass days,
+mainly fixes ERA5 rain misplacement; S2 = slow vegetation proxy; soil/DEM/LULC set level and range (bias/RMSE more
+than ubRMSE); SIF dryland stress only; TWSA ~0 at 0-10, maybe 30-100. Redundant inputs can each look small alone.
+Caveat: shuffling statics also breaks the site fingerprint.
+
+Questions: Q1 ERA5; Q2 satellite at all; Q3 S2 vs S1 vs 20 m; Q4 statics level vs dynamics; Q5 SIF/TWSA;
+Q6 weather vs climate (ERA5 within vs cross); Q7 radar tracking (S1 within vs cross); Q8 per soil layer; Q9 additivity.
+
+Script slurm/eval_input_ablation.sh [smoke]; output eval_output/baseline_selected_20261005_ablation/,
+figure figures/eval/baseline_selected_20261005_paper/ablation/. Cost ~300-500 SBU (1 H100), smoke ~20 SBU.
+Smoke and full each need the user's OK.
