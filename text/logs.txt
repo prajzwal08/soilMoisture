@@ -8333,3 +8333,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §66 user switched to palette H (#08519C/#6BAED6/#E6550D) for all figures; render job 27627018 OK (no tracebacks). Second agent review launched.
   §66 review round 2 fixes (legend above class boxes, dots in view, scatter colourbar/legend/note, Köppen flat, robust ts ylim) -> final render 27627283 OK; spot-checked kg_macro + ubrmse_vs_offset clean. Inventory now TRAIN 573 / OOS 222 / OOT 362 / OOST 115. Title em-dash separator committed, renders next time. Phase A figures DONE; next = Phase B ablation.
   §67 BUILT 7fc5e4d (+fix): ablation.py MODALITY_KEYS_S48, eval_predict multi --ablate, compare_ablation RMSE/|bias|/CI, plot_input_ablation.py, slurm/eval_input_ablation.sh [smoke]; runbook §66/§67. Nothing submitted.
+  §67 SMOKE SUBMITTED on the user's OK: job 27627468 (slurm/eval_input_ablation.sh smoke, 5 OOS stations, 13 passes).
