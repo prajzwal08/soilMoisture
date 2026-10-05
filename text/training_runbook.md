@@ -17821,3 +17821,15 @@ clients. The smoke run measures one year-task first.
 which is a few hours. Overijssel just uses its subset.
 
 Imagery (B1-B4) and tokens (D) stay Overijssel-only. They scale with tiles and are the real NL-wide cost (§68.4 ×10).
+
+### 68.12 SIF: keep the WHOLE global daily files (user 2026-10-05, supersedes the NL-box soundings idea in 68.11)
+
+- **What is kept:** every S5P-PAL `L2B_SIF___` global daily file 2018-04-30..2025-12-31, ~390 MB × ~2,800 days ≈
+  1.1 TB, in `/projects/prjs1968/sif_tropomi_l2b/{YYYY}/`.
+- **Verify, then lock:** files per year == catalogue days, sizes > 0, every file opens; then `chmod -R a-w`.
+- **How extraction changes:** `download_sif_tropomi.py` gets a `--keep-dir` that writes the file there instead of
+  a tempfile, and `--from-local` that extracts from the kept files without network. Per-tile extraction (NL tiles,
+  training stations, anything later) then reads local files.
+- **FIRST CHECK Tue morning:** project quota usage (5 TB; 1.4 TB zarr_tokens + 247 GB satellite_zarr + checkpoints
+  already). If 1.1 TB does not fit, ask the user; the fallback is to keep only the SIF + geolocation variables per
+  file.
