@@ -8164,3 +8164,9 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §59 BUILT (not submitted): no-LST + --n-layers 3 + --warmup-steps 200 + new --save-every-epoch
     (epochs/epoch_NNN.pt, weights only) + per-epoch "gap val/train" line. Scripts
     slurm/train_nolst_L3_wu200_smoke.sh -> slurm/train_nolst_L3_wu200.sh. Smoke needs OK.
+  §59 SMOKE SUBMITTED on the user's OK (full run approved if it passes): job 27574568, log logs/lst_tmean_diff/smoke_nolst_L3_wu200_27574568.out
+  §59 SMOKE 27574568 PASSED (12 min, code a571b71): CONFIG n_layers=3 warmup 20 save_every_epoch=True, 26.7 M params
+    (6-layer: 48.0 M), stats shas = baseline (era5 b2b54b7b, driver b7bd19b3). Per epoch: gap 1.31/1.39/1.59x,
+    fine ratio 0.63/1.06/0.07, map SD 0-10 0.006/0.015/0.018, epochs/epoch_00{1,2,3}.pt 107 MB each. Numbers meaningless at 20 stn.
+  §59 FULL RUN SUBMITTED on the user's OK ("then full run if it passes"): job 27575211, nolst_L3_wu200_20261005,
+    log logs/lst_tmean_diff/train_nolst_L3_wu200_27575211.out, ckpt .../lst_tmean_diff/nolst_L3_wu200_20261005/{best,last}.pt + epochs/.
