@@ -8213,3 +8213,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Decision: keep computing NDVI/NDMI on the GPU from the fp16 tensor; no cache rebuild. Next: §61 smoke (needs OK).
   §61 SMOKE SUBMITTED on the user's OK (full approved if it passes): job 27590528, log logs/lst_tmean_diff/smoke_s61_27590528.out
   §61 full run capped at --max-epochs 10 (user).
+  §61: H100 smoke 27590528 CANCELLED (queued for hours, partition full); LIGHT smoke SUBMITTED on the user's OK: job 27605328 (1 A100, no shm staging), log logs/lst_tmean_diff/smoke_s61_lite_27605328.out. Full run on 4x H100 approved if it passes.
