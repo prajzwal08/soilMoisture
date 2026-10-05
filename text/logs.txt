@@ -8214,3 +8214,8 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §61 SMOKE SUBMITTED on the user's OK (full approved if it passes): job 27590528, log logs/lst_tmean_diff/smoke_s61_27590528.out
   §61 full run capped at --max-epochs 10 (user).
   §61: H100 smoke 27590528 CANCELLED (queued for hours, partition full); LIGHT smoke SUBMITTED on the user's OK: job 27605328 (1 A100, no shm staging), log logs/lst_tmean_diff/smoke_s61_lite_27605328.out. Full run on 4x H100 approved if it passes.
+  §61 LIGHT SMOKE 27605328 PASSED (5 min, 1 A100, code 96b8962): CONFIG fine_inputs=indices skip_zero_init=False lr 1e-4
+    coarse 0.5 wd 0.2 n_layers 3, stats shas = baseline; fine-grad ratio ep1 0.90 (no zero-init: fine path ON at start;
+    §59 smoke ep1 0.63 with zero-init but warmup 20), then 0.03; epoch files written. 20 stn -> numbers meaningless.
+  §61 FULL RUN SUBMITTED on the user's OK: job 27605977 (4x H100, max 10 epochs), nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005,
+    log logs/lst_tmean_diff/train_s61_27605977.out
