@@ -8138,3 +8138,15 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   SUBMITTED on the user's OK: §55 baseline eval array 27572594 (tasks 0-4, wt_pw_era5do feeddb1,
   logs/pw_era5do_eval_27572594_<i>.out), compare base 27572596 afterok (logs/pw_era5do_compare_27572596.out),
   §58 verify 27572598 (logs/verify_s58_27572598.out).
+  2026-10-05 RESULTS. §58 verify 27572598: ALL PASS (3 val stn, 3349 samples; 170 full windows pad exactly 185, kept rows
+  identical to the 365 window, max 180 rows; train withheld 0.292; eval reads cfg).
+  §55 BASELINE eval 27572594 + compare 27572596 (VALID: HEAD feeddb1, split 5ed81686, driver 34ade6b9, era5 572028af,
+  74 val stations = the 2026-08-27 eval; pw_stage2a_L3 best.pt ep2). Per-station median delta ubRMSE vs intact:
+                          0-10 / 10-30 / 30-100            r 0-10 (base 0.75)   stations worse 0-10/10-30/30-100
+    sat cross_station     +0.0084 / +0.0112 / +0.0135      0.67                 95 / 100 / 100%
+    sat within_station    +0.0009 / +0.0004 / +0.0018      0.74                 57 / 61 / 56%
+    era5 cross_station    +0.0408 / +0.0336 / +0.0244      0.17                 100%
+    era5 remove           +0.0166 / +0.0164 / +0.0070      0.26                 89 / 88 / 74%
+  VERDICT CONFIRMED on the correct split (the withdrawn 27422859 said the same): tokens = SITE FINGERPRINT; same-station
+  wrong-date tokens cost ~nothing (coin-flip station counts). ERA5 carries the dynamics. Without ERA5, r drops 0.75 -> 0.26.
+  This is the §58 reference. NEXT: §58 smoke (needs OK).
