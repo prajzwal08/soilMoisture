@@ -8232,3 +8232,13 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     impossible here. NOTHING §61 is queued now (27608079 and 27607454 were cancelled). slurm/train_s61_anygpu.sh unusable.
   §61 RACE resubmitted on the user's OK (option A): H100 27608107 (run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005, 720G, 12 w)
     + A100 27608108 (run ..._a100_20261005, 480G, 8 w); a watcher cancels whichever is still pending when the other starts.
+  §61 race: H100 27608107 STARTED first, A100 27608108 cancelled by the watcher (never ran). H100 run COMPLETED 0:0 (32 min,
+    ~61 s/epoch compute, 10 epochs), ckpt checkpoints/soilmoisture/lst_tmean_diff/nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005
+  §61 RESULT (best ep9; still improving slowly, ep10 0.0517):
+    run          best   SELECT   ubRMSE 0-10/10-30/30-100     r 0-10/10-30/30-100       gap
+    §59 3L       ep10   0.0488   0.0554/0.0501/0.0499         0.756/0.754/0.734       2.9x
+    §60 3L+sd+wd ep10   0.0513   0.0571/0.0529/0.0523         0.734/0.723/0.697       2.4x
+    §61 idx+nzi  ep9    0.0511   0.0565/0.0530/0.0544         0.741/0.721/0.696       2.5x
+    VERDICT: §61 is ~5% WORSE than §59 (0.0511 vs 0.0488), on par with §60; worse at every depth, mostly 30-100.
+    Fine-grad ratio 0.025-0.048 all run (no zero-init did not keep the fine path on after ep1). Gap 2.5x (vs 2.9x).
+    Indices + no-zero-init + coarse 0.5 + wd 0.2 + lr 1e-4 together did not help; changes not separable (one run).
