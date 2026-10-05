@@ -8318,3 +8318,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Out of range: negatives <=-0.023 at dry SNOTEL/SCAN sites (0.1-1% rows); >0.6 ONLY ICOS_FI-Sii (peat, WET) in OOT, preds .60-1.02 vs obs ~.85.
     Model head is linear (bias=label mean), Huber loss: nothing bounds the output. Proposed: clip [0,1] at eval (awaiting user).
     Figure defect: igbp_macro bottom-panel class labels collide with the n-counts.
+  §66 paper-style TEST figure (job 27625538, 44 s): metrics re-run with EVAL_CLIP=0,1 (clipped val 952 / OOS 1,190 / OOT 8,099 / OOST 319 rows);
+    figures/eval/baseline_selected_20261005_paper/box_ubrmse_by_igbp_macro.png (blue/green/red, Nimbus Roman = Times clone; Times New Roman not installed). Awaiting user verdict before all figures.
