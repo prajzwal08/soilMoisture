@@ -8181,3 +8181,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Read: 3 layers + warmup 200 reaches the 6-layer best 3 epochs sooner; gap grows as fast (memorisation not
     from trunk depth); fine-grad ratio noisy 0.05-0.14, no rise vs 6 layers.
   §60 BUILT (not submitted): --static-dropout (DEM/LULC/soil, trunk+fine tied) + wd 0.5 on the §59 config; slurm/train_s60{_smoke,}.sh. Smoke needs OK.
+  §60 SMOKE SUBMITTED on the user's OK (full approved if it passes): job 27578435, log logs/lst_tmean_diff/smoke_s60_27578435.out
+  §60 SMOKE 27578435 FAILED in the startup check: NameError FINE_DEM (only defined in model.py); fixed d51ff22; resubmit needs OK.
