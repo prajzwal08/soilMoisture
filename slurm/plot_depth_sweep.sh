@@ -15,4 +15,4 @@ set -euo pipefail
 cd /gpfs/work3/0/prjs1968/soilMoisture
 
 
-conda run -n terramind --no-capture-output python plot_depth_sweep.py
+conda run -n terramind --no-capture-output python plot_depth_sweep.py "$@"

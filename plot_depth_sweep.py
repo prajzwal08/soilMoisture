@@ -23,16 +23,22 @@ OUT_DIR = Path("eval_output/depth_sweep")
 MAX_EP = 10
 DEPTHS = ["0-10", "10-30", "30-100"]
 
-# (layers, log glob) — 6L = 27417115 (warmup 1000, older code; counted with the rest by the user's call)
-RUNS = [
-    (1, "train_nolst_L1_wu200_*.out"),
-    (2, "train_nolst_L2_wu200_27611631.out"),
-    (3, "train_nolst_L3_wu200_27575211.out"),
-    (6, "train_nolst_27417115.out"),
-]
-# Ordinal one-hue blue ramp (validated: dataviz validate_palette.js --ordinal, light): more layers = darker
-COLORS = {1: "#86b6ef", 2: "#3987e5", 3: "#1c5cab", 6: "#0d366b"}
-MARKERS = {1: "o", 2: "s", 3: "^", 6: "D"}
+# Ordinal one-hue blue ramp (validated: dataviz validate_palette.js --ordinal, light): larger value = darker.
+# Each sweep: (value, log glob, colour, marker). Every run is §59 with ONE setting changed.
+SWEEPS = {
+    # 6L = 27417115 (warmup 1000, older code; counted with the rest by the user's call)
+    "depth": dict(key="layers", xlabel="Transformer layers", name="depth",
+                  label=lambda v: f"{v} layer" + ("s" if v > 1 else ""),
+                  runs=[(1, "train_nolst_L1_wu200_*.out", "#86b6ef", "o"),
+                        (2, "train_nolst_L2_wu200_27611631.out", "#3987e5", "s"),
+                        (3, "train_nolst_L3_wu200_27575211.out", "#1c5cab", "^"),
+                        (6, "train_nolst_27417115.out", "#0d366b", "D")]),
+    # clean wd points only (user 2026-10-05): §59 wd 0.05 vs §65 wd 0.3, both 3 layers
+    "wd": dict(key="weight_decay", xlabel="Weight decay (AdamW)", name="weight decay",
+               label=lambda v: f"wd {v}",
+               runs=[(0.05, "train_nolst_L3_wu200_27575211.out", "#3987e5", "o"),
+                     (0.3, "train_nolst_L3_wd03_27621051.out", "#0d366b", "s")]),
+}
 
 RE_EPOCH = re.compile(r"^Epoch (\d+)\s+\|\s+train_loss=([\d.eE+-]+)\s+val_loss=([\d.eE+-]+)")
 RE_DEPTH = re.compile(r"^\s+(0-10|10-30|30-100)\s+train_loss=.*ubRMSE=([\d.]+).*\br=([-\d.]+)")
@@ -61,22 +67,31 @@ def parse(path):
 
 
 def main():
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sweep", choices=list(SWEEPS), default="depth")
+    a = ap.parse_args()
+    sw = SWEEPS[a.sweep]
+    out_dir = OUT_DIR.with_name(f"{a.sweep}_sweep")
+    stem = f"{a.sweep}_sweep"
+    COLORS = {v: c for v, _, c, _ in sw["runs"]}
+    MARKERS = {v: m for v, _, _, m in sw["runs"]}
+    out_dir.mkdir(parents=True, exist_ok=True)
     curves, table = {}, []
-    for n, pattern in RUNS:
+    for n, pattern, _, _ in sw["runs"]:
         hits = sorted(LOG_DIR.glob(pattern))
         if not hits:
-            print(f"[skip] {n}L: no log matching {pattern}")
+            print(f"[skip] {n}: no log matching {pattern}")
             continue
         df, params = parse(hits[-1])
         if df.empty:
-            print(f"[skip] {n}L: no completed epochs in {hits[-1].name}")
+            print(f"[skip] {n}: no completed epochs in {hits[-1].name}")
             continue
         if df.epoch.max() < MAX_EP:
-            print(f"[warn] {n}L: only {df.epoch.max()} epochs in {hits[-1].name}")
+            print(f"[warn] {n}: only {df.epoch.max()} epochs in {hits[-1].name}")
         curves[n] = df
         last, best = df.iloc[-1], df.loc[df.select.idxmin()]
-        row = {"layers": n, "params_M": round(params / 1e6, 1) if params else None, "log": hits[-1].name,
+        row = {sw["key"]: n, "params_M": round(params / 1e6, 1) if params else None, "log": hits[-1].name,
                "epoch": int(last.epoch), "SELECT": round(last.select, 4),
                "best_le10": round(best.select, 4), "best_ep": int(best.epoch)}
         row.update({f"ubRMSE {d}": round(last[f"ub_{d}"], 4) for d in DEPTHS})
@@ -85,12 +100,12 @@ def main():
         table.append(row)
 
     tab = pd.DataFrame(table)
-    tab.to_csv(OUT_DIR / "depth_sweep.csv", index=False)
+    tab.to_csv(out_dir / f"{stem}.csv", index=False)
     try:
         md = tab.drop(columns="log").to_markdown(index=False)
     except ImportError:  # tabulate missing
         md = tab.drop(columns="log").to_string(index=False)
-    (OUT_DIR / "depth_sweep.md").write_text(md + "\n")
+    (out_dir / f"{stem}.md").write_text(md + "\n")
     print(tab.drop(columns="log").to_string(index=False))
 
     try:
@@ -100,7 +115,7 @@ def main():
         pass
     fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.2), constrained_layout=True)
     for n, df in curves.items():
-        kw = dict(color=COLORS[n], marker=MARKERS[n], ms=4, lw=1.5, label=f"{n} layer" + ("s" if n > 1 else ""))
+        kw = dict(color=COLORS[n], marker=MARKERS[n], ms=4, lw=1.5, label=sw["label"](n))
         axes[0].plot(df.epoch, df.select, **kw)
         axes[1].plot(df.epoch, df.gap, **kw)
     axes[0].set(xlabel="Epoch", ylabel="Val ubRMSE, depth mean (m³/m³)", title="(a) Validation skill")
@@ -112,21 +127,25 @@ def main():
 
     ax = axes[2]
     xs = list(range(len(tab)))
+    vals = tab[sw["key"]].tolist()
     for i, r in tab.iterrows():
-        ax.plot(xs[i], r.SELECT, marker=MARKERS[r.layers], color=COLORS[r.layers], ms=7, ls="none")
-        ax.annotate(f"{r.SELECT:.4f}\n{r.params_M} M", (xs[i], r.SELECT), textcoords="offset points",
+        v = vals[i]
+        note = f"{r.SELECT:.4f}\n{r.params_M} M" if a.sweep == "depth" else f"{r.SELECT:.4f}\ngap {r.gap:.2f}x"
+        ax.plot(xs[i], r.SELECT, marker=MARKERS[v], color=COLORS[v], ms=7, ls="none")
+        ax.annotate(note, (xs[i], r.SELECT), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=7, color="0.25")
     ax.plot(xs, tab.SELECT, color="0.7", lw=0.8, zorder=0)
-    ax.set_xticks(xs, [str(n) for n in tab.layers])
+    ax.set_xticks(xs, [str(v) for v in vals])
     ax.set_xlim(-0.5, len(xs) - 0.5)
     lo, hi = tab.SELECT.min(), tab.SELECT.max()
     pad = max(hi - lo, 1e-3) * 0.6
     ax.set_ylim(lo - pad, hi + pad * 1.6)
-    ax.set(xlabel="Transformer layers", ylabel="Val ubRMSE at epoch 10 (m³/m³)", title="(c) Epoch-10 skill vs depth")
+    ax.set(xlabel=sw["xlabel"], ylabel="Val ubRMSE at epoch 10 (m³/m³)",
+           title=f"(c) Epoch-10 skill vs {sw['name']}")
 
     for ext in ("pdf", "png"):
-        fig.savefig(OUT_DIR / f"depth_sweep.{ext}", dpi=300)
-    print(f"wrote {OUT_DIR}/depth_sweep.{{pdf,png,csv,md}}")
+        fig.savefig(out_dir / f"{stem}.{ext}", dpi=300)
+    print(f"wrote {out_dir}/{stem}.{{pdf,png,csv,md}}")
 
 
 if __name__ == "__main__":
