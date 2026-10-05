@@ -17509,3 +17509,16 @@ Depth sweep, caveat: 1/2/3 layers (§63/§62/§59) share one config. The 6-layer
 warmup 1000 (not 200), older code (git 0387fd4), no per-epoch weights. Report it as "6L, different warmup".
 
 Status: built, NOT submitted. Smoke and full each need the user's OK.
+
+## §64 No-LST, 3 layers, static dropout 0.5 ONLY (Session 47, 2026-10-05)
+
+Why: §60 (static dropout 0.5 + weight decay 0.5) gave SELECT 0.0513 vs §59 0.0488, gap 2.4x vs 2.9x, but changed two
+things at once. §64 isolates static dropout: §59 + `--static-dropout 0.5`, weight decay stays 0.05 (explicit).
+DEM, LULC and soil are each withheld independently with p = 0.5 per training sample, trunk + fine tied (§60 mechanism).
+
+Run nolst_L3_wu200_sd05_20261005, 10 epochs (user), scripts slurm/train_s64_smoke.sh, slurm/train_s64.sh.
+Reading: ~0.049 with gap ~2.4x -> wd caused §60's loss and static dropout is a free cut to memorisation;
+~0.051 -> statics carry signal the model needs, and that counts against "it memorises sites through the statics".
+Compare at ep10 against §59 ep10 (0.0488).
+
+Status: built, NOT submitted. Smoke and full each need the user's OK.

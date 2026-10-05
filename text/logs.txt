@@ -8254,3 +8254,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Early read: 2 layers neither helps SM nor closes the memorisation gap; trunk depth is not what drives it.
   §63 BUILT (user): §59 config with --n-layers 1, raw bands; slurm/train_s63{_smoke,}.sh, run nolst_L1_wu200_20261005;
     runbook §63. Nothing submitted. Depth sweep caveat: 6L run 27417115 used warmup 1000 + older code, so only 1/2/3 are clean.
+  §64 BUILT (user): §59 + --static-dropout 0.5 only (wd 0.05, isolates §60's static dropout from its wd 0.5), 10 epochs;
+    slurm/train_s64{_smoke,}.sh, run nolst_L3_wu200_sd05_20261005; runbook §64. Nothing submitted.
