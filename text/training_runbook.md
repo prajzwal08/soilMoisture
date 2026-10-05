@@ -17472,6 +17472,6 @@ fraction of pixels with |d| > 0.02 < 1e-3 (the max is still printed). Re-verify 
 
 Built: model.py/train.py `--no-skip-zero-init` (CONFIG skip_zero_init, default True = unchanged).
 Run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005 = §59 flags + `--fine-inputs indices --no-skip-zero-init
---coarse-dropout 0.5 --weight-decay 0.2 --lr 1e-4 --max-epochs 20`. Order: verify -> smoke -> full, each
+--coarse-dropout 0.5 --weight-decay 0.2 --lr 1e-4 --max-epochs 10` (user: 10 epochs only). Order: verify -> smoke -> full, each
 needs the user's OK. Eval/ablation of these checkpoints needs `--fine-inputs indices --n-layers 3`.
 Success = fine ablation cost clearly above §59's at similar SELECT.

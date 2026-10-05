@@ -14,7 +14,7 @@
 #SBATCH --requeue
 
 # §61: §59 (no-LST, 3 layers, warmup 200, every epoch kept) + fine inputs = indices (NDVI, NDMI, VV,
-# VH/VV + DEM, LULC) + no zero-init of the decoder skips + coarse dropout 0.5 + wd 0.2 + lr 1e-4, max 20
+# VH/VV + DEM, LULC) + no zero-init of the decoder skips + coarse dropout 0.5 + wd 0.2 + lr 1e-4, max 10
 # epochs. Static dropout off. Goal: make the decoder use the 20 m path. Needs the user's OK to submit.
 set -euo pipefail
 cd /gpfs/work3/0/prjs1968/soilMoisture
@@ -24,4 +24,4 @@ bash slurm/train.sh --run-name nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005 \
     --lst-target dT_pixel --lambda-lst 0 \
     --era5-dropout 0.5 --coarse-dropout 0.5 --sif-twsa-dropout 0 \
     --n-layers 3 --warmup-steps 200 --save-every-epoch \
-    --fine-inputs indices --no-skip-zero-init --weight-decay 0.2 --lr 1e-4 --max-epochs 20
+    --fine-inputs indices --no-skip-zero-init --weight-decay 0.2 --lr 1e-4 --max-epochs 10
