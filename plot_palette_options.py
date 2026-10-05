@@ -47,12 +47,12 @@ def main():
             pos = [i + off for i in range(len(order))]
             for v, x in zip(data, pos):
                 ax.scatter(x + rng.uniform(-width * 0.2, width * 0.2, len(v)), v, s=6,
-                           color="black", alpha=0.35, lw=0, zorder=4)
+                           color="black", alpha=0.35, lw=0, zorder=2)   # behind the boxes
             bp = ax.boxplot(data, positions=pos, widths=width * 0.66, showfliers=False,
                             patch_artist=True, zorder=3, medianprops=dict(color="black", lw=1.6),
                             boxprops=dict(lw=1.0), whiskerprops=dict(lw=1.0), capprops=dict(lw=1.0))
             for p in bp["boxes"]:
-                p.set_facecolor(col[s]); p.set_edgecolor("black"); p.set_alpha(0.9)
+                p.set_facecolor(col[s]); p.set_edgecolor("black"); p.set_alpha(1.0)
         ax.set_title(name, loc="left")
         ax.set_ylabel("ubRMSE (m$^3$/m$^3$)")
         ax.set_ylim(0, 0.11)
