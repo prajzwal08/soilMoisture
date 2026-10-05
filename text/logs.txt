@@ -8161,3 +8161,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   Plot re-run 27573906 on OK (fixes 2bfe413): figure OK except best label overlaps the val curve -> moved below the
     ring (next commit, not re-rendered). No-LST ckpt dir has ONLY best.pt (ep13) + last.pt (ep21): no ep8 weights,
     and per-epoch fine-path diag was never logged for this run (W&B-block bug, fixed later in 341d4ac).
+  §59 BUILT (not submitted): no-LST + --n-layers 3 + --warmup-steps 200 + new --save-every-epoch
+    (epochs/epoch_NNN.pt, weights only) + per-epoch "gap val/train" line. Scripts
+    slurm/train_nolst_L3_wu200_smoke.sh -> slurm/train_nolst_L3_wu200.sh. Smoke needs OK.

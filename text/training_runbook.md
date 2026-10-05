@@ -17409,3 +17409,27 @@ delta rises only if the model compensates from the tokens.
 Success = a clear rise (CI off zero, more than 60% of stations worse). Secondary: per-depth cost
 of the truncation (expected at 30–100 cm), and the era5-cross delta (should shrink if the
 dependence moved to the tokens).
+
+## §59 No-LST, 3 transformer layers, 200-step warmup, every epoch kept (Session 47, 2026-10-05)
+
+Why: the no-LST baseline (`nolst_era5do05_coarse03_20260930`, 27417115; 6 layers, warmup 1000 ≈ 5 epochs)
+peaks on val at ep8–13 and then only memorises (val/train 1.0x → 4.6x); SM ignores the 20 m path
+(shuffle +2%, zero +0.2% SELECT). Only best.pt (ep13) and last.pt survived, so ep8 could not be chosen.
+User: halve the trunk (3 layers) and shorten warmup to 200 steps (~1 epoch); log val, generalisation
+gap and fine-decoder use per epoch, and keep every epoch's weights to choose from later.
+
+Expectation (stated to the user): fewer layers may raise fine-path use, but probably as a station
+fingerprint rather than wetness information; the decisive test is same-station / wrong-date fine
+input, not cross-station shuffle. Warmup is a confound for early fine-path use (low lr lets the small
+fine encoder move first), so it is changed together here only by the user's choice.
+
+Built:
+- train.py `--save-every-epoch` → `epochs/epoch_NNN.pt` (epoch, model, config, val_loss, val_pooled,
+  val_ubrmse_depth_mean, selection_metric, train_loss; no optimizer). Loadable by
+  `--eval-fine-ablation --eval-ckpt epochs/epoch_NNN.pt` (needs the same --n-layers 3 on the CLI).
+- train.py per-epoch line `gap val/train=…x` (separate line; plot_loss_curves.py regex unchanged).
+- Fine-decoder use per epoch = the existing `[diag] input-grad RMS … ratio` and
+  `[diag] within-tile SD` lines (341d4ac).
+- slurm/train_nolst_L3_wu200_smoke.sh (20 stn, 3 ep, warmup 20) → slurm/train_nolst_L3_wu200.sh
+  (run nolst_L3_wu200_20261005; identical to train_nolst_v2cfg.sh + `--n-layers 3 --warmup-steps 200
+  --save-every-epoch`). Smoke and full each need the user's OK.

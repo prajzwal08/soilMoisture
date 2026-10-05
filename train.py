@@ -1805,6 +1805,11 @@ def main():
                              "ubrmse (default) = depth-mean of station-mean ubRMSE, the "
                              "quantity §35.10 is stated in. huber_pooled = the pooled "
                              "training loss. Both are always logged")
+    parser.add_argument("--save-every-epoch", action="store_true",
+                        help="Also keep a weights-only copy of EVERY epoch as "
+                             "epochs/epoch_NNN.pt (model + config + val metrics, no optimizer), so "
+                             "any epoch can be chosen after the run. Loadable by --eval-fine-ablation "
+                             "--eval-ckpt epochs/epoch_NNN.pt")
     parser.add_argument("--no-input-grad-diag", action="store_true",
                         help="Disable the once-per-epoch fine-vs-rest input-gradient ratio "
                              "(rank 0, one val batch). On by default")
@@ -1894,6 +1899,7 @@ def main():
     if args.train_days_per_station is not None: CONFIG["train_days_per_station"] = args.train_days_per_station
     if args.val_days_per_station   is not None: CONFIG["val_days_per_station"]   = args.val_days_per_station
     if args.warmup_steps        is not None: CONFIG["warmup_steps"]        = args.warmup_steps
+    if args.save_every_epoch: CONFIG["save_every_epoch"] = True
     if args.huber_delta         is not None: CONFIG["huber_delta"]         = args.huber_delta
     if args.log_every           is not None: CONFIG["log_every"]           = args.log_every
     if args.select_metric       is not None: CONFIG["select_metric"]       = args.select_metric
@@ -2145,7 +2151,7 @@ def main():
                  "lst_target", "era5_dropout", "sif_twsa_dropout", "coarse_dropout", "lambda_frac", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
-                 "select_metric", "input_grad_diag", "git_sha",
+                 "select_metric", "input_grad_diag", "save_every_epoch", "git_sha",
                  "era5_stats_sha", "driver_stats_sha", "fine_stats_sha", "lst_stats_sha", "lst_dT_stats_sha"]
         print("CONFIG: " + "  ".join(f"{k}={CONFIG.get(k)}" for k in _echo))
 
@@ -2683,6 +2689,9 @@ def main():
             print(f"\nEpoch {epoch:03d}  |  train_loss={train_loss:.6f}  val_loss={val_loss:.6f}"
                   f"  data={data_time:.0f}s  compute={compute_time:.0f}s"
                   f"  gpu_util={gpu_util:.0f}%  peak_vram={peak_vram:.1f}GB")
+            # Own line so plot_loss_curves.py's EPOCH_RE is unchanged. Train is measured WITH
+            # the training-time dropouts, val without, so this is a lower bound on the gap.
+            print(f"  {'gap':>8s}  val/train={val_loss / max(train_loss, 1e-12):.2f}x")
             if train_stats:
                 # clip_frac near 1.0 => every step was clipped => the effective step size is
                 # grad_clip/||g||, not the lr printed anywhere in this log.
@@ -2993,6 +3002,17 @@ def main():
             if _improved:
                 _fsync_save(state, ckpt_dir / "best.pt")
                 print(f"  New best {SELECTION_METRIC}={best_val_loss:.6f} — checkpoint saved")
+
+            # --save-every-epoch: weights only (~1/3 of last.pt), so an epoch can be chosen after
+            # the run. Same "model"/"epoch"/"config" keys run_fine_ablation reads.
+            if CONFIG.get("save_every_epoch"):
+                (ckpt_dir / "epochs").mkdir(exist_ok=True)
+                _fsync_save({k: state[k] for k in ("epoch", "model", "config", "val_loss",
+                                                   "val_pooled", "val_ubrmse_depth_mean",
+                                                   "selection_metric")}
+                            | {"train_loss": train_loss},
+                            ckpt_dir / "epochs" / f"epoch_{epoch:03d}.pt")
+                print(f"  epoch weights saved -> epochs/epoch_{epoch:03d}.pt")
 
         # Broadcast early-stop decision to all ranks so none hang at next DDP sync
         stop_flag = torch.tensor(
