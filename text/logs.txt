@@ -8248,3 +8248,7 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §62 PLANNED (user): §59 config with --n-layers 2, raw bands (not indices); only change vs §59. Built
     slurm/train_s62_smoke.sh + slurm/train_s62.sh (run nolst_L2_wu200_20261005); runbook §62. Nothing submitted.
   §62 SUBMITTED on the user's OK (full, no smoke): job 27611631, slurm/train_s62.sh, run nolst_L2_wu200_20261005.
+  §62 progress (job 27611631 RUNNING, 21 min, ~51 s/epoch compute, now on ep12): SELECT by epoch
+    ep1 0.0625 | ep2 0.0577 | ep3 0.0533 | ep4 0.0539 | ep5 0.0518 | ep6 0.0509 | ep7 0.0504 | ep8 0.0495 | ep9 0.0498 | ep10 0.0494 (best) | ep11 0.0518
+    gap val/train 1.07x -> 2.73x at ep10 -> 2.88x at ep11. Best so far 0.0494 vs §59 3L 0.0488 (~1% worse); gap is the same as §59 (2.9x).
+    Early read: 2 layers neither helps SM nor closes the memorisation gap; trunk depth is not what drives it.
