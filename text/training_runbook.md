@@ -17596,3 +17596,166 @@ Smoke and full each need the user's OK.
 - Figure style fixed for the paper (plot_style_bw.py --style paper): palette H, Python-blue time-series line,
   Times bold, no titles; figures reviewed twice by agents.
 - Code pushed: branch feat/lst-level-dT + tag baseline/selected-20261005 on origin.
+
+## §68 Overijssel wall-to-wall daily soil moisture 2016-2025 with the frozen baseline (Session 47, 2026-10-05, PLANNED)
+
+### 68.1 What and why
+
+- **Goal:** a CONTINUOUS (every calendar day) prediction at 0-10 / 10-30 / 30-100 cm, 2016-01-01..2025-12-31, for
+  every land tile of Overijssel.
+- **Model:** the frozen §66 model `baseline_selected_20261005`
+  (ckpt `checkpoints/soilmoisture/lst_tmean_diff/nolst_L3_wu200_20261005/best.pt`). No retraining.
+- **Tiles:** 682 tiles of 2.24 km (`make_nl_grid.py`, CBS/PDOK land mask, keep land_frac >= 0.5; job 27628469).
+  Overijssel is the pilot for the whole of the Netherlands (7,005 tiles).
+- **Product = one value per tile (the supervised centre pixel), not a 20 m map.** §56: the within-tile map is a
+  fixed decoder pattern.
+- **Validation:** the TWENTE stations (all OOS, never trained on) against their tile, plus 2 CONTROL tiles centred
+  exactly on TWENTE stations.
+- **User decisions (2026-10-05):**
+  - land-only tiles, >= 50 % land;
+  - Overijssel first;
+  - continuous prediction;
+  - SIF from TROPOMI per tile, as in training (may be revisited after the §67 SIF ablation, job 27627597);
+  - overnight chain authorised: smoke -> full runs automatically ONLY if every smoke gate (68.5) passes;
+    any failure stops the chain.
+
+### 68.2 Flowchart
+
+```
+                     ┌───────────────────────────────────────────────┐
+                     │ A. TILE LIST  make_nl_splits.py               │
+                     │ csvs/nl_tiles.csv (province==Overijssel, keep)│
+                     │ + 2 control tiles centred on TWENTE stations  │
+                     │ -> data_nl/station_splits.csv (splits schema) │
+                     │ source_network=network=NLGRID, id=T060_045,   │
+                     │ has_sm=True, has_flux=False, 2016-01-01..2025-│
+                     │ 12-31, split=nl_grid, dir=NLGRID_T060_045     │
+                     └───────────────────────┬───────────────────────┘
+          ┌───────────────┬──────────────────┼──────────────────┬───────────────┐
+          ▼               ▼                  ▼                  ▼               ▼
+ ┌────────────────┐┌───────────────┐┌─────────────────┐┌────────────────┐┌──────────────┐
+ │B1 S2 L2A       ││B2 S1 RTC +    ││B3 DEM           ││C1 ERA5-Land    ││C3 SIF TROPOMI│
+ │backfill_catalog││LULC           ││cop-dem-glo-30   ││meteo (GEE)     ││download_sif_ │
+ │-> backfill_s2_ ││download_s1_   ││(MPC, via S2     ││BY UNIQUE 0.1°  ││tropomi.py    │
+ │download --down-││lulc_mpc.py    ││script) — check  ││PIXEL (~100 not ││global daily  │
+ │load --harmonise││dB, clip       ││vs stored DEM on ││682) -> copy to ││files, 1 pass │
+ │(fresh SAS sign,││[-50,10]       ││control tiles    ││tiles; + TWSA   ││~16-17 h      │
+ │fillna(0), +1000││array x16      ││                 ││C2 radiation    ││2018-04 on    │
+ │by BASELINE)    ││               ││                 ││(GEE hourly)    ││              │
+ │array x8, CPU   ││CPU            ││                 ││same pixel trick││CPU           │
+ └───────┬────────┘└──────┬────────┘└────────┬────────┘└───────┬────────┘└──────┬───────┘
+         ▼                │                  │                 │                │
+ ┌────────────────┐       │                  │         ┌───────┴───────┐        │
+ │B4 cloud mask   │       │                  │         │C4 soil        │        │
+ │SEnSeIv2 (sensei│       │                  │         │OpenLandMap    │        │
+ │GPU) + filter_  │       │                  │         │74x74 @30 m    │        │
+ │cloudy_tiles    │       │                  │         │~5 min         │        │
+ │(>50 % bad      │       │                  │         └───────┬───────┘        │
+ │patches = drop) │       │                  │                 │                │
+ └───────┬────────┘       │                  │                 │                │
+         ▼                ▼                  ▼                 │                │
+ ┌───────────────────────────────────────────────┐             │                │
+ │D1 RAW STORE  convert_satellite_to_zarr.py     │             │                │
+ │-> scratch nl/satellite_zarr/{dir}.zarr        │             │                │
+ │(s2 int16, s1_asc/desc f16 dB, dem, lulc)      │             │                │
+ └───────────────────────┬───────────────────────┘             │                │
+                         ▼                                     │                │
+ ┌───────────────────────────────────────────────┐             │                │
+ │D2 TOKENS  TerraMind ViT-B (terramind, A100)   │             │                │
+ │L12 per scene, S2/S1/DEM/LULC; cm/masks;       │             │                │
+ │token masks  -> scratch nl/zarr/sm_only/{dir}  │◄────────────┴────────────────┘
+ │+ era5/values -> splice -> era5/values18,      │
+ │  sif/*, twsa/*, soil;   NO labels             │
+ └───────────────────────┬───────────────────────┘
+                         ▼
+ ┌───────────────────────────────────────────────┐
+ │D3 §48 CACHE  prepare_s48_cache.py --stations  │
+ │-> scratch nl/s48cache/sm_only/{dir}           │
+ └───────────────────────┬───────────────────────┘
+                         ▼
+ ┌───────────────────────────────────────────────┐   ┌────────────────────────────┐
+ │E1 PREDICT  eval_predict.py --predict-all-days │   │ SMOKE GATES (68.5)         │
+ │--splits-csv data_nl/... --years 2016-2025     │──►│ control tiles vs existing  │
+ │frozen §66 ckpt, centre pixel (56,56), clip    │   │ inputs + predictions;      │
+ │[0,1]; every calendar day, 3 depths            │   │ no NaN; 3,653 days         │
+ └───────────────────────┬───────────────────────┘   └─────────────┬──────────────┘
+                         ▼                                         │ pass -> full 682
+ ┌───────────────────────────────────────────────┐                 │ fail -> STOP
+ │E2 ASSEMBLE  nl_output/overijssel_sm_daily.zarr│◄────────────────┘
+ │(time 3653, y, x, depth 3) + figures:          │
+ │maps (seasonal/dry/wet days), TWENTE time      │
+ │series tile-vs-station, palette H              │
+ └───────────────────────────────────────────────┘
+```
+
+### 68.3 Steps, with what is reused, what is new, and the traps
+
+**Isolation rule: nothing touches the training stores or CSVs.**
+- All roots are new: `data_nl/` (work3) and `/gpfs/scratch1/shared/pkhanal/nl/{satellite,zarr,satellite_zarr,s48cache}`.
+- `csvs/station_splits.csv` and `/gpfs/work3/0/prjs1968/data/station_splits.csv` are NOT edited. Instead, every
+  script gets an env override (`SOIL_STATION_CSV`, plus root overrides where hard-coded).
+- Defaults stay unchanged, so the training paths behave exactly as before.
+
+| Step | Script (reuse / new) | Env, partition | Trap handled |
+|---|---|---|---|
+| A | NEW `make_nl_splits.py` | soilmoisture, rome | one name convention for all 3 naming rules (source_network==network=NLGRID); `has_sm=True` else the tile is flux_only and the ckpt filter drops it; real bools; end_date explicit (blank = today) |
+| B1 | `backfill_catalogue.py --catalogue` → `backfill_s2_download.py --download --harmonise` | soilmoisture, rome array | the old `download_s2_mpc.py` lacks the §50 fixes (SAS expiry, NaN→int16, harmonise by date); `--report` may assume the store exists, so check it |
+| B2 | `download_s1_lulc_mpc.py` + `SOIL_STATION_CSV`, array split by index | soilmoisture, rome | it was a 12-day job for 1,028 stations, so it must be split into ~16 tasks; MPC per-client ceiling; LULC 2017-2024 (2025 = 2024 copy, as in training) |
+| B3 | DEM: the MPC `cop-dem-glo-30` written by the S2 script | – | training used CDSE openEO GLO-30, the same product; gate S3 compares control-tile DEM against the stored DEM |
+| B4 | `cloud_masking_inference.py --stations-file`, `filter_cloudy_tiles.py` | sensei, gpu_a100 | it skips silently if `{data-dir}/{cat}/{dir}` is missing, so pre-create the dirs |
+| C1 | `download_era5land_gee.py --stations-file` on a NEW pixel list + `era5_pixel_fanout.py` (copy nc per tile) | soilmoisture, rome, 6 workers | 21 h per tile → ~3 h per pixel; buffer fallback inflates tp 16x, so assert strategy == era5land_point for every pixel; TWSA ends 2024 (2025 invalid, as in training) |
+| C2 | `download_era5_radiation.py --stations` (pixel list) + fan-out | soilmoisture, rome | output root is hard-coded to data/ → env override |
+| C3 | `download_sif_tropomi.py --stations-file --data-root data_nl` | soilmoisture, rome, 72 h | ~16-17 h whatever the station count; 2018-04-30 onward only |
+| C4 | `download_soil_openlandmap.py --stations-file --data-root data_nl` | soilmoisture, rome | `soil_patch_ok` must be computed (NaN %) as for training |
+| D1 | `convert_satellite_to_zarr.py --src nl/satellite --dst nl/satellite_zarr` | terramind, rome | it has no station list, but the src root holds only NL tiles |
+| D2 | `retokenize_satellite_zarr.py --mode terramind` + `--mode cm-fill`, `compute_s1_dem_lulc_token_masks.py`, `create_token_zarr.py` (drivers), `splice_era5_radiation.py --zarr-root nl/zarr` | terramind/sensei, gpu_h100 + rome | ZARR_ROOT hard-coded → env; `mode="w"` wipes a store (new root, so harmless); which writer made the CURRENT store layout is settled by gate S2 (control tile byte-compare) |
+| D3 | `prepare_s48_cache.py --stations …` with `S48_CACHE_ROOT=nl/s48cache` | terramind, rome 64 CPU | without `--stations` it overwrites `csvs/s48_cache_index.csv`, so always pass `--stations` |
+| E1 | `eval_predict.py` NEW flags: `--splits-csv`, `--years`, `--predict-all-days`; `dataset.py` NEW `predict_all_days` | terramind, gpu_h100 | the dataset builds days from label days and rejects stations with no labels; the new mode takes every `era5/date_ints` day inside the S2 record, NaN labels; `to_long_frame` keeps all rows; frozen `era5_stats18.json` / `driver_stats.json`, never refit |
+| E2 | NEW `assemble_nl_sm.py`, `plot_nl_sm.py` | terramind, rome | paper style; one sample figure first |
+
+### 68.4 Budget (682 tiles + 2 control tiles)
+
+| Item | Estimate |
+|---|---|
+| Scratch storage | ~1.5 TB under `nl/` (raw TIFs ~0.3, raw zarr ~0.1, tokens ~1.0, cache ~0.2); quota 8 TB, ~2.1 TB used |
+| Permanent output | ~35 MB (`nl_output/`) + figures |
+| SBU | ~7k total: S1 download ~3k CPU, tokenise + cloud mask ~2.7k GPU, S2/SIF/ERA5/soil ~0.8k CPU, zarr/cache ~0.3k CPU, predict ~0.2k GPU |
+| Long poles | S1 download (~12 h at 16 tasks, unmeasured at this width) and SIF (~17 h); everything else < 3 h each |
+| Wall time | ~24-30 h from first submit, so the full result is expected Wednesday 2026-10-07 morning; smoke + first maps Tuesday |
+
+### 68.5 Smoke run and gates (all must pass before the full array; any failure stops the chain)
+
+**Smoke set:**
+- 2 CONTROL tiles centred on TWENTE stations inside Overijssel, which already have training-format stores.
+- 1 ordinary grid tile.
+- The full date range, through steps A-E1.
+
+**Gates:**
+- **S1 completeness:** S2 ledger has 0 failed scenes; S1/DEM/LULC present; per-store `len(dates) == shape[0]`; no
+  negative DN; harmonise applied by baseline.
+- **S2 identity on control tiles vs the existing station store:**
+  - S2/S1 date sets are equal, or explained by the cloud filter.
+  - Raw DN of shared scenes is equal.
+  - Stored L12 tokens agree to fp16 tolerance.
+  - era5/values18 is equal for the same pixel.
+  - DEM agrees within 1 m median.
+- **S3 inputs:** every pixel is `era5land_point`; SIF files exist for 2018-2025; soil_patch_ok is True.
+- **S4 predictions:**
+  - 3,653 days x 3 depths for every smoke tile;
+  - 0 NaN;
+  - values in [0,1] after clip;
+  - control-tile predictions on observed days match the existing `allday/` predictions for that station
+    (median |diff| < 0.02, the user's threshold).
+- **S5 cost:** measured SBU and minutes per tile are extrapolated; if 682 tiles exceed 2x the 68.4 estimate, STOP.
+
+**Full run:** steps B-E for all 682 tiles as SLURM arrays chained with `afterok`. Every job id goes into
+`text/logs.txt` and is committed.
+
+### 68.6 Outputs
+
+- `nl_output/overijssel_sm_daily.zarr` with `sm(time, y, x, depth)`, plus `tile_id`, `lat`/`lon`, `land_frac`,
+  and attrs naming the model tag.
+- `figures/nl_sm/`:
+  - monthly-mean maps per depth;
+  - a dry day (summer 2018/2022) and a wet day;
+  - tile-vs-station time series for every TWENTE station inside Overijssel.
