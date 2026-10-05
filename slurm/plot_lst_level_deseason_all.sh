@@ -12,4 +12,4 @@
 # Deseasonalised LST level / pattern vs SM 0-10, all stations in the §52 probe scenes.csv (CPU, ~1 min).
 set -euo pipefail
 cd /gpfs/work3/0/prjs1968/soilMoisture
-conda run -n terramind --no-capture-output python plot_lst_level_deseason_all.py
+conda run -n terramind --no-capture-output python plot_lst_level_deseason_all.py "$@"

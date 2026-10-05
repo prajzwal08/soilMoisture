@@ -128,10 +128,17 @@ def style(ax, zero_x=True):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--txson-only", action="store_true", help="TxSON stations only (outputs get a _TxSON suffix)")
+    a = ap.parse_args()
+    tag = "_TxSON" if a.txson_only else ""
     from multiprocessing import Pool
     from splits_config import category_of, station_dir_name
 
     s = pd.read_csv(SCENES)
+    if a.txson_only:
+        s = s[s["txson"].astype(str).str.lower() == "true"].copy()
     sp = pd.read_csv("csvs/station_splits.csv")          # pandas: quoted commas
     sp["dir"] = sp.apply(station_dir_name, axis=1)
     sp["cat"] = sp.apply(category_of, axis=1)
@@ -161,7 +168,7 @@ def main():
         rows.append(row)
     per = pd.DataFrame(rows)
     OUT_CSV.mkdir(parents=True, exist_ok=True)
-    per.to_csv(OUT_CSV / "partC_deseason_r_per_station.csv", index=False)
+    per.to_csv(OUT_CSV / f"partC_deseason_r_per_station{tag}.csv", index=False)
 
     # ---- C1: pooled + per-station r --------------------------------------------------------
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.0), constrained_layout=True,
@@ -170,6 +177,8 @@ def main():
         style(ax)
         for flag, col, lbl in ((False, OTHER, "Other networks"), (True, TXSON, "TxSON")):
             g = d[d["is_txson"] == flag]
+            if g.empty:
+                continue
             ax.scatter(g[SM], g[c], s=7, color=col, alpha=0.35, linewidths=0, label=lbl, rasterized=True)
         r, n = r_of(d[c], d[SM])
         rs = per[f"r_{c}"].dropna()
@@ -202,12 +211,12 @@ def main():
     ax.set_xlim(-0.6, 1.8)
     ax.set_ylabel("Per-station deseasonalised r with SM 0-10", fontsize=9, color=INK)
     ax.set_title(f"(c) One dot per station (≥ {MIN_SCENES} scenes)", fontsize=9, color=INK, loc="left")
-    fig.suptitle("Landsat scene days 2016-2022, anomalies from smooth per-station climatologies "
+    fig.suptitle(("TxSON only. " if a.txson_only else "") + "Landsat scene days 2016-2022, anomalies from smooth per-station climatologies "
                  "(SM: full daily record; thermal: harmonic fit)",
                  fontsize=10, color=INK)
     OUT_FIG.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
-        fig.savefig(OUT_FIG / f"C1_deseason_pooled_0-10.{ext}", dpi=300)
+        fig.savefig(OUT_FIG / f"C1_deseason_pooled_0-10{tag}.{ext}", dpi=300)
     plt.close(fig)
 
     # ---- C2: small multiples, level only --------------------------------------------------
@@ -231,11 +240,11 @@ def main():
     fig.suptitle("Deseasonalised level vs SM per station (orange = other networks, blue = TxSON; "
                  "sorted by r within group)", fontsize=10, color=INK)
     for ext in ("png", "pdf"):
-        fig.savefig(OUT_FIG / f"C2_deseason_per_station_0-10.{ext}", dpi=200)
+        fig.savefig(OUT_FIG / f"C2_deseason_per_station_0-10{tag}.{ext}", dpi=200)
     plt.close(fig)
 
     print(per[["r_dT_mean", "r_P_stn"]].describe().round(3).to_string())
-    print(f"wrote {OUT_FIG}/C1_*, C2_*  and {OUT_CSV}/partC_deseason_r_per_station.csv")
+    print(f"wrote {OUT_FIG}/C1_*{tag}, C2_*{tag}  and {OUT_CSV}/partC_deseason_r_per_station{tag}.csv")
 
 
 if __name__ == "__main__":
