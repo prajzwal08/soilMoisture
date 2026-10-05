@@ -8327,3 +8327,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   NOTE: full paper figures job 27625949 (palette C) DID run 20:34 (2m51s) although the tool call showed as rejected; outputs in figures/eval/baseline_selected_20261005_paper/ will be overwritten once the palette is final.
   Palette sheet v3 (job 27626370): C, G navy/teal/brick, H dark blue/light blue/orange, I Tol muted, J dark blue/rose/light blue, A NPG, F navy/grey/brick; counts in black. Awaiting pick.
   §66 user picked Nature/NPG palette (#3C5488/#00A087/#E64B35); sample job 27626584 -> figures/eval/baseline_selected_20261005_paper/box_ubrmse_by_igbp_macro.png. Awaiting OK for full set.
+  §66 FULL paper figures (Nature palette) SUBMITTED on the user's OK: job 27626637 (OUT figures/eval/baseline_selected_20261005_paper, EVAL_CLIP=0,1, OOS/OOT/OOST).
