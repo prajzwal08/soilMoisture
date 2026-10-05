@@ -17548,7 +17548,7 @@ and figures (EVAL_CLIP=0,1; 0.1-0.9 % of rows; linear unbounded head; FI-Sii pea
 Station-mean ubRMSE 0-10/10-30/30-100: OOS .052/.048/.047, OOT .049/.043/.044, OOST .054/.047/.050.
 Paper figures (palette H, Times bold, no titles, agent-reviewed twice): figures/eval/baseline_selected_20261005_paper/.
 
-## §67 Input attribution of the frozen baseline (Session 47, 2026-10-05, BUILT, nothing submitted)
+## §67 Input attribution of the frozen baseline (Session 47, 2026-10-05, SMOKE PASSED, full run 27627597 RUNNING)
 
 Question: how much does the trained model RELY on each input (eval-only; no retraining). OOS only (standard set
 for analysing a final model). 13 passes from one dataset build (`eval_predict.py --ablate ...` now takes a list):
@@ -17568,3 +17568,31 @@ Q6 weather vs climate (ERA5 within vs cross); Q7 radar tracking (S1 within vs cr
 Script slurm/eval_input_ablation.sh [smoke]; output eval_output/baseline_selected_20261005_ablation/,
 figure figures/eval/baseline_selected_20261005_paper/ablation/. Cost ~300-500 SBU (1 H100), smoke ~20 SBU.
 Smoke and full each need the user's OK.
+
+### §67.1 Smoke result and decisions (2026-10-05)
+
+- Smoke 27627468 (5 OOS stations, 13 passes, 2m50s, 1 H100): PASS. Donors 100 % assigned, no fallback;
+  cross-station donors 100 % from another station at a median 4 d apart; within-station donors from the same
+  station at a median 146 d apart. ERA5 cross-station: 0-10 +10.3 %, 10-30 +13.7 % ubRMSE, both 95 % CIs > 0
+  (harness reaches the model). The first "POSITIVE CONTROL FAIL" was a check bug: 30-100 had n = 1, so no CI
+  (NaN); the check now ignores layers without a CI.
+- Baseline pass vs the Phase A OOS predictions (27627524): 91 of 17,316 rows differ, max 9.2e-5 m3/m3, mean 9e-8
+  (bf16 batch-composition noise, ~50x smaller than the ERA5 effect). Not bit-identical; the user judged it the
+  same and kept the baseline pass in the full run (one pass, exact pairing).
+- OOS depth coverage (per_station_oos.csv): 222 stations; 0-10 221, 10-30 144, 30-100 119; all three layers 112;
+  0-10 only 71; 0-10 + 10-30 only 31. Each layer is scored on all stations that have it (different station sets
+  per layer); a common-112-station check is a CPU-only follow-up if needed.
+- Full run 27627597 SUBMITTED on the user's OK: 13 passes on all 222 OOS stations, outputs
+  eval_output/baseline_selected_20261005_ablation/ (ablation_summary.csv) and
+  figures/eval/baseline_selected_20261005_paper/ablation/ (heatmap + table).
+
+### §67.2 Session 47 other outcomes (2026-10-05), for reference
+
+- Depth sweep (§62/§63): ep10 SELECT 1L 0.0510 / 2L 0.0494 / 3L 0.0488 / 6L 0.0500; gap 2.7-2.9x at every depth.
+- Weight decay (§65): 0.3 gives 0.0493, gap 2.90x = no effect; 0.05 kept. Final model = 3 layers, wd 0.05.
+- LST − T2m: deseasonalised level vs SM anomaly r = -0.22 (train, 571 stn), -0.42 (TxSON); pattern ~0. Residual
+  check on val: model error vs LST-T2m anomaly r = -0.05 (vs -0.23 for SM itself) -> model already has ~80 % of
+  the signal; LST input / LST pretraining not pursued.
+- Figure style fixed for the paper (plot_style_bw.py --style paper): palette H, Python-blue time-series line,
+  Times bold, no titles; figures reviewed twice by agents.
+- Code pushed: branch feat/lst-level-dT + tag baseline/selected-20261005 on origin.

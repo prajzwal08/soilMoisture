@@ -8339,3 +8339,12 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Baseline match vs Phase A (27627524): 91 of 17,316 rows differ, max 9.2e-5, mean 9e-8 (bf16 batch-composition noise) -> NOT bit-identical.
     OOS depth coverage: 222 stations; 0-10 221, 10-30 144, 30-100 119; all three 112; 0-10 only 71; 0-10+10-30 only 31.
   §67 FULL ablation SUBMITTED on the user's OK ('yes go on'): job 27627597, 13 passes on OOS (baseline pass KEPT: smoke baseline not bit-identical to Phase A, max 9e-5).
+  §67 full ablation 27627597 RUNNING (started ~1 min ago at time of writing). User: baseline pass kept (judged same as Phase A).
+  Runbook updated: §67 header status, §67.1 smoke result + decisions + OOS depth coverage, §67.2 session outcomes.
+
+=== 2026-10-05 Session 47 summary ===
+  Depth sweep closed (3 layers best, ep10 0.0488); wd 0.3 = no effect -> final model frozen = §59 (3L, wd 0.05),
+  renamed baseline_selected_20261005 (README, tag, pushed). Final eval OOS/OOT/OOST + TxSON (27621948) with inference
+  timing (~0.74 ms/sample, H100). LST-T2m deseasonalised analyses (60 stn, TxSON, 571 train stn) + residual check ->
+  LST not worth adding. Predictions clipped to [0,1]. Paper figure style settled (palette H) and all baseline figures
+  rendered + agent-reviewed twice. §67 input ablation built, smoke passed, full run 27627597 running.
