@@ -8227,3 +8227,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §61 user switched to option B: H100 27608079 + A100 27607454 CANCELLED (both queued); ONE job on gpu_h100,gpu_a100
     SUBMITTED: , run nolst_L3_idx_nzi_cd05_wd02_lr1e4_anygpu_20261005, 480G, 8 workers, 10 epochs,
     log logs/lst_tmean_diff/train_s61_anygpu_.out (GPU type recorded in the log).
+  CORRECTION: the any-GPU submit FAILED (no job id): Snellius rejects gpu_h100,gpu_a100 in one job ("combination of
+    partitions is not supported for shared jobs"; with --exclusive: "not supported for exclusive jobs"). Option B is
+    impossible here. NOTHING §61 is queued now (27608079 and 27607454 were cancelled). slurm/train_s61_anygpu.sh unusable.
