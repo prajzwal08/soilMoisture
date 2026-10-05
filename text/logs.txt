@@ -8300,3 +8300,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     WD SERIES @ep10: 0.05 0.0488 (2.89x) | 0.2* 0.0517 (2.5x) | 0.3 0.0493 (2.90x) | 0.5* 0.0513 (2.4x); *bundled (§61, §60).
     VERDICT: wd 0.3 changes neither skill (+1%, within likely seed noise) nor the gap -> wd does not touch memorisation; keep 0.05.
   wd plot (§59 0.05 vs §65 0.3) jobs 27621379 + 27621401 -> eval_output/wd_sweep/wd_sweep.{png,pdf,csv,md}; plot_depth_sweep.py now --sweep depth|wd.
+  §66 FINAL EVAL SUBMITTED on the user's OK (no smoke; eval path exercised today by 27614390): job 27621845 (slurm/eval_final.sh, code 1b4d6c4):
+    §59 nolst_L3_wu200_20261005 best.pt (3 layers, wd 0.05, ep10) -> OOS/OOT/OOST + TxSON readout -> eval_output/nolst_L3_wu200_20261005/.
+    Final model declared FROZEN by the user (3L, wd 0.05). Plan: Phase A baseline eval + BW figures, then Phase B 13-pass OOS input ablation.
