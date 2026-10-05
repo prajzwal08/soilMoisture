@@ -8188,3 +8188,11 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     stats shas = baseline; [static-dropout check] withheld dem 0.53 lulc 0.48 soil 0.44, untied fine/trunk 0;
     gap/diag/epoch files every epoch.
   §60 FULL RUN SUBMITTED on the user's OK: job 27579697, nolst_L3_wu200_sd05_wd05_20261005, log logs/lst_tmean_diff/train_s60_sd05_wd05_27579697.out
+  §60 FULL 27579697 STOPPED by the user after ep12 (scancel, 25 min). best.pt = ep10. epochs/epoch_001..012.pt kept.
+    best-epoch val      SELECT   ubRMSE 0-10/10-30/30-100     r 0-10/10-30/30-100     gap    params
+    baseline 6L  ep13   0.0487   0.0549/0.0508/0.0498         0.761/0.742/0.727       3.4x   48.0 M
+    §59 3L       ep10   0.0488   0.0554/0.0501/0.0499         0.756/0.754/0.734       2.9x   26.7 M
+    §60 3L+sd+wd ep10   0.0513   0.0571/0.0529/0.0523         0.734/0.723/0.697       2.4x   26.7 M
+    VERDICT: static dropout 0.5 + wd 0.5 cut the gap ~17% at the same epoch but cost ~5% SELECT (worse at every depth);
+    fine-grad ratio fell to 0.004-0.03 (vs 0.05-0.14). Less memorisation did not buy better generalisation.
+    Effects of sd and wd not separable (one run).
