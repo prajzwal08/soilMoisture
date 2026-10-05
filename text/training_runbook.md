@@ -17616,7 +17616,8 @@ Smoke and full each need the user's OK.
   - Overijssel first;
   - continuous prediction;
   - SIF from TROPOMI per tile, as in training (may be revisited after the §67 SIF ablation, job 27627597);
-  - overnight chain authorised: smoke -> full runs automatically ONLY if every smoke gate (68.5) passes;
+  - START 2026-10-06 MORNING (user, 22:40 on 10-05: nothing is submitted tonight); once started, the chain
+    smoke -> full runs automatically ONLY if every smoke gate (68.5) passes;
     any failure stops the chain.
 
 ### 68.2 Flowchart
@@ -17721,7 +17722,7 @@ Smoke and full each need the user's OK.
 | Permanent output | ~35 MB (`nl_output/`) + figures |
 | SBU | ~7k total: S1 download ~3k CPU, tokenise + cloud mask ~2.7k GPU, S2/SIF/ERA5/soil ~0.8k CPU, zarr/cache ~0.3k CPU, predict ~0.2k GPU |
 | Long poles | S1 download (~12 h at 16 tasks, unmeasured at this width) and SIF (~17 h); everything else < 3 h each |
-| Wall time | ~24-30 h from first submit, so the full result is expected Wednesday 2026-10-07 morning; smoke + first maps Tuesday |
+| Wall time | ~24-30 h from first submit (start Tue 2026-10-06 ~09:00): smoke gates Tuesday midday, the full result is expected Wednesday 2026-10-07 midday |
 
 ### 68.5 Smoke run and gates (all must pass before the full array; any failure stops the chain)
 
@@ -17759,3 +17760,38 @@ Smoke and full each need the user's OK.
   - monthly-mean maps per depth;
   - a dry day (summer 2018/2022) and a wet day;
   - tile-vs-station time series for every TWENTE station inside Overijssel.
+
+### 68.7 Code to build (BEFORE the first submit; each change is a no-op when its env var / flag is unset)
+
+| File | Change | Acceptance check (inside the smoke sbatch) |
+|---|---|---|
+| `make_nl_splits.py` (new) | `nl_tiles.csv` (Overijssel, keep) + 2 control tiles → `data_nl/station_splits.csv` | 684 rows; `station_dir_name()` == downloader `_station_folder()` for every row; dtype bool for `has_*` |
+| `download_s1_lulc_mpc.py` | `SOIL_STATION_CSV` env; `--start-idx/--end-idx` for array tasks | defaults are unchanged (diff = env read only) |
+| `backfill_catalogue.py`, `backfill_s2_download.py` | `SOIL_STATION_CSV`; scratch root env → `nl/satellite` | catalogue rows > 0 for every tile; ledger has 0 failed |
+| `download_era5land_gee.py`, `download_sif_tropomi.py`, `download_soil_openlandmap.py` | STATION_CSV resolved AFTER `--data-root` / env (now fixed at import) | log lists only NLGRID dirs |
+| `era5_pixel_fanout.py` (new) | tile → ERA5-Land 0.1° pixel centre; pixel pseudo-stations; copy `meteo_*/rad_*/twsa_*` nc to each tile | pixel count printed; a control tile's copied nc equals a direct point download of that tile |
+| `download_era5_radiation.py` | `--data-root`, `--stations-file`, CSV env | as above |
+| `create_token_zarr.py`, `splice_era5_radiation.py`, `retokenize_satellite_zarr.py`, `compute_s1_dem_lulc_token_masks.py` | `ZARR_ROOT` / CSV env, `--stations` where missing | written only under `nl/zarr`; training store mtime unchanged |
+| `dataset.py` | env `ZARR_ROOT` / `RAW_ROOT` / `S48_CACHE_ROOT` / splits CSV; `predict_all_days=True` → days = era5 days in S2 record, NaN labels, skip label/qc rejections | on a TWENTE station with labels, the observed-day subset is IDENTICAL to the normal mode (same samples, same tensors) |
+| `eval_predict.py` | `--splits-csv`, `--years`, `--predict-all-days` (keeps every row, obs NaN) | output has 3,653 × 3 rows per tile |
+| `assemble_nl_sm.py`, `plot_nl_sm.py` (new) | parquet → zarr (time, y, x, depth); maps + time series | tile count = 682; one sample figure first (style rule) |
+
+Every change is committed before the smoke run. `graphify update .` runs after the build.
+
+### 68.8 Day plan
+
+- **Tue morning:**
+  - build 68.7;
+  - ONE CPU job runs the static checks (CSV, naming, dataset predict_all_days identity on 2 TWENTE stations);
+  - then the smoke chain A→E1 on 3 tiles;
+  - SIF download (C3) for all 684 starts at the same time, because it is the 17 h long pole and is independent.
+- **Tue midday:** smoke gates S1-S5 → if all pass, the full arrays B1/B2/B4, C1/C2/C4 start automatically.
+- **Tue night:** D1-D3 as the downloads finish (afterok chains).
+- **Wed morning:** E1 predict (~1 GPU-h), E2 assemble + one sample figure for the user → the full figure set
+  after OK.
+
+### 68.9 Open decisions
+
+- **SIF:** keep the TROPOMI download (user choice) unless the §67 ablation (job 27627597, cross-station SIF shuffle,
+  per depth) shows ~0 effect at every depth. Revisit with the user Tuesday morning before C3 starts.
+- **Control-tile mismatch (gate S2 fails):** stop and diagnose; never "fix" by refitting stats.
