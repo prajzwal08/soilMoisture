@@ -8135,3 +8135,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   Scripts: verify_s58.sh -> train_pw_era5w180_do03_smoke.sh -> train_pw_era5w180_do03.sh -> pw_era5w180_eval.sh (0-4)
   -> pw_era5w180_compare.sh. Runbook §58. Commit trailer is now the user (Co-Authored-By: Prajwal Khanal).
   NEXT (each needs OK): baseline eval 0-4 + compare base; verify_s58.
+  SUBMITTED on the user's OK: §55 baseline eval array 27572594 (tasks 0-4, wt_pw_era5do feeddb1,
+  logs/pw_era5do_eval_27572594_<i>.out), compare base 27572596 afterok (logs/pw_era5do_compare_27572596.out),
+  §58 verify 27572598 (logs/verify_s58_27572598.out).
