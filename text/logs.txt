@@ -8183,3 +8183,8 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §60 BUILT (not submitted): --static-dropout (DEM/LULC/soil, trunk+fine tied) + wd 0.5 on the §59 config; slurm/train_s60{_smoke,}.sh. Smoke needs OK.
   §60 SMOKE SUBMITTED on the user's OK (full approved if it passes): job 27578435, log logs/lst_tmean_diff/smoke_s60_27578435.out
   §60 SMOKE 27578435 FAILED in the startup check: NameError FINE_DEM (only defined in model.py); fixed d51ff22; resubmit needs OK.
+  §60 SMOKE RESUBMITTED on the user's OK (full approved if it passes): job 27579234 (code d51ff22), log logs/lst_tmean_diff/smoke_s60_27579234.out
+  §60 SMOKE 27579234 PASSED (7 min, code 940b0f9 incl. fix d51ff22): CONFIG static_dropout=0.5 weight_decay=0.5 n_layers=3,
+    stats shas = baseline; [static-dropout check] withheld dem 0.53 lulc 0.48 soil 0.44, untied fine/trunk 0;
+    gap/diag/epoch files every epoch.
+  §60 FULL RUN SUBMITTED on the user's OK: job 27579697, nolst_L3_wu200_sd05_wd05_20261005, log logs/lst_tmean_diff/train_s60_sd05_wd05_27579697.out
