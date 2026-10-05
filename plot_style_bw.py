@@ -14,10 +14,10 @@ SPLIT_LS, SPLIT_MARKER, HEX_CMAP, PRED_COLOR, OBS_COLOR, OOT_SHADE, BW, FS, XROT
 """
 import matplotlib.pyplot as plt
 
-# Paul Tol high-contrast (user's pick, 2026-10-05, from the six-palette sheet): dark blue / gold / rose.
-# Colour-blind safe (worst CVD dE 21.3) and distinct in greyscale print (three lightness levels).
-# Variable names kept for the call sites: BLUE=OOS, GREEN=OOT (gold), RED=OOST (rose).
-BLUE, GREEN, RED = "#004488", "#DDAA33", "#BB5566"
+# Nature / NPG (user pick 2026-10-05, from the seven-palette sheet): navy / green / red.
+# Colour-blind safe (dataviz validate_palette.js: worst CVD dE 11.6 deutan, normal-vision dE 23.1).
+# BLUE=OOS (navy), GREEN=OOT, RED=OOST.
+BLUE, GREEN, RED = "#3C5488", "#00A087", "#E64B35"
 
 GREYS = {"oos": "0.15", "oot": "0.45", "oost": "0.70", "val": "0.88", "train": "0.30"}
 HATCH = {"oos": "", "oot": "////", "oost": "....", "val": "xxxx", "train": "\\\\\\\\"}
