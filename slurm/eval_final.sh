@@ -4,13 +4,14 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus=1
-#SBATCH --mem=300G
+#SBATCH --mem=180G
 #SBATCH --time=05:00:00
 #SBATCH --partition=gpu_h100
 #SBATCH --output=/gpfs/work3/0/prjs1968/soilMoisture/logs/eval_final_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com
 
+# --mem 180G: a gpu_h100 node is 737 GB / 4 GPUs, so 300G billed TWO GPUs (27621845, cancelled); s48 memmaps the cache.
 # §66 Phase A: GPU half of the final-model test evaluation (§59 nolst_L3_wu200_20261005, best.pt = ep10).
 #   1) predictions on OOS / OOT / OOST   (val parquet already written by job 27614390)
 #   2) TxSON network readout (every station pixel in every TxSON tile) for the maps + tile time series
@@ -61,6 +62,8 @@ for f in sorted(d.glob("predictions_*.parquet")):
           f"pred {p.min():.3f}-{p.max():.3f}  finite {fin}  in[0,0.6] {rng}")
 m = json.loads((d / "manifest.json").read_text())
 print(f"  manifest checkpoint={m.get('checkpoint')}  epoch={m.get('epoch')}")
+for k, s in m.get('splits', {}).items():
+    print(f"  timing {k}: {s.get('timing')}")
 print("SANITY", "PASS" if ok else "FAIL")
 EOF
 echo "=== done $(date) ==="

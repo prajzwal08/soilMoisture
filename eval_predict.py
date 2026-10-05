@@ -95,11 +95,16 @@ def run_split(model, loader, device) -> dict:
     """
     srow, scol = SoilMoistureModel.STATION_ROW, SoilMoistureModel.STATION_COL
     preds, targets, keys, years, doys = [], [], [], [], []
+    fwd_events = []      # CUDA events around model(batch): pure GPU forward time, no data loading
 
     t0, n_batches = time.time(), len(loader)
     for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        ev0.record()
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu = model(batch)["sm"]
+        ev1.record()
+        fwd_events.append((ev0, ev1))
         _p = mu[:, :, srow, scol]
         preds.append(_p.float().cpu().numpy())
         targets.append(batch["label"].float().cpu().numpy())
@@ -121,7 +126,14 @@ def run_split(model, loader, device) -> dict:
         keys    = np.asarray(keys),                  # (N,)
         years   = np.concatenate(years,   axis=0),   # (N,)
         doys    = np.concatenate(doys,    axis=0),   # (N,)
+        fwd_s   = _forward_seconds(fwd_events),
     )
+
+
+def _forward_seconds(events) -> float:
+    """Sum of CUDA-event times around every model(batch) call, in seconds."""
+    torch.cuda.synchronize()
+    return sum(a.elapsed_time(b) for a, b in events) / 1e3
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +196,16 @@ def run_split_pixels(model, loader, device, pmap: PixelMap) -> dict:
     rows_t = torch.from_numpy(pmap.rows).to(device)      # (n_tiles, K)
     cols_t = torch.from_numpy(pmap.cols).to(device)
     preds, tiles, years, doys = [], [], [], []
+    fwd_events = []
 
     t0, n_batches = time.time(), len(loader)
     for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        ev0.record()
         with torch.autocast("cuda", dtype=torch.bfloat16):
             mu = model(batch)["sm"]                      # (B, D, 112, 112)
+        ev1.record()
+        fwd_events.append((ev0, ev1))
         B, D, H, W = mu.shape
 
         ti  = torch.as_tensor([pmap.index[k] for k in batch["station_key"]],
@@ -215,6 +232,7 @@ def run_split_pixels(model, loader, device, pmap: PixelMap) -> dict:
         tiles = np.concatenate(tiles, axis=0),   # (N,)
         years = np.concatenate(years, axis=0),
         doys  = np.concatenate(doys,  axis=0),
+        fwd_s = _forward_seconds(fwd_events),
     )
 
 
@@ -483,6 +501,7 @@ def main():
             active_csv = str(chunk_csv)
             print(f"  Chunk rows [{lo}:{hi}] of {split_name} → {len(sub)} stations")
 
+        t_init = time.time()
         ds = SoilMoistureDataset(
             splits_csv      = active_csv,
             era5_stats_path = str(ERA5_STATS),
@@ -492,6 +511,7 @@ def main():
             training        = False,
             max_stations    = args.max_stations,
         )
+        init_s = time.time() - t_init
         n_stations = len({s["station_key"] for s in ds.samples})
         expected   = EXPECTED_STATIONS.get(split_name)
         chunked    = args.csv_start_idx is not None or args.csv_end_idx is not None
@@ -548,6 +568,10 @@ def main():
 
         print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
               f"{mins:.1f} min")
+        print(f"  TIMING {split_name}{('_' + args.tag) if args.tag else ''}: dataset init {init_s:.0f} s | "
+              f"loop {mins*60:.0f} s ({len(ds)/max(mins*60,1e-9):.0f} samples/s incl. loading) | "
+              f"GPU forward {res['fwd_s']:.1f} s = {1e3*res['fwd_s']/max(len(ds),1):.3f} ms/sample "
+              f"(batch {args.batch_size}, {torch.cuda.get_device_name(0)})")
         if pmap is not None:
             print(f"  readouts: {df.groupby(['tile','station']).ngroups} "
                   f"(tile, station) pairs | "
@@ -567,6 +591,19 @@ def main():
                               df.groupby("depth", observed=True).size().items()},
             "nan_pred":     n_nan_pred,
             "minutes":      round(mins, 1),
+            # inference timing (user 2026-10-05): dataset build, full loop (incl. data loading),
+            # and pure GPU forward time from CUDA events; bf16 autocast, batch size as below
+            "timing": {
+                "gpu":                 torch.cuda.get_device_name(0),
+                "batch_size":          args.batch_size,
+                "num_workers":         args.num_workers,
+                "dataset_init_s":      round(init_s, 1),
+                "loop_s":              round(mins * 60, 1),
+                "gpu_forward_s":       round(res["fwd_s"], 2),
+                "n_samples":           int(len(ds)),
+                "samples_per_s_loop":  round(len(ds) / max(mins * 60, 1e-9), 1),
+                "ms_per_sample_gpu":   round(1e3 * res["fwd_s"] / max(len(ds), 1), 3),
+            },
             **({"pixel_csv":   args.pixel_csv,
                 "n_readouts":  int(df.groupby(["tile", "station"]).ngroups),
                 "n_offcentre": int(df.groupby(["tile", "station"])
