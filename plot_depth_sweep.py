@@ -34,7 +34,7 @@ SWEEPS = {
                         (3, "train_nolst_L3_wu200_27575211.out", "#1c5cab", "^"),
                         (6, "train_nolst_27417115.out", "#0d366b", "D")]),
     # clean wd points only (user 2026-10-05): §59 wd 0.05 vs §65 wd 0.3, both 3 layers
-    "wd": dict(key="weight_decay", xlabel="Weight decay (AdamW)", name="weight decay",
+    "wd": dict(key="weight_decay", xlabel="Weight decay (AdamW)", name="wd",
                label=lambda v: f"wd {v}",
                runs=[(0.05, "train_nolst_L3_wu200_27575211.out", "#3987e5", "o"),
                      (0.3, "train_nolst_L3_wd03_27621051.out", "#0d366b", "s")]),
