@@ -8306,3 +8306,7 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §66 eval 27621845 CANCELLED while pending (300G billed 2 GPUs; user asked for inference timing). Added timing to eval_predict.py
     (dataset init s, loop s, CUDA-event GPU forward s, ms/sample, GPU name -> stdout TIMING line + manifest 'timing'), --mem 180G.
     RESUBMITTED (same approved run): job 27621948, code a1ddc08.
+  §66 EVAL 27621948 DONE (29 min, 1 H100): OOS 222 stn / OOT 362 / OOST 115 / TxSON 40. GPU forward 0.734-0.749 ms/sample
+    (batch 128, bf16, H100); loop 1200-1300 samples/s incl. loading; dataset init 99-454 s. OOT post-cut filter excluded 350/748, OOST 120/241 station-years.
+    SANITY FAIL: preds outside [0,0.6] — min -0.025 (all splits slightly <0), OOT max 1.017. Diagnostic added to eval_figures.sh.
+    Folder renamed eval_output/baseline_selected_20261005 (+ symlink from old name, README.txt); git tag baseline/selected-20261005 -> a01decf.
