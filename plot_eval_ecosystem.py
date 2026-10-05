@@ -49,6 +49,9 @@ SPLIT_COLORS = {"train": "#34495e", "val": "#7f8c8d",
                 "oos": "#1a6faf", "oot": "#e8851a", "oost": "#9b59b6"}
 SPLIT_HATCH  = {}          # filled by plot_style_bw.apply under --style bw
 BW           = False
+FS           = 1.0         # annotation font-size multiplier (paper style raises it)
+DPI          = 300
+XROT         = None        # category tick rotation override (paper style: 90)
 EVAL_SPLITS  = ["oos", "oot", "oost"]
 INVENTORY_SPLITS = ["train", "val", "oos", "oot", "oost"]   # --no-val drops "val"
 SPLITS_CSV   = Path("csvs/station_splits.csv")
@@ -57,7 +60,7 @@ SPLITS_CSV   = Path("csvs/station_splits.csv")
 def save(fig, out_dir: Path, name: str):
     out_dir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{name}.{ext}", dpi=600 if BW else 300, bbox_inches="tight")
+        fig.savefig(out_dir / f"{name}.{ext}", dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  → {out_dir/name}.png")
 
@@ -140,7 +143,7 @@ def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
         for xi, v in zip(x, wide[split]):
             if v:
                 axes[0].annotate(f"{int(v)}", (xi, v), ha="center", va="bottom",
-                                 fontsize=5, rotation=90, xytext=(0, 1),
+                                 fontsize=5 * FS, rotation=90, xytext=(0, 1),
                                  textcoords="offset points")
         axes[1].bar(x, frac[split] * 100, width=width * 0.9,
                     color=SPLIT_COLORS[split], edgecolor="k", lw=0.4,
@@ -151,12 +154,13 @@ def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
                              if plt.rcParams["text.usetex"] else "share of split (%)",
                              "composition")):
         ax.set_xticks(range(len(order)))
-        ax.set_xticklabels(order, rotation=20, ha="right", fontsize=7)
+        ax.set_xticklabels(order, rotation=XROT if XROT is not None else 20,
+                           ha="center" if XROT == 90 else "right", fontsize=7 * FS)
         ax.set_ylabel(ylab)
-        ax.set_title(title, fontsize=8)
+        ax.set_title(title, fontsize=8 * FS)
         ax.grid(axis="y", lw=0.4, alpha=0.35)
         ax.set_axisbelow(True)
-    axes[0].legend(fontsize=6, frameon=False)
+    axes[0].legend(fontsize=6 * FS, frameon=False)
 
     fig.suptitle(f"Station inventory by {by} -- train vs held-out splits", y=1.04)
     save(fig, out_dir, f"stations_by_{by}")
@@ -201,7 +205,7 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
                 ax.annotate(f"{len(v)}", xy=(pos[-1], 0.0),
                             xycoords=("data", "axes fraction"),
                             xytext=(0, -9), textcoords="offset points",
-                            ha="center", va="top", fontsize=5,
+                            ha="center", va="top", fontsize=5 * FS,
                             color="black" if BW else SPLIT_COLORS[split])
             bp = ax.boxplot([d if len(d) else [np.nan] for d in data],
                             positions=pos, widths=width * 0.62, showfliers=False,
@@ -224,9 +228,12 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
 
     axes[0].legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=1.0 if BW else 0.55,
                                   hatch=SPLIT_HATCH.get(s, ""), label=s.upper()) for s in splits],
-                   fontsize=6, frameon=False, loc="upper right", ncol=len(splits))
+                   fontsize=6 * FS, frameon=False, loc="upper right", ncol=len(splits))
     axes[-1].set_xticks(range(len(order)))
-    axes[-1].set_xticklabels(order, rotation=15, ha="right")
+    axes[-1].set_xticklabels(order, rotation=XROT if XROT is not None else 15,
+                             ha="center" if XROT == 90 else "right")
+    if XROT == 90:                      # clear the per-box station counts drawn just under the axis
+        axes[-1].tick_params(axis="x", pad=14 * FS)
     axes[-1].set_xlabel(f"{by}   (small numbers = stations per box)")
     fig.suptitle(f"Per-station {metric} by {by} and split", y=1.02)
     save(fig, out_dir, f"box_{metric.lower()}_by_{by}")
@@ -260,12 +267,12 @@ def main():
     p.add_argument("--min-stations", type=int, default=5)
     p.add_argument("--no-val", action="store_true",
                    help="leave val out of the inventory figure (held-out splits only, + train)")
-    p.add_argument("--style", choices=["color", "bw"], default="color",
-                   help="bw = black-and-white publication style (plot_style_bw.py)")
+    p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
+                   help="bw = black-and-white; paper = blue/green/red, Times (plot_style_bw.py)")
     args = p.parse_args()
-    if args.style == "bw":
+    if args.style != "color":
         import plot_style_bw
-        plot_style_bw.apply(globals())
+        plot_style_bw.apply(globals(), args.style)
 
     if args.no_val:
         INVENTORY_SPLITS.remove("val")

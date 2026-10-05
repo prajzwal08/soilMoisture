@@ -46,7 +46,7 @@ try:
 except ImportError:
     plt.rcParams.update({"font.size": 9, "axes.labelsize": 9, "axes.titlesize": 10})
 
-from eval_metrics import SM_DEPTHS, metrics_from_arrays, _make_key
+from eval_metrics import SM_DEPTHS, clip_pred, metrics_from_arrays, _make_key
 
 DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
 DEPTH_LABELS = {"0-10": "0-10 cm", "10-30": "10-30 cm", "30-100": "30-100 cm"}
@@ -58,6 +58,9 @@ PRED_COLOR   = None
 OBS_COLOR    = "black"
 OOT_SHADE    = "#9b59b6"
 BW           = False
+FS           = 1.0         # annotation font-size multiplier (paper style raises it)
+DPI          = 300
+XROT         = None        # category tick rotation override (paper style: 90)
 
 
 def select_stations(df: pd.DataFrame, n: int, min_n: int, rank_metric: str,
@@ -185,7 +188,7 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
         if g.empty:
             ax.text(0.5, 0.5, f"no data at {DEPTH_LABELS[depth]}",
                     transform=ax.transAxes, ha="center", va="center",
-                    fontsize=8, color="grey")
+                    fontsize=8 * FS, color="grey")
             ax.set_ylabel(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
             ax.set_yticks([])
             continue
@@ -210,7 +213,7 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
                 f"ubRMSE {m['ubRMSE']:.3f}   RMSE {m['RMSE']:.3f}   "
                 f"$r^2$ {m['R2_pearson']:.2f}   NSE {m['NSE']:+.2f}   "
                 f"bias {m['bias']:+.3f}   n {m['n']}",
-                transform=ax.transAxes, va="top", ha="left", fontsize=6,
+                transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
                 bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.2))
 
         # OOS stations continue into 2023 as OOST -- mark the boundary
@@ -225,7 +228,7 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
         ax.set_ylim(0, max(0.55, float(g[["pred", "obs"]].to_numpy().max()) * 1.1))
         ax.margins(x=0.01)
 
-    axes[0].legend(fontsize=6, frameon=False, loc="upper right", ncol=2)
+    axes[0].legend(fontsize=6 * FS, frameon=False, loc="upper right", ncol=2)
     axes[-1].set_xlabel("date")
     axes[-1].xaxis.set_major_locator(mdates.AutoDateLocator())
     axes[-1].xaxis.set_major_formatter(mdates.ConciseDateFormatter(
@@ -238,7 +241,7 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
               f"{meta.get('longitude', float('nan')):.2f}"
         bits.append(f"{meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')} "
                     f"| {loc}")
-    fig.suptitle("   ".join(bits), fontsize=8)
+    fig.suptitle("   ".join(bits), fontsize=8 * FS)
     return fig
 
 
@@ -266,12 +269,12 @@ def main():
                    help="depth whose metric decides best/worst or below/above")
     p.add_argument("--seed",        type=int, default=0,
                    help="--select median: seed for the random draw")
-    p.add_argument("--style", choices=["color", "bw"], default="color",
-                   help="bw = black-and-white publication style (plot_style_bw.py)")
+    p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
+                   help="bw = black-and-white; paper = blue/green/red, Times (plot_style_bw.py)")
     args = p.parse_args()
-    if args.style == "bw":
+    if args.style != "color":
         import plot_style_bw
-        plot_style_bw.apply(globals())
+        plot_style_bw.apply(globals(), args.style)
     if args.select == "named" and not args.stations:
         p.error("--select named requires --stations")
 
@@ -288,7 +291,7 @@ def main():
             print(f"[{split}] no parquet -- skipping")
             continue
 
-        df = pd.read_parquet(path)
+        df = clip_pred(pd.read_parquet(path))
         df_rank = df        # rank on this split alone, before OOST is merged in
 
         # An OOS station continues into 2023 as OOST; show both in one figure
@@ -296,7 +299,7 @@ def main():
         if split == "oos":
             oost_path = in_dir / "predictions_oost.parquet"
             if oost_path.exists():
-                df = pd.concat([df, pd.read_parquet(oost_path)], ignore_index=True)
+                df = pd.concat([df, clip_pred(pd.read_parquet(oost_path))], ignore_index=True)
 
         print(f"\n[{split}] {len(df):,} rows | "
               f"{df['station_key'].nunique()} stations")
@@ -328,7 +331,7 @@ def main():
                                split, n_total)
             name = (f"{info['rank']}_{info['rank_idx']:02d}_"
                     f"{info['station_key']}.png")
-            fig.savefig(split_dir / name, dpi=600 if BW else 300, bbox_inches="tight")
+            fig.savefig(split_dir / name, dpi=DPI, bbox_inches="tight")
             figs.append(fig)
             print(f"    {info['rank']:>5s} {info['rank_idx']:>2d}  "
                   f"{info['station_key']:<45s} "

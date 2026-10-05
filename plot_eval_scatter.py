@@ -30,7 +30,7 @@ try:
 except ImportError:
     plt.rcParams.update({"font.size": 9, "axes.labelsize": 9, "axes.titlesize": 10})
 
-from eval_metrics import SM_DEPTHS, metrics_from_arrays, per_station_metrics
+from eval_metrics import SM_DEPTHS, clip_pred, metrics_from_arrays, per_station_metrics
 
 # §13.3 house style
 DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
@@ -45,13 +45,16 @@ HEX_CMAP    = "viridis"     # these four are replaced by plot_style_bw.apply und
 SPLIT_MARKER = {}
 SPLIT_LS    = {}
 BW          = False
+FS           = 1.0         # annotation font-size multiplier (paper style raises it)
+DPI          = 300
+XROT         = None        # category tick rotation override (paper style: 90)
 SM_LIM   = (0.0, 0.62)
 
 
 def save(fig, out_dir: Path, name: str):
     out_dir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
-        fig.savefig(out_dir / f"{name}.{ext}", dpi=600 if BW else 300, bbox_inches="tight")
+        fig.savefig(out_dir / f"{name}.{ext}", dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  → {out_dir/name}.png")
 
@@ -61,7 +64,7 @@ def load_predictions(in_dir: Path) -> dict:
     for split in HELD_OUT:
         p = in_dir / f"predictions_{split}.parquet"
         if p.exists():
-            out[split] = pd.read_parquet(p)
+            out[split] = clip_pred(pd.read_parquet(p))
     if not out:
         raise SystemExit(f"No prediction parquets in {in_dir}")
     return out
@@ -83,7 +86,7 @@ def fig_pred_obs(preds: dict, out_dir: Path):
             if g.empty:
                 ax.set_axis_off()
                 ax.text(0.5, 0.5, "no data", ha="center", va="center",
-                        transform=ax.transAxes, fontsize=8, color="grey")
+                        transform=ax.transAxes, fontsize=8 * FS, color="grey")
                 continue
 
             p = g["pred"].to_numpy(np.float64)
@@ -97,7 +100,7 @@ def fig_pred_obs(preds: dict, out_dir: Path):
                     f"RMSE {m['RMSE']:.3f}\nubRMSE {m['ubRMSE']:.3f}\n"
                     f"$r^2$ {m['R2_pearson']:.2f}\nNSE {m['NSE']:+.2f}\n"
                     f"bias {m['bias']:+.3f}\nn {m['n']:,}",
-                    transform=ax.transAxes, va="top", ha="left", fontsize=6,
+                    transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
                     bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
 
             ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
@@ -143,7 +146,7 @@ def fig_station_mean(preds: dict, out_dir: Path):
                  else np.nan)
             ax.text(0.03, 0.97,
                     f"RMS offset {rms_off:.3f}\n$r$ {r:.2f}\n{len(st)} stations",
-                    transform=ax.transAxes, va="top", ha="left", fontsize=6,
+                    transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
                     bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
 
             ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
@@ -192,7 +195,7 @@ def fig_station_metrics(ps_all: pd.DataFrame, out_dir: Path):
                 patch.set_alpha(0.9)
 
             ax.set_xticks(range(len(splits)))
-            ax.set_xticklabels([s.upper() for s in splits], fontsize=7)
+            ax.set_xticklabels([s.upper() for s in splits], fontsize=7 * FS)
             if ylim:
                 ax.set_ylim(*ylim)
             if metric == "NSE_anom":
@@ -202,7 +205,7 @@ def fig_station_metrics(ps_all: pd.DataFrame, out_dir: Path):
             if i == 0:
                 ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
             ax.text(0.98, 0.03, "\n".join(f"n={len(d)}" for d in [data[0]]),
-                    transform=ax.transAxes, ha="right", va="bottom", fontsize=6,
+                    transform=ax.transAxes, ha="right", va="bottom", fontsize=6 * FS,
                     color="grey")
 
     fig.suptitle("Per-station metric distributions (one dot = one station)", y=1.01)
@@ -233,9 +236,9 @@ def fig_ubrmse_vs_offset(ps_all: pd.DataFrame, out_dir: Path):
         ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
         if j == 0:
             ax.set_ylabel("|per-station bias| (level error)")
-            ax.legend(fontsize=6, frameon=False, loc="upper right")
+            ax.legend(fontsize=6 * FS, frameon=False, loc="upper right")
         ax.text(0.5, 0.02, "above line: level-limited", transform=ax.transAxes,
-                ha="center", fontsize=6, color="grey")
+                ha="center", fontsize=6 * FS, color="grey")
 
     fig.suptitle("Dynamics error vs absolute-level error, per station", y=1.03)
     save(fig, out_dir, "scatter_ubrmse_vs_offset")
@@ -293,7 +296,7 @@ def fig_oot_error_vs_doy(preds: dict, out_dir: Path, n_bins: int = 24):
         ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
         if j == 0:
             ax.set_ylabel("|error| anomaly (m$^3$/m$^3$)\nper-station mean removed")
-            ax.legend(fontsize=6, frameon=False)
+            ax.legend(fontsize=6 * FS, frameon=False)
 
     fig.suptitle("§22.7  OOT error through 2023 (OOST = seasonality control)", y=1.04)
     save(fig, out_dir, "oot_error_vs_doy")
@@ -303,12 +306,12 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--in-dir",  default="eval_output")
     p.add_argument("--out-dir", default="figures/eval")
-    p.add_argument("--style", choices=["color", "bw"], default="color",
-                   help="bw = black-and-white publication style (plot_style_bw.py)")
+    p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
+                   help="bw = black-and-white; paper = blue/green/red, Times (plot_style_bw.py)")
     args = p.parse_args()
-    if args.style == "bw":
+    if args.style != "color":
         import plot_style_bw
-        plot_style_bw.apply(globals())
+        plot_style_bw.apply(globals(), args.style)
 
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
     preds = load_predictions(in_dir)

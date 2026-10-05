@@ -22,6 +22,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 
@@ -34,6 +35,18 @@ SM_DEPTHS  = ["0-10", "10-30", "30-100"]
 
 MIN_N        = 5    # matches evaluate_splits.py:86
 MIN_N_UBRMSE = 2    # anomalies need at least two points
+
+# §66: EVAL_CLIP="0,1" clips predictions to the physical range before any metric or figure.
+# The model head is linear and unbounded; reported in the methods. Unset = raw predictions.
+def clip_pred(df: pd.DataFrame) -> pd.DataFrame:
+    rng = os.environ.get("EVAL_CLIP")
+    if rng and "pred" in df:
+        lo, hi = (float(x) for x in rng.split(","))
+        n = int(((df["pred"] < lo) | (df["pred"] > hi)).sum())
+        df["pred"] = df["pred"].clip(lo, hi)
+        print(f"  [EVAL_CLIP] {n:,} of {len(df):,} predictions clipped to [{lo}, {hi}]")
+    return df
+
 
 META_COLS = [
     "station_key", "latitude", "longitude", "IGBP", "igbp_macro",
@@ -311,8 +324,8 @@ def main():
     for split_name in sorted(groups, key=lambda s: {"val": 0, "oos": 1,
                                                     "oot": 2, "oost": 3}.get(s, 9)):
         chunk_paths = groups[split_name]
-        df = pd.concat([pd.read_parquet(p_) for p_ in chunk_paths],
-                       ignore_index=True)
+        df = clip_pred(pd.concat([pd.read_parquet(p_) for p_ in chunk_paths],
+                       ignore_index=True))
         # a station must not appear in two chunks, or its metrics double-count
         df = df.drop_duplicates(subset=["station_key", "year", "doy", "depth"])
         print(f"\n{'='*66}")
