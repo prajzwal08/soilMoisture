@@ -8303,3 +8303,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §66 FINAL EVAL SUBMITTED on the user's OK (no smoke; eval path exercised today by 27614390): job 27621845 (slurm/eval_final.sh, code 1b4d6c4):
     §59 nolst_L3_wu200_20261005 best.pt (3 layers, wd 0.05, ep10) -> OOS/OOT/OOST + TxSON readout -> eval_output/nolst_L3_wu200_20261005/.
     Final model declared FROZEN by the user (3L, wd 0.05). Plan: Phase A baseline eval + BW figures, then Phase B 13-pass OOS input ablation.
+  §66 eval 27621845 CANCELLED while pending (300G billed 2 GPUs; user asked for inference timing). Added timing to eval_predict.py
+    (dataset init s, loop s, CUDA-event GPU forward s, ms/sample, GPU name -> stdout TIMING line + manifest 'timing'), --mem 180G.
+    RESUBMITTED (same approved run): job 27621948, code a1ddc08.
