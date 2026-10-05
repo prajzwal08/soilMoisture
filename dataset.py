@@ -149,6 +149,7 @@ MAX_DEAD_SOIL_CHANNELS = 2
 
 # ── Fine imagery (§48.3, §48.9 item 1) — must match model.py's FINE_* layout ────
 FINE_CH        = 19          # S2 10 bands + valid + age | S1 VV VH valid age orbit | DEM valid
+FINE_DEM       = slice(17, 19)   # DEM | dem_valid — build_fine writes fine[17:19]; model.py FINE_DEM
 LULC_PAD       = 10          # model.py LULC_PAD; TerraMind index 0 (nodata) and >9 map here
 LST_N          = 22
 LST_LEVEL_MIN_CELLS = 10     # §52: min valid 100 m cells for a tile-mean (level) target
