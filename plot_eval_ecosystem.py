@@ -53,6 +53,7 @@ FS           = 1.0         # annotation font-size multiplier (paper style raises
 DPI          = 300
 PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
 CS           = 1.0         # extra multiplier for count / median annotations (paper style)
+BOX_ALPHA    = 0.55        # box fill opacity (bw + paper: 1.0, solid)
 XROT         = None        # category tick rotation override (paper style: 90)
 EVAL_SPLITS  = ["oos", "oot", "oost"]
 INVENTORY_SPLITS = ["train", "val", "oos", "oot", "oost"]   # --no-val drops "val"
@@ -229,7 +230,7 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
             for patch in bp["boxes"]:
                 patch.set_facecolor(SPLIT_COLORS[split])
                 patch.set_hatch(SPLIT_HATCH.get(split, ""))
-                patch.set_alpha(1.0 if BW else 0.55)
+                patch.set_alpha(BOX_ALPHA)
                 patch.set_edgecolor("k")
 
         ax.set_ylabel(f"{DEPTH_LABELS[depth]}\n{metric} (m$^3$/m$^3$)",
@@ -239,7 +240,7 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
         ax.grid(axis="y", lw=0.4, alpha=0.35)
         ax.set_axisbelow(True)
 
-    axes[0].legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=1.0 if BW else 0.55,
+    axes[0].legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=BOX_ALPHA,
                                   hatch=SPLIT_HATCH.get(s, ""), label=s.upper()) for s in splits],
                    fontsize=6 * FS, frameon=False, loc="upper right", ncol=len(splits))
     axes[-1].set_xticks(range(len(order)))

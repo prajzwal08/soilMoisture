@@ -62,6 +62,7 @@ FS           = 1.0         # annotation font-size multiplier (paper style raises
 DPI          = 300
 PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
 CS           = 1.0         # extra multiplier for count / median annotations (paper style)
+BOX_ALPHA    = 0.55        # box fill opacity (bw + paper: 1.0, solid)
 XROT         = None        # category tick rotation override (paper style: 90)
 
 

@@ -14,9 +14,10 @@ SPLIT_LS, SPLIT_MARKER, HEX_CMAP, PRED_COLOR, OBS_COLOR, OOT_SHADE, BW, FS, XROT
 """
 import matplotlib.pyplot as plt
 
-# Okabe-Ito blue / bluish-green / vermillion: colour-blind safe (dataviz validate_palette.js, all checks
-# pass: worst CVD dE 11.0 deutan). The earlier #2166AC/#1B7837/#B2182B FAILED (red-green dE 2.5).
-BLUE, GREEN, RED = "#0072B2", "#009E73", "#D55E00"
+# Paul Tol high-contrast (user's pick, 2026-10-05, from the six-palette sheet): dark blue / gold / rose.
+# Colour-blind safe (worst CVD dE 21.3) and distinct in greyscale print (three lightness levels).
+# Variable names kept for the call sites: BLUE=OOS, GREEN=OOT (gold), RED=OOST (rose).
+BLUE, GREEN, RED = "#004488", "#DDAA33", "#BB5566"
 
 GREYS = {"oos": "0.15", "oot": "0.45", "oost": "0.70", "val": "0.88", "train": "0.30"}
 HATCH = {"oos": "", "oot": "////", "oost": "....", "val": "xxxx", "train": "\\\\\\\\"}
@@ -74,7 +75,7 @@ def apply(g: dict, style: str = "bw") -> None:
         g["PRED_COLOR"], g["OBS_COLOR"], g["OOT_SHADE"] = BLUE, "black", RED
         g["BW"] = False
         g["FS"], g["XROT"], g["DPI"] = 1.5, 90, 600
-        g["PAPER"], g["CS"] = True, 1.45
+        g["PAPER"], g["CS"], g["BOX_ALPHA"] = True, 1.45, 1.0
         return
     plt.rcParams.update(RC_BW)
     if "DEPTH_COLORS" in g:
@@ -90,3 +91,4 @@ def apply(g: dict, style: str = "bw") -> None:
     g["PRED_COLOR"], g["OBS_COLOR"], g["OOT_SHADE"] = "black", "0.55", "0.6"
     g["BW"] = True
     g["FS"], g["XROT"], g["DPI"] = 1.0, None, 600
+    g["BOX_ALPHA"] = 1.0

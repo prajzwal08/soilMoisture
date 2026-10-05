@@ -43,6 +43,7 @@ FS           = 1.0         # annotation font-size multiplier (paper style raises
 DPI          = 300
 PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
 CS           = 1.0         # extra multiplier for count / median annotations (paper style)
+BOX_ALPHA    = 0.55        # box fill opacity (bw + paper: 1.0, solid)
 XROT         = None        # category tick rotation override (paper style: 90)
 SPLIT_LABELS = {"oos": "OOS (novel stations, 2016-2022)",
                 "oot": "OOT (seen stations, 2023-2025)",
@@ -117,7 +118,7 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
         for patch in bp["boxes"]:
             patch.set_facecolor(SPLIT_COLORS[split])
             patch.set_hatch(SPLIT_HATCH.get(split, ""))
-            patch.set_alpha(1.0 if BW else 0.55)
+            patch.set_alpha(BOX_ALPHA)
             patch.set_edgecolor("k")
 
         # median on a clean row at the top, station count below the axis
@@ -147,7 +148,7 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
     ax.set_ylabel(METRIC_LABELS.get(metric, metric))
     ax.grid(axis="y", lw=0.4, alpha=0.35)
     ax.set_axisbelow(True)
-    ax.legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=1.0 if BW else 0.55,
+    ax.legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=BOX_ALPHA,
                              hatch=SPLIT_HATCH.get(s, ""),
                              label=SPLIT_LABELS.get(s, s.upper()))
                        for s in splits],
