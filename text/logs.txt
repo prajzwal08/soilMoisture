@@ -8324,3 +8324,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §66 palette chooser (jobs 27625807, 27625858): figures/eval/baseline_selected_20261005_paper/palette_options/palette_options.png, six CVD-safe palettes
     A NPG navy/green/red, B Tol bright, C Tol high-contrast blue/gold/rose, D Dark2, E navy/teal/gold, F navy/grey/brick; solid fills (alpha 0.9). Awaiting user pick.
   §66 user picked palette C (Tol high-contrast). FULL paper-style figures SUBMITTED: job 27625949 (eval_figures.sh --style paper, EVAL_CLIP=0,1, OOS/OOT/OOST, OUT figures/eval/baseline_selected_20261005_paper), code 4788a67.
+  NOTE: full paper figures job 27625949 (palette C) DID run 20:34 (2m51s) although the tool call showed as rejected; outputs in figures/eval/baseline_selected_20261005_paper/ will be overwritten once the palette is final.
+  Palette sheet v3 (job 27626370): C, G navy/teal/brick, H dark blue/light blue/orange, I Tol muted, J dark blue/rose/light blue, A NPG, F navy/grey/brick; counts in black. Awaiting pick.
