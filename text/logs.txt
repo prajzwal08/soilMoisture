@@ -8280,3 +8280,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   LST deseason TRAIN job 27614277 DONE (45 s): probe 573 stn -> _full folders; train split 571 stn, 42,538 scenes.
     LEVEL (tile LST - T2m) vs SM 0-10 anomaly: pooled r -0.21, per-station median -0.22 (538 stn, IQR -0.33..-0.10).
     PATTERN (cell - tile): pooled -0.05, per-station median -0.05 (476 stn). TxSON (-0.42) is the STRONG end; network-wide signal ~half.
+  LST residual check SUBMITTED on the user's OK: job 27614390 (slurm/probe_lst_residual.sh, code ac285c5): §59 val preds -> r(obs-pred, LST-T2m anom) on Landsat days.
