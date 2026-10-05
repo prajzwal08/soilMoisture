@@ -31,7 +31,7 @@ if [[ "${MODE}" == smoke ]]; then
 else
     OUT=eval_output/${RUN}_ablation; LIMIT=""
 fi
-FIG=figures/eval/${RUN}_paper/ablation$([[ "${MODE}" == smoke ]] && echo _smoke)
+FIG=figures/eval/${RUN}_paper/ablation; [[ "${MODE}" == smoke ]] && FIG=${FIG}_smoke   # (a failing $(...) would trip set -e)
 PASSES="none era5 sat s2 s1 fine dem lulc soil sif twsa era5:within_station s1:within_station"
 echo "=== input_ablation ${MODE}  job ${SLURM_JOB_ID}  $(date)  on $(hostname) ==="
 echo "ckpt ${CKPT}   out ${OUT}   passes: ${PASSES}"
