@@ -14,6 +14,7 @@ import pandas as pd
 from shapely.geometry import Point, box
 
 LAND_FILE = "data/nl/landsdeel_2024.json"
+PROV_FILE = "data/nl/provincie_2024.json"  # PDOK gebiedsindelingen:provincie_gegeneraliseerd 2024
 OUT_CSV = "csvs/nl_tiles.csv"
 TILE_M = 2240.0
 MIN_LAND_FRAC = 0.5
@@ -44,10 +45,15 @@ def main():
     ll = gpd.GeoSeries(gpd.points_from_xy(cells.x_rd, cells.y_rd), crs=28992).to_crs(4326)
     cells["latitude"] = ll.y.values.round(6)
     cells["longitude"] = ll.x.values.round(6)
+    # province = the one containing the tile centre (centre on water -> nearest province)
+    prov = gpd.read_file(PROV_FILE).to_crs(28992)[["statnaam", "geometry"]]
+    centres = gpd.GeoDataFrame(geometry=gpd.points_from_xy(cells.x_rd, cells.y_rd), crs=28992,
+                               index=cells.index)
+    cells["province"] = gpd.sjoin_nearest(centres, prov, how="left").groupby(level=0)["statnaam"].first()
     cells["station_name"] = [f"NL_{ix:03d}_{iy:03d}" for ix, iy in zip(cells.ix, cells.iy)]
     cells["network"] = "NL_GRID"
 
-    cols = ["network", "station_name", "latitude", "longitude", "x_rd", "y_rd", "ix", "iy",
+    cols = ["network", "station_name", "province", "latitude", "longitude", "x_rd", "y_rd", "ix", "iy",
             "land_frac", "centre_on_land", "keep"]
     pd.DataFrame(cells[cols]).round({"land_frac": 4}).to_csv(OUT_CSV, index=False)
 
@@ -58,6 +64,8 @@ def main():
     print(f"kept with centre on water: {(~kept.centre_on_land).sum():,}")
     print(f"land covered by kept tiles: "
           f"{kept.geometry.intersection(land_union).area.sum() / land_union.area:.1%}")
+    print("kept tiles per province:")
+    print(kept.groupby("province").size().sort_values(ascending=False).to_string())
     print(f"wrote {OUT_CSV}")
 
 

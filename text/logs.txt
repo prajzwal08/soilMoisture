@@ -8371,3 +8371,9 @@ Rescaled sizing (7,005 tiles x 3,653 days, streamed, intermediates deleted per b
   output ~0.35 GB permanent; scratch peak ~1.1 TB per 500-tile batch; raw imagery +1.05 TB if kept.
   TerraMind ~180 A100-h (~23k GPU SBU), predict ~2k GPU SBU, CPU ~3-6k SBU (download unmeasured); ~1 week.
 Next: plan the full run (smoke = 20 tiles around Twente first; every job needs an explicit OK).
+Job 27628469: + province column (tile centre, nearest province for water centres; PDOK provincie_gegeneraliseerd 2024
+  -> data/nl/provincie_2024.json). Kept tiles per province: Gelderland 1022, Noord-Brabant 1009, Fryslan 702,
+  OVERIJSSEL 682 (3,408 km2), Zuid-Holland 591, Noord-Holland 563, Drenthe 534, Groningen 477, Limburg 445,
+  Zeeland 373, Utrecht 310, Flevoland 297.  Map shows Overijssel filled; 2-3 TWENTE stations fall just SOUTH
+  of the border in Gelderland (Achterhoek), so "all TWENTE inside Overijssel" was wrong.
+  Overijssel pilot sizing (x682/7005): ~17 A100-h tokens (~2.2k GPU SBU) + ~0.2k predict + ~0.5k CPU, 1-2 days.
