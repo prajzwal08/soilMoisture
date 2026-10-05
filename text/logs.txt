@@ -8277,3 +8277,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Empty panels: Berlin_PSA4Heerstrasse, TxSON_CR200-23 (< 20 scenes). Figures C1/C2 in figures/probe_lst_level_pattern/.
   LST deseason TRAIN plot SUBMITTED on the user's OK: job 27614277 (slurm/probe_lst_deseason_train.sh, code edcf608): full probe -> _full folders, then plot --split train.
     TxSON-only result (27614230): level per-station median r -0.42 (37/39 neg), pattern -0.06.
+  LST deseason TRAIN job 27614277 DONE (45 s): probe 573 stn -> _full folders; train split 571 stn, 42,538 scenes.
+    LEVEL (tile LST - T2m) vs SM 0-10 anomaly: pooled r -0.21, per-station median -0.22 (538 stn, IQR -0.33..-0.10).
+    PATTERN (cell - tile): pooled -0.05, per-station median -0.05 (476 stn). TxSON (-0.42) is the STRONG end; network-wide signal ~half.
