@@ -8265,3 +8265,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §63 SUBMITTED on the user's OK (plan approved; full, no smoke): job 27613769, slurm/train_s63.sh, run nolst_L1_wu200_20261005,
     4x H100, 10 epochs, log logs/lst_tmean_diff/train_nolst_L1_wu200_27613769.out. Ablation scope cut to this one run for now
     (user: full design ~26.6k SBU "consumes too much"; seeds/wd/attribution deferred).
+  NEXT (user): wd 0.3 single run on the WINNING depth (decided after §63 1L 27613769 finishes). Reason: over ~2000 steps
+    lr*wd*steps max shrink is ~2% (0.05) / ~4% (0.1) / ~12% (0.3) / ~20% (0.5), so 0.1 would be inside seed noise.
+    Not built, not submitted.
