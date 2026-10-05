@@ -10,7 +10,7 @@ Figures (PNG + PDF, dpi 300, house style §13.3):
                                      (isolates the §20.1 absolute-level failure)
     scatter_station_metrics   per-station metric distributions across splits
     scatter_ubrmse_vs_offset  dynamics error vs level error (MSE ~ ubRMSE^2 + bias^2)
-    oot_error_vs_doy          §22.7 diagnostic -- OOT error through 2023, OOST as control
+    oot_error_vs_doy          §22.7 diagnostic -- OOT error by day-of-year (2023-2025 pooled), OOST as control
 
 Usage:
     python plot_eval_scatter.py [--in-dir eval_output] [--out-dir figures/eval]
@@ -54,6 +54,20 @@ XROT         = None        # category tick rotation override (paper style: 90)
 SM_LIM   = (0.0, 0.62)
 
 
+def _afs(base: float) -> float:
+    """Annotation font size: base*FS, never below the tick-label size in paper style."""
+    if not PAPER:
+        return base * FS
+    ts = plt.rcParams.get("xtick.labelsize", 11)
+    ts = ts if isinstance(ts, (int, float)) else 11
+    return max(base * FS, ts)
+
+
+def _note_color() -> str:
+    """Secondary text/guide colour: grey in the colour style, black in paper style."""
+    return "black" if PAPER else "grey"
+
+
 def save(fig, out_dir: Path, name: str):
     out_dir.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
@@ -89,7 +103,7 @@ def fig_pred_obs(preds: dict, out_dir: Path):
             if g.empty:
                 ax.set_axis_off()
                 ax.text(0.5, 0.5, "no data", ha="center", va="center",
-                        transform=ax.transAxes, fontsize=8 * FS, color="grey")
+                        transform=ax.transAxes, fontsize=_afs(8), color=_note_color())
                 continue
 
             p = g["pred"].to_numpy(np.float64)
@@ -99,12 +113,22 @@ def fig_pred_obs(preds: dict, out_dir: Path):
             ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
 
             m = metrics_from_arrays(p, t)
-            ax.text(0.03, 0.97,
-                    f"RMSE {m['RMSE']:.3f}\nubRMSE {m['ubRMSE']:.3f}\n"
-                    f"$r^2$ {m['R2_pearson']:.2f}\nNSE {m['NSE']:+.2f}\n"
-                    f"bias {m['bias']:+.3f}\nn {m['n']:,}",
-                    transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
-                    bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
+            if PAPER:
+                # short box in the lower-right corner (below the 1:1 line at high
+                # obs, where pred-vs-obs scatter is sparse), semi-transparent
+                ax.text(0.97, 0.03,
+                        f"ubRMSE {m['ubRMSE']:.3f}\n$r^2$ {m['R2_pearson']:.2f}\n"
+                        f"bias {m['bias']:+.3f}\nn {m['n']:,}",
+                        transform=ax.transAxes, va="bottom", ha="right",
+                        fontsize=_afs(6), zorder=4,
+                        bbox=dict(fc="white", ec="none", alpha=0.6, pad=1.5))
+            else:
+                ax.text(0.03, 0.97,
+                        f"RMSE {m['RMSE']:.3f}\nubRMSE {m['ubRMSE']:.3f}\n"
+                        f"$r^2$ {m['R2_pearson']:.2f}\nNSE {m['NSE']:+.2f}\n"
+                        f"bias {m['bias']:+.3f}\nn {m['n']:,}",
+                        transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
+                        bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
 
             ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
             if i == 0:
@@ -115,8 +139,9 @@ def fig_pred_obs(preds: dict, out_dir: Path):
                 ax.set_xlabel("observed SM (m$^3$/m$^3$)")
 
     fig.colorbar(hb, ax=axes[:, -1].tolist(), label="samples per bin (log)",
-                 shrink=0.6)
-    fig.suptitle("Predicted vs observed soil moisture -- held-out splits", y=1.01)
+                 shrink=0.9 if PAPER else 0.6)   # paper: span the full column height
+    if not PAPER:
+        fig.suptitle("Predicted vs observed soil moisture -- held-out splits", y=1.01)
     save(fig, out_dir, "scatter_pred_obs")
 
 
@@ -149,7 +174,7 @@ def fig_station_mean(preds: dict, out_dir: Path):
                  else np.nan)
             ax.text(0.03, 0.97,
                     f"RMS offset {rms_off:.3f}\n$r$ {r:.2f}\n{len(st)} stations",
-                    transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
+                    transform=ax.transAxes, va="top", ha="left", fontsize=_afs(6),
                     bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
 
             ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
@@ -160,7 +185,8 @@ def fig_station_mean(preds: dict, out_dir: Path):
             if i == len(splits) - 1:
                 ax.set_xlabel("mean observed (m$^3$/m$^3$)")
 
-    fig.suptitle("Station-mean predicted vs observed -- absolute level only", y=1.01)
+    if not PAPER:
+        fig.suptitle("Station-mean predicted vs observed -- absolute level only", y=1.01)
     save(fig, out_dir, "scatter_station_mean")
 
 
@@ -178,6 +204,7 @@ def fig_station_metrics(ps_all: pd.DataFrame, out_dir: Path):
     rng = np.random.default_rng(0)
 
     for i, (metric, label, ylim) in enumerate(metrics):
+        filled = []                                   # axes that received data
         for j, depth in enumerate(SM_DEPTHS):
             ax = axes[i][j]
             data = []
@@ -187,8 +214,22 @@ def fig_station_metrics(ps_all: pd.DataFrame, out_dir: Path):
                 data.append(v)
                 if len(v):
                     x = k + rng.uniform(-0.13, 0.13, len(v))
-                    ax.scatter(x, v, s=7, alpha=0.5, c=SPLIT_COLORS[split],
-                               edgecolors="none", zorder=2)
+                    if ylim:
+                        # fixed limits: draw out-of-range stations AT the limit with a
+                        # triangle pointing off-axis, so clipping is never silent
+                        lo, hi = ylim
+                        inr = (v >= lo) & (v <= hi)
+                        ax.scatter(x[inr], v[inr], s=7, alpha=0.5, c=SPLIT_COLORS[split],
+                                   edgecolors="none", zorder=2)
+                        for sel, yv, mk in ((v < lo, lo, "v"), (v > hi, hi, "^")):
+                            if sel.any():
+                                ax.scatter(x[sel], np.full(sel.sum(), yv), s=16,
+                                           marker=mk, c=SPLIT_COLORS[split],
+                                           edgecolors="k", linewidths=0.3,
+                                           zorder=4, clip_on=False)
+                    else:
+                        ax.scatter(x, v, s=7, alpha=0.5, c=SPLIT_COLORS[split],
+                                   edgecolors="none", zorder=2)
             bp = ax.boxplot(data, positions=range(len(splits)), widths=0.5,
                             showfliers=False, zorder=3,
                             medianprops=dict(color="k", lw=1.2),
@@ -198,33 +239,49 @@ def fig_station_metrics(ps_all: pd.DataFrame, out_dir: Path):
                 patch.set_alpha(0.9)
 
             ax.set_xticks(range(len(splits)))
-            ax.set_xticklabels([s.upper() for s in splits], fontsize=7 * FS)
+            # station count per split lives in the tick label (e.g. "OOS\n221")
+            ax.set_xticklabels([f"{s.upper()}\n{len(d)}" for s, d in zip(splits, data)],
+                               fontsize=_afs(7))
             if ylim:
                 ax.set_ylim(*ylim)
             if metric == "NSE_anom":
-                ax.axhline(0, color="grey", lw=0.6, ls=":")
+                ax.axhline(0, color=_note_color(), lw=0.6, ls=":")
             if j == 0:
                 ax.set_ylabel(label)
             if i == 0:
                 ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
-            ax.text(0.98, 0.03, "\n".join(f"n={len(d)}" for d in [data[0]]),
-                    transform=ax.transAxes, ha="right", va="bottom", fontsize=6 * FS,
-                    color="grey")
+            if any(len(d) for d in data):
+                filled.append(ax)
 
-    fig.suptitle("Per-station metric distributions (one dot = one station)", y=1.01)
+        if not ylim and filled:
+            # free-scale rows (ubRMSE): one shared y range across depths
+            los, his = zip(*(a.get_ylim() for a in filled))
+            for a in axes[i]:
+                a.set_ylim(min(los), max(his))
+
+    if not PAPER:
+        fig.suptitle("Per-station metric distributions (one dot = one station)", y=1.01)
     save(fig, out_dir, "scatter_station_metrics")
 
 
 # ── 4. Dynamics error vs level error ──────────────────────────────────────────
 
 def fig_ubrmse_vs_offset(ps_all: pd.DataFrame, out_dir: Path):
-    """MSE ~ ubRMSE^2 + bias^2 (§20.1). Points below the diagonal are
-    level-limited: the model tracks the dynamics but sits at the wrong level."""
+    """MSE ~ ubRMSE^2 + bias^2 (§20.1). Points ABOVE the diagonal (|bias| > ubRMSE)
+    are level-limited: the model tracks the dynamics but sits at the wrong level."""
     fig, axes = plt.subplots(1, len(SM_DEPTHS), figsize=(9.0, 3.1),
                              constrained_layout=True, squeeze=False)
+    splits = [s for s in HELD_OUT if s in ps_all["eval_split"].unique()]
+    # one data-driven limit for both axes and all panels: 99.5th pct of
+    # max(ubRMSE, |bias|) plus 10% headroom (the old fixed 0-0.20 clipped points)
+    held = ps_all[ps_all["eval_split"].isin(splits)]
+    span = np.fmax(held["ubRMSE"].to_numpy(np.float64),
+                   held["bias"].abs().to_numpy(np.float64))
+    span = span[np.isfinite(span)]
+    lim = (0.0, float(np.percentile(span, 99.5)) * 1.1 if len(span) else 0.2)
     for j, depth in enumerate(SM_DEPTHS):
         ax = axes[0][j]
-        for split in [s for s in HELD_OUT if s in ps_all["eval_split"].unique()]:
+        for split in splits:
             g = ps_all[(ps_all["eval_split"] == split) & (ps_all["depth"] == depth)]
             if g.empty:
                 continue
@@ -232,22 +289,24 @@ def fig_ubrmse_vs_offset(ps_all: pd.DataFrame, out_dir: Path):
                        c=SPLIT_COLORS[split], edgecolors="k" if BW else "none",
                        linewidths=0.3, marker=SPLIT_MARKER.get(split, "o"),
                        label=split.upper())
-        lim = (0, 0.2)
         ax.plot(lim, lim, "k--", lw=0.8, zorder=1)
         ax.set_xlim(*lim); ax.set_ylim(*lim); ax.set_aspect("equal")
         ax.set_xlabel("ubRMSE (dynamics error)")
         ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
+        # upper-left = above the diagonal = the (sparse) level-limited region
+        ax.text(0.04, 0.96, "above line:\nlevel-limited", transform=ax.transAxes,
+                ha="left", va="top", fontsize=_afs(6), color=_note_color())
         if j == 0:
             ax.set_ylabel("|per-station bias| (level error)")
-            ax.legend(fontsize=6 * FS, frameon=False, loc="upper right")
-        ax.text(0.5, 0.02, "above line: level-limited", transform=ax.transAxes,
-                ha="center", fontsize=6 * FS, color="grey")
+            # "best" avoids the points and the note above (drawn first)
+            ax.legend(fontsize=_afs(6), frameon=False, loc="best")
 
-    fig.suptitle("Dynamics error vs absolute-level error, per station", y=1.03)
+    if not PAPER:
+        fig.suptitle("Dynamics error vs absolute-level error, per station", y=1.03)
     save(fig, out_dir, "scatter_ubrmse_vs_offset")
 
 
-# ── 5. §22.7 diagnostic: OOT error through 2023 ───────────────────────────────
+# ── 5. §22.7 diagnostic: OOT error by day-of-year ───────────────────────────────
 
 def fig_oot_error_vs_doy(preds: dict, out_dir: Path, n_bins: int = 24):
     """OOT seen-context fraction falls 100% -> 0% across 2023 (§22.3).
@@ -256,10 +315,24 @@ def fig_oot_error_vs_doy(preds: dict, out_dir: Path, n_bins: int = 24):
     Both tracing the same shape => seasonality; the diagnostic says nothing.
     Errors are per-station-standardised first, so stations entering or leaving
     the record mid-year cannot masquerade as a trend.
+
+    NOTE (§47): OOT/OOST now span 2023-2025 (splits_config.OOT_YEARS). Samples are
+    binned by day-of-year ONLY, so all OOT years are pooled into one seasonal
+    cycle -- the x axis is not calendar 2023, and the 2023 context decay is
+    diluted by the 2024-2025 samples (input windows wholly past the cut).
     """
     if "oot" not in preds:
         print("  (skipping oot_error_vs_doy -- no OOT predictions)")
         return
+
+    yrs = sorted({int(y) for s in ("oot", "oost") if s in preds
+                  and "year" in preds[s] for y in pd.unique(preds[s]["year"])})
+    if not yrs:
+        xlabel = "Day of year (OOT years pooled)"
+    elif yrs[0] == yrs[-1]:
+        xlabel = f"Day of year ({yrs[0]})"
+    else:
+        xlabel = f"Day of year ({yrs[0]}-{yrs[-1]} pooled)"
 
     fig, axes = plt.subplots(1, len(SM_DEPTHS), figsize=(9.0, 3.0),
                              constrained_layout=True, squeeze=False)
@@ -293,15 +366,25 @@ def fig_oot_error_vs_doy(preds: dict, out_dir: Path, n_bins: int = 24):
             ax.fill_between(centers, mean - se, mean + se, alpha=0.18,
                             color=SPLIT_COLORS[split], lw=0)
 
-        ax.axhline(0, color="grey", lw=0.6, ls=":")
+        ax.axhline(0, color=_note_color(), lw=0.6, ls=":")
         ax.set_xlim(0, 366)
-        ax.set_xlabel("day of year, 2023")
+        ax.set_xlabel(xlabel)
         ax.set_title(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
         if j == 0:
             ax.set_ylabel("|error| anomaly (m$^3$/m$^3$)\nper-station mean removed")
-            ax.legend(fontsize=6 * FS, frameon=False)
 
-    fig.suptitle("§22.7  OOT error through 2023 (OOST = seasonality control)", y=1.04)
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    if PAPER and handles:
+        # one figure legend above the panels: never covers the OOST trough
+        # anchored just above the figure top (above the depth titles); bbox_inches
+        # ="tight" in save() keeps it in the file (works on any matplotlib >= 3.x)
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 1.0),
+                   ncol=len(labels), fontsize=_afs(6), frameon=False)
+    elif handles:
+        axes[0][0].legend(fontsize=_afs(6), frameon=False, loc="best")
+
+    if not PAPER:
+        fig.suptitle("§22.7  OOT error, day-of-year (OOST = seasonality control)", y=1.04)
     save(fig, out_dir, "oot_error_vs_doy")
 
 

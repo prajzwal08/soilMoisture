@@ -178,20 +178,59 @@ def select_named(df: pd.DataFrame, stations: list[str], min_n: int,
     return out
 
 
-def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
-                 n_total: int) -> plt.Figure:
-    """3 stacked depth panels for one station."""
-    station = info["station_key"]
-    fig, axes = plt.subplots(len(SM_DEPTHS), 1, figsize=(7.4, 5.6),
-                             sharex=True, constrained_layout=True)
+def _clean_station_name(station: str) -> str:
+    """'ISMN_TxSON_CR200-18' -> 'TxSON CR200-18' (source prefix dropped, network kept)."""
+    for prefix in ("ISMN_", "ICOS_", "AmeriFlux_", "FLUXNET_"):
+        if station.startswith(prefix):
+            station = station[len(prefix):]
+            break
+    return station.replace("_", " ")
 
-    for ax, depth in zip(axes, SM_DEPTHS):
-        g = df[(df["station_key"] == station) & (df["depth"] == depth)]
-        g = g.sort_values("date")
-        if g.empty:
+
+def _paper_ylim(vals: np.ndarray) -> tuple[float, float]:
+    """Data-driven y range: floor at 0 (or just below the minimum), 12 % headroom."""
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return 0.0, 0.5
+    lo, hi = float(vals.min()), float(vals.max())
+    pad = 0.05 * max(hi - lo, 0.02)
+    ylo = max(0.0, lo - pad) if lo - pad > 0.05 else 0.0
+    return ylo, hi * 1.12 + 0.005
+
+
+def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
+                 n_total: int):
+    """Stacked depth panels for one station; None if the station has no data.
+
+    Colour style: always 3 panels (empty ones say so).  PAPER: only the depths
+    with data, legend + metrics above the axes, data-driven y limits.
+    """
+    station = info["station_key"]
+    st = df[df["station_key"] == station]
+    present = [d for d in SM_DEPTHS if (st["depth"] == d).any()]
+    if not present:
+        print(f"    no data at any depth -- skipping {station}")
+        return None
+    depths = present if PAPER else list(SM_DEPTHS)
+    nrow = len(depths)
+    # paper: ~1.9 in per panel + room for the legend row and title
+    figsize = (7.4, 1.9 * nrow + 1.0) if PAPER else (7.4, 5.6)
+    fig, axes = plt.subplots(nrow, 1, figsize=figsize, sharex=True,
+                             constrained_layout=True, squeeze=False)
+    axes = axes[:, 0]
+    tick_fs = plt.rcParams["xtick.labelsize"]
+    if isinstance(tick_fs, str):
+        tick_fs = plt.rcParams["font.size"]
+    ann_fs = max(6 * FS, float(tick_fs)) if PAPER else 6 * FS
+    text_grey = "black" if PAPER else "grey"
+    shaded = False
+
+    for ax, depth in zip(axes, depths):
+        g = st[st["depth"] == depth].sort_values("date")
+        if g.empty:          # colour style only -- PAPER never draws empty panels
             ax.text(0.5, 0.5, f"no data at {DEPTH_LABELS[depth]}",
                     transform=ax.transAxes, ha="center", va="center",
-                    fontsize=8 * FS, color="grey")
+                    fontsize=8 * FS, color=text_grey)
             ax.set_ylabel(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
             ax.set_yticks([])
             continue
@@ -205,46 +244,92 @@ def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
         pred[np.append(gap, False)] = np.nan
 
         # BW: observed grey dots UNDER a black prediction line, so the line stays readable
-        ax.plot(dates, pred, "-", lw=0.9, color=PRED_COLOR or DEPTH_COLORS[depth],
-                label="predicted", zorder=3 if BW else 2)
+        # PAPER: solid, fully opaque navy line drawn ABOVE the observed dots
+        line_on_top = BW or PAPER
+        ax.plot(dates, pred, "-", lw=1.1 if PAPER else 0.9, color=PRED_COLOR or DEPTH_COLORS[depth],
+                alpha=1.0, solid_capstyle="butt",
+                label="predicted", zorder=3 if line_on_top else 2)
         ax.plot(g["date"], g["obs"], ".", ms=1.9, color=OBS_COLOR,
-                label="observed", zorder=2 if BW else 3)
+                label="observed", zorder=2 if line_on_top else 3)
 
         m = metrics_from_arrays(g["pred"].to_numpy(np.float64),
                                 g["obs"].to_numpy(np.float64))
-        ax.text(0.005, 0.96,
-                f"ubRMSE {m['ubRMSE']:.3f}   RMSE {m['RMSE']:.3f}   "
-                f"$r^2$ {m['R2_pearson']:.2f}   NSE {m['NSE']:+.2f}   "
-                f"bias {m['bias']:+.3f}   n {m['n']}",
-                transform=ax.transAxes, va="top", ha="left", fontsize=6 * FS,
-                bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.2))
+        sep = "  " if PAPER else "   "     # paper: larger font, keep it inside the width
+        mtxt = sep.join([f"ubRMSE {m['ubRMSE']:.3f}", f"RMSE {m['RMSE']:.3f}",
+                         f"$r^2$ {m['R2_pearson']:.2f}", f"NSE {m['NSE']:+.2f}",
+                         f"bias {m['bias']:+.3f}", f"n {m['n']}"])
+        if PAPER:
+            # above the panel, clear of the data (wet stations reach the top)
+            ax.text(1.0, 1.01, mtxt, transform=ax.transAxes, va="bottom",
+                    ha="right", fontsize=ann_fs, color="black")
+        else:
+            ax.text(0.005, 0.96, mtxt, transform=ax.transAxes, va="top",
+                    ha="left", fontsize=6 * FS,
+                    bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.2))
 
         # OOS stations continue into 2023 as OOST -- mark the boundary
         if split == "oos" and g["date"].max() >= pd.Timestamp("2023-01-01"):
             ax.axvspan(pd.Timestamp("2023-01-01"), g["date"].max(),
-                       color=OOT_SHADE, alpha=0.08, lw=0, zorder=0)
+                       color=OOT_SHADE, alpha=0.12 if PAPER else 0.08,
+                       lw=0, zorder=0)
             ax.axvline(pd.Timestamp("2023-01-01"), color=OOT_SHADE,
                        lw=0.8, ls="--", zorder=1)
+            shaded = True
 
-        ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nSM (m$^3$/m$^3$)",
-                      color=DEPTH_COLORS[depth])
-        ax.set_ylim(0, max(0.55, float(g[["pred", "obs"]].to_numpy().max()) * 1.1))
+        if PAPER:
+            ax.set_ylabel(DEPTH_LABELS[depth], color="black")
+            ax.set_ylim(*_paper_ylim(g[["pred", "obs"]].to_numpy(np.float64).ravel()))
+        else:
+            ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nSM (m$^3$/m$^3$)",
+                          color=DEPTH_COLORS[depth])
+            ax.set_ylim(0, max(0.55, float(g[["pred", "obs"]].to_numpy().max()) * 1.1))
         ax.margins(x=0.01)
 
-    axes[0].legend(fontsize=6 * FS, frameon=False, loc="upper right", ncol=2)
-    axes[-1].set_xlabel("date")
-    axes[-1].xaxis.set_major_locator(mdates.AutoDateLocator())
-    axes[-1].xaxis.set_major_formatter(mdates.ConciseDateFormatter(
-        mdates.AutoDateLocator()))
+    if PAPER:
+        from matplotlib.colors import to_rgba
+        from matplotlib.patches import Patch
+        from matplotlib.transforms import offset_copy
+        handles, labels = axes[0].get_legend_handles_labels()
+        if shaded:
+            handles.append(Patch(facecolor=to_rgba(OOT_SHADE, 0.12),
+                                 edgecolor=OOT_SHADE, ls="--", lw=0.8))
+            labels.append("2023–2025 (OOST)")
+        # in the figure margin above the top panel, never over the data:
+        # anchored at the top-left of the axes, lifted (in points) past the
+        # metrics line that sits just above the axes
+        lift = offset_copy(axes[0].transAxes, fig=fig, y=1.8 * ann_fs, units="points")
+        axes[0].legend(handles, labels, fontsize=ann_fs, frameon=False,
+                       loc="lower left", bbox_to_anchor=(0.0, 1.0),
+                       bbox_transform=lift,
+                       ncol=3, markerscale=4, handlelength=1.6,
+                       borderaxespad=0.0, columnspacing=1.2)
+        fig.supylabel("Soil moisture (m$^3$/m$^3$)", fontsize=plt.rcParams["axes.labelsize"],
+                      fontweight="bold")
+    else:
+        axes[0].legend(fontsize=6 * FS, frameon=False, loc="upper right", ncol=2)
+        axes[-1].set_xlabel("date")
+    loc = mdates.AutoDateLocator()       # ONE instance for locator and formatter
+    axes[-1].xaxis.set_major_locator(loc)
+    axes[-1].xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
 
-    bits = [f"{station}", f"[{split.upper()} {info['rank']} "
-                          f"{info['rank_idx']}/{n_total}]"]
-    if meta:
-        loc = f"{meta.get('latitude', float('nan')):.2f}, " \
-              f"{meta.get('longitude', float('nan')):.2f}"
-        bits.append(f"{meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')} "
-                    f"| {loc}")
-    fig.suptitle("   ".join(bits), fontsize=8 * FS)
+    if PAPER:
+        title = _clean_station_name(station)
+        if meta:
+            lat = meta.get("latitude", float("nan"))
+            lon = meta.get("longitude", float("nan"))
+            title += (f"   {meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')}"
+                      f" | {lat:.2f}°, {lon:.2f}°")
+        fig.suptitle(title, fontsize=plt.rcParams["figure.titlesize"],
+                     fontweight="bold")
+    else:
+        bits = [f"{station}", f"[{split.upper()} {info['rank']} "
+                              f"{info['rank_idx']}/{n_total}]"]
+        if meta:
+            loc_s = f"{meta.get('latitude', float('nan')):.2f}, " \
+                    f"{meta.get('longitude', float('nan')):.2f}"
+            bits.append(f"{meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')} "
+                        f"| {loc_s}")
+        fig.suptitle("   ".join(bits), fontsize=8 * FS)
     return fig
 
 
@@ -332,7 +417,9 @@ def main():
         for info in selected:
             fig = plot_station(df, info, meta_map.get(info["station_key"], {}),
                                split, n_total)
-            name = (f"{info['rank']}_{info['rank_idx']:02d}_"
+            if fig is None:          # no depth has data
+                continue
+            name =(f"{info['rank']}_{info['rank_idx']:02d}_"
                     f"{info['station_key']}.png")
             fig.savefig(split_dir / name, dpi=DPI, bbox_inches="tight")
             figs.append(fig)

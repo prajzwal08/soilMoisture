@@ -72,7 +72,8 @@ def apply(g: dict, style: str = "bw") -> None:
         g["SPLIT_LS"] = dict(SPLIT_LINESTYLE)
         g["SPLIT_MARKER"] = dict(SPLIT_MARKERS)
         g["HEX_CMAP"] = "Blues"
-        g["PRED_COLOR"], g["OBS_COLOR"], g["OOT_SHADE"] = BLUE, "black", RED
+        # time-series prediction line: Python-logo blue #3776AB, solid (user 2026-10-05)
+        g["PRED_COLOR"], g["OBS_COLOR"], g["OOT_SHADE"] = "#3776AB", "black", RED
         g["BW"] = False
         g["FS"], g["XROT"], g["DPI"] = 1.5, 90, 600
         g["PAPER"], g["CS"], g["BOX_ALPHA"] = True, 1.45, 1.0

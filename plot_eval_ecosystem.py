@@ -68,30 +68,62 @@ def save(fig, out_dir: Path, name: str):
     print(f"  → {out_dir/name}.png")
 
 
-def load_inventory(by: str) -> pd.DataFrame:
-    """Long frame [split, class, n].
+def load_inventory(by: str, in_dir: Path = None) -> pd.DataFrame:
+    """Long frame [split, class, n] -- SOIL-MOISTURE stations only.
 
-    OOT and OOST are not values of the `split` column -- they are 2023 windows
-    over stations flagged oot_eligible / oost_eligible -- so they are counted
-    from those flags, not from `split`.
+    station_splits.csv also lists flux_only stations, which carry no SM target and are
+    never evaluated (§47.7), so rows are kept only when has_soil_moisture is true AND
+    splits_config.category_of(row) is in SM_CATEGORIES.
+
+    Held-out splits (oos / oot / oost) are counted from <in_dir>/per_station_{split}.csv
+    when it exists -- the stations actually evaluated -- and otherwise fall back to the
+    splits CSV.  OOT and OOST are not values of the `split` column -- they are 2023
+    windows over stations flagged oot_eligible / oost_eligible -- so the fallback counts
+    them from those flags.
     """
+    from splits_config import SM_CATEGORIES, category_of
+
     d = pd.read_csv(SPLITS_CSV)
     if by not in d.columns:
         raise SystemExit(f"'{by}' not in {SPLITS_CSV}; have: {sorted(d.columns)}")
+    n_all = len(d)
+    has_sm = d["has_soil_moisture"].astype(str).str.strip().str.lower().isin(["true", "1", "yes"])
+    d = d[has_sm]
+    d = d[d.apply(category_of, axis=1).isin(SM_CATEGORIES)].copy()
+    print(f"  inventory: {len(d)} soil-moisture stations of {n_all} rows in {SPLITS_CSV}")
     d[by] = d[by].fillna("unknown")
+
+    def _evaluated(split):
+        if in_dir is None:
+            return None
+        p = Path(in_dir) / f"per_station_{split}.csv"
+        if not p.exists():
+            return None
+        e = pd.read_csv(p)
+        if by not in e.columns:
+            print(f"  ('{by}' not in {p.name} -- {split} counted from {SPLITS_CSV})")
+            return None
+        e = e.drop_duplicates("station_key") if "station_key" in e.columns else e
+        print(f"  inventory: {split} counted from {p} ({len(e)} evaluated stations)")
+        return e[by].fillna("unknown")
 
     rows = []
     for split in ["train", "val", "oos"]:
-        g = d[d["split"] == split]
+        cls = _evaluated(split) if split == "oos" else None
+        if cls is None:
+            cls = d.loc[d["split"] == split, by]
         rows += [{"split": split, "class": k, "n": v}
-                 for k, v in g[by].value_counts().items()]
+                 for k, v in cls.value_counts().items()]
     for split, flag in (("oot", "oot_eligible"), ("oost", "oost_eligible")):
-        if flag not in d.columns:
-            print(f"  ({flag} missing -- {split} omitted from the inventory)")
-            continue
-        g = d[d[flag].astype(str).str.lower().isin(["true", "1", "yes"])]
+        cls = _evaluated(split)
+        if cls is None:
+            if flag not in d.columns:
+                print(f"  ({flag} missing -- {split} omitted from the inventory)")
+                continue
+            cls = d.loc[d[flag].astype(str).str.strip().str.lower()
+                        .isin(["true", "1", "yes"]), by]
         rows += [{"split": split, "class": k, "n": v}
-                 for k, v in g[by].value_counts().items()]
+                 for k, v in cls.value_counts().items()]
     return pd.DataFrame(rows)
 
 
@@ -123,11 +155,52 @@ def load_metrics(in_dir: Path, by: str, metric: str) -> pd.DataFrame:
 
 def _rotation(labels, default):
     """Category tick rotation: the colour style keeps `default`; the paper style lays short
-    label sets flat and turns crowded ones (many classes or long names) to 90 degrees."""
+    label sets flat and turns crowded ones to 90 degrees.  "Crowded" is about the total
+    printed length, not the class count: seven 3-letter IGBP codes stay flat."""
     if not PAPER:
         return default
-    crowded = len(labels) > 6 or max((len(str(s)) for s in labels), default=0) > 14
+    lens = [max((len(p) for p in str(s).split("\n")), default=0) for s in labels]
+    crowded = sum(lens) > 45 or max(lens, default=0) > 14
     return 90 if crowded else 0
+
+
+# ordinal / conventional class orders; anything not listed follows in count order
+CLASS_ORDER = {
+    "elevation_band": ["Low", "Mid", "High"],
+    "kg_macro":       ["A", "B", "C", "D", "E"],
+}
+KG_GLOSS = {"A": "Tropical", "B": "Arid", "C": "Temperate", "D": "Continental", "E": "Polar"}
+MIN_SLOT = 3                # no box, dots or count for a (class, split, depth) slot below this
+TOP_N_NETWORKS = 12         # inventory --by network: top-N by train count + "Other"
+
+
+def _order_classes(by: str, count_order: list) -> list:
+    """`count_order` (descending count) re-sorted into the ordinal order for `by`, if any."""
+    fixed = CLASS_ORDER.get(by)
+    if not fixed:
+        return list(count_order)
+    head = [c for c in fixed if c in count_order]
+    return head + [c for c in count_order if c not in head]
+
+
+def _class_labels(by: str, order: list, default_rot):
+    """Tick labels + rotation.  Paper style glosses the Koppen letters (C -> C Temperate)."""
+    labels = [str(c) for c in order]
+    if PAPER and by == "kg_macro":
+        labels = [f"{c} {KG_GLOSS[c]}" if c in KG_GLOSS else str(c) for c in order]
+    rot = _rotation(labels, default_rot)
+    if PAPER and by == "kg_macro" and rot == 0:          # stacked when flat: letter over gloss
+        labels = [s.replace(" ", "\n", 1) for s in labels]
+    return labels, rot
+
+
+def _count_fs(n_classes: int) -> float:
+    """Count-annotation font size: the colour style keeps 5*FS*CS; paper keeps it >= 10 pt
+    when there is room (<= 8 classes)."""
+    fs = 5 * FS * CS
+    if PAPER and n_classes <= 8:
+        fs = max(fs, 10.0)
+    return fs
 
 
 # ── 1. inventory ──────────────────────────────────────────────────────────────
@@ -135,9 +208,20 @@ def _rotation(labels, default):
 def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
     splits = [s for s in INVENTORY_SPLITS
               if s in inv["split"].unique()]
+    if by == "network":                 # legibility: top-N networks by train count + "Other"
+        train_n = (inv[inv["split"] == "train"].set_index("class")["n"]
+                   .sort_values(ascending=False))
+        top = train_n.index[:TOP_N_NETWORKS].tolist()
+        if inv["class"].nunique() > len(top):
+            inv = inv.assign(cls=np.where(inv["class"].isin(top), inv["class"], "Other"))
+            inv = (inv.groupby(["split", "cls"], as_index=False)["n"].sum()
+                   .rename(columns={"cls": "class"}))
     order  = (inv[inv["split"] == "train"].set_index("class")["n"]
               .sort_values(ascending=False).index.tolist())
     order += [c for c in inv["class"].unique() if c not in order]
+    if "Other" in order and by == "network":          # the bucket goes last
+        order = [c for c in order if c != "Other"] + ["Other"]
+    order = _order_classes(by, order)
 
     wide  = inv.pivot(index="class", columns="split", values="n").reindex(order)
     wide  = wide.reindex(columns=splits).fillna(0)
@@ -145,32 +229,42 @@ def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
 
     fig, axes = plt.subplots(1, 2, figsize=(9.4, 3.6), constrained_layout=True)
     width = 0.8 / len(splits)
+    # paper: per-bar counts only while they stay readable (<= 6 classes)
+    show_counts = (not PAPER) or len(order) <= 6
+    cfs = _count_fs(len(order))
 
     for k, split in enumerate(splits):
         offset = (k - (len(splits) - 1) / 2) * width
         x = np.arange(len(order)) + offset
         axes[0].bar(x, wide[split], width=width * 0.9,
-                    color=SPLIT_COLORS[split], label=f"{split} (n={int(wide[split].sum())})",
+                    color=SPLIT_COLORS[split],
+                    label=f"{split.upper()} (n={int(wide[split].sum())})",
                     edgecolor="k", lw=0.4, hatch=SPLIT_HATCH.get(split, ""))
-        for xi, v in zip(x, wide[split]):
-            if v:
-                axes[0].annotate(f"{int(v)}", (xi, v), ha="center", va="bottom",
-                                 fontsize=5 * FS * CS, rotation=90, xytext=(0, 1),
-                                 textcoords="offset points")
+        if show_counts:
+            for xi, v in zip(x, wide[split]):
+                if v:
+                    axes[0].annotate(f"{int(v)}", (xi, v), ha="center", va="bottom",
+                                     fontsize=cfs, rotation=90, xytext=(0, 1),
+                                     textcoords="offset points")
         axes[1].bar(x, frac[split] * 100, width=width * 0.9,
                     color=SPLIT_COLORS[split], edgecolor="k", lw=0.4,
                     hatch=SPLIT_HATCH.get(split, ""))
 
-    for ax, ylab, title in ((axes[0], "stations", "counts"),
-                            (axes[1], "share of split (\\%)"
-                             if plt.rcParams["text.usetex"] else "share of split (%)",
-                             "composition")):
+    labels, rot = _class_labels(by, order, 20)
+    for ax, ylab, title, letter in ((axes[0], "stations", "counts", "(a)"),
+                                    (axes[1], "share of split (\\%)"
+                                     if plt.rcParams["text.usetex"] else "share of split (%)",
+                                     "composition", "(b)")):
         ax.set_xticks(range(len(order)))
-        rot = _rotation(order, 20)
-        ax.set_xticklabels(order, rotation=rot, ha="center" if rot in (0, 90) else "right",
+        ax.set_xticklabels(labels, rotation=rot, ha="center" if rot in (0, 90) else "right",
                            fontsize=7 * FS)
         ax.set_ylabel(ylab)
-        ax.set_title(title, fontsize=8 * FS)
+        if PAPER:                       # panel letter instead of a title, just above the corner
+            ax.text(0.0, 1.01, letter, transform=ax.transAxes, ha="left", va="bottom",
+                    fontsize=8 * FS, fontweight="bold")
+            ax.set_ylim(0, ax.get_ylim()[1] * 1.15)   # headroom: counts clear the top spine
+        else:
+            ax.set_title(title, fontsize=8 * FS)
         ax.grid(axis="y", lw=0.4, alpha=0.35)
         ax.set_axisbelow(True)
     axes[0].legend(fontsize=6 * FS, frameon=False)
@@ -193,36 +287,58 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
         print(f"  dropped (< {min_stations} stations): "
               + ", ".join(f"{c} (n={counts[c]})" for c in dropped))
     long = long[long["class"].isin(keep)]
-    order = (long.groupby("class")["station_key"].nunique()
-             .sort_values(ascending=False).index.tolist())
     splits = [s for s in EVAL_SPLITS if s in long["split"].unique()]
 
-    fig, axes = plt.subplots(len(SM_DEPTHS), 1, figsize=(8.0, 8.4),
+    # station count per (class, split, depth) slot; a slot below MIN_SLOT gets no box,
+    # no dots and no count, and a class with no drawable slot at all is dropped
+    slot_n = long.groupby(["class", "split", "depth"])["station_key"].nunique()
+    drawable = slot_n[slot_n >= MIN_SLOT].reset_index()["class"].unique().tolist()
+    empty = sorted(set(keep) - set(drawable))
+    if empty:
+        print(f"  dropped (no split/depth slot with >= {MIN_SLOT} stations): "
+              + ", ".join(map(str, empty)))
+    long = long[long["class"].isin(drawable)]
+    order = (long.groupby("class")["station_key"].nunique()
+             .sort_values(ascending=False).index.tolist())
+    order = _order_classes(by, order)
+    n_cls = len(order)
+
+    many = n_cls > 8                    # crowded: rotate the counts, widen the figure
+    fig_w = max(8.0, 0.55 * n_cls * max(len(splits), 1)) if many else 8.0
+    fig, axes = plt.subplots(len(SM_DEPTHS), 1, figsize=(fig_w, 8.4),
                              sharex=True, constrained_layout=True)
     rng   = np.random.default_rng(0)
     span  = 0.84
     width = span / max(len(splits), 1)
+    cfs   = _count_fs(n_cls)
+    count_rot = 90 if many else 0
+    max_digits = 1
 
     for ax, depth in zip(axes, SM_DEPTHS):
+        w_lo, w_hi = [], []
         for k, split in enumerate(splits):
             offset = (k - (len(splits) - 1) / 2) * width
             data, pos = [], []
             for i, cls in enumerate(order):
                 v = long[(long["split"] == split) & (long["depth"] == depth) &
                          (long["class"] == cls)]["value"].to_numpy()
+                if len(v) < MIN_SLOT:           # too thin to summarise: draw nothing
+                    continue
+                x0 = i + offset
                 data.append(v)
-                pos.append(i + offset)
-                if len(v):
-                    x = pos[-1] + rng.uniform(-width * 0.2, width * 0.2, len(v))
-                    ax.scatter(x, v, s=5, alpha=0.4, c=SPLIT_COLORS[split],
-                               edgecolors="none", zorder=2)
-                ax.annotate(f"{len(v)}", xy=(pos[-1], 0.0),
+                pos.append(x0)
+                x = x0 + rng.uniform(-width * 0.2, width * 0.2, len(v))
+                ax.scatter(x, v, s=5, alpha=0.4, c=SPLIT_COLORS[split],
+                           edgecolors="none", zorder=2)
+                max_digits = max(max_digits, len(str(len(v))))
+                ax.annotate(f"{len(v)}", xy=(x0, 0.0),
                             xycoords=("data", "axes fraction"),
                             xytext=(0, -9 * CS), textcoords="offset points",
-                            ha="center", va="top", fontsize=5 * FS * CS,
+                            ha="center", va="top", fontsize=cfs, rotation=count_rot,
                             color="black" if (BW or PAPER) else SPLIT_COLORS[split])
-            bp = ax.boxplot([d if len(d) else [np.nan] for d in data],
-                            positions=pos, widths=width * 0.62, showfliers=False,
+            if not data:
+                continue
+            bp = ax.boxplot(data, positions=pos, widths=width * 0.62, showfliers=False,
                             patch_artist=True, zorder=3,
                             medianprops=dict(color="k", lw=1.1),
                             boxprops=dict(lw=0.6), whiskerprops=dict(lw=0.6),
@@ -232,24 +348,42 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
                 patch.set_hatch(SPLIT_HATCH.get(split, ""))
                 patch.set_alpha(BOX_ALPHA)
                 patch.set_edgecolor("k")
+            for w in bp["whiskers"]:
+                y = np.asarray(w.get_ydata(), dtype=float)
+                y = y[np.isfinite(y)]
+                if y.size:
+                    w_lo.append(y.min())
+                    w_hi.append(y.max())
 
         ax.set_ylabel(f"{DEPTH_LABELS[depth]}\n{metric} (m$^3$/m$^3$)",
                       color=DEPTH_COLORS[depth])
-        ax.set_ylim(0, float(long["value"].quantile(0.99)) * 1.1)
-        ax.set_xlim(-0.6, len(order) - 0.4)
+        # limits from the drawn whiskers (+8 %), so no whisker is cut; beyond-whisker
+        # dots may be clipped.  Negative values (bias) keep a zero line.
+        if w_hi:
+            lo, hi = min(min(w_lo), 0.0), max(w_hi)
+            pad = 0.08 * max(hi - lo, 1e-6)
+            ax.set_ylim(lo - pad if lo < 0 else 0.0, hi + pad)
+            if lo < 0:
+                ax.axhline(0, color="k", lw=0.8, zorder=1.5)
+        ax.set_xlim(-0.6, n_cls - 0.4)
         ax.grid(axis="y", lw=0.4, alpha=0.35)
         ax.set_axisbelow(True)
 
     axes[0].legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=BOX_ALPHA,
                                   hatch=SPLIT_HATCH.get(s, ""), label=s.upper()) for s in splits],
                    fontsize=6 * FS, frameon=False, loc="upper right", ncol=len(splits))
-    axes[-1].set_xticks(range(len(order)))
-    rot = _rotation(order, 15)
-    axes[-1].set_xticklabels(order, rotation=rot, ha="center" if rot in (0, 90) else "right")
-    if PAPER:                           # clear the per-box station counts drawn just under the axis
-        axes[-1].tick_params(axis="x", pad=16 * CS)
-    else:                               # paper style: no description / title (the caption carries it)
-        axes[-1].set_xlabel(f"{by}   (small numbers = stations per box)")
+    axes[-1].set_xticks(range(n_cls))
+    labels, rot = _class_labels(by, order, 15)
+    axes[-1].set_xticklabels(labels, rotation=rot, ha="center" if rot in (0, 90) else "right")
+    # clear the per-box station counts drawn just under the axis
+    count_h = (0.62 * cfs * max_digits) if count_rot else (1.2 * cfs)
+    if PAPER:
+        axes[-1].tick_params(axis="x", pad=9 * CS + count_h + 3)
+    elif many:
+        axes[-1].tick_params(axis="x", pad=9 * CS + count_h + 2)
+    if not PAPER:                       # paper style: no description / title (the caption carries it)
+        axes[-1].set_xlabel(f"{by}   (small numbers = stations per box, "
+                            f"boxes need >= {MIN_SLOT})")
         fig.suptitle(f"Per-station {metric} by {by} and split", y=1.02)
     save(fig, out_dir, f"box_{metric.lower()}_by_{by}")
 
@@ -293,7 +427,7 @@ def main():
         INVENTORY_SPLITS.remove("val")
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
 
-    inv = load_inventory(args.by)
+    inv = load_inventory(args.by, in_dir)
     wide = fig_inventory(inv, args.by, out_dir)
     print(f"\nstations per {args.by} and split\n{wide.astype(int)}")
 

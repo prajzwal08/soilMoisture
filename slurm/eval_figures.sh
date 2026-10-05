@@ -93,11 +93,14 @@ for M in RMSE bias; do                 # §66: level error next to the dynamics 
 done
 
 echo ""; echo "───────── ubRMSE by land cover / climate ─────────"
-for BY in igbp_macro kg_macro elevation_band network; do
+for BY in igbp_macro kg_macro elevation_band; do
     echo "--- --by ${BY} ---"
     $RUN_PY plot_eval_ecosystem.py --in-dir "${IN}" --out-dir "${OUT}" \
         --by "${BY}" ${ECO_EXTRA} "$@"
 done
+echo "--- --by network --min-stations 15 (keeps the figure a readable width) ---"
+$RUN_PY plot_eval_ecosystem.py --in-dir "${IN}" --out-dir "${OUT}" \
+    --by network --min-stations 15 ${ECO_EXTRA} "$@"
 echo "--- --by IGBP --min-stations 8 (fine classes) ---"
 $RUN_PY plot_eval_ecosystem.py --in-dir "${IN}" --out-dir "${OUT}" \
     --by IGBP --min-stations 8 ${ECO_EXTRA} "$@"

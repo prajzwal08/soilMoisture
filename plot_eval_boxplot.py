@@ -97,6 +97,10 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
     span  = 0.88                                   # width of a depth group
     width = span / max(len(splits), 1)
 
+    whisk_lo, whisk_hi = [], []                    # drawn whisker ends, for the y limits
+    med_fs = 5.5 * FS * CS
+    if PAPER:
+        med_fs = max(med_fs, 10.0)
     for k, split in enumerate(splits):
         offset = (k - (len(splits) - 1) / 2) * width
         data, pos = [], []
@@ -120,22 +124,38 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
             patch.set_hatch(SPLIT_HATCH.get(split, ""))
             patch.set_alpha(BOX_ALPHA)
             patch.set_edgecolor("k")
+        for w in bp["whiskers"]:
+            y = np.asarray(w.get_ydata(), dtype=float)
+            y = y[np.isfinite(y)]
+            if y.size:
+                whisk_lo.append(y.min())
+                whisk_hi.append(y.max())
 
-        # median on a clean row at the top, station count below the axis
+        # median on a clean row at the top (paper: just ABOVE the axes, so it can never
+        # touch a y tick label), station count below the axis
         for v, x in zip(data, pos):
             if not len(v):
                 continue
-            ax.annotate(f"{np.median(v):.3f}", xy=(x, 0.985),
-                        xycoords=("data", "axes fraction"),
-                        ha="center", va="top", fontsize=5.5 * FS * CS,
-                        color="black" if (BW or PAPER) else SPLIT_COLORS[split])
+            if PAPER:
+                ax.annotate(f"{np.median(v):.3f}", xy=(x, 1.0),
+                            xycoords=("data", "axes fraction"),
+                            xytext=(0, 3), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=med_fs,
+                            color="black", annotation_clip=False, clip_on=False)
+            else:
+                ax.annotate(f"{np.median(v):.3f}", xy=(x, 0.985),
+                            xycoords=("data", "axes fraction"),
+                            ha="center", va="top", fontsize=5.5 * FS * CS,
+                            color="black" if BW else SPLIT_COLORS[split])
             ax.annotate(f"{len(v)}" if PAPER else f"n={len(v)}", xy=(x, 0), xycoords=("data", "axes fraction"),
                         xytext=(0, -14 * CS), textcoords="offset points",
-                        ha="center", va="top", fontsize=5.5 * FS * CS, color="black" if PAPER else "grey")
+                        ha="center", va="top", fontsize=med_fs if PAPER else 5.5 * FS * CS,
+                        color="black" if PAPER else "grey")
 
-    ax.annotate("median", xy=(0, 0.985), xycoords=("axes fraction", "axes fraction"),
-                xytext=(-4, 0), textcoords="offset points",
-                ha="right", va="top", fontsize=5.5 * FS * CS, color="black" if PAPER else "grey")
+    if not PAPER:                                   # paper: numbers only, no "median" word
+        ax.annotate("median", xy=(0, 0.985), xycoords=("axes fraction", "axes fraction"),
+                    xytext=(-4, 0), textcoords="offset points",
+                    ha="right", va="top", fontsize=5.5 * FS * CS, color="grey")
     for i in range(len(depths) - 1):                # separate the depth groups
         ax.axvline(i + 0.5, color="grey", lw=0.5, ls=":", zorder=1)
 
@@ -144,16 +164,39 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
     for tick, d in zip(ax.get_xticklabels(), depths):
         tick.set_color(DEPTH_COLORS[d])
     ax.set_xlim(-0.55, len(depths) - 0.45)
-    ax.set_ylim(0, float(long["value"].max()) * 1.16)   # headroom for the median row
+    # y limits from the data, not from 0 / the max: negative bias must show, and one
+    # outlier station must not squash the boxes (dots beyond the 99.5th pct are clipped)
+    vals = long.loc[long["split"].isin(splits) & long["depth"].isin(depths), "value"]
+    vals = vals.to_numpy(dtype=float)
+    vals = vals[np.isfinite(vals)]
+    lo = min(float(np.percentile(vals, 0.5)), 0.0, min(whisk_lo, default=0.0))
+    hi = max(float(np.quantile(vals, 0.995)), max(whisk_hi, default=0.0))
+    rng_y = max(hi - lo, 1e-6)
+    y0 = lo - 0.04 * rng_y if lo < 0 else 0.0
+    # colour/bw: the median row sits INSIDE the axes, so it needs ~16 % headroom;
+    # paper: the median row sits above the axes, so only a little air above the whiskers
+    y1 = hi + (0.06 if PAPER else 0.16) * rng_y
+    ax.set_ylim(y0, y1)
+    if lo < 0:                                      # bias: zero reference line
+        ax.axhline(0, color="k", lw=0.8, zorder=1.5)
     ax.set_ylabel(METRIC_LABELS.get(metric, metric))
     ax.grid(axis="y", lw=0.4, alpha=0.35)
     ax.set_axisbelow(True)
-    ax.legend(handles=[Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=BOX_ALPHA,
-                             hatch=SPLIT_HATCH.get(s, ""),
-                             label=SPLIT_LABELS.get(s, s.upper()))
-                       for s in splits],
-              fontsize=6 * FS, frameon=False, loc="upper left",
-              bbox_to_anchor=(0.005, 0.955), ncol=1)
+    handles = [Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=BOX_ALPHA,
+                     hatch=SPLIT_HATCH.get(s, ""),
+                     label=SPLIT_LABELS.get(s, s.upper()))
+               for s in splits]
+    if PAPER:
+        # legend OUTSIDE, above the median row: the pad (in legend-font units) clears
+        # the 3 pt offset + one line of median text + 3 pt of air
+        leg_fs = 6 * FS
+        pad = (3 + 1.25 * med_fs + 3) / leg_fs
+        ax.legend(handles=handles, fontsize=leg_fs, frameon=False,
+                  loc="lower center", bbox_to_anchor=(0.5, 1.0),
+                  borderaxespad=pad, ncol=min(len(splits), 3))
+    else:
+        ax.legend(handles=handles, fontsize=6 * FS, frameon=False, loc="upper left",
+                  bbox_to_anchor=(0.005, 0.955), ncol=1)
     if not PAPER:
         ax.set_title(f"Per-station {metric} by depth and held-out split "
                      "(one dot = one station)", fontsize=9 * FS)
