@@ -14,7 +14,9 @@ SPLIT_LS, SPLIT_MARKER, HEX_CMAP, PRED_COLOR, OBS_COLOR, OOT_SHADE, BW, FS, XROT
 """
 import matplotlib.pyplot as plt
 
-BLUE, GREEN, RED = "#2166AC", "#1B7837", "#B2182B"
+# Okabe-Ito blue / bluish-green / vermillion: colour-blind safe (dataviz validate_palette.js, all checks
+# pass: worst CVD dE 11.0 deutan). The earlier #2166AC/#1B7837/#B2182B FAILED (red-green dE 2.5).
+BLUE, GREEN, RED = "#0072B2", "#009E73", "#D55E00"
 
 GREYS = {"oos": "0.15", "oot": "0.45", "oost": "0.70", "val": "0.88", "train": "0.30"}
 HATCH = {"oos": "", "oot": "////", "oost": "....", "val": "xxxx", "train": "\\\\\\\\"}
@@ -49,6 +51,10 @@ RC_PAPER = {
     "figure.titlesize": 13,
     "axes.prop_cycle": plt.cycler(color=[BLUE, GREEN, RED]),
     "lines.linewidth": 1.3, "image.cmap": "Blues",
+    # bold text everywhere: axis labels, tick numbers, legends, annotations (user 2026-10-05)
+    "font.weight": "bold", "axes.labelweight": "bold", "axes.titleweight": "bold",
+    "figure.titleweight": "bold", "mathtext.default": "bf", "axes.linewidth": 1.2,
+    "xtick.major.width": 1.2, "ytick.major.width": 1.2,
 }
 
 
