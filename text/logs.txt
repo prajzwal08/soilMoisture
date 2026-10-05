@@ -8272,6 +8272,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     anomalies, 60 probe stations; SM clim = 31-d DOY mean of full daily record, thermal clim = annual+semiannual harmonic fit.
     Depth sweep plot built (04a579e, slurm/plot_depth_sweep.sh), NOT submitted; 6L counted as same (user).
   LST deseason plot 27614151 DONE (40 s): smooth-climatology anomalies, 60 stations, 6637 scenes.
-    LEVEL (LST tile - T2m) vs SM 0-10: pooled r -0.36 (n 6619), per-station median -0.38 (58 stn, IQR -0.46..-0.26; 55/58 negative).
+    LEVEL (LST tile - T2m) vs SM 0-10: pooled r -0.36 (n 6619), per-station median -0.38 (58 stn, IQR -0.46..-0.26; 54/58 negative).
     PATTERN (cell - tile): pooled r -0.09, per-station median -0.04 (55 stn, IQR -0.30..+0.14). Level carries the SM signal, pattern does not.
     Empty panels: Berlin_PSA4Heerstrasse, TxSON_CR200-23 (< 20 scenes). Figures C1/C2 in figures/probe_lst_level_pattern/.
