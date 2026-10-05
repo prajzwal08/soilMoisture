@@ -8286,3 +8286,4 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     r(LST-T2m anom, model error obs-pred): 0-10 pooled -0.052 / median -0.047 (60% neg); 10-30 -0.037/-0.039; 30-100 -0.026/-0.045
     error/SM ratio 0.21: the §59 model already captures ~80% of the LST-T2m signal; residual r -0.05 = ~0.25% variance.
     VERDICT: an LST-T2m input is NOT worth building (expected gain negligible). Figure figures/probe_lst_residual/R1_*.
+  §63 A100 copy SUBMITTED on the user's OK: job 27618809 (slurm/train_s63_a100.sh, run nolst_L1_wu200_a100_20261005, 480G, 8 w), raced vs H100 27613769; watcher cancels whichever is still pending when the other starts.
