@@ -17795,3 +17795,13 @@ Every change is committed before the smoke run. `graphify update .` runs after t
 - **SIF:** keep the TROPOMI download (user choice) unless the §67 ablation (job 27627597, cross-station SIF shuffle,
   per depth) shows ~0 effect at every depth. Revisit with the user Tuesday morning before C3 starts.
 - **Control-tile mismatch (gate S2 fails):** stop and diagnose; never "fix" by refitting stats.
+
+### 68.10 SIF source (user question 2026-10-05)
+
+Keep the SAME source as training: S5P-PAL `L2B_SIF___`, 5 km sounding mean per day.
+- GEE has no TROPOMI SIF.
+- Gridded products (GOSIF, TROPOSIF L3, CSIF) are composites or reconstructions, so they would be an input shift.
+
+The ~17 h cost scales with DAYS, not stations. C3 therefore becomes a SLURM array split by YEAR (2018-2025, 8 tasks;
+needs a `--years` / date-range flag in `download_sif_tropomi.py`), ~2-3 h if S5P-PAL does not throttle parallel
+clients. The smoke run measures one year-task first.
