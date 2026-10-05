@@ -8281,3 +8281,8 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     LEVEL (tile LST - T2m) vs SM 0-10 anomaly: pooled r -0.21, per-station median -0.22 (538 stn, IQR -0.33..-0.10).
     PATTERN (cell - tile): pooled -0.05, per-station median -0.05 (476 stn). TxSON (-0.42) is the STRONG end; network-wide signal ~half.
   LST residual check SUBMITTED on the user's OK: job 27614390 (slurm/probe_lst_residual.sh, code ac285c5): §59 val preds -> r(obs-pred, LST-T2m anom) on Landsat days.
+  LST residual check 27614390 DONE (4m45s; val 89 stn, 6,944 Landsat scene-days, join check max|diff| 1e-16):
+    r(LST-T2m anom, SM anom 0-10) reference: pooled -0.201, station median -0.226 (87 stn, 85% neg)
+    r(LST-T2m anom, model error obs-pred): 0-10 pooled -0.052 / median -0.047 (60% neg); 10-30 -0.037/-0.039; 30-100 -0.026/-0.045
+    error/SM ratio 0.21: the §59 model already captures ~80% of the LST-T2m signal; residual r -0.05 = ~0.25% variance.
+    VERDICT: an LST-T2m input is NOT worth building (expected gain negligible). Figure figures/probe_lst_residual/R1_*.
