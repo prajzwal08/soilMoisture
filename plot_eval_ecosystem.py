@@ -51,6 +51,8 @@ SPLIT_HATCH  = {}          # filled by plot_style_bw.apply under --style bw
 BW           = False
 FS           = 1.0         # annotation font-size multiplier (paper style raises it)
 DPI          = 300
+PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
+CS           = 1.0         # extra multiplier for count / median annotations (paper style)
 XROT         = None        # category tick rotation override (paper style: 90)
 EVAL_SPLITS  = ["oos", "oot", "oost"]
 INVENTORY_SPLITS = ["train", "val", "oos", "oot", "oost"]   # --no-val drops "val"
@@ -118,6 +120,15 @@ def load_metrics(in_dir: Path, by: str, metric: str) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True)
 
 
+def _rotation(labels, default):
+    """Category tick rotation: the colour style keeps `default`; the paper style lays short
+    label sets flat and turns crowded ones (many classes or long names) to 90 degrees."""
+    if not PAPER:
+        return default
+    crowded = len(labels) > 6 or max((len(str(s)) for s in labels), default=0) > 14
+    return 90 if crowded else 0
+
+
 # ── 1. inventory ──────────────────────────────────────────────────────────────
 
 def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
@@ -143,7 +154,7 @@ def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
         for xi, v in zip(x, wide[split]):
             if v:
                 axes[0].annotate(f"{int(v)}", (xi, v), ha="center", va="bottom",
-                                 fontsize=5 * FS, rotation=90, xytext=(0, 1),
+                                 fontsize=5 * FS * CS, rotation=90, xytext=(0, 1),
                                  textcoords="offset points")
         axes[1].bar(x, frac[split] * 100, width=width * 0.9,
                     color=SPLIT_COLORS[split], edgecolor="k", lw=0.4,
@@ -154,15 +165,17 @@ def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
                              if plt.rcParams["text.usetex"] else "share of split (%)",
                              "composition")):
         ax.set_xticks(range(len(order)))
-        ax.set_xticklabels(order, rotation=XROT if XROT is not None else 20,
-                           ha="center" if XROT == 90 else "right", fontsize=7 * FS)
+        rot = _rotation(order, 20)
+        ax.set_xticklabels(order, rotation=rot, ha="center" if rot in (0, 90) else "right",
+                           fontsize=7 * FS)
         ax.set_ylabel(ylab)
         ax.set_title(title, fontsize=8 * FS)
         ax.grid(axis="y", lw=0.4, alpha=0.35)
         ax.set_axisbelow(True)
     axes[0].legend(fontsize=6 * FS, frameon=False)
 
-    fig.suptitle(f"Station inventory by {by} -- train vs held-out splits", y=1.04)
+    if not PAPER:
+        fig.suptitle(f"Station inventory by {by} -- train vs held-out splits", y=1.04)
     save(fig, out_dir, f"stations_by_{by}")
     return wide
 
@@ -204,8 +217,8 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
                                edgecolors="none", zorder=2)
                 ax.annotate(f"{len(v)}", xy=(pos[-1], 0.0),
                             xycoords=("data", "axes fraction"),
-                            xytext=(0, -9), textcoords="offset points",
-                            ha="center", va="top", fontsize=5 * FS,
+                            xytext=(0, -9 * CS), textcoords="offset points",
+                            ha="center", va="top", fontsize=5 * FS * CS,
                             color="black" if BW else SPLIT_COLORS[split])
             bp = ax.boxplot([d if len(d) else [np.nan] for d in data],
                             positions=pos, widths=width * 0.62, showfliers=False,
@@ -230,12 +243,13 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
                                   hatch=SPLIT_HATCH.get(s, ""), label=s.upper()) for s in splits],
                    fontsize=6 * FS, frameon=False, loc="upper right", ncol=len(splits))
     axes[-1].set_xticks(range(len(order)))
-    axes[-1].set_xticklabels(order, rotation=XROT if XROT is not None else 15,
-                             ha="center" if XROT == 90 else "right")
-    if XROT == 90:                      # clear the per-box station counts drawn just under the axis
-        axes[-1].tick_params(axis="x", pad=14 * FS)
-    axes[-1].set_xlabel(f"{by}   (small numbers = stations per box)")
-    fig.suptitle(f"Per-station {metric} by {by} and split", y=1.02)
+    rot = _rotation(order, 15)
+    axes[-1].set_xticklabels(order, rotation=rot, ha="center" if rot in (0, 90) else "right")
+    if PAPER:                           # clear the per-box station counts drawn just under the axis
+        axes[-1].tick_params(axis="x", pad=16 * CS)
+    else:                               # paper style: no description / title (the caption carries it)
+        axes[-1].set_xlabel(f"{by}   (small numbers = stations per box)")
+        fig.suptitle(f"Per-station {metric} by {by} and split", y=1.02)
     save(fig, out_dir, f"box_{metric.lower()}_by_{by}")
 
 

@@ -68,6 +68,7 @@ def apply(g: dict, style: str = "bw") -> None:
         g["PRED_COLOR"], g["OBS_COLOR"], g["OOT_SHADE"] = BLUE, "black", RED
         g["BW"] = False
         g["FS"], g["XROT"], g["DPI"] = 1.5, 90, 600
+        g["PAPER"], g["CS"] = True, 1.45
         return
     plt.rcParams.update(RC_BW)
     if "DEPTH_COLORS" in g:

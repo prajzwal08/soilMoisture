@@ -60,6 +60,8 @@ OOT_SHADE    = "#9b59b6"
 BW           = False
 FS           = 1.0         # annotation font-size multiplier (paper style raises it)
 DPI          = 300
+PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
+CS           = 1.0         # extra multiplier for count / median annotations (paper style)
 XROT         = None        # category tick rotation override (paper style: 90)
 
 

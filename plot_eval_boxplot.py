@@ -41,6 +41,8 @@ SPLIT_HATCH  = {}          # filled by plot_style_bw.apply under --style bw
 BW           = False
 FS           = 1.0         # annotation font-size multiplier (paper style raises it)
 DPI          = 300
+PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
+CS           = 1.0         # extra multiplier for count / median annotations (paper style)
 XROT         = None        # category tick rotation override (paper style: 90)
 SPLIT_LABELS = {"oos": "OOS (novel stations, 2016-2022)",
                 "oot": "OOT (seen stations, 2023-2025)",
@@ -124,15 +126,15 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
                 continue
             ax.annotate(f"{np.median(v):.3f}", xy=(x, 0.985),
                         xycoords=("data", "axes fraction"),
-                        ha="center", va="top", fontsize=5.5 * FS,
+                        ha="center", va="top", fontsize=5.5 * FS * CS,
                         color="black" if BW else SPLIT_COLORS[split])
             ax.annotate(f"n={len(v)}", xy=(x, 0), xycoords=("data", "axes fraction"),
                         xytext=(0, -14), textcoords="offset points",
-                        ha="center", va="top", fontsize=5.5 * FS, color="grey")
+                        ha="center", va="top", fontsize=5.5 * FS * CS, color="grey")
 
     ax.annotate("median", xy=(0, 0.985), xycoords=("axes fraction", "axes fraction"),
                 xytext=(-4, 0), textcoords="offset points",
-                ha="right", va="top", fontsize=5.5 * FS, color="grey")
+                ha="right", va="top", fontsize=5.5 * FS * CS, color="grey")
     for i in range(len(depths) - 1):                # separate the depth groups
         ax.axvline(i + 0.5, color="grey", lw=0.5, ls=":", zorder=1)
 
