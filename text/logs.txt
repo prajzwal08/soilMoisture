@@ -8293,3 +8293,5 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     DEPTH SWEEP @ep10: 1L 0.0510 (12.5M, gap 2.74) | 2L 0.0494 (19.6M, 2.73) | 3L 0.0488 (26.7M, 2.89) | 6L 0.0500 (48.0M, 2.81; warmup 1000).
     3L best; 1L ~4.5% worse; gap ~2.7-2.9x at every depth -> memorisation not driven by trunk depth.
   depth sweep plot SUBMITTED on the user's OK: job 27620795 (slurm/plot_depth_sweep.sh, code 04a579e).
+  §65 wd 0.3 SUBMITTED on the user's OK: job 27621051 (slurm/train_s65.sh, run nolst_L3_wu200_wd03_20261005, 10 epochs).
+    User: report wd 0.05 (§59) / 0.2 (§61) / 0.3 (§65) / 0.5 (§60) together as the wd comparison (0.2 and 0.5 bundled; footnote).
