@@ -142,7 +142,12 @@ def main():
         "savefig.bbox": "tight",
     })
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 2.9))
+    # Panel (c), val ubRMSE, needs the SELECT lines; older logs keep the two-panel figure.
+    if sel:
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(11.2, 2.9))
+    else:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 2.9))
+        ax3 = None
 
     # ── (a) per-batch train vs per-epoch val, single log axis ─────────
     # Epoch separators first, so they sit under everything.
@@ -209,7 +214,22 @@ def main():
         ax2.annotate(f"{ratio[i]:.1f}x", (ep[i], ratio[i]), textcoords="offset points",
                      xytext=(0, 8), ha="center", fontsize=7, color=MUTED)
 
-    for ax in (ax1, ax2):
+    # ── (c) validation ubRMSE, the selection metric ───────────────────
+    if ax3 is not None:
+        ax3.plot(ep, sel, "-s", color=C_VAL, lw=1.8, ms=4.5, mec="white", mew=0.8, zorder=3)
+        ax3.plot(ep[best_i], sel[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=4)
+        ax3.annotate(f"{sel[best_i]:.4f} (epoch {ep[best_i]})", (ep[best_i], sel[best_i]),
+                     textcoords="offset points", xytext=(0, -18),
+                     ha="right" if ep[best_i] > 0.5 * ep[-1] else "left",
+                     fontsize=7, color=MUTED)
+        ax3.set_xlabel("Epoch")
+        ax3.set_ylabel("Validation ubRMSE (m$^3$ m$^{-3}$)")
+        ax3.set_title("(c) Validation ubRMSE (depth mean)", loc="left", pad=8)
+        ax3.set_xticks(ep)
+        ax3.set_xticklabels([str(e) if i % 2 == 0 else "" for i, e in enumerate(ep)])
+        ax3.set_xlim(ep[0] - 0.35, ep[-1] + 0.35)
+
+    for ax in (a for a in (ax1, ax2, ax3) if a is not None):
         ax.grid(True, which="major", axis="y", color=GRID, lw=0.6, zorder=0)
         ax.set_axisbelow(True)
         for side in ("top", "right"):
