@@ -119,6 +119,7 @@ def c5_c8_raw(n_stations=12, n_scenes=12):
     pick = rng.choice(len(stores), size=min(n_stations, len(stores)), replace=False)
     err32, err16, err_cr, ndvi_all, ndmi_all, cr_all = [], [], [], [], [], []
     d16_px = []
+    worst_new, worst_old = [], []   # §61: (err, station, date, index, (i,j), den DN, ref, got, valid frac, scene frac>0.02)
     low = {"pre": [0, 0], "post": [0, 0]}         # [n DN<1000, n valid] over kept bands
     kept = fs["s2_keep"]
     for si in pick:
@@ -156,6 +157,26 @@ def c5_c8_raw(n_stations=12, n_scenes=12):
                                    np.abs(got[1][v] - ndmi[v]).max()))
                 # §61: per-pixel fp16 errors, so 5b reports how MANY pixels are off, not only the max
                 d16_px.append(np.maximum(np.abs(got16[0][v] - ndvi[v]), np.abs(got16[1][v] - ndmi[v])))
+                # §61: where are the worst pixels? Record the scene's worst NDVI/NDMI pixel at the
+                # current floor AND at the old 10 DN floor (reference and model both re-run at 10).
+                for floor, worst_l in ((M._IDX_DEN_FLOOR, worst_new), (10.0, worst_old)):
+                    _keep = M._IDX_DEN_FLOOR
+                    M._IDX_DEN_FLOOR = floor
+                    try:
+                        g = fine_to_indices(torch.from_numpy(f.astype(np.float16)).float()[None])[0].numpy()
+                        r_v, okv = _nd(pdn[6], pdn[2])
+                        r_m, okm = _nd(pdn[7], pdn[8])
+                    finally:
+                        M._IDX_DEN_FLOOR = _keep
+                    vv = (n > 0) & okv & okm
+                    if not vv.any():
+                        continue
+                    for name, gi, ref, a, b in (("NDVI", 0, r_v, 6, 2), ("NDMI", 1, r_m, 7, 8)):
+                        e = np.where(vv, np.abs(g[gi] - ref), -1.0)
+                        ij = np.unravel_index(int(np.argmax(e)), e.shape)
+                        worst_l.append((float(e[ij]), p.stem, dates[ri], name, ij,
+                                        float(pdn[a][ij] + pdn[b][ij]), float(ref[ij]), float(g[gi][ij]),
+                                        float(sc[10][ij]), float(np.mean(e[vv] > 2e-2))))
                 ndvi_all.append(ndvi[v]); ndmi_all.append(ndmi[v])
         for key in ("s1_asc", "s1_desc"):
             if f"{key}/data" not in rg:
@@ -182,6 +203,12 @@ def c5_c8_raw(n_stations=12, n_scenes=12):
     e16 = max(err16) if err16 else np.inf
     check(len(err32) > 20 and e32 < 1e-3,
           "5a NDVI/NDMI (fp32 path) == direct from raw DN", f"{len(err32)} scenes, max |d| {e32:.2e}")
+    for label, wl in (("OLD floor 10 DN", worst_old), (f"CURRENT floor {M._IDX_DEN_FLOOR:g} DN", worst_new)):
+        print(f"     5b worst 8 scenes, {label}  (den = a+b in DN after the 1000 offset; vfrac = 20 m valid fraction)")
+        for w in sorted(wl, reverse=True)[:8]:
+            print(f"       |d| {w[0]:.3f}  {w[1]:32s} {w[2]} {w[3]} px{tuple(int(k) for k in w[4])}  "
+                  f"den {w[5]:9.1f}  ref {w[6]:+.3f}  got {w[7]:+.3f}  vfrac {w[8]:.2f}  "
+                  f"scene frac>0.02 {w[9]:.2e}")
     # §61: 27439912 failed 5b on the MAX alone (0.80). Judge on the distribution instead: p99 |d| and
     # the fraction of valid pixels off by more than 0.02 index units; the max is still printed.
     d16 = np.concatenate(d16_px) if d16_px else np.array([np.inf])
