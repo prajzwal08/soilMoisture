@@ -49,7 +49,8 @@ import sys, pandas as pd
 s = pd.read_csv(sys.argv[1])
 e = s[s["ablation"].str.contains("era5_cross_station")]
 print(e[["depth", "n", "d_ubRMSE", "d_ubRMSE_lo", "d_ubRMSE_hi", "d_ubRMSE_pct"]].to_string(index=False))
-ok = len(e) and (e["d_ubRMSE_lo"] > 0).all()
+f = e[e["d_ubRMSE_lo"].notna()]          # layers with too few stations have no CI
+ok = len(f) > 0 and (f["d_ubRMSE_lo"] > 0).all()
 print("POSITIVE CONTROL", "PASS" if ok else "FAIL (ERA5 shuffle did not clearly hurt: check the harness)")
 EOF
 
