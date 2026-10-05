@@ -54,10 +54,30 @@ fi
 ls -la "${IN}"/predictions_*.parquet
 mkdir -p "${OUT}"
 
-SPLITS="val oos oot oost"
+SPLITS="${SPLITS:-val oos oot oost}"          # §66: SPLITS="oos oot oost" for held-out-only figures
+ECO_EXTRA="${NO_VAL:+--no-val}"               # NO_VAL=1 also drops val from the inventory figure
 
 echo ""; echo "───────── metrics ─────────"
 $RUN_PY eval_metrics.py --in-dir "${IN}" --out-dir "${IN}"
+
+echo ""; echo "───────── predictions outside the physical range [0, 0.6] ─────────"
+# §66: the model output is not clamped; report where it leaves [0, 0.6] before any figure is read.
+$RUN_PY - "${IN}" <<'EOF'
+import sys
+from pathlib import Path
+import pandas as pd
+d = Path(sys.argv[1])
+for f in sorted(d.glob("predictions_*.parquet")):
+    df = pd.read_parquet(f)
+    bad = df[(df["pred"] < 0) | (df["pred"] > 0.6)]
+    print(f"{f.stem}: {len(bad):,} of {len(df):,} rows out of range "
+          f"({100 * len(bad) / max(len(df), 1):.3f}%)  <0: {(df['pred'] < 0).sum():,}  >0.6: {(df['pred'] > 0.6).sum():,}")
+    if len(bad):
+        key = "station_key" if "station_key" in bad else "station"
+        top = (bad.groupby([key, "depth"], observed=True)["pred"]
+               .agg(n="size", min="min", max="max").sort_values("n", ascending=False).head(8))
+        print(top.to_string())
+EOF
 
 echo ""; echo "───────── scatter ─────────"
 $RUN_PY plot_eval_scatter.py --in-dir "${IN}" --out-dir "${OUT}" "$@"
@@ -76,11 +96,11 @@ echo ""; echo "───────── ubRMSE by land cover / climate ──
 for BY in igbp_macro kg_macro elevation_band network; do
     echo "--- --by ${BY} ---"
     $RUN_PY plot_eval_ecosystem.py --in-dir "${IN}" --out-dir "${OUT}" \
-        --by "${BY}" "$@"
+        --by "${BY}" ${ECO_EXTRA} "$@"
 done
 echo "--- --by IGBP --min-stations 8 (fine classes) ---"
 $RUN_PY plot_eval_ecosystem.py --in-dir "${IN}" --out-dir "${OUT}" \
-    --by IGBP --min-stations 8 "$@"
+    --by IGBP --min-stations 8 ${ECO_EXTRA} "$@"
 
 echo ""; echo "───────── time series: 5 best / 5 worst ─────────"
 $RUN_PY plot_eval_timeseries.py --in-dir "${IN}" \

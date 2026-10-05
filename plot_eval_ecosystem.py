@@ -50,6 +50,7 @@ SPLIT_COLORS = {"train": "#34495e", "val": "#7f8c8d",
 SPLIT_HATCH  = {}          # filled by plot_style_bw.apply under --style bw
 BW           = False
 EVAL_SPLITS  = ["oos", "oot", "oost"]
+INVENTORY_SPLITS = ["train", "val", "oos", "oot", "oost"]   # --no-val drops "val"
 SPLITS_CSV   = Path("csvs/station_splits.csv")
 
 
@@ -117,7 +118,7 @@ def load_metrics(in_dir: Path, by: str, metric: str) -> pd.DataFrame:
 # ── 1. inventory ──────────────────────────────────────────────────────────────
 
 def fig_inventory(inv: pd.DataFrame, by: str, out_dir: Path):
-    splits = [s for s in ["train", "val", "oos", "oot", "oost"]
+    splits = [s for s in INVENTORY_SPLITS
               if s in inv["split"].unique()]
     order  = (inv[inv["split"] == "train"].set_index("class")["n"]
               .sort_values(ascending=False).index.tolist())
@@ -257,6 +258,8 @@ def main():
     p.add_argument("--metric",  default="ubRMSE",
                    choices=["ubRMSE", "RMSE", "MAE", "bias"])
     p.add_argument("--min-stations", type=int, default=5)
+    p.add_argument("--no-val", action="store_true",
+                   help="leave val out of the inventory figure (held-out splits only, + train)")
     p.add_argument("--style", choices=["color", "bw"], default="color",
                    help="bw = black-and-white publication style (plot_style_bw.py)")
     args = p.parse_args()
@@ -264,6 +267,8 @@ def main():
         import plot_style_bw
         plot_style_bw.apply(globals())
 
+    if args.no_val:
+        INVENTORY_SPLITS.remove("val")
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
 
     inv = load_inventory(args.by)
