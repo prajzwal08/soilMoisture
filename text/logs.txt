@@ -8335,3 +8335,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   §67 BUILT 7fc5e4d (+fix): ablation.py MODALITY_KEYS_S48, eval_predict multi --ablate, compare_ablation RMSE/|bias|/CI, plot_input_ablation.py, slurm/eval_input_ablation.sh [smoke]; runbook §66/§67. Nothing submitted.
   §67 SMOKE SUBMITTED on the user's OK: job 27627468 (slurm/eval_input_ablation.sh smoke, 5 OOS stations, 13 passes).
   PUSHED on the user's OK: branch feat/lst-level-dT (new on origin, tracking set) + tag baseline/selected-20261005.
+  §67 SMOKE 27627468 PASS (2m50s, 13 passes): donors 100% assigned, cross-station 100% other station (median 4 d), within-station same station (median 146 d). ERA5 cross: 0-10 +10.3% [CI>0], 10-30 +13.7% [CI>0], 30-100 n=1 no CI -> control 'FAIL' was a check bug (NaN), fixed.
+    Baseline match vs Phase A (27627524): 91 of 17,316 rows differ, max 9.2e-5, mean 9e-8 (bf16 batch-composition noise) -> NOT bit-identical.
+    OOS depth coverage: 222 stations; 0-10 221, 10-30 144, 30-100 119; all three 112; 0-10 only 71; 0-10+10-30 only 31.
