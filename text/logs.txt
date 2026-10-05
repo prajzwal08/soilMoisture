@@ -8360,3 +8360,14 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     Replaced in place: only the paper time-series PNG/PDFs (figures/eval/baseline_selected_20261005_paper/timeseries{,_twente}/),
       redrawn by job 27627836 with the continuous line. Why: ITCSM-13 10-30 showed a gap in the PREDICTION too, because the
       old export dropped rows without an observation (to_long_frame keep = ~isnan(obs)); the model had predicted those days.
+
+--- 2026-10-05 (Session 47) -- Netherlands land-only tile grid (plan §68, wall-to-wall run 2016-2025) ---
+Land mask: CBS/PDOK gebiedsindelingen 2024 landsdeel_gegeneraliseerd (EPSG:28992, water excluded)
+  -> data/nl/landsdeel_2024.json.  Grid: 2.24 km (one model tile), RD New, keep if land_frac >= 0.5.
+Job 27628348 (rome, 16 CPU, 38 s): make_nl_grid.py + plot_nl_grid.py
+  land area 35,088 km2; cells touching land 7,733; KEPT 7,005 (98.0 % of land covered);
+  dropped 728; kept-with-centre-on-water 37.  -> csvs/nl_tiles.csv, figures/nl_grid/nl_tiles.{png,pdf}
+Rescaled sizing (7,005 tiles x 3,653 days, streamed, intermediates deleted per batch):
+  output ~0.35 GB permanent; scratch peak ~1.1 TB per 500-tile batch; raw imagery +1.05 TB if kept.
+  TerraMind ~180 A100-h (~23k GPU SBU), predict ~2k GPU SBU, CPU ~3-6k SBU (download unmeasured); ~1 week.
+Next: plan the full run (smoke = 20 tiles around Twente first; every job needs an explicit OK).
