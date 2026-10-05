@@ -8350,3 +8350,13 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
   rendered + agent-reviewed twice. §67 input ablation built, smoke passed, full run 27627597 running.
   TWENTE time series (job 27627623, paper style, clipped): figures/eval/baseline_selected_20261005_paper/timeseries_twente/named/oos/ (8 PNG + contact PDF). Hupsel: model +0.22/+0.15/+0.10 bias at 0-10/10-30/30-100; observed 0-10 sits ~0.01 for months (likely sensor/calibration issue, flag only). ITCSM-16b: dynamics tracked, winter peaks 0.4-0.6 underestimated.
   ALL-DAY predictions (time-series lines only) SUBMITTED on the user's OK (option B): job 27627836 (slurm/eval_allday.sh): OOS/OOT/OOST --keep-unobserved -> eval_output/baseline_selected_20261005/allday/, then paper time series redrawn (extremes, TxSON, TWENTE). Metrics + ablation stay on observed days only (user).
+  ALL-DAY PREDICTIONS — file layout (user asked, 2026-10-05):
+    Observed-day predictions (UNCHANGED, never replaced): eval_output/baseline_selected_20261005/predictions_{oos,oot,oost}.parquet
+      -> the only input to metrics (eval_metrics.py globs the top folder only), scatter/box figures, station ranking, ablation.
+    Every-day predictions (NEW, separate subfolder): eval_output/baseline_selected_20261005/allday/predictions_*.parquet
+      -> eval_predict.py --keep-unobserved (every day of each depth a station measures at least once, obs NaN where unobserved);
+         used ONLY to draw the time-series prediction line (plot_eval_timeseries.py --line-dir). Never point a metric at it.
+    Ablation (27627597, running) reads observed-day files in eval_output/baseline_selected_20261005_ablation/: unaffected.
+    Replaced in place: only the paper time-series PNG/PDFs (figures/eval/baseline_selected_20261005_paper/timeseries{,_twente}/),
+      redrawn by job 27627836 with the continuous line. Why: ITCSM-13 10-30 showed a gap in the PREDICTION too, because the
+      old export dropped rows without an observation (to_long_frame keep = ~isnan(obs)); the model had predicted those days.
