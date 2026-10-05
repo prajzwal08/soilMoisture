@@ -8219,3 +8219,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     §59 smoke ep1 0.63 with zero-init but warmup 20), then 0.03; epoch files written. 20 stn -> numbers meaningless.
   §61 FULL RUN SUBMITTED on the user's OK: job 27605977 (4x H100, max 10 epochs), nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005,
     log logs/lst_tmean_diff/train_s61_27605977.out
+  §61 SWAPPED to A100 on the user's OK: H100 job 27605977 CANCELLED (queued, partition full); A100 full run SUBMITTED:
+    job 27607454, run nolst_L3_idx_nzi_cd05_wd02_lr1e4_a100_20261005 (own ckpt folder), 4x A100, --mem 480G, --num-workers 8,
+    10 epochs, log logs/lst_tmean_diff/train_s61_a100_27607454.out. GPU type differs from §59/§60 (H100): note in comparisons.
