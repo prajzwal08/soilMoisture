@@ -8224,3 +8224,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     10 epochs, log logs/lst_tmean_diff/train_s61_a100_27607454.out. GPU type differs from §59/§60 (H100): note in comparisons.
   §61 RACE (user, option A): H100 full run SUBMITTED alongside the queued A100 27607454: job 27608079 (slurm/train_s61.sh,
     run nolst_L3_idx_nzi_cd05_wd02_lr1e4_20261005, own folder, 720G, 12 workers). A watcher cancels whichever starts second.
+  §61 user switched to option B: H100 27608079 + A100 27607454 CANCELLED (both queued); ONE job on gpu_h100,gpu_a100
+    SUBMITTED: , run nolst_L3_idx_nzi_cd05_wd02_lr1e4_anygpu_20261005, 480G, 8 workers, 10 epochs,
+    log logs/lst_tmean_diff/train_s61_anygpu_.out (GPU type recorded in the log).
