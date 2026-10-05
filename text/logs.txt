@@ -8256,3 +8256,6 @@ SESSION END 2026-09-30 (late). Nothing running. Summary of the afternoon/evening
     runbook §63. Nothing submitted. Depth sweep caveat: 6L run 27417115 used warmup 1000 + older code, so only 1/2/3 are clean.
   §64 BUILT (user): §59 + --static-dropout 0.5 only (wd 0.05, isolates §60's static dropout from its wd 0.5), 10 epochs;
     slurm/train_s64{_smoke,}.sh, run nolst_L3_wu200_sd05_20261005; runbook §64. Nothing submitted.
+  §62 progress (27611631 RUNNING, 28 min, ep18 done): SELECT ep12 0.0493 | ep13 0.0508 | ep14 0.0502 | ep15 0.0493 (best, 0.049263)
+    | ep16 0.0513 | ep17 0.0502 | ep18 0.0499. Gap 2.89x -> 3.44x. Plateaued since ep8 (~0.049-0.051) while the gap keeps growing;
+    best 0.0493 vs §59 3L 0.0488. Early stop (patience 8) ends it after ep23 unless it improves.
