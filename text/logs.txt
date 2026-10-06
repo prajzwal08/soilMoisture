@@ -8593,3 +8593,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   humps (Dec-Feb 2020/2022/2024) -> R -0.20/-0.29: model difference is imagery seasonality, not water.
   Frozen periods dominate the obs difference extremes (TDR artefact) -> mask ts<=0 days in any score.
   §69.3 diff figure, tile-centre model only (user asked): job 27654586
+  §69.3 diff figure, observed line + Ne1-Ne2 labels (user asked): job 27654684
