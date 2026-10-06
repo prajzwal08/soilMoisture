@@ -124,15 +124,20 @@ def acquisitions(st):
     return s1, pd.Series(clear, index=s2)
 
 
-def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
+def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None, same_tile=False):
     """Ne1 - Ne2 per depth: observed vs model at each station's own tile centre.
     acq: optional (s1_dates, s2_clear_series, {site: irrigation DataFrame}) -> top strip.
-    precip: optional {"ERA5": s, "US-Ne1": s, "US-Ne2": s} daily mm -> bottom panel (needs acq)."""
+    precip: optional {"ERA5": s, "US-Ne1": s, "US-Ne2": s} daily mm -> bottom panel (needs acq).
+    same_tile: model Ne1 - Ne2 read inside ONE forward pass (Ne1 tile solid, Ne2 tile dashed)
+    instead of two tile centres."""
     plot_style_bw.apply(globals(), "paper")
     a, b = ST
     within = (df[df["tile"] == a].pivot_table(index=["date", "depth"], columns="station",
                                               values="pred"))
     within = (within[a] - within[b]).unstack("depth")
+    within2 = (df[df["tile"] == b].pivot_table(index=["date", "depth"], columns="station",
+                                               values="pred"))
+    within2 = (within2[a] - within2[b]).unstack("depth")
     if acq is None:
         fig, axes = plt.subplots(3, 1, figsize=(12 if tag == "full" else 9, 8), sharex=True)
     else:
@@ -144,7 +149,8 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
     series = {}
     for dep in BINS:
         series[dep] = ((obs[a][0][dep] - obs[b][0][dep]).loc[lo:hi],
-                       (own[a][dep] - own[b][dep]).loc[lo:hi], within[dep].loc[lo:hi])
+                       (within[dep] if same_tile else own[a][dep] - own[b][dep]).loc[lo:hi],
+                       within2[dep].loc[lo:hi])
     lim = np.nanpercentile(np.abs(pd.concat([s for t in series.values() for s in t[:2]])), 99.5) + 0.01
     for ax, dep, lab in zip(axes, BINS, "abc" if acq is None else "bcd"):
         ts = obs[a][1]
@@ -165,10 +171,18 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
         ax.plot(o_d.index, o_d.values, "-", color="black", lw=1.4,
                 label="Observed Ne1 $-$ Ne2", zorder=2)
         ax.plot(p.index, p.values, "-", color=PRED_COLOR, lw=1.4,
-                label="Model Ne1 $-$ Ne2", zorder=4)
+                label="Model Ne1 $-$ Ne2" + (", Ne1 tile" if same_tile else ""), zorder=4)
         j = pd.concat([o, p], axis=1, keys=["o", "p"]).dropna()
-        ax.text(0.01, 0.95, f"({lab}) {dep} cm   mean observed {j['o'].mean():+.3f}  "
-                f"model {j['p'].mean():+.3f}   R {j['o'].corr(j['p']):+.2f}",
+        txt = (f"({lab}) {dep} cm   mean observed {j['o'].mean():+.3f}  "
+               f"model {j['p'].mean():+.3f}   R {j['o'].corr(j['p']):+.2f}")
+        if same_tile:
+            ax.plot(w.index, w.values, "--", color=plot_style_bw.GREEN, lw=1.4,
+                    label="Model Ne1 $-$ Ne2, Ne2 tile", zorder=3)
+            j2 = pd.concat([o, w], axis=1, keys=["o", "w"]).dropna()
+            txt = (f"({lab}) {dep} cm   mean obs {j['o'].mean():+.3f}   model Ne1 tile "
+                   f"{j['p'].mean():+.3f} (R {j['o'].corr(j['p']):+.2f})   Ne2 tile "
+                   f"{j2['w'].mean():+.3f} (R {j2['o'].corr(j2['w']):+.2f})")
+        ax.text(0.01, 0.95, txt,
                 transform=ax.transAxes, va="top",
                 bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
         ax.set_ylim(-lim, lim)
@@ -204,7 +218,7 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
                ncol=2 if acq is None else 3, frameon=False)
     fig.align_ylabels(fig.axes)
     fig.tight_layout()
-    suffix = "" if acq is None else "_acq"
+    suffix = ("" if acq is None else "_acq") + ("_sametile" if same_tile else "")
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_diff_Ne1_Ne2_{tag}{suffix}.{ext}", dpi=600)
     print(f"figure: {FIG_DIR}/mead_diff_Ne1_Ne2_{tag}{suffix}.png")
@@ -251,6 +265,8 @@ def main():
                     help="one Ne1 - Ne2 figure for this year with S1/S2/irrigation dates on top")
     ap.add_argument("--acq-window", nargs=2, default=None, metavar=("START", "END"),
                     help="as --acq-year over START..END, plus an ERA5 + tower-gauge precipitation panel")
+    ap.add_argument("--same-tile", action="store_true",
+                    help="with --acq-window: model Ne1 - Ne2 from one forward pass (both tiles shown)")
     args = ap.parse_args()
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -293,7 +309,7 @@ def main():
             from plot_mead_precip import load as load_precip
             lo, hi = args.acq_window
             diff_figure(obs, own, df, lo, hi, f"{lo.replace('-', '')}_{hi.replace('-', '')}",
-                        acq=(s1, s2c, irr), precip=load_precip()[0])
+                        acq=(s1, s2c, irr), precip=load_precip()[0], same_tile=args.same_tile)
             return
         y = args.acq_year
         print(f"{y}: S1 passes {int(((s1 >= f'{y}-01-01') & (s1 <= f'{y}-12-31')).sum())}, "
