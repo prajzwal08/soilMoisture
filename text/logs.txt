@@ -8675,3 +8675,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Spearman dNDVI vs dSM: obs 0-10 +0.10, 10-30 -0.21 (n 51); model own +0.51 / +0.25, same tile +0.32 / +0.26.
   READ: NDVI difference does NOT explain the observed SM difference, but the MODEL's difference follows NDVI -> model contrast is vegetation.
   §69.5 embedding rerun, clear S2 only + S1 unfrozen only, + scatter (1-cos) vs |dSM| (user: only clear, same for S1): job 27658107
+  27658107 DONE (29 s): embed rerun on clear S2 (50) / unfrozen S1 (17); figures mead_embed_{cos,scatter,matrix}_2019.
+    Spearman (1-cos, tile centres) vs |dSM| all-year: S2 obs +0.23/-0.03, model +0.76/+0.22; S1 obs -0.24/-0.23, model -0.01/-0.16.
+    Jun-Sep: S2 cos 0.95 (ref 480 m west 0.80), S1 0.91 (ref 0.81); S1 Jun-Sep obs +0.58/+0.32 but n=9.
+  READ: S2 embedding difference explains the MODEL's SM difference (+0.76 at 0-10) but not the observed one (+0.23/-0.03).
+    S1 explains neither over the year. Same picture as NDVI: the model's Ne1-Ne2 contrast is vegetation, not water.
