@@ -8420,3 +8420,6 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     radial label placement, scale bar clear of labels. All station pixels inside tiles; panel metrics match
     per_station_oos.csv wherever the record ends <= 2022 (others pool OOS+OOST, user not yet decided on a split).
     TxSON: within-tile level spread NOT reproduced (CR200-18 +0.108, CR200-25 +0.076 vs CR200-6 -0.118).
+  TxSON CR200-18 UNBIASED tile figure (plot_tile_paper.py --unbiased: line shifted by each station x depth observed-day
+    mean bias; ubRMSE/r unchanged), job 27642405 -> tiles/txson_cr200-18_unbiased.{png,pdf}. Biased version kept.
+    Reading: timing matches at all 6; CR200-18/-25 (the two over-wet stations) also swing TOO WIDE (dry-downs reach ~0).

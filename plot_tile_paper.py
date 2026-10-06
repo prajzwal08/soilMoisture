@@ -155,6 +155,8 @@ def main():
     ap.add_argument("--rgb-date", default=None, help="YYYYMMDD; default = least-cloudy summer scene")
     ap.add_argument("--merge-m", type=float, default=20.0)
     ap.add_argument("--category", default="sm_only")
+    ap.add_argument("--unbiased", action="store_true",
+                    help="shift each station x depth prediction by its observed-day mean bias")
     a = ap.parse_args()
     plt.rcParams.update(plot_style_bw.RC_PAPER)
 
@@ -197,7 +199,12 @@ def main():
             for dep in SM_DEPTHS:
                 q = df[(df["station_key"] == key) & (df["depth"] == dep)]
                 if q["obs"].notna().any():
-                    panels.append((key, dep, q.sort_values("date")))
+                    q = q.sort_values("date").copy()
+                    o = q["obs"].notna()
+                    q.attrs["offset"] = float((q.loc[o, "pred"] - q.loc[o, "obs"]).mean())
+                    if a.unbiased:     # shift the whole line by the observed-day mean bias
+                        q["pred"] = q["pred"] - q.attrs["offset"]
+                    panels.append((key, dep, q))
         cols.append((g, panels))
     if len(cols) > 2:            # many separate stations (e.g. TxSON): two balanced columns
         flat = [p for _, ps in cols for p in ps]
@@ -306,11 +313,13 @@ def main():
                 ax.axvline(OOST_FROM, color=OOST_SHADE, lw=0.9, ls="--", zorder=1)
                 shaded = True
             ax.plot(o["date"], o["obs"], ".", ms=2.2, color=OBS_COLOR, label="observed", zorder=2)
-            ax.plot(dates, pred, "-", lw=1.1, color=PRED_COLOR, label="predicted", zorder=3)
+            ax.plot(dates, pred, "-", lw=1.1, color=PRED_COLOR, label="predicted (bias removed)" if a.unbiased else "predicted", zorder=3)
             ax.set_ylim(ylo, yhi)
             ax.margins(x=0.01)
             m = metrics_from_arrays(o["pred"].to_numpy(np.float64), o["obs"].to_numpy(np.float64))
-            ax.text(1.0, 1.02, f"ubRMSE {m['ubRMSE']:.3f}  r {m['R']:.2f}  bias {m['bias']:+.3f}"
+            btxt = (f"bias removed {q.attrs['offset']:+.3f}" if a.unbiased
+                    else f"bias {m['bias']:+.3f}")
+            ax.text(1.0, 1.02, f"ubRMSE {m['ubRMSE']:.3f}  r {m['R']:.2f}  {btxt}"
                                f"  n {m['n']}", transform=ax.transAxes, ha="right", va="bottom")
             short = key.split("_")[-1]
             ax.text(0.0, 1.02, f"({chr(letter)}) {short}, {DEPTH_LABELS[dep]}",
