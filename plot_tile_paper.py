@@ -162,7 +162,8 @@ def main():
     sp = pd.read_csv(SPLITS)                      # pandas only: quoted commas (AmeriFlux names)
     sp["key"] = sp.apply(_make_key, axis=1)
     meta = sp.set_index("key").loc[a.stations].reset_index()
-    meta["short"] = meta["station_name"].astype(str)
+    meta["short"] = [str(r.station_name) if r.source_network == "ISMN" else str(r.station_id)
+                     for r in meta.itertuples()]     # AmeriFlux names are long: use the site id
     raw = zarr.open_group(str(SAT_ZARR / f"{a.tile_station}.zarr"), mode="r")
     tok = zarr.open_consolidated(str(TOK_ZARR / a.category / a.tile_station))
     st = station_pixels(raw, meta)
@@ -198,6 +199,10 @@ def main():
                 if q["obs"].notna().any():
                     panels.append((key, dep, q.sort_values("date")))
         cols.append((g, panels))
+    if len(cols) > 2:            # many separate stations (e.g. TxSON): two balanced columns
+        flat = [p for _, ps in cols for p in ps]
+        h = (len(flat) + 1) // 2
+        cols = [(None, flat[:h]), (None, flat[h:])]
     nrow = max(len(p) for _, p in cols)
     ncol = len(cols)
 
@@ -208,53 +213,82 @@ def main():
     print("\nstation x depth: ubRMSE here vs per_station_oos.csv  (n here / n csv)")
 
     # ── figure ─────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(7.0 * ncol + 0.6, 4.6 + 1.75 * nrow))
-    outer = GridSpec(2, 1, figure=fig, height_ratios=[4.6, 1.75 * nrow], hspace=0.16,
-                     left=0.07, right=0.985, top=0.985, bottom=0.04)
-    top = GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[0], wspace=0.06)
+    fig = plt.figure(figsize=(7.0 * ncol + 0.6, 5.1 + 1.75 * nrow))
+    # rows: images | legend strip | time series -- the legend gets its own space
+    outer = GridSpec(3, 1, figure=fig, height_ratios=[4.6, 0.5, 1.75 * nrow], hspace=0.04,
+                     left=0.07, right=0.985, top=0.975, bottom=0.04)
 
     idx, date, cf = pick_rgb_scene(raw, tok, a.rgb_date)
     print(f"\nRGB scene {date} (cloud fraction {cf:.3f})")
     rgb = s2_rgb(raw, idx)
+    date_s = f"{date[:4]}-{date[4:6]}-{date[6:]}"
 
-    # zoom window: station bounding box + margin, at least 400 m
+    # zoom window: station bounding box + margin, at least 400 m, kept inside the tile.
+    # Stations spread over most of the tile (TxSON) -> no zoom, ONE panel with the markers.
     cx, cy = st["col"].mean(), st["row"].mean()
     half = max(0.5 * max(np.ptp(st["col"]), np.ptp(st["row"])) + 12, 200 / res)
-    box = (cx - half, cy - half, 2 * half)
+    zoom = 2 * half <= 0.55 * npx
+    if zoom:
+        x0 = float(np.clip(cx - half, -0.5, npx - 0.5 - 2 * half))
+        y0 = float(np.clip(cy - half, -0.5, npx - 0.5 - 2 * half))
+        box = (x0, y0, 2 * half)
+    else:
+        box = (-0.5, -0.5, float(npx))
 
-    axA = fig.add_subplot(top[0, 0])
-    axA.imshow(rgb, interpolation="nearest")
-    axA.add_patch(mpatches.Rectangle((box[0], box[1]), box[2], box[2], fill=False,
-                                     ec="white", lw=2.0, zorder=5))
-    axA.add_patch(mpatches.Rectangle((box[0], box[1]), box[2], box[2], fill=False,
-                                     ec="black", lw=0.8, ls="--", zorder=6))
-    scale_bar(axA, 10, npx - 14, 500, res)
-    axA.set_xticks([]); axA.set_yticks([])
-    axA.text(0.0, 1.01, "(a)", transform=axA.transAxes, va="bottom", ha="left")
+    def draw_markers(ax, box):
+        """Marker per group; label pushed radially away from the stations' centroid."""
+        for g in groups:
+            gx, gy = g["col"].mean(), g["row"].mean()
+            ax.plot(gx, gy, marker="o", ms=11, mfc=plot_style_bw.RED, mec="white", mew=2.0,
+                    zorder=7)
+            v = np.array([gx - cx, gy - cy])
+            u = v / np.linalg.norm(v) if np.linalg.norm(v) > 1e-6 else np.array([0.0, 1.0])
+            d = 0.075 * box[2]
+            ax.annotate(group_label(g), (gx, gy), xytext=(gx + u[0] * d, gy + u[1] * d),
+                        ha="left" if u[0] > 0.35 else "right" if u[0] < -0.35 else "center",
+                        va="top" if u[1] > 0.35 else "bottom" if u[1] < -0.35 else "center",
+                        zorder=8, bbox=dict(fc="white", ec="black", lw=0.8, pad=2.5))
 
-    axB = fig.add_subplot(top[0, 1])
-    axB.imshow(rgb, interpolation="nearest")
-    axB.set_xlim(box[0], box[0] + box[2]); axB.set_ylim(box[1] + box[2], box[1])
-    for k, g in enumerate(groups):
-        gx, gy = g["col"].mean(), g["row"].mean()
-        axB.plot(gx, gy, marker="o", ms=11, mfc=plot_style_bw.RED, mec="white", mew=2.0,
-                 zorder=7)
-        dy = -2.2 if gy > cy else 2.2
-        axB.annotate(group_label(g), (gx, gy), xytext=(gx, gy + dy * 1.6), ha="center",
-                     va="bottom" if dy < 0 else "top", zorder=8,
-                     bbox=dict(fc="white", ec="black", lw=0.8, pad=2.5))
-    scale_bar(axB, box[0] + 0.06 * box[2], box[1] + 0.9 * box[2], 100, res)
-    axB.set_xticks([]); axB.set_yticks([])
-    for s in axB.spines.values():
-        s.set_linestyle("--")
-    axB.text(0.0, 1.01, f"(b)   Sentinel-2 true colour, {date[:4]}-{date[4:6]}-{date[6:]}",
-             transform=axB.transAxes, va="bottom", ha="left")
+    if zoom:
+        top = GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[0], wspace=0.06)
+        axA = fig.add_subplot(top[0, 0])
+        axA.imshow(rgb, interpolation="nearest")
+        axA.add_patch(mpatches.Rectangle((box[0], box[1]), box[2], box[2], fill=False,
+                                         ec="white", lw=2.0, zorder=5))
+        axA.add_patch(mpatches.Rectangle((box[0], box[1]), box[2], box[2], fill=False,
+                                         ec="black", lw=0.8, ls="--", zorder=6))
+        scale_bar(axA, 10, npx - 14, 500, res)
+        axA.set_xticks([]); axA.set_yticks([])
+        axA.text(0.0, 1.01, "(a)", transform=axA.transAxes, va="bottom", ha="left")
+
+        axB = fig.add_subplot(top[0, 1])
+        axB.imshow(rgb, interpolation="nearest")
+        axB.set_xlim(box[0], box[0] + box[2]); axB.set_ylim(box[1] + box[2], box[1])
+        draw_markers(axB, box)
+        scale_bar(axB, box[0] + 0.06 * box[2], box[1] + 0.9 * box[2], 100, res)
+        axB.set_xticks([]); axB.set_yticks([])
+        for s in axB.spines.values():
+            s.set_linestyle("--")
+        axB.text(0.0, 1.01, f"(b)   Sentinel-2 true colour, {date_s}",
+                 transform=axB.transAxes, va="bottom", ha="left")
+        first_letter = "c"
+    else:
+        top = GridSpecFromSubplotSpec(1, 3, subplot_spec=outer[0], wspace=0.0)
+        axA = fig.add_subplot(top[0, 1])
+        axA.imshow(rgb, interpolation="nearest")
+        draw_markers(axA, box)
+        scale_bar(axA, npx - 10 - 500 / res, npx - 14, 500, res)    # bottom-right: clear of labels
+        axA.set_xlim(-0.5, npx - 0.5); axA.set_ylim(npx - 0.5, -0.5)
+        axA.set_xticks([]); axA.set_yticks([])
+        axA.text(0.0, 1.01, f"(a)   Sentinel-2 true colour, {date_s}",
+                 transform=axA.transAxes, va="bottom", ha="left")
+        first_letter = "b"
 
     allv = np.concatenate([np.r_[p[2]["pred"].to_numpy(float), p[2]["obs"].to_numpy(float)]
                            for _, ps in cols for p in ps])
     ylo, yhi = ylim_all(allv)
-    ts = GridSpecFromSubplotSpec(nrow, ncol, subplot_spec=outer[1], hspace=0.55, wspace=0.12)
-    letter = ord("c")
+    ts = GridSpecFromSubplotSpec(nrow, ncol, subplot_spec=outer[2], hspace=0.55, wspace=0.12)
+    letter = ord(first_letter)
     first_ax, shaded = None, False
     for j, (g, panels) in enumerate(cols):
         share = None
@@ -297,9 +331,9 @@ def main():
         handles.append(mpatches.Patch(facecolor=OOST_SHADE, alpha=0.12, edgecolor=OOST_SHADE,
                                       ls="--"))
         labels.append("2023–2025 (OOST)")
-    fig.legend(handles, labels, loc="upper center", ncol=len(labels), frameon=False,
-               markerscale=5, bbox_to_anchor=(0.5, outer[1].get_position(fig).y1 + 0.035))
-    fig.supylabel("Soil moisture (m$^3$/m$^3$)", x=0.005, y=outer[1].get_position(fig).y1 / 2,
+    axL = fig.add_subplot(outer[1]); axL.axis("off")
+    axL.legend(handles, labels, loc="center", ncol=len(labels), frameon=False, markerscale=5)
+    fig.supylabel("Soil moisture (m$^3$/m$^3$)", x=0.005, y=outer[2].get_position(fig).y1 / 2,
                   fontsize=plt.rcParams["axes.labelsize"], fontweight="bold")
 
     out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
