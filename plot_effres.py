@@ -22,6 +22,9 @@ import pandas as pd
 
 import plot_style_bw
 from plot_style_bw import BLUE, GREEN, RED
+from splits_config import station_dir_name
+
+SPLITS = Path(__file__).resolve().parent / "csvs" / "station_splits.csv"
 
 DEPTHS = ["0-10", "10-30", "30-100"]
 COLORS = dict(zip(DEPTHS, [BLUE, GREEN, RED]))
@@ -67,13 +70,29 @@ def main():
     var = pd.read_csv(an / "testC_variance.csv")
     obs = pd.read_csv(an / "test0_variogram.csv")
 
+    # model variogram per tile (oos tiles only, as Test C), then mean g and v over tiles per lag bin
     maps = np.load(d / "maps_L0.npy", mmap_mode="r")
+    idx = pd.read_parquet(d / "index_L0.parquet")
+    splits = pd.read_csv(SPLITS)
+    cur = dict(zip(splits.apply(station_dir_name, axis=1), splits["split"]))
+    tiles = [(t, g["idx"].to_numpy()) for t, g in idx.groupby("tile") if cur.get(t) == "oos"]
+    print(f"model variogram over {len(tiles)} oos tiles")
     rng = np.random.default_rng(0)
+    rows = {dep: [] for dep in DEPTHS}
+    for t, ii in tiles:
+        m = np.asarray(maps[np.sort(ii)], np.float32)                # (T, 3, 112, 112)
+        for i, dep in enumerate(DEPTHS):
+            rows[dep].append(map_variogram(m[:, i], rng).assign(tile=t))
     vg = {}
-    for i, dep in enumerate(DEPTHS):
-        vg[dep] = map_variogram(np.asarray(maps[:, i], np.float32), rng)
+    for dep in DEPTHS:
+        per = pd.concat(rows[dep])
+        per.assign(depth=dep).to_csv(an / f"map_variogram_tiles_{dep}.csv", index=False)
+        vg[dep] = per.groupby("bin", observed=True).agg(
+            dist_m=("dist_m", "mean"), g=("g", "mean"), v=("v", "mean"),
+            n=("n", "sum"), n_tiles=("tile", "nunique")).reset_index()
+        vg[dep]["g_frac"] = vg[dep]["g"] / vg[dep]["v"]
         vg[dep].assign(depth=dep).to_csv(an / f"map_variogram_{dep}.csv", index=False)
-        print(dep, vg[dep][["dist_m", "g_frac", "n"]].round(4).to_string(index=False), sep="\n")
+        print(dep, vg[dep][["dist_m", "g_frac", "n_tiles"]].round(4).to_string(index=False), sep="\n")
 
     fig, axs = plt.subplots(1, 3, figsize=(15, 4.6), constrained_layout=True)
 
