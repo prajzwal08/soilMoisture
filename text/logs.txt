@@ -8997,3 +8997,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     (NDVI, NDRE, NDMI, MSI, STR, OPTRAM); (c) C-band scattering schematic: bare soil / sparse canopy / dense forest with
     VV, VH, VH/VV links to SM (direct, via vegetation, none), 1-5 cm soil penetration, forest not reached.
     Jobs 27684566, 27684569, 27684647 -> figures/textbook/sm_signals.{png,pdf}
+  textbook fig v4 (user): two review agents (optical, SAR); user then kept ONLY the spectra panel. Final: journal width
+    7.2 x 3.8 in, 7.5 pt text, all 13 S2 bands, reviewed annotations (chlorophyll absorbs blue + red; NIR mesophyll
+    scattering; SWIR liquid-water absorption; wetting darkens soil, largest in SWIR; B1/B9/B10 atmospheric only;
+    H2O absorption bands), legend above. Bug found: plot_style_bw.apply overwrites a global FS (=1.5) -> renamed to TXT.
+    Jobs 27684724-27684849 -> figures/textbook/sm_signals.{png,pdf}
