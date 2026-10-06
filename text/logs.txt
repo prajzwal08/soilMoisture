@@ -8564,3 +8564,18 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   That is the decoder's centre-vs-edge pattern, not the field. Observed Ne1-Ne2 offset is ~-0.02..-0.03 (Ne1 drier),
   and 2019 (Ne2-only irrigation) is not visible in the means. Within-tile map does NOT separate the two fields.
   §68 driver SMOKE submitted (user OK): job 27653254 (nl_drivers.sh static: py_compile 19 files, ERA5 pixel list, SIF/ERA5/rad/TWSA/soil on 3 smoke tiles, rome 16 CPU)
+  §69.3 pred-vs-obs plot (user "plot the time series against the measurement"): job 27653291
+  27653291 FAILED (sed renamed the script path); resubmitted as 27653318
+  27653318 FAILED (no pyarrow in soilmoisture env); switched to terramind, resubmitted (user "go on") as 27653516
+  §70 REVIEW (2 agents, code + science) -> NOT ready for the full run.
+    Code bugs: (1) coarsen_item averages fine values but leaves valid/age/orbit channels at 20 m and puts block means
+      into invalid pixels (training always had 0 there) -> off-distribution, likely inflates S at b=2;
+      (2) LULC block MODE shifts the class mix (+PAD votes) instead of removing detail -> coarsen the 8-ch LULC embedding instead;
+      (3) Test C with <5 tiles marks every block "ok" (NaN lo) -> L_C = 2240 m by default; (4) the same pair is counted in up to 6 tiles;
+      (5) cross-tile bootstrap clusters on station a only. Minor: S1 averaged in dB not linear; soil/anchor uneven adaptive bins.
+    Science: L_eff = max() silently drops undetermined tests and mixes bound types -> report each L with CI, "undetermined" when unpowered;
+      Test A corr hides amplitude (pred Δ 3-7x smaller than obs) -> add MSE skill vs tile-constant map + slope, and Test 0 ceiling;
+      Test C -> equivalence test with a preset margin; control too easy (white noise, tiny obs noise) -> correlated error, nugget-level noise, sigma sweep;
+      key smoke clue: flattening ALL inputs (b=112) leaves map SD ~unchanged (0.0267 vs 0.0273) -> structure is positional (§56);
+      add: decoder-only null (Test A on map_112), translation consistency (same station at centre vs off-centre), shuffled-pattern null,
+      split by distance to nearest train station (leakage). Expected honest headline: no correct detail below the tile, L_eff >= ~1.6-2.2 km (lower bound).
