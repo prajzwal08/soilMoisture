@@ -8982,3 +8982,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Shrub-Savanna SWIR B11 -2 (refl x100) at 3-5 d (significant); optical/NDVI/NDMI noise at n=7/macro;
     Forest "peaks" at 37-39 d sit in the thin last bin -> artefacts. Full run awaiting OK.
   User: "NO DELETE IT" -> keep the delete approach (no skip-list in convert_satellite_to_zarr). prep 27682356 keeps deleting.
+2026-10-06 ~22:27 §68 CANCELLED by user ("cancel this job, we start tomorrow"): prep 27682356 (1:35:58, delete at
+  13,245 / 265,048), tok 27682358, post 27682359. State for tomorrow: cm DONE for all 688 tiles (27681280 t1-7 +
+  27682355 t0); refetch done; ~13.2k rejected S2 TIFs already deleted, ~251.8k still on disk; raw zarr / tokens / post NOT
+  started. Resume = resubmit prep (re-runs analyze ~80 min on remaining scenes, then delete, then raw zarr) -> tok -> post.
