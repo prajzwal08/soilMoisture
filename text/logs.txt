@@ -8957,3 +8957,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 — terramind_value sample: prep+render 27683739 (UMAP 839 stations: A 4, B 205, C 246, D 381, E 3; S2 L12 pca .088/.071/.045; DEM .140/.105/.060, LULC .200/.104/.076), layout fix render 27683765. Observed: L12 token maps nearly identical across the 4 seasons (static landscape, not seasonal); UMAP Koppen separation partial (C right, B/D mixed).
 2026-10-06 — terramind_value: panel (c) now UMAP coloured by station mean SM 0-10 cm (user), prep+render 27683778 (assets add umap_sm), spacing render 27683883. Pattern in (c) is weak (matches §27b: kNN skill 9.8% global vs 23.4% tabular).
 2026-10-06 — terramind_value render 27684023 (prep, no UMAP): added (b) S1 ascending VV + L12 tokens for the pass nearest each S2 date (2019-01-08, 03-21, 06-13, 09-29; pca .112/.076/.070); static row is now (c); UMAP behind --umap, not drawn (user: later; old assets kept as assets_with_umap_20261006.npz). Fixed 4 double-encoded comment lines (a perl \x{} edit without -CSD had re-encoded the file).
+
+2026-10-06 — SESSION SUMMARY (figures). architecture_s48.png reworked end to end (cloud mask
+  SEnSeIv2 panels + dashed grey mask arrows, asinh fine DEM, per-input stems/encoders, transformer
+  blocks, key-padding slot bars with ERA5 token-dropout ticks, dropout terminology, green input
+  frames, three-section gaps, fine lane = latest scene <= D badges); runbook §71 (S2/S1 history
+  token dropout) PLANNED; new plot_terramind_value.py (S2/S1/static token maps; UMAP deferred).
+  Last commits: ace7bea..9fda7f0. Nothing training-related submitted.
