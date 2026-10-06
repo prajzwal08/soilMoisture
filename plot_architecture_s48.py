@@ -141,19 +141,22 @@ def prep(day: str) -> None:
     anc = max(clear or cands, key=lambda c: (c[0], -ANCHOR_ORBIT_ID[c[1]]))
     a["anchor_age"], a["anchor_orbit"] = (D - _ymd(anc[0])).days, anc[1]
 
-    # cloud-mask panel: the most recent S2 scene in the window that is 20-60 % cloud/shadow,
-    # with its 14x14 token mask exactly as dataset._cm_token_mask computes it
+    # cloud-mask panel: every S2 scene goes through SEnSeIv2 -> shown as a stack of the 3 most
+    # recent scenes in the window with 5-70 % cloud/shadow (so the grey is visible), each with
+    # its 14x14 token mask exactly as dataset._cm_token_mask computes it
     if cm_idx:
-        best = None
+        picks = []
         for d in rdates:
             if d.isdigit() and w0 <= int(d) <= w1 and d in cm_idx:
                 cmk = cm_arr[cm_idx[d], :224, :224]
                 f = np.isin(cmk, [3, 4, 5]).mean()                # thin / thick cloud, shadow
-                if 0.2 <= f <= 0.6 and (best is None or d > best[0]):
-                    best = (d, cmk)
-        if best:
-            a["cm_date"], a["cm_rgb"] = best[0], s2_rgb(raw, rdates.index(best[0]))
-            a["cm_tok"] = _cm_token_mask(best[1][None])[0]
+                if 0.05 <= f <= 0.7:
+                    picks.append((d, cmk))
+        picks = sorted(picks)[-3:]
+        if picks:
+            a["cm_dates"] = np.array([d for d, _ in picks])
+            a["cm_rgbs"] = np.stack([s2_rgb(raw, rdates.index(d)) for d, _ in picks])
+            a["cm_toks"] = _cm_token_mask(np.stack([c for _, c in picks]))
 
     # drivers in the same window [D-364, D]
     def window(vals, dints):
@@ -383,20 +386,14 @@ def render() -> None:
 
     # ── lane A: drivers ────────────────────────────────────────────────────────────────────
     pw, px = 8.2, [2.0, 11.6, 21.2, 30.8]                    # lanes B and C
-    # the 18 ERA5-Land columns (dataset.ERA5_VARS), one MLP input row per day
-    for k, s_ in enumerate(("ERA5-Land inputs, 18 per day:",
-                            "T2m · Td2m · u10 · v10 · psurf",
-                            "   daily min / mean / max (15)",
-                            "precip · SW↓ · LW↓  daily sum (3)")):
-        ax.text(33.8, 84.4 - k * 1.75, s_, ha="left", va="center",
-                fontsize=FS_B if k else FS_T, zorder=6)
-    # ERA5-Land: the 18 columns as 8 sparklines (mean line in a min-max band, or a daily sum)
+    # ERA5-Land: the 18 columns (dataset.ERA5_VARS) as 8 sparklines (mean line in a min-max
+    # band = 3 columns, or a daily sum = 1); the daily statistic is written under each name
     e5, age = a["era5"], -a["era5_age"]
     rows = [("T2m", (0, 1, 2)), ("Td2m", (3, 4, 5)), ("u10", (6, 7, 8)), ("v10", (9, 10, 11)),
             ("psurf", (12, 13, 14)), ("precip", 15), ("SW↓", 16), ("LW↓", 17)]
     for k, (name, col) in enumerate(rows):
         y0 = 84 - (k + 1) * 2.5 + 0.2
-        t = inset(fig, 6.0, y0, 14.0, 2.3)
+        t = inset(fig, 7.6, y0, 12.6, 2.3)
         if isinstance(col, tuple):
             t.fill_between(age, e5[:, col[1]], e5[:, col[2]], color=LBLUE, lw=0)
             t.plot(age, e5[:, col[0]], color="#3776AB", lw=0.7)
@@ -405,8 +402,10 @@ def render() -> None:
         else:
             t.plot(age, e5[:, col], color="#3776AB", lw=0.7)
         t.set_xlim(-365, 0)
-        ax.text(5.6, y0 + 1.15, name, ha="right", va="center", fontsize=FS_B, zorder=6)
-    label(ax, 11.0, 85.6, "ERA5-Land · 365 d × 18")
+        ax.text(7.2, y0 + 1.6, name, ha="right", va="center", fontsize=FS_B, zorder=6)
+        ax.text(7.2, y0 + 0.45, "min·mean·max" if isinstance(col, tuple) else "daily sum",
+                ha="right", va="center", fontsize=7, color=FROZEN_EDGE, zorder=6)
+    label(ax, 13.9, 85.6, "ERA5-Land · 365 d × 18")
     # SIF: the last 50 values span only ~7 weeks, so zoom to them (on a 365-d axis they are a
     # smudge at the right edge); TWSA: monthly points joined, last 45 d shaded = not released
     o = np.argsort(-a["sif_age"])
@@ -465,7 +464,7 @@ def render() -> None:
     label(ax, 68.25, 59.6, "196 × 768 · 160 m")
     path(ax, [(74.5, 51.25), (86, 51.25)])
     label(ax, 80.25, 53.2, "pyramid ×4")
-    label(ax, 80.25, 49.3, "anchor 196")
+    label(ax, 79.6, 49.3, "anchor 196")
     box(ax, 62, 38.3, 76, 42.8, ["satellite modality", "dropout 0.3"], kind="plain",
         dashed=True, fs=FS_B)
 
@@ -523,7 +522,16 @@ def render() -> None:
     s2f = a["s2_rgb"][-1][::2, ::2]
     image(ax, s2f, px[0], yc0, pw, pw)
     image(ax, a["s1_vv"][-1][::2, ::2], px[1], yc0, pw, pw, cmap="gray", vmin=0, vmax=1)
-    image(ax, a["dem_hs"][::2, ::2], px[2], yc0, pw, pw, cmap="gray")
+    # what the DEM stem actually sees (dataset.fine_dem_static): 2x2 mean to 20 m, then
+    # asinh((h - tile mean) / 1 m) / 4, clipped +/-2.5; nodata (<= -1000 m or non-finite) = 0
+    dem = np.asarray(a["dem"], np.float64)
+    v = np.isfinite(dem) & (dem > -1000)
+    s_ = np.where(v, dem, 0).reshape(112, 2, 112, 2).sum((1, 3))
+    n_ = v.reshape(112, 2, 112, 2).sum((1, 3))
+    p_ = np.where(n_ > 0, s_ / np.maximum(n_, 1), np.nan)
+    rel = np.clip(np.arcsinh((p_ - np.nanmean(p_)) / 1.0) / 4.0, -2.5, 2.5)
+    lim = float(np.nanpercentile(np.abs(rel), 98))
+    image(ax, np.nan_to_num(rel), px[2], yc0, pw, pw, cmap="RdBu_r", vmin=-lim, vmax=lim)
     image(ax, lulc, px[3], yc0, pw, pw, cmap=cm, norm=BoundaryNorm(np.arange(-.5, 11), 11))
     # name + what dataset.py / model.py do to it before the stem (fine_*_scene, _lulc_20m)
     for x, s_, n_ in zip(px, ["S2 on D", "S1 on D", "DEM 20 m", "LULC 10 m"],
@@ -536,35 +544,40 @@ def render() -> None:
     # dataset.py CM_BAD_CLASSES = thin / thick cloud, shadow, nodata; a 160 m token is valid
     # at <= 1 % bad pixels (_cm_token_mask); fine S2 pools clear pixels only (fine_s2_scene).
     # scene -> [SEnSeIv2 on the arrow] -> token mask; the model is named on the arrow, no box
+    # every S2 scene -> SEnSeIv2 -> its token mask: a stack in, the same stack masked out.
+    # The mask (grey rejected tokens + white 14x14 grid) is baked into each RGB so the stacked
+    # layers occlude each other correctly.
     xs2 = px[0] + pw / 2
-    cs, cy0 = 7.4, 29.8
-    xa, xb = xs2 - cs / 2, xs2 - cs / 2 + cs + 10.0           # scene / token-mask panels
-    path(ax, [(xs2, bus_b), (xs2, cy0 + cs)])                # S2 L2A -> cloudy scene
+    cs, off, cy0 = 6.4, 0.8, 29.4
+    xa, xb = xs2 - (cs + 2 * off) / 2, xs2 - (cs + 2 * off) / 2 + cs + 2 * off + 10.0
+    path(ax, [(xs2, bus_b), (xs2, cy0 + cs + 2 * off)])      # S2 L2A -> cloud model
     path(ax, [(xs2, cy0), (xs2, 26.4)])                      # pixel mask -> fine S2
-    label(ax, xs2 + 1.0, 28.5, "pixel mask", ha="left")
-    path(ax, [(xa + cs, 33.5), (xb, 33.5)])
-    label(ax, (xa + cs + xb) / 2, 35.0, "SEnSeIv2", fs=FS_B)
-    label(ax, (xa + cs + xb) / 2, 32.0, "SegFormer-B2", fs=FS_B - 1)
-    if "cm_rgb" in a:                                        # one cloudy scene + its token mask
-        image(ax, a["cm_rgb"], xa, cy0, cs, cs)
-        image(ax, a["cm_rgb"], xb, cy0, cs, cs)
-        rej = np.kron(~a["cm_tok"], np.ones((16, 16), bool))
-        ov = np.zeros(rej.shape + (4,))
-        ov[rej] = (0.10, 0.10, 0.10, 0.92)
-        ax.imshow(ov, extent=(xb, xb + cs, cy0, cy0 + cs), zorder=4.5,
-                  interpolation="nearest")
-        g = cs / 14
-        for k in range(1, 14):
-            ax.add_line(Line2D([xb + k * g] * 2, [cy0, cy0 + cs], color="white", lw=0.2,
-                               zorder=4.6))
-            ax.add_line(Line2D([xb, xb + cs], [cy0 + k * g] * 2, color="white", lw=0.2,
-                               zorder=4.6))
-        dd = str(a["cm_date"])
-        label(ax, xb + cs / 2, 28.7, f"{dd[:4]}-{dd[4:6]}-{dd[6:]} · kept "
-              f"{int(a['cm_tok'].sum())}/196", fs=FS_B - 1)
-    path(ax, [(xb + cs, 33.5), (93, 33.5), (93, 42)])        # token mask -> token sequence
-    label(ax, 70, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
-    label(ax, 70, 35.0, "→ S2 history · anchor · pyramid")
+    label(ax, xs2 + 1.0, 28.0, "pixel mask", ha="left")
+    xm0, xm1 = xa + cs + 2 * off, xb
+    path(ax, [(xm0, 33.5), (xm1, 33.5)])
+    label(ax, (xm0 + xm1) / 2, 35.0, "SEnSeIv2", fs=FS_B)
+    label(ax, (xm0 + xm1) / 2, 32.0, "SegFormer-B2", fs=FS_B - 1)
+    if "cm_rgbs" in a:
+        rgbs = np.asarray(a["cm_rgbs"], np.float32)
+        if rgbs.max() > 1.0:                               # stored as uint8 0-255
+            rgbs = rgbs / 255.0
+        masked = []
+        for rgb, tok in zip(rgbs, a["cm_toks"]):
+            rej = np.kron(~tok, np.ones((16, 16), bool))
+            m = rgb.copy()
+            m[rej] = 0.1 * m[rej] + 0.9 * np.array([0.62, 0.62, 0.62])
+            m[::16, :] = 1.0
+            m[:, ::16] = 1.0
+            masked.append(m)
+        stack(ax, list(rgbs), xa, cy0, cs, off=off)
+        stack(ax, masked, xb, cy0, cs, off=off)
+        kept = " · ".join(str(int(t.sum())) for t in a["cm_toks"])
+        label(ax, xb + cs / 2 + off, 27.9, f"tokens kept {kept} /196", fs=FS_B - 1)
+    # the mask acts INSIDE the pyramid pooling (dataset._cpu_pyramid_pool: masked mean over
+    # valid tokens per window) and in scene / anchor selection -> arrow onto the pyramid step
+    path(ax, [(xb + cs + 2 * off, 33.5), (84.8, 33.5), (84.8, 51.25)])
+    label(ax, 61, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
+    label(ax, 61, 35.0, "masked mean in pyramid ×4 · picks the clear anchor")
     # one 3x3 stem per input (model.py stem_s2 / stem_s1 / stem_dem / stem_lulc), then concat
     bus_c = 5.5
     for x, nm, ch in zip(px, ["S2", "S1", "DEM", "LULC"],

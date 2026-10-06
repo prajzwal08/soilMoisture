@@ -8896,3 +8896,14 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   prep 27682356 -> tok 27682358 (x16) -> post 27682359, all afterok.
 
 2026-10-06 — architecture_s48.png render 27682346: SEnSeIv2 / SegFormer-B2 written on the scene -> token-mask arrow (grey box removed); rejected-token shading 0.10 grey, alpha 0.92 (was 0.30, 0.8).
+
+2026-10-06 — architecture_s48.png prep+render 27682488, renders 27682642/27682691/27682702:
+  - cloud panel = stack in (3 most recent window scenes with 5-70 % cloud) -> SEnSeIv2 / SegFormer-B2
+    on the arrow -> same stack with grey rejected tokens + 14x14 grid (kept 173 · 142 · 141 /196).
+    27682488 drew the stacks WHITE (uint8 RGB cast to float without /255) -> fixed.
+  - token-mask arrow now ends on the pyramid x4 arrow (masked mean in dataset._cpu_pyramid_pool),
+    label "masked mean in pyramid x4 · picks the clear anchor".
+  - fine DEM panel = asinh((h - tile mean)/1 m)/4 at 20 m (fine_dem_static), RdBu_r, was hillshade.
+  - ERA5 "inputs, 18 per day" text block removed; per-row statistic (min·mean·max / daily sum)
+    under each sparkline name; sparklines shifted right to fit.
+  - assets backups: assets.npz.bak_20261006, assets.npz.bak_20261006b.
