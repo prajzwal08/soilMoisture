@@ -8873,3 +8873,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
         (0-10 0.055, 10-30 0.10, 30-100 0.085); observed TxSON pairs 0-10: 0.15-0.20 at 250 m-3 km (n = 2/9/3/1).
     Reading: the map's range is ~200-250 m (the token grid); within-tile it changes ~3x less than real stations do.
     One tile only; the full §70 run (effres_maps.sh + effres_analysis.sh) is NOT submitted.
+
+2026-10-06 20:30 §68.7 FULL TOKENS: cm array 27681280 tasks 1-7 COMPLETED (~33 min); task 0 FAILED (21 min) on ONE
+  truncated S2 TIF: NLGRID_T103_084/S2L2A/20160714.tif = 5,590 B, written 13:57 (S2 re-download window), GDAL
+  "TIFFReadDirectory: Failed to read directory at offset 3560". Task 0: 57,525 masks written, errors 1, skipped 0.
+  afterok chain prep 27681281 / tok 27681282 / post 27681284 auto-CANCELLED. Scanning all S2 TIFs < 20 KB for more.
