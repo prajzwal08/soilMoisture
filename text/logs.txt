@@ -8555,3 +8555,11 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Fixes: CIs need >= 5 tiles (1-tile CI was a point and declared L_A = 438 m and "worse" at 40 m);
       L_C = largest block not significantly worse than 20 m (no prefix rule: noise averaging makes it non-monotone).
   §69.3 Ne1+Ne2 pixel readout SUBMITTED (user "lets ... predict"): job 27653186, gpu_h100 1 GPU <=1 h
+  §69.3 job 27653186 DONE (1 min, H100). ERA5 values18 Ne1 == Ne2 on all 2922 days (max |diff| 0) -> SAME ERA5 cell.
+  Pixels: Ne2 at (56,83) in Ne1's tile, Ne1 at (56,29) in Ne2's tile (546 m). dataset.py md5 954b8934 (uncommitted §68).
+  Predicted Ne1-Ne2 WITHIN one tile (mean / std / corr):
+    tile Ne1: 0-10 +0.0052/0.013/0.967  10-30 +0.0085/0.019/0.933  30-100 +0.0050/0.013/0.968
+    tile Ne2: 0-10 -0.0040/0.016/0.940  10-30 -0.0043/0.021/0.912  30-100 -0.0044/0.014/0.959
+  READ: the sign FLIPS with the tile -> the centre pixel is always ~0.004-0.009 wetter than the off-centre one.
+  That is the decoder's centre-vs-edge pattern, not the field. Observed Ne1-Ne2 offset is ~-0.02..-0.03 (Ne1 drier),
+  and 2019 (Ne2-only irrigation) is not visible in the means. Within-tile map does NOT separate the two fields.
