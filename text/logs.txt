@@ -8450,3 +8450,9 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     Check: eval vs label day counts agree to <0.1% for Val/OOS; OOT/OOST lower by the <365-post-cut exclusion.
     Caveat: Train bar counts all 573 split stations; the dataset admits 565 (§51.1, 8 without pre-2023 S2).
   data_overview: 'stn' spelled out as 'stations', 'yr' as 'years', two-line counts in (d) (jobs 27648383, 27648396).
+  SIF global L2B keep (§68.12) DONE: array 27629867_[0-7] all COMPLETED 0:0 (10-05 22:42-22:47, 5-9 min/task).
+    Files per year 2018..2025 = 245/365/366/365/365/365/366/365 (2018 starts 05-01), 0 files < 100 MB,
+    ~910 GB in /projects/prjs1968/sif_tropomi_l2b. 2018 ledger: 241 done + 4 exists + 1 no_data.
+    Not yet: open-every-file check + chmod -R a-w.
+  Budget (accinfo): GPU 706,012 of 800k left, CPU 192,181 of 200k left. §68 estimate ~2.9k GPU + ~3.9k CPU.
+  Storage §68: ~1.5 TB scratch (2.1/8 TiB used). User: "ok lets do Overijssel" -> start §68.
