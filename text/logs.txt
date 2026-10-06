@@ -8642,3 +8642,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     late-Aug; model does not follow them. Gauges: Ne1 = Ne2 incl. 30 mm pivot spikes (Jul 9/16/30) -> Ne1 copied from Ne2.
     ERA5 Aug 20/26 = 45/52 mm vs gauges 9/16 mm.
   §69.5 Jun-Aug 2019 diff figure + grey boxes where ERA5, Ne1, Ne2 all < 1 mm (user asked): job 27656397
+  §68 status check 13:05: driver smoke 27655028 COMPLETED 0:0 (7 min): ERA5 meteo+rad 3 px x 10 yr ok=30/30 (HDF5 tmp-file
+    diag messages are noise), fan-out 87 files -> 3 tiles, soil 3/3, 37 nc per tile. Full driver run NOT submitted (needs OK).
+    Imagery S1+LULC 27652836: 5/12 tasks done, rest at ~48/57. S2+DEM 27652835: ~241/688 tiles processed (~2 min/tile/task,
+    ~1.5 h left). 16 tiles status=error = MPC STAC "rate limit exceeded" at the simultaneous 11:41 start (no scenes); 2 partial
+    (23 failed scenes). 403s since 12:26 are retried with fresh signatures and mostly recover. Resubmitting s2 array retries
+    error+partial tiles (checkpoint counts only done/no_data).
