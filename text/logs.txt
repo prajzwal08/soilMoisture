@@ -8641,3 +8641,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     contrast, opposite sign to the water. Observed Ne2-wetter dips follow the Ne2 pivot dates (Jul 8/15/29, Aug 9) and the dry
     late-Aug; model does not follow them. Gauges: Ne1 = Ne2 incl. 30 mm pivot spikes (Jul 9/16/30) -> Ne1 copied from Ne2.
     ERA5 Aug 20/26 = 45/52 mm vs gauges 9/16 mm.
+  §69.5 Jun-Aug 2019 diff figure + grey boxes where ERA5, Ne1, Ne2 all < 1 mm (user asked): job 27656397

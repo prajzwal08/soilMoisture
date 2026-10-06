@@ -152,6 +152,13 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
             fz = ts.loc[lo:hi] <= 0
             for d in fz.index[fz.values]:
                 ax.axvspan(d, d + pd.Timedelta("1D"), color="0.90", lw=0, zorder=0)
+        if precip is not None:                           # ERA5, Ne1 and Ne2 gauges all < 1 mm
+            days = pd.date_range(lo, hi)
+            dry = np.ones(len(days), bool)
+            for k in ("ERA5", "US-Ne1", "US-Ne2"):
+                dry &= precip[k].reindex(days).fillna(np.inf).values < 1.0
+            for d in days[dry]:
+                ax.axvspan(d, d + pd.Timedelta("1D"), color="0.85", lw=0, zorder=0)
         o, p, w = series[dep]
         ax.axhline(0, color="black", lw=1.0, zorder=1)
         o_d = o.asfreq("D")                              # NaN gaps break the line
@@ -190,6 +197,9 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
         if precip is not None:
             h3, l3 = ax_all[4].get_legend_handles_labels()
             h, l = h + h3, l + l3
+            from matplotlib.patches import Patch
+            h.append(Patch(color="0.85"))
+            l.append("No P (ERA5, Ne1, Ne2 < 1 mm)")
     top.legend(h, l, loc="lower left", bbox_to_anchor=(0, 1.02),
                ncol=2 if acq is None else 3, frameon=False)
     fig.align_ylabels(fig.axes)
