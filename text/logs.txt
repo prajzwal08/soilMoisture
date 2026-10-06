@@ -8634,3 +8634,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     READ: observed Ne2 wets 0.05-0.08 more than Ne1 during its irrigation; model gives ~0-0.03 and only in
     windows with an S1 pass (Jul 9, Aug 2); without S1 it is ~0 or the wrong sign.
     CONFIRMED: 2019 Ne1 gauge copies Ne2 pivot spikes (both 30.5 mm max, Ne1 not irrigated) -> Ne1 P gap-filled from Ne2.
+  §69.5 Ne1-Ne2 diff + S1/S2/irr strip + precip panel, Jun-Aug 2019 (user asked, style of mead_diff_Ne1_Ne2_2019_acq): job 27656121
