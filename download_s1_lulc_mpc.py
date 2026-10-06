@@ -21,6 +21,8 @@ Usage:
 
 import csv
 import json
+
+from download_s2_mpc import write_metadata
 import logging
 import os
 os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
@@ -481,10 +483,9 @@ def process_station(row: pd.Series, catalog_mpc, skip_s1rtc: bool = False) -> di
     _run("lulc", download_lulc, station_dir, catalog_mpc, epsg, bounds, bbox,
          start_year, end_year, meta)
 
-    # Write metadata.json
+    # Write metadata.json (merged under a lock: the S2 downloader may write the same file concurrently, §68)
     try:
-        with open(station_dir / "metadata.json", "w") as f:
-            json.dump(meta, f, indent=2)
+        write_metadata(station_dir, meta)
     except Exception as exc:
         logging.warning(f"  {station_id}: metadata.json write failed: {exc}")
 

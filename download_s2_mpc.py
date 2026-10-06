@@ -21,6 +21,7 @@ Usage:
 """
 
 import csv
+import fcntl
 import json
 import logging
 import os
@@ -381,12 +382,27 @@ def process_station(row: pd.Series, catalog) -> dict:
 
     log["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-    _tmp = station_dir / "metadata.json.tmp"
-    with open(_tmp, "w") as f:
-        json.dump(meta, f, indent=2)
-    _tmp.rename(station_dir / "metadata.json")
+    write_metadata(station_dir, meta)
 
     return log
+
+
+def write_metadata(station_dir: Path, meta: dict):
+    """Merge `meta` into station_dir/metadata.json under a lock (§68: S2 and S1 run concurrently on the same
+    station dir; a plain overwrite let the S1 writer drop the S2L2A section). Per-scene dicts are merged, so a
+    resumed run keeps the entries of scenes it skipped."""
+    path = station_dir / "metadata.json"
+    with open(station_dir / ".metadata.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        old = json.loads(path.read_text()) if path.exists() else {}
+        for k, v in meta.items():
+            if isinstance(v, dict) and isinstance(old.get(k), dict):
+                old[k].update(v)
+            else:
+                old[k] = v
+        tmp = station_dir / "metadata.json.tmp"
+        tmp.write_text(json.dumps(old, indent=2))
+        tmp.rename(path)
 
 
 # ============================================================

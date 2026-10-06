@@ -42,15 +42,23 @@ def check_s2(tile_dir, store, out):
     shared = [d for d in sd if d in fresh]
     out["s2_store_n"], out["s2_shared"] = len(sd), len(shared)
     out["s2_store_missing_in_fresh"] = len(set(sd) - set(fresh))
-    same, maxd = [], 0
-    for d in shared[:: max(1, len(shared) // 25)]:
+    same, maxd, bad = [], 0, []
+    scenes = meta.get("S2L2A", {})
+    for d in shared:                                                # every shared scene, so mismatches are listed
         with rasterio.open(fresh[d]) as src:
             a = src.read().astype(np.int32)
         b = store["s2/data"][sd.index(d)].astype(np.int32)
         same.append(float((a == b).mean()))
         maxd = max(maxd, int(np.abs(a - b).max()))
+        if same[-1] < 0.99:
+            m = (a != 0) & (b != 0)
+            bad.append(f"{d}:pb{scenes.get(d, {}).get('processing_baseline', '?')}"
+                       f":store-fresh={int(np.median((b - a)[m])) if m.any() else 'nodata'}")
     out["s2_identical_frac_min"] = round(min(same), 4) if same else None
     out["s2_maxabs"] = maxd
+    out["s2_n_mismatch"] = len(bad)
+    if bad:
+        print(f"{tile_dir.name} S2 mismatching scenes ({len(bad)}): " + " ".join(bad))
 
 
 def check_s1(tile_dir, store, out):
@@ -116,7 +124,7 @@ def main():
     ok = True
     if "s2" in args.modalities:
         ok &= bool((res.s2_n > 0).all()) and bool((res.s2_negative_px_sampled == 0).all())
-        ok &= bool((res.s2_failed.astype(str).isin(["0", "n/a"])).all())
+        ok &= bool((res.s2_failed.astype(str) == "0").all())        # "n/a" = metadata lost -> unverified, FAIL
         c = res[res.control_of != ""]
         if "s2_identical_frac_min" in c:
             ok &= bool((c.s2_identical_frac_min.fillna(0) >= 0.99).all())

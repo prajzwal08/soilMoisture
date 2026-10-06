@@ -8476,3 +8476,10 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     bias_groups (OOS bias vs land cover / climate / texture / DEM: none beats random); data_overview (map, split
     timeline, record length, data points); split_flowchart (QC + split assignment). Open: OOS/OOST metric split in
     tile panels, 573 vs 565 train and 224 vs 222 OOS numbers for the paper, tile spatial maps (GPU).
+  §68 imagery smoke 27648625 FAILED gate (13:56): S2 on control ITCSM-08b had scene(s) offset by EXACTLY 1000 DN vs store
+    (07b 79/79 identical; S1 med 0.002 dB both; DEM 0 m). Hypothesis: store = harmonize_s2_pre2022.py (+1000 by DATE <20220125)
+    vs NL/backfill = by BASELINE (<04.00) -> pre-2022 scenes reprocessed to pb 05.xx are double-offset in the store.
+    Second bug: S2 and S1 run concurrently and BOTH overwrote metadata.json -> S2 section + S2_failed_scenes lost (gate read "n/a").
+    Fixed: write_metadata() merge under fcntl lock (download_s2_mpc.py, used by download_s1_lulc_mpc.py); verify lists every
+    mismatching scene with baseline + store-fresh offset; "n/a" now FAILS. Deleted the 3 smoke tiles' fresh S2L2A + smoke S2 ckpt.
+  §68 imagery smoke RE-SUBMITTED (user "go on"): job 27651557
