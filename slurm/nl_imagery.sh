@@ -49,6 +49,7 @@ EOF
 else
     export SOIL_DATA_ROOT=${NL}/data SOIL_TASK_INDEX=${SLURM_ARRAY_TASK_ID} SOIL_N_TASKS=${2:?n_tasks}
     if [[ ${MODE} == s2 ]]; then
+        sleep $(( ${SLURM_ARRAY_TASK_ID} * 90 ))   # stagger STAC searches (§68: rate limit at simultaneous start)
         $PY download_s2_mpc.py
     else
         $PY download_s1_lulc_mpc.py

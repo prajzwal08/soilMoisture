@@ -8687,3 +8687,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     signature every attempt" + TOKEN_CACHE.clear() is a NO-OP here. backfill_s2_download.py is fine (client opened unsigned).
     Fix: open the client without the modifier (sign only in _load). Failed scenes are not written; tiles go 'partial' and a
     resubmit retries them. S1 (27652836) unaffected: 9/12 done. Awaiting user OK to cancel S2 array, fix, resubmit staggered.
+  §68 S2 FIX (user "go on, download"): cancelled 27652835 at 2:16 (~241+/688 tiles done before 12:26 SAS expiry).
+    download_s2_mpc.py: catalog opened WITHOUT modifier=sign_inplace -> items unsigned, _load() signs fresh each attempt.
+    slurm/nl_imagery.sh s2: tasks staggered sleep TASK*90 s (MPC STAC rate limit at simultaneous start).
+    RESUBMITTED S2+DEM array: job 27659323 [0-7] (resumes; retries error/partial tiles). Full drivers still NOT submitted (needs OK).

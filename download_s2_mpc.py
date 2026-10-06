@@ -438,7 +438,9 @@ def main():
     completed = [0]
 
     def _process_one(row):
-        cat = pystac_client.Client.open(MPC_URL, modifier=planetary_computer.sign_inplace)
+        # §68: NO sign_inplace modifier -- signed items carry a fixed SAS expiry that sign() cannot refresh;
+        # items stay unsigned and _load() signs a copy fresh on every attempt
+        cat = pystac_client.Client.open(MPC_URL)
         return process_station(row, cat)
 
     with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
