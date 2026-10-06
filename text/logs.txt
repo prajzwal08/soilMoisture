@@ -8610,3 +8610,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Ne1 P (P_PI_F) likely gap-filled from Ne2 in 2019; check P_PI_F_1_1_1 vs P_PI_F_2_2_1 and raw P.
   (4) ERA5 ~20-25 % wetter than gauges; Jan-Apr ERA5 accumulates ~2x the gauges (snow undercatch by gauges).
   (5) Ne3 gauge ~100 mm/yr below Ne1/Ne2 outside irrigation days too -> gauge/siting difference.
+  GEE re-authenticated by user 12:37 (credentials refreshed). §68 driver smoke RE-SUBMITTED: job 27655028
