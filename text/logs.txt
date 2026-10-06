@@ -8493,3 +8493,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   FOUND: BIF irrigation log says "No irrigation over Towers" for some events -> per-year check before use.
   New: preprocessing_mead_base.py, analyse_mead_irrigation.py, slurm/mead_irrigation_step1.sh; runbook §69.
   NOT submitted, waiting for the user's OK.
+  §69 step 1+2 SUBMITTED (user "yes"): job 27651792 (slurm/mead_irrigation_step1.sh 2022)
