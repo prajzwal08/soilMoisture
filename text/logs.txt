@@ -8726,3 +8726,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     S2 Jun-Sep (n 24): 0-10 -0.07 / +0.22, 10-30 +0.34 / +0.22;  Oct-May (n 32): +0.30 / +0.17, +0.28 / +0.03
     S1 Jun-Sep (n 9):  0-10 +0.22 / -0.48, 10-30 +0.28 / -0.57;  Oct-May (n 11): +0.05 / -0.35, -0.12 / -0.42
   READ: no season shows a usable relation; S2 summer 10-30 obs +0.34 is the strongest (n 24, weak); model vs S1 negative in both seasons.
+  §69.5 patch-location figure (Ne1 (7,7), Ne2 (7,10), ref (7,4) on 2019-07-22 RGB+NDVI) (user asked): job 27661269
+  27661269 DONE (17 s): figures/mead/mead_patches_20190722.png. Ref (7,4) = west edge of the Ne1 pivot, road on its left edge; towers sit on the top edge of row 7 (Ne1 at the corner of (7,7)).
