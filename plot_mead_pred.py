@@ -96,9 +96,53 @@ def figure(obs, own, off, lo, hi, tag):
     print(f"figure: {FIG_DIR}/mead_pred_vs_obs_{tag}.png")
 
 
+def diff_figure(obs, own, df, lo, hi, tag):
+    """Ne1 - Ne2 per depth: observed (dots), model own-tile centres (solid),
+    model both pixels of Ne1's tile (dashed)."""
+    plot_style_bw.apply(globals(), "paper")
+    a, b = ST
+    within = (df[df["tile"] == a].pivot_table(index=["date", "depth"], columns="station",
+                                              values="pred"))
+    within = (within[a] - within[b]).unstack("depth")
+    fig, axes = plt.subplots(3, 1, figsize=(12 if tag == "full" else 9, 8), sharex=True)
+    series = {}
+    for dep in BINS:
+        series[dep] = ((obs[a][0][dep] - obs[b][0][dep]).loc[lo:hi],
+                       (own[a][dep] - own[b][dep]).loc[lo:hi], within[dep].loc[lo:hi])
+    lim = np.nanpercentile(np.abs(pd.concat([s for t in series.values() for s in t])), 99.5) + 0.01
+    for ax, dep, lab in zip(axes, BINS, "abc"):
+        ts = obs[a][1]
+        if ts is not None:
+            fz = ts.loc[lo:hi] <= 0
+            for d in fz.index[fz.values]:
+                ax.axvspan(d, d + pd.Timedelta("1D"), color="0.90", lw=0, zorder=0)
+        o, p, w = series[dep]
+        ax.axhline(0, color="black", lw=1.0, zorder=1)
+        ax.plot(o.index, o.values, "o", ms=1.6 if tag == "full" else 2.4, color="black",
+                label="Observed", zorder=2)
+        ax.plot(w.index, w.values, "--", color=OFF_COLOR, lw=1.2,
+                label="Model, both pixels of the Ne1 tile", zorder=3)
+        ax.plot(p.index, p.values, "-", color=PRED_COLOR, lw=1.4,
+                label="Model, each station's own tile centre", zorder=4)
+        j = pd.concat([o, p], axis=1, keys=["o", "p"]).dropna()
+        ax.text(0.01, 0.95, f"({lab}) {dep} cm   mean obs {j['o'].mean():+.3f}  "
+                f"model {j['p'].mean():+.3f}   R {j['o'].corr(j['p']):+.2f}",
+                transform=ax.transAxes, va="top",
+                bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
+        ax.set_ylim(-lim, lim)
+        ax.set_ylabel("Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
+    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
+    fig.align_ylabels(axes)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(FIG_DIR / f"mead_diff_Ne1_Ne2_{tag}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_diff_Ne1_Ne2_{tag}.png")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zoom", type=int, nargs="+", default=[2019, 2020])
+    ap.add_argument("--diff-only", action="store_true", help="only the Ne1 - Ne2 figures")
     args = ap.parse_args()
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -126,9 +170,13 @@ def main():
               f"mean obs {j['o'].mean():+.3f} pred {j['p'].mean():+.3f} | "
               f"JJAS 2019 obs {jj['o'].mean():+.3f} pred {jj['p'].mean():+.3f}")
 
-    figure(obs, own, off, "2017-01-01", "2024-12-31", "full")
     lo, hi = f"{min(args.zoom)}-01-01", f"{max(args.zoom)}-12-31"
-    figure(obs, own, off, lo, hi, f"{min(args.zoom)}_{max(args.zoom)}")
+    zt = f"{min(args.zoom)}_{max(args.zoom)}"
+    if not args.diff_only:
+        figure(obs, own, off, "2017-01-01", "2024-12-31", "full")
+        figure(obs, own, off, lo, hi, zt)
+    diff_figure(obs, own, df, "2017-01-01", "2024-12-31", "full")
+    diff_figure(obs, own, df, lo, hi, zt)
 
 
 if __name__ == "__main__":
