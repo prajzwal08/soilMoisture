@@ -333,7 +333,7 @@ def render() -> None:
                            zorder=6))
     ax.text(tx(182), 104.2, "window for day D: the last 365 days", ha="center", va="center",
             fontsize=FS_T, zorder=6)
-    ax.text(tx(152), 107.6, "window for day D+30: it slides one day per day", ha="center",
+    ax.text(tx(152), 107.6, "slides per day", ha="center",
             va="center", fontsize=FS_B, zorder=6)
     for x, s in (((X0 + wa) / 2, "dropped"), ((wb + X1) / 2, "future")):
         ax.text(x, 104.2, s, ha="center", va="center", fontsize=FS_B, color=FROZEN_EDGE,

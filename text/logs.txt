@@ -8814,3 +8814,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   - job 27667140 (render only): architecture_s48 timeline band redrawn in the same sliding-window
     style (axis D-455..D+120, framed window, grey = not given, dashed D+30 bracket, key at right);
     "not loaded" hatched stub removed. Canvas H 110 -> 114.
+  - job 27667578 (render only): dashed-bracket label -> "slides per day" in both figures.

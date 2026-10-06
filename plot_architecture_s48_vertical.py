@@ -123,7 +123,7 @@ def render() -> None:
     ax.text(tx(182), 119.7, "window for day D: the last 365 days", ha="center",
             va="center", fontsize=FS_T, zorder=6)
     bracket(ax, -30, 122.2, dashed=True, lw=1.1)
-    ax.text(tx(152), 123.5, "window for day D+30: it slides one day per day", ha="center",
+    ax.text(tx(152), 123.5, "slides per day", ha="center",
             va="center", fontsize=FS_B, zorder=6)
     ax.text((TX0 + wa) / 2, 119.7, "dropped", ha="center", va="center", fontsize=FS_B,
             color=FROZEN_EDGE, zorder=6)
