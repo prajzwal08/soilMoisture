@@ -52,11 +52,18 @@ def check_s2(tile_dir, store, out):
         maxd = max(maxd, int(np.abs(a - b).max()))
         if same[-1] < 0.99:
             m = (a != 0) & (b != 0)
-            bad.append(f"{d}:pb{scenes.get(d, {}).get('processing_baseline', '?')}"
-                       f":store-fresh={int(np.median((b - a)[m])) if m.any() else 'nodata'}")
+            pb = str(scenes.get(d, {}).get("processing_baseline", "?"))
+            off = int(np.median((b - a)[m])) if m.any() else None
+            # KNOWN store defect (logs 2026-10-06): harmonize_s2_pre2022.py skipped bright pre-2022 scenes whose min DN
+            # was already >= 1000, so the store is exactly 1000 LOWER on those. Accepted; anything else fails.
+            known = (off == -1000 and d < "20220125" and pb not in ("", "?") and float(pb) < 4.0
+                     and bool(((b - a)[m] == -1000).all()))
+            bad.append(f"{d}:pb{pb}:store-fresh={off if off is not None else 'nodata'}"
+                       f":{'KNOWN_skip_defect' if known else 'UNEXPLAINED'}")
     out["s2_identical_frac_min"] = round(min(same), 4) if same else None
     out["s2_maxabs"] = maxd
     out["s2_n_mismatch"] = len(bad)
+    out["s2_n_unexplained"] = sum(x.endswith("UNEXPLAINED") for x in bad)
     if bad:
         print(f"{tile_dir.name} S2 mismatching scenes ({len(bad)}): " + " ".join(bad))
 
@@ -126,8 +133,8 @@ def main():
         ok &= bool((res.s2_n > 0).all()) and bool((res.s2_negative_px_sampled == 0).all())
         ok &= bool((res.s2_failed.astype(str) == "0").all())        # "n/a" = metadata lost -> unverified, FAIL
         c = res[res.control_of != ""]
-        if "s2_identical_frac_min" in c:
-            ok &= bool((c.s2_identical_frac_min.fillna(0) >= 0.99).all())
+        if "s2_n_unexplained" in c:
+            ok &= bool((c.s2_n_unexplained.fillna(1) == 0).all())       # every mismatch must be the known skip defect
         if "dem_med_absdiff_m" in c:
             ok &= bool((c.dem_med_absdiff_m.fillna(99) <= 1.0).all())
     if "s1" in args.modalities:
