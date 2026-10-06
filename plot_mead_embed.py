@@ -5,13 +5,19 @@
 # The model reads L12 tokens (14 x 14 grid of 160 m patches per 2.24 km tile):
 #   pooled pyramid, level 0 = centre 2x2 tokens of each station's OWN tile  -> "tile centres"
 #   the anchor = full 14 x 14 grid; inside Ne1's tile Ne2 sits 3.4 tokens east -> "same tile"
-# Per 2019 acquisition (S2 and S1 ascending), cosine similarity of the mean 2x2 token
-# vector at Ne1 vs at Ne2:
-#   same tile  : Ne1 tile, rows 6-7, cols 6-7 (Ne1) vs cols 9-10 (Ne2)
-#   tile centre: Ne1 tile rows/cols 6-7 vs Ne2 tile rows/cols 6-7 (what the pyramid sees)
-#   reference  : Ne1 tile, Ne1 block vs cols 3-4 (a neighbour 3 tokens west, same distance)
-# Blocks with any invalid token (cloud for S2, token_mask for S1) -> NaN.
+# Per 2019 acquisition (S2 and S1 ascending), cosine similarity of the ONE token (160 m
+# patch) each station sits in (map pixel // 8; Ne1 (56,56) is a patch corner, (7,7) taken):
+#   same tile  : Ne1 tile, patch (7,7) (Ne1) vs (7,10) (Ne2, map pixel (56,83))
+#   tile centre: Ne1 tile (7,7) vs Ne2 tile (7,7)
+#   reference  : Ne1 tile, (7,7) vs (7,4) (a neighbour 3 tokens west, same distance)
+# Patches with an invalid token (cloud for S2, token_mask for S1) -> NaN.
 # Then: Spearman of (1 - cos) with |Ne1 - Ne2| SM on the acquisition day, observed and model.
+# The SCATTER uses same tile for both axes: one scene, one footprint, one forward pass, so
+# ERA5 (identical, era5_max_abs_diff 0), SIF, TWSA, soil tabular and the pyramid are shared.
+# Only the per-pixel map inputs differ: S2/S1/anchor (vary by date) and DEM, LULC and the
+# decoder's position pattern (fixed within the year). So the date-to-date variation of the
+# model's same-tile Ne1 - Ne2 can only come from the satellite; the yearly mean is the fixed
+# part, and the "anomaly" Spearman (signed difference minus its yearly mean) tests that alone.
 # Figures: mead_embed_cos_<year>  time series (S2, S1, |dSM| obs/model, P)
 #          mead_embed_scatter_<year> (1 - cos) vs |dSM|, observed and model
 #          mead_embed_matrix_<year>  date x date cosine (Ne1-Ne1, Ne2-Ne2, Ne1-Ne2) per sensor
@@ -38,8 +44,8 @@ from plot_mead_pred import ROOT, FIG_DIR, PRED, PRED_COLOR, observed, predicted
 from plot_mead_precip import load as load_precip
 
 ST    = {"Ne1": "AmeriFlux_US-Ne1", "Ne2": "AmeriFlux_US-Ne2"}
-ROWS  = slice(6, 8)
-BLK   = {"ne1": slice(6, 8), "ne2": slice(9, 11), "ref": slice(3, 5)}
+ROWS  = slice(7, 8)                                       # one token: the station's patch
+BLK   = {"ne1": slice(7, 8), "ne2": slice(10, 11), "ref": slice(4, 5)}
 BINS  = ["0-10", "10-30"]
 
 
@@ -147,6 +153,18 @@ def main():
                         out.append(f"{spearmanr(x[ok], z[ok])[0]:+.2f} (n {ok.sum()})" if ok.sum() >= 5
                                    else "   n/a")
                     print(f"    {c:>11} vs {lab:>10} {b:>5}: {out[0]}   {out[1]}")
+        print("  anomaly (signed Ne1 - Ne2 minus its mean over these dates), same tile, all / Jun-Sep:")
+        for b in BINS:
+            for lab, col in (("obs", f"obs_{b}"), ("model same", f"same_{b}")):
+                out = []
+                for sel in (np.ones(len(r), bool), js):
+                    x = (1 - r.loc[sel, "same_tile"]).values
+                    z = r.loc[sel, col].values
+                    ok = np.isfinite(x) & np.isfinite(z)
+                    z = np.abs(z - z[ok].mean()) if ok.any() else z
+                    out.append(f"{spearmanr(x[ok], z[ok])[0]:+.2f} (n {ok.sum()})" if ok.sum() >= 5
+                               else "   n/a")
+                print(f"    same_tile vs {lab:>10} {b:>5}: {out[0]}   {out[1]}")
         r.to_csv(ROOT / "pred" / f"embed_cos_{sensor}_{y}.csv")
 
     # --- time series ---
@@ -207,10 +225,10 @@ def main():
         js = (r.index.month >= 6) & (r.index.month <= 9)
         for j, b in enumerate(BINS):
             a = ax[k, j]
-            x = 1 - r["tile_centre"]
+            x = 1 - r["same_tile"]
             txt = []
             for lab, col, mk, name in (("obs", "black", "o", "observed"),
-                                       ("own", PRED_COLOR, "^", "model")):
+                                       ("same", PRED_COLOR, "^", "model")):
                 z = r[f"{lab}_{b}"].abs()
                 for sel, fill in ((js, col), (~js, "white")):
                     a.plot(x[sel], z[sel], mk, ms=5, mfc=fill, mec=col, mew=0.9,
@@ -222,7 +240,7 @@ def main():
                    bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.0))
             if j == 0:
                 a.set_ylabel("|$\\Delta$SM| Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
-            a.set_xlabel(f"1 $-$ cosine, {sensor} L12 (tile centres)")
+            a.set_xlabel(f"1 $-$ cosine, {sensor} L12 (station patches, same scene)")
     ax[0, 0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, frameon=False)
     fig.tight_layout()
     for ext in ("png", "pdf"):
@@ -253,7 +271,7 @@ def main():
     fig.colorbar(im, cax=fig.add_axes([0.93, 0.25, 0.015, 0.5]), label="Cosine similarity")
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_embed_matrix_{y}.{ext}", dpi=300)
-    print(f"figure: {FIG_DIR}/mead_embed_matrix_{y}.png  (tile-centre 2x2 blocks, valid dates only)")
+    print(f"figure: {FIG_DIR}/mead_embed_matrix_{y}.png  (tile-centre patches, valid dates only)")
 
 
 if __name__ == "__main__":

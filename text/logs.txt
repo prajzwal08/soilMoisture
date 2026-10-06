@@ -8691,3 +8691,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     download_s2_mpc.py: catalog opened WITHOUT modifier=sign_inplace -> items unsigned, _load() signs fresh each attempt.
     slurm/nl_imagery.sh s2: tasks staggered sleep TASK*90 s (MPC STAC rate limit at simultaneous start).
     RESUBMITTED S2+DEM array: job 27659323 [0-7] (resumes; retries error/partial tiles). Full drivers still NOT submitted (needs OK).
+  §69.5 embed rerun, ONE patch per station (Ne1 (7,7), Ne2 (7,10), ref (7,4)), scatter on same tile both axes + anomaly Spearman (user: patch only, attribute to satellite): job 27659392
+  27659392 DONE (44 s): single-patch, same-tile scatter. Single tokens are far less similar than 2x2 blocks (S2 Jun-Sep cos 0.82 vs 0.95 block; ref west 0.71).
+    Spearman (1-cos same tile) vs |dSM|, all / Jun-Sep: S2 obs +0.15/+0.04, model same +0.17/+0.28 (0-10); obs +0.13/+0.23, model same +0.14/+0.24 (10-30).
+    S1: obs +0.13/+0.22, model same -0.55/-0.48 (0-10); obs +0.09/+0.28, model same -0.54/-0.57 (10-30), n 17 / 9.
+    anomaly (signed dSM minus mean): S2 obs +0.27/-0.07, model +0.18/+0.34 (0-10); S1 obs +0.35/+0.47, +0.38/+0.65 (10-30), model -0.46/-0.52.
+    Old model +0.76 was 'model own' (two forward passes, two tiles); same-tile it drops to +0.17 -> most of it was NOT the satellite.
+    One S2 date has cos ~ -0.02 (1-cos 1.02): outlier, to check. Right-column x labels clipped.
