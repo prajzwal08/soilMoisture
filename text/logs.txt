@@ -8728,3 +8728,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   READ: no season shows a usable relation; S2 summer 10-30 obs +0.34 is the strongest (n 24, weak); model vs S1 negative in both seasons.
   §69.5 patch-location figure (Ne1 (7,7), Ne2 (7,10), ref (7,4) on 2019-07-22 RGB+NDVI) (user asked): job 27661269
   27661269 DONE (17 s): figures/mead/mead_patches_20190722.png. Ref (7,4) = west edge of the Ne1 pivot, road on its left edge; towers sit on the top edge of row 7 (Ne1 at the corner of (7,7)).
+  §68 status 14:51: S2 27659323 4/8 tasks done, 0 failed scenes / 0 x 403 at 54 min (old run died ~45 min after its
+    search) -> SAS fix WORKS; ~87 tiles left on tasks 1/3/4/6. ERA5 27659722 418/660 px-years (GEE 503s retried), still the
+    2 early errors. SIF 27659724: main thread spent 14:11-14:51 writing the 2018 per-tile files (~5 s/file, 688 files,
+    workers keep reading meanwhile) -> no progress lines for 40 min but NOT stuck. Read 95 GB of 906 GB in 46 min ->
+    ~7-8 h total (my earlier 70 min estimate was wrong), inside the 12 h cap; resume is per finished year.
