@@ -40,6 +40,62 @@ PASSES = [
 ]
 
 
+# Publication (horizontal) variant: inputs along x, layers along y, ubRMSE + |bias| only.
+# The single-sensor 160 m passes and the 20 m imagery are left out (they stay in the full figure).
+PASSES_H = [
+    ("era5_cross_station",  "ERA5\n(other\nstation)"),
+    ("era5_within_station", "ERA5\n(same station,\nother time)"),
+    ("sat_cross_station",   "All\nsatellite"),
+    ("s1_within_station",   "S1 160 m\n(same station,\nother time)"),
+    ("dem_cross_station",   "DEM"),
+    ("lulc_cross_station",  "Land\ncover"),
+    ("soil_cross_station",  "Soil"),
+    ("sif_cross_station",   "SIF"),
+    ("twsa_cross_station",  "TWSA"),
+]
+
+
+def _matrix(s, keys, col, lo, hi):
+    """-> (value, significant) arrays, rows = pass keys, cols = DEPTHS."""
+    m = np.full((len(keys), len(DEPTHS)), np.nan)
+    sig = np.zeros_like(m, dtype=bool)
+    for i, k in enumerate(keys):
+        for jx, d in enumerate(DEPTHS):
+            r = s[(s["key"] == k) & (s["depth"] == d)]
+            if len(r):
+                m[i, jx] = r[col].iloc[0]
+                sig[i, jx] = (r[lo].iloc[0] > 0) or (r[hi].iloc[0] < 0)
+    return m, sig
+
+
+def plot_horizontal(s, cmap, out):
+    """(a) ubRMSE and (b) |bias| change, stacked; inputs along x, layers along y; one colour scale."""
+    order = [(k, lab) for k, lab in PASSES_H if k in set(s["key"])]
+    keys = [k for k, _ in order]
+    panels = [("d_ubRMSE_pct", "d_ubRMSE_lo", "d_ubRMSE_hi", "(a) ubRMSE change (%)"),
+              ("d_absbias_pct", "d_absbias_lo", "d_absbias_hi", "(b) |bias| change (%)")]
+    mats = [tuple(x.T for x in _matrix(s, keys, *p[:3])) for p in panels]     # -> layers x inputs
+    vmax = max(max(np.nanmax(np.abs(m)) for m, _ in mats), 1.0)
+    norm = TwoSlopeNorm(0, -vmax, vmax)
+    fig, axes = plt.subplots(2, 1, figsize=(1.35 * len(order) + 2.6, 6.8), constrained_layout=True,
+                             sharex=True)
+    for ax, (m, sig), (_, _, _, title) in zip(axes, mats, panels):
+        im = ax.imshow(m, cmap=cmap, norm=norm, aspect="auto")
+        for i in range(m.shape[0]):
+            for jx in range(m.shape[1]):
+                if np.isfinite(m[i, jx]):
+                    v = m[i, jx]
+                    ax.text(jx, i, f"{v:+.1f}{'*' if sig[i, jx] else ''}", ha="center", va="center",
+                            color="white" if abs(v) > 0.6 * vmax else "black")
+        ax.set_yticks(range(len(DEPTHS)), [f"{d} cm" for d in DEPTHS])
+        ax.set_title(title, loc="left")
+    axes[1].set_xticks(range(len(order)), [lab for _, lab in order])
+    fig.colorbar(im, ax=axes, shrink=0.9, label="% change vs. baseline")
+    for ext in ("png", "pdf"):
+        fig.savefig(out / f"input_ablation_heatmap_horizontal.{ext}", dpi=600)
+    print(f"wrote {out}/input_ablation_heatmap_horizontal.{{png,pdf}}")
+
+
 def _pass_key(stem: str) -> str:
     """predictions_oos_era5_cross_station_s0 -> era5_cross_station"""
     s = stem.split("predictions_oos_", 1)[-1]
@@ -50,6 +106,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--summary", required=True, help="compare_ablation.py --csv output")
     ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--layout", choices=["vertical", "horizontal"], default="vertical",
+                    help="horizontal = publication variant ONLY (ubRMSE + |bias|, fewer passes); "
+                         "never rewrites the vertical figure or the table")
     a = ap.parse_args()
 
     plt.rcParams.update(plot_style_bw.RC_PAPER)
@@ -64,6 +123,11 @@ def main():
 
     # orange (worse) - white - blue (better), from palette H
     cmap = LinearSegmentedColormap.from_list("worse_better", [plot_style_bw.BLUE, "white", plot_style_bw.RED])
+    out = Path(a.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if a.layout == "horizontal":
+        plot_horizontal(s, cmap, out)
+        return
     panels = [("d_ubRMSE_pct", "d_ubRMSE_lo", "d_ubRMSE_hi", "(a) ubRMSE change (%)"),
               ("d_RMSE_pct", "d_RMSE_lo", "d_RMSE_hi", "(b) RMSE change (%)"),
               ("d_absbias_pct", "d_absbias_lo", "d_absbias_hi", "(c) |bias| change (%)")]
@@ -97,8 +161,6 @@ def main():
     fig.colorbar(im, ax=axes, shrink=0.9, label="% change vs. baseline")
     axes[0].set_yticks(range(len(order)), [lab for _, lab in order])
 
-    out = Path(a.out_dir)
-    out.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
         fig.savefig(out / f"input_ablation_heatmap.{ext}", dpi=600)
     keep = ["key", "depth", "n", "ubRMSE_base", "d_ubRMSE", "d_ubRMSE_lo", "d_ubRMSE_hi", "d_ubRMSE_pct",

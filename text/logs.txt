@@ -8402,3 +8402,6 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     median_abs_doy_gap made circular too. Existing results (27627597 era5/s1 within_station) used the old non-circular rule.
   User decision: NO re-run of the within_station passes with the circular-gap fix, and NO anchor-only / sat160 pass.
     §67 ablation results (27627597) stand as final; heatmap 3 panels, shared scale (3de5eab).
+  §67 publication heatmap (NEW file, original untouched, md5 checked): plot_input_ablation.py --layout horizontal ->
+    input_ablation_heatmap_horizontal.{png,pdf}; inputs on x, layers on y, (a) ubRMSE + (b) |bias| only, shared scale;
+    S2 160 m, S1 160 m (other station) and 20 m imagery dropped; S1 same-station row kept. Render job 27639404 COMPLETED.

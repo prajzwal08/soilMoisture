@@ -16,5 +16,5 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 RUN=baseline_selected_20261005
 conda run -n terramind --no-capture-output python plot_input_ablation.py \
     --summary eval_output/${RUN}_ablation/ablation_summary.csv \
-    --out-dir figures/eval/${RUN}_paper/ablation
+    --out-dir figures/eval/${RUN}_paper/ablation "$@"
 echo "=== done $(date) ==="
