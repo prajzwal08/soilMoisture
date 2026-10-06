@@ -8698,3 +8698,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     anomaly (signed dSM minus mean): S2 obs +0.27/-0.07, model +0.18/+0.34 (0-10); S1 obs +0.35/+0.47, +0.38/+0.65 (10-30), model -0.46/-0.52.
     Old model +0.76 was 'model own' (two forward passes, two tiles); same-tile it drops to +0.17 -> most of it was NOT the satellite.
     One S2 date has cos ~ -0.02 (1-cos 1.02): outlier, to check. Right-column x labels clipped.
+  §68 FULL drivers submitted (user OK): era5 27659722 (66 ERA5 px = Overijssel+controls, subset root nl/era5pix_ov; full NL list
+    is 567 px), sif 27659724, soil 27659727 (688 tiles), fanout 27659732 afterok:27659722. nl_drivers.sh era5/fanout now point at era5pix_ov.

@@ -61,8 +61,8 @@ EOF
     for d in ${NL}/data_smoke/sm_only/*/; do echo "$(basename $d): $(ls -R $d | grep -c '\.nc$') nc, soil=$(ls $d/soil 2>/dev/null | tr '\n' ' ')"; done
     ;;
 sif)    sif ${NL}/data ;;
-era5)   era5 ${PIX} ;;
-fanout) $PY era5_pixel_fanout.py fanout --pixel-root ${PIX} --tile-csv ${NL}/data/station_splits.csv --data-root ${NL}/data ;;
+era5)   era5 ${PIX}_ov ;;   # Overijssel + controls only (66 px of 567)
+fanout) $PY era5_pixel_fanout.py fanout --pixel-root ${PIX}_ov --tile-csv ${NL}/data/station_splits.csv --data-root ${NL}/data ;;
 soil)   $PY download_soil_openlandmap.py --data-root ${NL}/data ;;
 esac
 date
