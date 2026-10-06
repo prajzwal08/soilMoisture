@@ -8534,3 +8534,15 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     (2) block 1 identity, max |diff| 0; (3) block 2 (40 m) map RMS diff 0.0082 vs map SD 0.0289, block 112 0.0349 -> inputs DO reach the map.
     2,503 samples/pass in 0.1 min. Analysis CRASHED in Test B (groupby.apply on one station collapsed to a Series) -> fixed (explicit loop).
     Tests C + control not yet exercised. Within-tile Test A on one tile (CR200-18, 0-10): level r 0.02 (500-1000 m), -0.56 (1-1.6 km); daily Δ r 0.06-0.10.
+  User OK ("ok"): verify gate now accepts ONLY the known skip-defect pattern (store exactly -1000 on every pixel, pre-20220125,
+    pb < 04.00); any other mismatch = UNEXPLAINED = FAIL. NL keeps the baseline harmonise rule.
+  §68 FULL imagery submitted (688 tiles: 682 grid + 6 control): S2+DEM array 27652835 [0-7], S1+LULC array 27652836 [0-11]
+    (rome 16 CPU, 36 h cap; SOIL_DATA_ROOT=nl/data, SOIL_SCRATCH_DIR=nl/satellite). Training stores untouched.
+  TODO: count un-offset bright scenes in the TRAINING store (read-only CPU scan), later.
+  §69 Ne1 vs Ne2 plot (user "please plot"): job 27652849 (2019 Ne2-only irrigated, 2020 both)
+  §69 Ne1 vs Ne2 (27652849, figures/mead/mead_Ne1_vs_Ne2_2019_2020.png): JJAS mean Ne1-Ne2
+    2019 (Ne2 129 mm irr, Ne1 0): 0-10 -0.012, 10-30 -0.021, 30-100 -0.031
+    2020 (Ne1 262 mm, Ne2 187 mm): 0-10 +0.025, 10-30 -0.053, 30-100 -0.016
+  READ: Ne1 sits ~0.02-0.03 below Ne2 ALL YEAR (spring, winter) = site/sensor offset. Net 2019 irrigation effect
+  is only ~0.01-0.03 in Aug-Sep: wet year, irrigation 129 mm vs heavy rain. Day-to-day difference swings +-0.1
+  (event timing), dwarfing the mean. Ne1-vs-Ne2 is a WEAK contrast; Ne1/Ne2-vs-Ne3 in dry years is the strong one.
