@@ -8865,3 +8865,11 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   LULC emb 8->4) under its image, joined into "concat 32 @ 112 (3x3 stems)" -> E1.
 
 2026-10-06 — architecture_s48.png render 27682129: removed the "token dropout" key text (user); orange ticks stay, unlabelled.
+  §70 effres figure (user "can you plot this?"): plot_effres.py + slurm/plot_effres.sh, job 27682211 (rome 16 CPU, 14 s)
+    on the smoke output (CR200-18 only, 2,503 days) -> figures/effres/effres_smoke.{png,pdf}; map variograms in analysis/map_variogram_*.csv.
+    (a) anomaly spectrum: smooth to ~320 m wavelength, then ~40x drop by 160 m, ~nothing below.
+    (b) variance retained: 160 m blocks 64%, 280 m 35%, 560 m 14%.
+    (c) model anomaly variogram (gamma/var, 40k random pixel pairs): rises 20 -> ~200 m, sill from ~250 m
+        (0-10 0.055, 10-30 0.10, 30-100 0.085); observed TxSON pairs 0-10: 0.15-0.20 at 250 m-3 km (n = 2/9/3/1).
+    Reading: the map's range is ~200-250 m (the token grid); within-tile it changes ~3x less than real stations do.
+    One tile only; the full §70 run (effres_maps.sh + effres_analysis.sh) is NOT submitted.
