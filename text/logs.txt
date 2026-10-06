@@ -8449,3 +8449,4 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     2016-2025: 0-10 885 stn median 6.2 yr, 10-30 682 / 6.6, 30-100 551 / 6.6; (d) observed station-days.
     Check: eval vs label day counts agree to <0.1% for Val/OOS; OOT/OOST lower by the <365-post-cut exclusion.
     Caveat: Train bar counts all 573 split stations; the dataset admits 565 (§51.1, 8 without pre-2023 S2).
+  data_overview: 'stn' spelled out as 'stations', 'yr' as 'years', two-line counts in (d) (jobs 27648383, 27648396).

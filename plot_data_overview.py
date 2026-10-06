@@ -127,10 +127,10 @@ def main():
         ax.add_patch(mpatches.Rectangle((2016, y - 0.35), 7, 0.7, fc=c1, ec="black", lw=0.8))
         ax.add_patch(mpatches.Rectangle((2023, y - 0.35), 3, 0.7, fc=c2, ec="black", lw=0.8,
                                         hatch="//" if l2 == "OOT" else None))
-        ax.text(2019.5, y, f"{l1}\n{n} stn", ha="center", va="center",
+        ax.text(2019.5, y, f"{l1}\n{n} stations", ha="center", va="center",
                 color="white" if c1 in (GREY, BLUE) else "black")
         n2 = (ev["oot"].split == s).sum() if l2 == "OOT" else len(ev["oost"])
-        ax.text(2024.5, y, f"{l2}\n{n2} stn", ha="center", va="center", color="black",
+        ax.text(2024.5, y, f"{l2}\n{n2} stations", ha="center", va="center", color="black",
                 bbox=dict(fc="white", ec="none", pad=1.0))
     ax.axvline(2023, color="black", lw=1.5, ls="--")
     ax.text(2023, len(rows) - 0.42, "cut: 2023-01-01", ha="center", va="bottom",
@@ -149,7 +149,7 @@ def main():
         yrs_d = (sp[f"pre_{d}"] + sp[f"post_{d}"]) / 365.25
         yrs_d = yrs_d[yrs_d > 0]
         ax.hist(yrs_d, bins=bins, histtype="step", lw=2.2, color=c,
-                label=f"{d} cm ({len(yrs_d)} stn, median {yrs_d.median():.1f} yr)")
+                label=f"{d} cm ({len(yrs_d)} stations, median {yrs_d.median():.1f} years)")
     ax.set_xlabel("Observed record per station (years, 2016–2025)")
     ax.set_ylabel("Stations")
     ax.legend(loc="upper left", frameon=False)
@@ -165,11 +165,11 @@ def main():
         v = np.array([pts[s][di] for s in sets]) / 1000
         ax.bar(x, v, w * 0.92, color=c, edgecolor="black", lw=0.8, label=f"{d} cm")
     for i, s in enumerate(sets):
-        ax.text(i, max(pts[s]) / 1000 * 1.04, f"{nst[s]} stn", ha="center", va="bottom")
+        ax.text(i, max(pts[s]) / 1000 * 1.04, f"{nst[s]}\nstations", ha="center", va="bottom")
     ax.set_xticks(range(len(sets)), sets)
     ax.set_ylabel("Observed station-days (thousands)")
     ax.legend(loc="upper right", frameon=False)
-    ax.set_ylim(0, max(max(v) for v in pts.values()) / 1000 * 1.18)
+    ax.set_ylim(0, max(max(v) for v in pts.values()) / 1000 * 1.25)
     ax.text(0.0, 1.01, "(d)", transform=ax.transAxes, ha="left", va="bottom")
 
     out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
