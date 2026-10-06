@@ -8708,3 +8708,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     2019-12-21 S2 cos ~0 for every pair -> degenerate scene, still in the store.
   §69.5 cos time series: tile-centre line only (same tile + 480 m ref removed) (user asked): job 27659878
   27659878 DONE (30 s): figures/mead/mead_embed_cos_2019_alldates.png, tile-centre line only.
+  §69.5 cos time series: dSM as dots, solid on S1/S2 acquisition days, faded otherwise (user asked): job 27659903
+  27659903 DONE (26 s): mead_embed_cos_2019_alldates.png with dSM solid on S1/S2 days, faded otherwise.

@@ -188,10 +188,14 @@ def main():
         a.set_ylabel("Cosine similarity")
     for k, b in enumerate(BINS, start=2):
         a = ax[k]
-        o = (obs["Ne1"][b] - obs["Ne2"][b]).loc[lo:hi].abs()
-        a.plot(o.index, o.values, "-", color="black", lw=1.2, label="|Ne1 $-$ Ne2| observed")
-        m = (own["Ne1"][b] - own["Ne2"][b]).loc[lo:hi].abs()
-        a.plot(m.index, m.values, "-", color=PRED_COLOR, lw=1.2, label="|Ne1 $-$ Ne2| model")
+        # acquisition days (S2 with valid tile-centre patches, or S1) solid; every other day faded
+        acq = res["S2"]["tile_centre"].dropna().index.union(res["S1"]["tile_centre"].dropna().index)
+        for s, col, mk, lab in (((obs["Ne1"][b] - obs["Ne2"][b]).loc[lo:hi].abs(), "black", "o", "observed"),
+                                ((own["Ne1"][b] - own["Ne2"][b]).loc[lo:hi].abs(), PRED_COLOR, "^", "model")):
+            on = s.index.isin(acq)
+            a.plot(s.index[~on], s.values[~on], mk, ms=2, color=col, alpha=0.2, mew=0)
+            a.plot(s.index[on], s.values[on], mk, ms=4, color=col,
+                   label=f"|Ne1 $-$ Ne2| {lab}, S1/S2 date")
         a.text(0.01, 0.95, f"({'cd'[k - 2]}) {b} cm", transform=a.transAxes, va="top",
                bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
         a.set_ylabel("|$\\Delta$SM| (m$^3$ m$^{-3}$)")
