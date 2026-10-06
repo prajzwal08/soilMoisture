@@ -8456,3 +8456,11 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     Not yet: open-every-file check + chmod -R a-w.
   Budget (accinfo): GPU 706,012 of 800k left, CPU 192,181 of 200k left. §68 estimate ~2.9k GPU + ~3.9k CPU.
   Storage §68: ~1.5 TB scratch (2.1/8 TiB used). User: "ok lets do Overijssel" -> start §68.
+  §68 imagery SMOKE submitted (user OK): job 27648625 (nl_imagery.sh smoke, 3 tiles: 2 TWENTE control + 1 grid, rome 16 CPU, 6 h cap)
+  data_overview (d): per-depth station counts, vertical, numbers only (job 27648598). Train 573/467/374, Val 89/69/56,
+    OOS 221/144/119, OOT 362/316/262, OOST 114/94/79.
+  SPLIT FLOWCHART (new plot_split_flowchart.py + slurm/plot_split_flowchart.sh; jobs 27648445, 27648599) ->
+    figures/eval/baseline_selected_20261005_paper/split_flowchart.{png,pdf}: inventory 990 -> 886 SM (103 flux-only,
+    1 duplicate) -> 3 km location groups -> stratified 20 % OOS / 10 % val -> 3 demotion rules -> val top-up from OOS
+    -> Train 573 / Val 89 / OOS 224 -> time cut 2023-01-01: OOT 312 + 50, OOST 115, OOS 222 evaluated. Counts read
+    from csvs + eval files, constants from splits_config.py.

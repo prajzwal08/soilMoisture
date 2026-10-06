@@ -81,9 +81,11 @@ def main():
     tr = sp[sp.split == "train"]
     pts = {"Train": [int(tr[f"pre_{d}"].sum()) for d in DEPTHS]}
     nst = {"Train": int((tr[[f"pre_{d}" for d in DEPTHS]].sum(axis=1) > 0).sum())}
+    nst_d = {"Train": [int((tr[f"pre_{d}"] > 0).sum()) for d in DEPTHS]}   # stations per depth
     for s, lab in [("val", "Validation"), ("oos", "OOS"), ("oot", "OOT"), ("oost", "OOST")]:
         pts[lab] = [int(ev[s][f"n_{d.replace('-', '_')}"].fillna(0).sum()) for d in DEPTHS]
         nst[lab] = len(ev[s])
+        nst_d[lab] = [int((ev[s][f"n_{d.replace('-', '_')}"].fillna(0) > 0).sum()) for d in DEPTHS]
     # label-based check for the eval sets
     chk = {"Validation": sp[sp.split == "val"], "OOS": sp[sp.split == "oos"]}
     print("\nobserved days (eval file vs labels), per depth:")
@@ -164,12 +166,12 @@ def main():
         x = np.arange(len(sets)) + (di - 1) * w
         v = np.array([pts[s][di] for s in sets]) / 1000
         ax.bar(x, v, w * 0.92, color=c, edgecolor="black", lw=0.8, label=f"{d} cm")
-    for i, s in enumerate(sets):
-        ax.text(i, max(pts[s]) / 1000 * 1.04, f"{nst[s]}\nstations", ha="center", va="bottom")
+        for xi, vi, s in zip(x, v, sets):          # stations per depth, vertical, number only
+            ax.text(xi, vi + 12, f"{nst_d[s][di]}", ha="center", va="bottom", rotation=90)
     ax.set_xticks(range(len(sets)), sets)
     ax.set_ylabel("Observed station-days (thousands)")
     ax.legend(loc="upper right", frameon=False)
-    ax.set_ylim(0, max(max(v) for v in pts.values()) / 1000 * 1.25)
+    ax.set_ylim(0, max(max(v) for v in pts.values()) / 1000 * 1.22)
     ax.text(0.0, 1.01, "(d)", transform=ax.transAxes, ha="left", va="bottom")
 
     out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
