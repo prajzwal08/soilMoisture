@@ -17,6 +17,7 @@
 # Usage:
 #   python plot_mead_dry_irrigation.py [--year 2018]
 #   python plot_mead_dry_irrigation.py --pair [--year 2018]   (Ne2 logged irrigation, ERA5/Ne1/Ne2 dry; Ne2 vs Ne1)
+#   python plot_mead_dry_irrigation.py --pair --year 2019 --window 2019-08-01 2019-08-31
 # ============================================================
 
 import argparse
@@ -65,10 +66,12 @@ def delta(series, d0, a, b):
     return x.iloc[1] - x.iloc[0]
 
 
-def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
+def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1", window=None):
     """Ne1/Ne2 share weather.  Days inside a logged irr_site interval on which ERA5, the Ne1
     and the Ne2 gauge all read < DRY_MM: irrigation is logged but nothing reached a gauge.
-    Per interval: observed and predicted SM change from start-1 to end+1, irrigated vs control."""
+    Per interval: observed and predicted SM change from start-1 to end+1, irrigated vs control.
+    window=(lo, hi): one figure column over that period instead of one per interval;
+    there every S1/S2 pass in the window gets a star."""
     df = pd.read_parquet(PRED)
     df["date"] = pd.to_datetime(df["date"])
     obs = {s: observed(f"AmeriFlux_{s}")[0] for s in (irr_site, ctl)}
@@ -114,31 +117,46 @@ def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
     out = ROOT / "pred" / f"pair_irrigation_{a_}_{y}.csv"
     pd.DataFrame(rows).to_csv(out, index=False)
     print(f"table: {out}")
-    if not events:
+    if not events and window is None:
         return
+    if window is None:                                   # one column per logged interval
+        cols = [dict(lo=a - pd.Timedelta(f"{PAD}D"), hi=e + pd.Timedelta(f"{PAD}D"), ivs=[(a, e)],
+                     dry=dry, star=[(a, e)], text=f", {a_} irrigation {a:%d %b}-{e:%d %b}")
+                for a, e, dry in events]
+        tag = str(y)
+    else:                                                # one column over the window
+        lo, hi = (pd.Timestamp(w) for w in window)
+        iv = [(a, e, d) for a, e, d in events if a <= hi and e >= lo]
+        cols = [dict(lo=lo, hi=hi, ivs=[(a, e) for a, e, _ in iv], dry=[d for *_, ds in iv for d in ds],
+                     star=[(lo, hi)], text=f", {lo:%d %b}-{hi:%d %b %Y}")]
+        tag = f"{lo:%Y%m%d}_{hi:%Y%m%d}"
 
     plot_style_bw.apply(globals(), "paper")
-    n = len(events)
+    n = len(cols)
     fig, axes = plt.subplots(3, n, figsize=(max(3.6 * n, 10), 8.5), sharex="col",
                              squeeze=False, gridspec_kw={"height_ratios": [1, 1, 0.8]})
     col = {irr_site: plot_style_bw.BLUE, ctl: plot_style_bw.GREEN}
     letters = iter("abcdefghijklmnopqrstuvwxyz")
-    for j, (a, e, dry) in enumerate(events):
-        lo, hi = a - pd.Timedelta(f"{PAD}D"), e + pd.Timedelta(f"{PAD}D")
+    for j, c in enumerate(cols):
+        lo, hi = c["lo"], c["hi"]
         for ax in axes[:, j]:
-            ax.axvspan(a, e + pd.Timedelta("1D"), color="0.92", lw=0, zorder=0)
-            for d in dry:
+            for a, e in c["ivs"]:
+                ax.axvspan(a, e + pd.Timedelta("1D"), color="0.92", lw=0, zorder=0)
+            for d in c["dry"]:
                 ax.axvspan(d, d + pd.Timedelta("1D"), color="#FDD0A2", alpha=0.6,
                            lw=0, zorder=0)
-        e1 = e + pd.Timedelta("1D")
-        for i, ax in enumerate(axes[:, j]):              # passes inside the logged interval
+        for ax in axes[:, j]:                            # passes inside the starred span(s)
             x = ax.get_xaxis_transform()
-            p1, p2 = s1[(s1 >= a) & (s1 < e1)], s2[(s2 >= a) & (s2 < e1)]
+            in1 = np.zeros(len(s1), bool)
+            in2 = np.zeros(len(s2), bool)
+            for a, e in c["star"]:
+                in1 |= (s1 >= a) & (s1 < e + pd.Timedelta("1D"))
+                in2 |= (s2 >= a) & (s2 < e + pd.Timedelta("1D"))
+            p1, p2 = s1[in1], s2[in2]
             ax.plot(p1 + pd.Timedelta("12h"), np.full(len(p1), 0.80), "*", ms=11, color="black",
                     transform=x, zorder=6)
             ax.plot(p2 + pd.Timedelta("12h"), np.full(len(p2), 0.80), "*", ms=11,
-                    color=plot_style_bw.RED, mec="black", mew=0.4, transform=x, zorder=6,
-                    label="S2 pass" if i == 1 else None)
+                    color=plot_style_bw.RED, mec="black", mew=0.4, transform=x, zorder=6)
         ax = axes[2, j]
         er = p["ERA5"].loc[lo:hi]
         ax.bar(er.index, er.values, width=1.0, color="0.6", label="ERA5-Land")
@@ -159,12 +177,13 @@ def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
                 ax.plot(pp.index, pp.values, "-" if s == irr_site else "--", color=col[s],
                         lw=1.5, label=f"Model {s[-3:]}")
             ax.text(0.03, 0.95, f"({chr(ord('a') + 3 * j + i)}) {bn} cm"
-                    + (f", {a_} irrigation {a:%d %b}-{e:%d %b}" if i == 0 else ""),
+                    + (c["text"] if i == 0 else ""),
                     transform=ax.transAxes, va="top",
                     bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
             if j == 0:
                 ax.set_ylabel("SM (m$^3$ m$^{-3}$)")
         axes[2, j].tick_params(axis="x", rotation=45)
+        axes[2, j].set_xlim(lo, hi + pd.Timedelta("1D"))
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
     h = [Line2D([], [], marker="o", ls="", ms=4, color=col[irr_site], label=f"Observed {a_}"),
@@ -183,8 +202,8 @@ def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
     fig.align_ylabels(axes[:, 0])
     fig.tight_layout(rect=[0, 0.08, 1, 1])
     for ext in ("png", "pdf"):
-        fig.savefig(FIG_DIR / f"mead_pair_irrigation_{a_}_{y}.{ext}", dpi=600)
-    print(f"figure: {FIG_DIR}/mead_pair_irrigation_{a_}_{y}.png  (grey = logged interval, "
+        fig.savefig(FIG_DIR / f"mead_pair_irrigation_{a_}_{tag}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_pair_irrigation_{a_}_{tag}.png  (grey = logged interval, "
           f"peach = ERA5/Ne1/Ne2 all dry, black * = S1, orange * = S2 inside the interval)")
 
 
@@ -193,13 +212,15 @@ def main():
     ap.add_argument("--year", type=int, default=2018)
     ap.add_argument("--pair", action="store_true",
                     help="Ne2 logged irrigation on days ERA5, Ne1 and Ne2 gauges all dry; Ne2 vs Ne1")
+    ap.add_argument("--window", nargs=2, default=None, metavar=("START", "END"),
+                    help="with --pair: one figure over this period, e.g. 2019-08-01 2019-08-31")
     args = ap.parse_args()
     y = args.year
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
     p, irr = load_precip()
     if args.pair:
-        pair(p, irr, y)
+        pair(p, irr, y, window=args.window)
         return
     dry = rain_free(p, irr, y)
     print(f"{y}: {int(dry.sum())} rain-free days of {len(dry)} "
