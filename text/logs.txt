@@ -8733,3 +8733,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     2 early errors. SIF 27659724: main thread spent 14:11-14:51 writing the 2018 per-tile files (~5 s/file, 688 files,
     workers keep reading meanwhile) -> no progress lines for 40 min but NOT stuck. Read 95 GB of 906 GB in 46 min ->
     ~7-8 h total (my earlier 70 min estimate was wrong), inside the 12 h cap; resume is per finished year.
+  §69.5 south-plot yardstick (12,6): cos Ne1 vs Ne2 / Ne1 vs south / Ne2 vs south, same scene, all dates (user asked): job 27661337; patch figure + south box: job 27661338
+  27661337 DONE (29 s): south yardstick, Jun-Sep mean cos: S2 Ne1-Ne2 0.82, Ne1-south 0.47, Ne2-south 0.54; S1 Ne1-Ne2 0.68, Ne1-south 0.59, Ne2-south 0.53.
+    S2: Ne1/Ne2 far more alike than either vs south plots all year except Jan-Mar (snow, all ~0.9). S1: Ne1-Ne2 above south most dates,
+    but on the Aug 1 (0.48) and Aug 25 (0.41) dips it drops to/below the south level.
+  27661338 patch figure + south box: legend overlapped x label -> ncol 3, rerun 27661634 DONE (16 s).

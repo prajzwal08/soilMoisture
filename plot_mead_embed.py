@@ -46,6 +46,7 @@ from plot_mead_precip import load as load_precip
 ST    = {"Ne1": "AmeriFlux_US-Ne1", "Ne2": "AmeriFlux_US-Ne2"}
 ROWS  = slice(7, 8)                                       # one token: the station's patch
 BLK   = {"ne1": slice(7, 8), "ne2": slice(10, 11), "ref": slice(4, 5)}
+SOUTH = (slice(12, 13), slice(6, 7))                    # (12,6): southern plot block, ~800 m S of Ne1
 BINS  = ["0-10", "10-30"]
 
 
@@ -72,10 +73,10 @@ def tokens(st, sensor, year):
     return d[i], t, v
 
 
-def block(t, v, cols):
+def block(t, v, cols, rows=ROWS):
     """Mean token over a 2x2 block; NaN where any token in it is invalid."""
-    m = t[:, ROWS, cols].mean(axis=(1, 2))
-    ok = v[:, ROWS, cols].all(axis=(1, 2))
+    m = t[:, rows, cols].mean(axis=(1, 2))
+    ok = v[:, rows, cols].all(axis=(1, 2))
     m[~ok] = np.nan
     return m
 
@@ -118,9 +119,11 @@ def main():
         a_ne1 = block(t1, v1, BLK["ne1"])[i1]
         a_ne2 = block(t1, v1, BLK["ne2"])[i1]
         a_ref = block(t1, v1, BLK["ref"])[i1]
+        a_s = block(t1, v1, SOUTH[1], rows=SOUTH[0])[i1]   # south plots, same scene
         b_ne2 = block(t2, v2, BLK["ne1"])[i2]                 # Ne2 at its own tile centre
         r = pd.DataFrame({"same_tile": cos(a_ne1, a_ne2), "tile_centre": cos(a_ne1, b_ne2),
-                          "ref_west": cos(a_ne1, a_ref)}, index=common)
+                          "ref_west": cos(a_ne1, a_ref), "ne1_south": cos(a_ne1, a_s),
+                          "ne2_south": cos(a_ne2, a_s)}, index=common)
         if args.all_dates:                               # what the model reads: valid tokens only
             keep = np.ones(len(common), bool)
         elif sensor == "S2":                             # clear: cloud-free >= 0.99, no snow
@@ -141,11 +144,12 @@ def main():
         emb[sensor] = (common, a_ne1, b_ne2)
         print(f"\n{sensor} {y}: {len(common)} shared dates, "
               f"{int(r['same_tile'].notna().sum())} with both blocks valid")
-        print(r[["same_tile", "tile_centre", "ref_west"]].describe().loc[["count", "mean", "min", "max"]]
+        print(r[["same_tile", "tile_centre", "ref_west", "ne1_south", "ne2_south"]].describe().loc[["count", "mean", "min", "max"]]
               .to_string(float_format=lambda v: f"{v:.4f}"))
         js = (r.index.month >= 6) & (r.index.month <= 9)
         print(f"  Jun-Sep mean cos: same tile {r.loc[js, 'same_tile'].mean():.4f}  "
-              f"tile centre {r.loc[js, 'tile_centre'].mean():.4f}  ref west {r.loc[js, 'ref_west'].mean():.4f}")
+              f"tile centre {r.loc[js, 'tile_centre'].mean():.4f}  ref west {r.loc[js, 'ref_west'].mean():.4f}  "
+              f"Ne1-south {r.loc[js, 'ne1_south'].mean():.4f}  Ne2-south {r.loc[js, 'ne2_south'].mean():.4f}")
         print(f"  Spearman of (1 - cos) with |Ne1 - Ne2| SM on acquisition days (all {y} / Jun-Sep):")
         for c in ("same_tile", "tile_centre"):
             for b in BINS:
@@ -180,7 +184,9 @@ def main():
     for k, sensor in enumerate(("S2", "S1")):
         a = ax[k]
         r = res[sensor]
-        for c, mk, col, lab in (("tile_centre", "o", PRED_COLOR, "Ne1 vs Ne2, tile centres"),):
+        for c, mk, col, lab in (("same_tile", "o", PRED_COLOR, "Ne1 vs Ne2"),
+                                ("ne1_south", "s", plot_style_bw.RED, "Ne1 vs south plots (12,6)"),
+                                ("ne2_south", "^", plot_style_bw.GREEN, "Ne2 vs south plots (12,6)")):
             s = r[c].dropna()
             a.plot(s.index, s.values, "-" + mk, ms=3.5, lw=0.8, color=col, label=lab)
         a.text(0.01, 0.95, f"({'ab'[k]}) {sensor} L12 cosine similarity", transform=a.transAxes, va="top",

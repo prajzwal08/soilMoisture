@@ -3,7 +3,8 @@
 # ============================================================
 # One clear S2 scene of Ne1's 2.24 km tile (true colour + NDVI) with the 14 x 14 L12 token
 # grid (160 m patches) and the three patches plot_mead_embed.py uses, all in row 7:
-#   Ne1 patch (7,7), Ne2 patch (7,10), reference (7,4) = 3 patches (480 m) west of Ne1.
+#   Ne1 patch (7,7), Ne2 patch (7,10), reference (7,4) = 3 patches (480 m) west of Ne1,
+#   south plots (12,6) = the yardstick for the Ne1 vs Ne2 difference.
 # Towers at their exact pixel (tower_px from plot_mead_s2.py).
 #
 # Usage:
@@ -27,7 +28,8 @@ from plot_mead_s2 import RAW, B, MARK, tower_px
 PATCH   = 16                                        # 224 px / 14 tokens = 16 px = 160 m
 BOXES   = {"Ne1 patch (7,7)": ((7, 7), plot_style_bw.BLUE),
            "Ne2 patch (7,10)": ((7, 10), plot_style_bw.GREEN),
-           "reference (7,4)": ((7, 4), plot_style_bw.RED)}
+           "reference (7,4)": ((7, 4), plot_style_bw.RED),
+           "south plots (12,6)": ((12, 6), "black")}
 
 
 def main():
@@ -73,8 +75,8 @@ def main():
         if k == 1:
             fig.colorbar(im, ax=x, fraction=0.046, pad=0.02, label="NDVI")
     h, l = ax[0].get_legend_handles_labels()
-    fig.legend(h, l, loc="lower center", ncol=5, frameon=False)
-    fig.tight_layout(rect=[0, 0.07, 1, 1])
+    fig.legend(h, l, loc="lower center", ncol=3, frameon=False)
+    fig.tight_layout(rect=[0, 0.13, 1, 1])
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_patches_{d:%Y%m%d}.{ext}", dpi=300)
     print(f"figure: {FIG_DIR}/mead_patches_{d:%Y%m%d}.png")
