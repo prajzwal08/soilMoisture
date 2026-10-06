@@ -8977,3 +8977,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   PROBLEM: --delete is a serial unlink loop running at ~2-5 files/s on scratch -> 265k files ~15-30 h, job limit 6 h
   -> will TIMEOUT before the raw zarr step. Asked user: cancel + parallel delete from the manifest, then zarr.
   User: "leave it" -> prep 27682356 left running as is (expect TIMEOUT ~02:50; resume needs a new OK).
+  §72 smoke rerun with fixes (user asked to plot smoke): 27684361
+  §72 smoke rerun 27684361 (fixed bins): SM +0.02-0.035 at 1-7 d vs placebo drying; Grass-Crop VV +0.9 dB at 0-2 d;
+    Shrub-Savanna SWIR B11 -2 (refl x100) at 3-5 d (significant); optical/NDVI/NDMI noise at n=7/macro;
+    Forest "peaks" at 37-39 d sit in the thin last bin -> artefacts. Full run awaiting OK.
