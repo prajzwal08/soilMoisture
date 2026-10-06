@@ -8850,3 +8850,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   token dropout (orange ticks on the ERA5 bar, one illustrative p=0.15 draw, 53 days) instead of
   attended/excluded; empty slots (no data, 161) plain light grey. Key: "token dropout 53" (orange),
   "empty slot 161".
+
+2026-10-06 — runbook §71 written: S2/S1 history token dropout (--hist-token-dropout 0.15, per scene,
+  anchor kept), §59 config, 10 epochs, ~420 SBU. PLANNED, not built; build/smoke/full each need OK.
+  Context: S2/S1 history currently only modality-dropped (coarse 0.3), never per scene.

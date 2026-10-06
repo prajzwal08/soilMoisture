@@ -17899,3 +17899,38 @@ The s2/s1/dem/lulc pyramids are pooled vectors broadcast over the map (no within
 **Code.** `ablation.py` (`coarsen_item`, `BlockAverageDataset`), `effres_maps.py` (GPU: maps_L0.npy 6.8 GB + per-block readouts/summaries), `effres_analysis.py` (CPU), `slurm/effres_maps.sh [smoke]`, `slurm/effres_analysis.sh`.
 
 **Smoke** (`sbatch slurm/effres_maps.sh smoke`, CR200-18, blocks 0,1,2,112): (1) plain pass equals eval_final's `predictions_network_txson.parquet` (max |diff| < 2e-3); (2) block 1 = identity; (3) block 112 moves the map; then the analysis on the smoke output. Full: ~90.8k samples per pass (eval_final network pass: 71 s loop), 8 passes, ~30 min on 1 H100. Every submission needs the user's OK.
+
+## §71 S2/S1 history token dropout (Session 48, 2026-10-06, PLANNED, not built)
+
+**Why.** While drawing the architecture figure (architecture_s48.png, 1840f4e) it came out that ERA5 is the
+only input dropped token by token (15 % of days, dataset.py:1675). The S2/S1 history is only ever dropped
+as a block: coarse dropout (p 0.3, dataset.py:1615) withholds anchor + all S2 + all S1 together. A training
+sample therefore sees either the full history or none, never a thinned one — but at inference the history
+IS thinned, by cloud: CR200-18 on 2019-09-28 fills 30 of 60 S2 slots and 30 of 40 S1 slots (161 of 1038
+tokens are empty slots). Per-scene token dropout trains on that condition.
+
+**Terms (fixed for the paper).** Token dropout = single tokens withheld at random; modality dropout = a
+whole group withheld; empty slot = no data (key-padded in training AND inference). None is reconstructed:
+this is not MTM (TerraMind's pretraining), the only target is SM.
+
+**Change.** New flag `--hist-token-dropout P` (default 0.0 = current behaviour), train only, applied in
+`SoilMoistureDataset.__getitem__` right after the coarse-dropout block:
+- per filled S2 scene and per filled S1 pass, independently, with p = P: valid -> False and its pyramid
+  rows -> fresh zeros (never in place: /dev/shm cache views, same rule as coarse dropout);
+- one scene = its 4 pyramid tokens, which model.py already key-pads from `{s2,s1}_valid`; no model change;
+- the anchor is NOT dropped (it is the spatial bottleneck; coarse dropout still covers anchor-missing);
+- if every scene is dropped the sample equals a coarse-dropped history minus the anchor — allowed.
+Proposed P = 0.15, matching ERA5. Echo `hist_token_dropout` in the CONFIG line.
+
+**Run.** §59 config (3 layers, warmup 200, `--save-every-epoch`) + `--hist-token-dropout 0.15`, nothing else,
+`--max-epochs 10`; run `nolst_L3_wu200_htd015_<date>`; 4x H100, ~420 SBU (same as §65).
+Compare at ep10 vs §59 (SELECT 0.0488, gap 2.9x). Also eval on a cloud-thinned subset (val samples with
+<= 15 filled S2 slots) where the gain, if any, should show first.
+
+**Reading.** Better SELECT, or same SELECT with a better cloudy-subset score -> keep. Worse -> the model
+needs the full history and thinning only hurts. Expectation, stated: small effect on the gap — §56/§58
+locate memorisation in a site fingerprint, which a thinned history does not remove.
+
+**Figure.** If kept, architecture_s48.png gets orange token-dropout ticks on the S2/S1 history bars too.
+
+Status: PLANNED. Build -> smoke -> full each need the user's OK.
