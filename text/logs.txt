@@ -8756,3 +8756,12 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
       map is about as much position as ground. Same-ground diff: level offset -0.031/-0.022/+0.010 plus a strong EDGE band (~5 px) at the tile borders.
     TEST 2 day-vs-mean-map corr median +0.65 (5% ~+0.45); static share of spatial variance ~0.41 -> map is NOT frozen; ~60% of its spatial variance moves day to day.
   READ: not a pure fixed pattern; position and ground contribute about equally; tile edges are a clear artefact. Figure colourbars of col 3 overlap col 4 (fix).
+  §69.7 patchwise pw_stage2a_L3 at Mead (user 'yes please, and make graphs'): predict 196 patches daily 2017-2024 on Ne1 tile (wt_pw_era5do, flux_only label bypass in-process): job 27662986; figures (series + scatter vs 1-cos, Ne1/Ne2/south, vs 20 m model) afterok: job 27662987
+  27662987 CANCELLED (sed renamed the script in slurm/mead_pw_plot.sh again); fixed + added full-record SM figure mead_pw_sm_2017-2024 (user: 'also plot the SM ... from all dates'); plot resubmitted afterok 27662986: job 27663015
+  27662986 DONE (70 s, H100): pw_stage2a_L3 (epoch 2) 196 patches x 2922 days on Ne1 tile -> data_mead/pred/pw_maps_Ne1_2017-2024.npz. 27663015 DONE: figures mead_pw_sm_2017-2024, mead_pw_series_2019, mead_pw_scatter_2019.
+    2017-2024 means Ne1/Ne2/south: 0-10 .250/.221/.249, 10-30 .294/.289/.292, 30-100 .290/.321/.331. Mean |Ne1-Ne2| .032/.014/.032, |Ne1-south| .024/.015/.041.
+    2019 corr with observed Ne1-Ne2 (all/JJAS): patchwise -0.12/-0.17, +0.13/+0.00, -0.03/-0.43; 20 m model +0.08/-0.23, -0.09/-0.38, -0.24/-0.50.
+    Patchwise tracks the observed LEVEL far better than the 20 m model (which is too dry from 2020 on, esp. 30-100). At 30-100 patchwise Ne1 sits ~0.04 below Ne2
+    (observed Ne1-Ne2 ~ -0.02..-0.03: right sign, ~1.5x too big); at 0-10 patchwise Ne1 is WETTER than Ne2 (+0.03 in 2019) while observed Ne1 is drier -> wrong sign.
+    Scatter: patchwise |dSM| DOES scale with patch dissimilarity (S2 JJAS Ne1-south squares higher; Oct-May 10-30 Ne1-south +0.40), unlike the 20 m map.
+  READ: patchwise separates patches as static offsets (fingerprint) that scale with how different they look, but the day-to-day Ne1-Ne2 contrast still does not follow the observations.
