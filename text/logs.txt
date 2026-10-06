@@ -8923,3 +8923,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     final LayerNorm (nn.TransformerEncoderLayer norm_first=True); thick border.
   - open_gaps(): post-draw y-shift opening ~4-unit bands between drivers / satellite+cloud /
     fine 20 m lanes; token list, transformer and maps stay rigid, crossing lines stretch.
+
+2026-10-06 — architecture_s48.png render 27682845: three sections per user: upper = 365-day timeline (gap 7), middle = drivers+satellite+transformer, lower = fine 20 m lane + decoder (gap 7); drivers/satellite gap 4 kept.

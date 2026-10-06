@@ -286,17 +286,21 @@ def label(ax, x, y, s, **kw):
     ax.text(x, y, s, va="center", fontsize=kw.pop("fs", FS_B), zorder=6, **kw)
 
 
-def open_gaps(fig, ax, s1=58.75, d1=4.0, s2=26.9, d2=4.0):
+def open_gaps(fig, ax, s0=86.35, d0=7.0, s1=58.75, d1=4.0, s2=26.9, d2=7.0):
     """Open blank bands between the three lanes after everything is drawn.
 
+    Three sections, per the user: upper = the 365-day timeline band (above s0, up d0 + d1),
+    middle = drivers + satellite + transformer, lower = fine 20 m lane + decoder (below s2).
     Everything below s2 (fine 20 m lane, CNN, decoder, heads) moves down by d2. On the left
     (x <= 86, up to the token-sequence box) everything above s1 (driver lane) moves up by d1,
     and so does everything above y = 79 (timeline band, legend). The token sequence, the
     transformer and the SM maps keep their shape; lines and boxes that cross a gap stretch.
     """
     def Y(x, y):
-        if y < s2:
+        if y < s2:                                   # lower: fine 20 m lane + decoder
             return y - d2
+        if y > s0:                                   # upper: the 365-day timeline band
+            return y + d1 + d0
         if y > s1 and (x <= 86.01 or y > 79):
             return y + d1
         return y
@@ -324,7 +328,7 @@ def open_gaps(fig, ax, s1=58.75, d1=4.0, s2=26.9, d2=4.0):
         x0, x1, y0, y1 = im.get_extent()
         xc = (x0 + x1) / 2
         im.set_extent((x0, x1, Y(xc, y0), Y(xc, y1)))
-    Hn = H + d1 + d2
+    Hn = H + d0 + d1 + d2
     others = [a_ for a_ in fig.axes if a_ is not ax]
     boxes = []
     for a_ in others:                          # read positions in the OLD figure fractions
@@ -333,7 +337,7 @@ def open_gaps(fig, ax, s1=58.75, d1=4.0, s2=26.9, d2=4.0):
         xc = (x0 + x1) / 2
         boxes.append((x0, x1, Y(xc, y0), Y(xc, y1)))
     fig.set_size_inches(W / 10, Hn / 10)
-    ax.set_ylim(-d2, H + d1)
+    ax.set_ylim(-d2, H + d1 + d0)
     for a_, (x0, x1, y0, y1) in zip(others, boxes):
         a_.set_position([x0 / W, (y0 + d2) / Hn, (x1 - x0) / W, (y1 - y0) / Hn])
 
