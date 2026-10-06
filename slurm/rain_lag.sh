@@ -4,8 +4,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
-#SBATCH --mem=200G
-#SBATCH --time=03:00:00
+#SBATCH --mem=112G
+#SBATCH --time=01:30:00
 #SBATCH --output=/gpfs/work3/0/prjs1968/soilMoisture/logs/rain_lag_%j.out
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ktm.prajwalkhanal@gmail.com

@@ -8966,3 +8966,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Last commits: ace7bea..9fda7f0. Nothing training-related submitted.
 
 2026-10-06 — runbook §72 written (paper figures: architecture_s48 decisions + terramind_value findings and open items); §71 header marked awaiting user OK.
+  §72 rain lag ladder smoke SUBMITTED (user "yes"): job 27684304 (20 stations, 16 CPU) -> eval_output/rain_lag_smoke, figures/rain_lag/lag_ladder_smoke
+  smoke 27684304 FAILED at import (ZARR_ROOT env tripped §68.3 guard) -> fixed, resubmitted as 27684312
+  §72 smoke 27684312 PASS (21 stations, 175 events, 1.5 min on 16 CPU): rain spike day 0; SM +0.02..0.035 within 0-3 d
+    while placebo keeps drying; Grass-Crop VV +1.4 dB at 2-4 d. Optical panels noise at n=7/macro.
+    Fixes: satellite bins start at day 0 (0-2, 3-5, ...), peak diamond only if 95% CI excludes 0; full job mem 112G / 1.5 h.

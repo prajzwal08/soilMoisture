@@ -293,7 +293,7 @@ def main():
 def lag_bin_all(rows: pd.DataFrame) -> np.ndarray:
     b = rows["lag"].to_numpy().copy()
     sat = ~rows["var"].isin(["rain", "SM"]).to_numpy()
-    b[sat] = 3 * np.round(b[sat] / 3).astype(int)
+    b[sat] = 3 * np.floor_divide(b[sat], 3) + 1          # bins 0-2, 3-5, ... ; -3..-1 never mixes with day 0
     return b
 
 

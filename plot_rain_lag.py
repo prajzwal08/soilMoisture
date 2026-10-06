@@ -64,6 +64,7 @@ def main():
             ax.plot(e["lag"], e["median"] * sc, color=c, lw=1.8, zorder=5,
                     marker=None if var in ("rain", "SM") else "o", ms=3.5)
             pk = lags[(lags["var"] == var) & (lags["macro"] == m)]
+            pk = pk[(pk["peak_lo"] > 0) | (pk["peak_hi"] < 0)]           # only a significant peak
             if var != "rain" and len(pk):
                 ax.plot(pk["peak_lag_d"], pk["peak"] * sc, "D", mfc=c, mec="black", ms=7, zorder=6)
         ax.set_ylabel(lab)
