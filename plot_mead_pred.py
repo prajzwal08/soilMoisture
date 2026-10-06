@@ -97,8 +97,7 @@ def figure(obs, own, off, lo, hi, tag):
 
 
 def diff_figure(obs, own, df, lo, hi, tag):
-    """Ne1 - Ne2 per depth: observed (dots), model own-tile centres (solid),
-    model both pixels of Ne1's tile (dashed)."""
+    """Ne1 - Ne2 per depth: observed (dots) vs model at each station's own tile centre."""
     plot_style_bw.apply(globals(), "paper")
     a, b = ST
     within = (df[df["tile"] == a].pivot_table(index=["date", "depth"], columns="station",
@@ -109,7 +108,7 @@ def diff_figure(obs, own, df, lo, hi, tag):
     for dep in BINS:
         series[dep] = ((obs[a][0][dep] - obs[b][0][dep]).loc[lo:hi],
                        (own[a][dep] - own[b][dep]).loc[lo:hi], within[dep].loc[lo:hi])
-    lim = np.nanpercentile(np.abs(pd.concat([s for t in series.values() for s in t])), 99.5) + 0.01
+    lim = np.nanpercentile(np.abs(pd.concat([s for t in series.values() for s in t[:2]])), 99.5) + 0.01
     for ax, dep, lab in zip(axes, BINS, "abc"):
         ts = obs[a][1]
         if ts is not None:
@@ -120,10 +119,8 @@ def diff_figure(obs, own, df, lo, hi, tag):
         ax.axhline(0, color="black", lw=1.0, zorder=1)
         ax.plot(o.index, o.values, "o", ms=1.6 if tag == "full" else 2.4, color="black",
                 label="Observed", zorder=2)
-        ax.plot(w.index, w.values, "--", color=OFF_COLOR, lw=1.2,
-                label="Model, both pixels of the Ne1 tile", zorder=3)
         ax.plot(p.index, p.values, "-", color=PRED_COLOR, lw=1.4,
-                label="Model, each station's own tile centre", zorder=4)
+                label="Model (tile centre)", zorder=4)
         j = pd.concat([o, p], axis=1, keys=["o", "p"]).dropna()
         ax.text(0.01, 0.95, f"({lab}) {dep} cm   mean obs {j['o'].mean():+.3f}  "
                 f"model {j['p'].mean():+.3f}   R {j['o'].corr(j['p']):+.2f}",
@@ -131,7 +128,7 @@ def diff_figure(obs, own, df, lo, hi, tag):
                 bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
         ax.set_ylim(-lim, lim)
         ax.set_ylabel("Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
-    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
+    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, frameon=False)
     fig.align_ylabels(axes)
     fig.tight_layout()
     for ext in ("png", "pdf"):
