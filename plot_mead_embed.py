@@ -105,6 +105,12 @@ def main():
     own = {k: predicted(df, v, True) for k, v in ST.items()}
     w = df[df["tile"] == ST["Ne1"]].pivot_table(index=["date", "depth"], columns="station", values="pred")
     same = (w[ST["Ne1"]] - w[ST["Ne2"]]).unstack("depth")
+    # model at the south plots: centre of token (12,6) in the Ne1 map (8 map px per patch), same pass
+    zm = np.load(ROOT / "pred" / "maps_AmeriFlux_US-Ne1_2017-2024.npz")
+    md = pd.DatetimeIndex(zm["dates"].astype("datetime64[D]"))
+    mi = np.where(md.year == y)[0]
+    msm = zm["sm"][mi].astype(np.float32)
+    south = pd.DataFrame(msm[:, :, 56, 56] - msm[:, :, 100, 52], index=md[mi], columns=["0-10", "10-30", "30-100"])
     p, _ = load_precip()
     irr = pd.read_csv(ROOT / "bif" / "US-Ne2_irrigation_events.csv", parse_dates=["date_start", "date_end"])
     irr = irr[(irr["date_start"].dt.year == y) & ~irr["cancelled"].fillna(False).astype(bool)]
@@ -140,6 +146,7 @@ def main():
             r[f"obs_{b}"] = (obs["Ne1"][b] - obs["Ne2"][b]).reindex(common).values
             r[f"own_{b}"] = (own["Ne1"][b] - own["Ne2"][b]).reindex(common).values
             r[f"same_{b}"] = same[b].reindex(common).values
+            r[f"south_{b}"] = south[b].reindex(common).values      # model Ne1 - south, same pass
         res[sensor] = r
         emb[sensor] = (common, a_ne1, b_ne2)
         print(f"\n{sensor} {y}: {len(common)} shared dates, "
@@ -262,6 +269,43 @@ def main():
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_embed_scatter_{tag}.{ext}", dpi=600)
     print(f"figure: {FIG_DIR}/mead_embed_scatter_{tag}.png")
+
+    # --- scatter, model only: Ne1 vs Ne2 against Ne1 vs south plots, one Ne1-tile pass ---
+    fig, ax = plt.subplots(len(rows), 2, figsize=(8, 12))
+    for k, (sensor, b) in enumerate(rows):
+        r = res[sensor]
+        js = (r.index.month >= 6) & (r.index.month <= 9)
+        top = max(np.nanmax(r[f"same_{b}"].abs()), np.nanmax(r[f"south_{b}"].abs())) * 1.35
+        for j, (sel, season) in enumerate(((js, "Jun-Sep"), (~js, "Oct-May"))):
+            a = ax[k, j]
+            txt = []
+            for xc, yc, col, mk, name in (("same_tile", f"same_{b}", PRED_COLOR, "^", "Ne1 vs Ne2"),
+                                          ("ne1_south", f"south_{b}", plot_style_bw.RED, "s", "Ne1 vs south")):
+                x, z = 1 - r[xc], r[yc].abs()
+                a.plot(x[sel], z[sel], mk, ms=5, color=col, label=name)
+                ok = sel & np.isfinite(x.values) & np.isfinite(z.values)
+                n = int(ok.sum())
+                txt.append(f"{name} {spearmanr(x.values[ok], z.values[ok])[0]:+.2f} (n {n})" if n >= 5
+                           else f"{name} n/a")
+            a.text(0.03, 0.97, f"({'abcdefgh'[2 * k + j]}) {sensor}, {b} cm, {season}, model\nSpearman "
+                   + ", ".join(txt), transform=a.transAxes, va="top", fontsize="small",
+                   bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.0))
+            a.set_ylim(-0.005, top)
+            if j == 0:
+                a.set_ylabel("|$\\Delta$SM| model (m$^3$ m$^{-3}$)")
+            a.set_xlabel(f"1 $-$ cosine, {sensor} L12 patches")
+    ax[0, 0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, frameon=False)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(FIG_DIR / f"mead_embed_scatter_south_{tag}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_embed_scatter_south_{tag}.png")
+    for sensor in ("S2", "S1"):
+        r = res[sensor]
+        js = (r.index.month >= 6) & (r.index.month <= 9)
+        for b in BINS:
+            print(f"  {sensor} {b}: model mean |Ne1 - Ne2| {r[f'same_{b}'].abs().mean():.4f} "
+                  f"(Jun-Sep {r.loc[js, f'same_{b}'].abs().mean():.4f})  "
+                  f"|Ne1 - south| {r[f'south_{b}'].abs().mean():.4f} (Jun-Sep {r.loc[js, f'south_{b}'].abs().mean():.4f})")
 
     # --- date x date matrices ---
     fig, ax = plt.subplots(2, 3, figsize=(12, 8))

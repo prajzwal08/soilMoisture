@@ -8743,3 +8743,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     2018-2025 sif_YYYY.nc, 0 tmp left. 2018 flush 14:11-15:03 ran under full read contention; later years flushed in 6-13 s.
     S2 27659323 7/8 tasks done, task 3 at 59/68. One failed scene in total: NLGRID_T108_079 S2 20240718 "Index 0 is out
     of bounds for axis 0 with size 0" (empty stack, likely deterministic) -> tile partial. ERA5 581/660, still 2 errors.
+  27662205 DONE (36 s): figures/mead/mead_embed_scatter_south_2019_alldates.png. Model mean |dSM| (Jun-Sep), Ne1-Ne2 vs Ne1-south:
+    0-10 0.014 vs 0.018, 10-30 0.017 vs 0.022 -- south patches are 2-3x more dissimilar (1-cos 0.4-0.7 vs 0-0.4) but the model SM gap is only ~1.3x.
+    Oct-May: Ne1-south Spearman -0.55 / -0.48 (more dissimilar -> SMALLER model gap); S1 negative everywhere.
+  READ: the model's map does not scale its SM contrast with how different the patches look; consistent with §56 (off-centre map = fixed decoder pattern).
