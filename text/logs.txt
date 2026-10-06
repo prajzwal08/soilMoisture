@@ -8635,3 +8635,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     windows with an S1 pass (Jul 9, Aug 2); without S1 it is ~0 or the wrong sign.
     CONFIRMED: 2019 Ne1 gauge copies Ne2 pivot spikes (both 30.5 mm max, Ne1 not irrigated) -> Ne1 P gap-filled from Ne2.
   §69.5 Ne1-Ne2 diff + S1/S2/irr strip + precip panel, Jun-Aug 2019 (user asked, style of mead_diff_Ne1_Ne2_2019_acq): job 27656121
+  27656121 DONE (24 s): figures/mead/mead_diff_Ne1_Ne2_20190601_20190831_acq.png (Jun-Aug 2019, strip + 3 depths + precip).
+    Jun-Aug Ne1-Ne2 mean obs / model, R: 0-10 -0.009/-0.015 +0.06; 10-30 -0.014/+0.002 -0.20; 30-100 -0.026/+0.015 -0.54.
+    READ: model Ne1-Ne2 STEPS at the Jun 24 S2 scene (10-30 -0.05 -> +0.02, 30-100 climbs to +0.05) and stays: crop/imagery
+    contrast, opposite sign to the water. Observed Ne2-wetter dips follow the Ne2 pivot dates (Jul 8/15/29, Aug 9) and the dry
+    late-Aug; model does not follow them. Gauges: Ne1 = Ne2 incl. 30 mm pivot spikes (Jul 9/16/30) -> Ne1 copied from Ne2.
+    ERA5 Aug 20/26 = 45/52 mm vs gauges 9/16 mm.
