@@ -27,7 +27,7 @@ echo ""
 
 $(which python) preprocessing_mead_base.py
 echo ""
-$(which python) analyse_mead_irrigation.py --year "${1:-2022}"
+$(which python) analyse_mead_irrigation.py --year ${@:-2022}
 
 echo ""
 echo "Finished : $(date)"

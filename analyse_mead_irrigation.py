@@ -52,7 +52,7 @@ pd.set_option("display.max_columns", 40)
 
 
 def load():
-    sm, rain, le, irr = {}, {}, {}, {}
+    sm, rain, le, irr, ts = {}, {}, {}, {}, {}
     for s in SITES:
         ds = xr.open_dataset(ROOT / "observed" / f"AmeriFlux_{s}_observed.nc")
         t = pd.to_datetime(ds["date_time"].values)
@@ -60,10 +60,11 @@ def load():
                              columns=[str(d) for d in ds["depth"].values])
         rain[s] = pd.Series(ds["precip_mm"].values, index=t) if "precip_mm" in ds else None
         le[s] = pd.Series(ds["le_wm2"].values, index=t) if "le_wm2" in ds else None
+        ts[s] = pd.Series(ds["ts_degc"].values, index=t) if "ts_degc" in ds else None
         f = ROOT / "bif" / f"{s}_irrigation_events.csv"
         irr[s] = (pd.read_csv(f, parse_dates=["date_start", "date_end"])
                   if f.exists() and f.stat().st_size > 1 else pd.DataFrame())
-    return sm, rain, le, irr
+    return sm, rain, le, irr, ts
 
 
 def t1_monthly(sm, lo, hi):
@@ -136,7 +137,7 @@ def t4_le(le):
     return pd.DataFrame(rows)
 
 
-def sample_figure(sm, rain, irr, year):
+def sample_figure(sm, rain, irr, ts, year):
     """One row per site: SM at three depths (left axis) and, hanging from the
     top (right axis, inverted), the site's tower rain (black) and irrigation
     events (filled = over the towers, hollow = log says not over the towers)."""
@@ -149,8 +150,7 @@ def sample_figure(sm, rain, irr, year):
     sm_all = pd.concat([sm[s].loc[lo:hi] for s in SITES]).stack()
     y_lo, y_hi = np.nanpercentile(sm_all, 0.5) - 0.02, np.nanpercentile(sm_all, 99.5) + 0.12
     p_max = max(rain[s].loc[lo:hi].max() for s in SITES if rain[s] is not None)
-    i_max = max([irr[s]["amount_in"].max() * 25.4 for s in SITES if len(irr[s])] + [0])
-    w_max = 2.5 * max(p_max, i_max)                     # bars use the top ~40 %
+    w_max = 2.5 * max(p_max, 40.0)                       # bars use the top ~40 %
 
     fig, axes = plt.subplots(3, 1, figsize=(9, 9), sharex=True)
     for ax, (s, name), lab in zip(axes, SITES.items(), ["(a)", "(b)", "(c)"]):
@@ -158,6 +158,10 @@ def sample_figure(sm, rain, irr, year):
             if b in sm[s]:
                 v = sm[s][b].loc[lo:hi]
                 ax.plot(v.index, v.values, color=depth_col[b], lw=1.6, label=f"{b} cm")
+        if ts[s] is not None:                       # frozen soil: TDR misses ice
+            fz = ts[s].loc[lo:hi] <= 0
+            for d in fz.index[fz.values]:
+                ax.axvspan(d, d + pd.Timedelta("1D"), color="0.88", lw=0, zorder=0)
         ax.set_ylim(y_lo, y_hi)
         ax.set_ylabel("SM (m$^3$ m$^{-3}$)")
         ax.text(0.01, 0.04, f"{lab} {name}", transform=ax.transAxes, va="bottom")
@@ -170,7 +174,9 @@ def sample_figure(sm, rain, irr, year):
         if len(e):
             e = e[(e["date_start"] >= lo) & (e["date_start"] <= hi)]
             for _, r in e.iterrows():
-                mm = r["amount_in"] * 25.4 if pd.notna(r["amount_in"]) else 0.3 * w_max
+                if r.get("cancelled", False):
+                    continue
+                mm = min(r["amount_in"] * 25.4 if pd.notna(r["amount_in"]) else 25.0, 0.4 * w_max)
                 hollow = bool(r["not_over_tower"])
                 ax2.bar(r["date_start"], mm, width=3.0, color="white" if hollow else "0.55",
                         edgecolor="black", lw=1.0,
@@ -193,9 +199,9 @@ def sample_figure(sm, rain, irr, year):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--year", type=int, default=2022)
+    ap.add_argument("--year", type=int, nargs="+", default=[2022])
     args = ap.parse_args()
-    sm, rain, le, irr = load()
+    sm, rain, le, irr, ts = load()
 
     print("T1 monthly mean difference vs rainfed Ne3 (m3/m3), observed days only")
     print("   2017-2024:")
@@ -214,7 +220,8 @@ def main():
     print("T4 Jun-Sep mean LE (W m-2)")
     print(t4_le(le).to_string(index=False), "\n")
 
-    sample_figure(sm, rain, irr, args.year)
+    for y in args.year:
+        sample_figure(sm, rain, irr, ts, y)
 
 
 if __name__ == "__main__":

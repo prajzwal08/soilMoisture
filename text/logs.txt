@@ -8494,3 +8494,18 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   New: preprocessing_mead_base.py, analyse_mead_irrigation.py, slurm/mead_irrigation_step1.sh; runbook §69.
   NOT submitted, waiting for the user's OK.
   §69 step 1+2 SUBMITTED (user "yes"): job 27651792 (slurm/mead_irrigation_step1.sh 2022)
+  §69 job 27651792 DONE (20 s). 990-style daily SM built for Ne1/Ne2/Ne3 (2001-2025, 0 % gap-fill in 2017-2025;
+  Ne1 level1 ends 2024-12-30). Depths 10/25/50/100 cm (MeasurementHeight file). Tower rain 809/788/644 mm/yr.
+  RESULTS:
+   - Irrigation log (BIF GRP_DM_WATER) covers ONLY 2014-2021. 2022-2024 have no log, but 2022 data clearly show
+     pivot irrigation (Ne1/Ne2 re-wet in Jul-Sep with no rain; Ne3 dries to ~0.21 and stays) -> log incomplete.
+   - T3 rain-free wetting jumps (May-Sep, 0-10 cm): Ne1 0-9/yr, Ne2 0-9/yr, Ne3 0-1/yr in every year 2001-2024.
+     Cleanest marker of irrigation; works without the log.
+   - T1 monthly gap 2001-2016: Jul-Aug +0.05..+0.07 at 0-10 (Ne1/Ne2 - Ne3). 2017-2024: ~0 or NEGATIVE, except
+     dry 2022 (JJAS 0-10 Ne1 .304 vs Ne3 .261). Wet years have no gap: rain does the irrigating.
+   - Permanent sensor/site offsets ~0.02-0.05 (30-100 cm Ne2 > Ne3 all year) -> compare ANOMALIES / dynamics,
+     not absolute levels.
+   - Winter: TDR SM drops to ~0.15 in Jan-Feb = frozen soil (liquid water only), not drying.
+  BUGS FIXED (not rerun): ".33 in" parsed as 33 in (72.95/122.03 in totals); "cancelled" events; LE_PI_F ends 2014
+  -> combine with raw LE_1_1_1; rain axis was scaled by the bad amounts (rain invisible); frozen days now shaded
+  (TS_1_1_1 <= 0); --year takes several years.

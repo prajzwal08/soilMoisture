@@ -74,7 +74,8 @@ TRAIN_END       = "2025-12-31"
 
 SWC_RAW = re.compile(r"^SWC_\d+_\d+_\d+$")
 P_COLS  = ["P_PI_F_1_1_1", "P_PI_F_2_2_1"]
-LE_COL  = "LE_PI_F_1_1_1"
+LE_COLS = ["LE_1_1_1", "LE_PI_F_1_1_1"]   # LE_PI_F stops after 2014
+TS_COL  = "TS_1_1_1"                       # shallow soil temperature, frozen-soil flag
 
 XNS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
@@ -148,12 +149,15 @@ def irrigation_events(bif: pd.DataFrame, site: str) -> pd.DataFrame:
         start = f.get("DM_DATE_START") or f.get("DM_DATE") or ""
         end   = f.get("DM_DATE_END") or start
         com   = str(f.get("DM_COMMENT", ""))
-        amt   = re.search(r"(\d+(?:\.\d+)?)\s*(?:in\b|in\.|inch)", com)
+        # ".33 in" must parse as 0.33 (a leading-dot amount read as 33 before)
+        amt   = re.search(r"(\d*\.\d+|\d+)\s*(?:in\b|in\.|inch)", com)
+        cancelled = bool(re.search(r"cancel", com, re.I))
         recs.append({
             "site": site, "group_id": gid, "type": f.get("DM_WATER", ""),
             "date_start": pd.to_datetime(str(start)[:8], format="%Y%m%d", errors="coerce"),
             "date_end":   pd.to_datetime(str(end)[:8], format="%Y%m%d", errors="coerce"),
-            "amount_in": float(amt.group(1)) if amt else np.nan,
+            "amount_in": 0.0 if cancelled else (float(amt.group(1)) if amt else np.nan),
+            "cancelled": cancelled,
             "not_over_tower": bool(re.search(r"no irrigation over tower", com, re.I)),
             "comment": com,
         })
@@ -315,7 +319,13 @@ def process(site: str) -> str:
     # tower precipitation (two gauges) + LE
     p = {c: daily_sum_mean(df[c].astype(float), "sum", step_h) for c in P_COLS if c in df}
     p_main = max(p, key=lambda c: p[c].notna().sum()) if p else None
-    le = daily_sum_mean(df[LE_COL].astype(float), "mean", step_h) if LE_COL in df else None
+    # LE: PI gap-filled where it exists, else the raw half of the record (12 h minimum)
+    le_cols = [c for c in LE_COLS if c in df]
+    le_h = (df[le_cols[1]].astype(float).combine_first(df[le_cols[0]].astype(float))
+            if len(le_cols) == 2 else df[le_cols[0]].astype(float) if le_cols else None)
+    le = (le_h.resample("D").mean().where(le_h.resample("D").count() >= 12 / step_h)
+          if le_h is not None else None)
+    ts = daily_sum_mean(df[TS_COL].astype(float), "mean", step_h) if TS_COL in df else None
     for c, s in p.items():
         w = s.loc[TRAIN_START:TRAIN_END]
         rep.append(f"  {c}: {int(w.notna().sum())}/{len(w)} valid days 2017-2025, "
@@ -334,7 +344,11 @@ def process(site: str) -> str:
         obs["precip_mm"].attrs = {"units": "mm d-1", "source": f"tower gauge {p_main}"}
     if le is not None:
         obs["le_wm2"] = ("date_time", le.reindex(idx).values)
-        obs["le_wm2"].attrs = {"units": "W m-2", "source": LE_COL}
+        obs["le_wm2"].attrs = {"units": "W m-2", "source": "+".join(LE_COLS)}
+    if ts is not None:
+        obs["ts_degc"] = ("date_time", ts.reindex(idx).values)
+        obs["ts_degc"].attrs = {"units": "degC", "source": TS_COL,
+                                "note": "TDR reads liquid water only: SM drops when ts <= 0"}
     obs["soil_moisture"].attrs = {"units": "m3 m-3", "note": "observed only, no gap-fill"}
     obs.attrs = {"site": site, "source": csv_name, "time_zone": "local standard time (BASE)"}
     (OUT_ROOT / "observed").mkdir(parents=True, exist_ok=True)
