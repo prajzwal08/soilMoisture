@@ -1,0 +1,135 @@
+# ============================================================
+# Mead Ne1 / Ne2: model time series vs measurements (runbook §69.3)
+# ============================================================
+# Observed = data_mead/observed (BASE, observed only, no gap-fill).
+# Predicted = predict_mead_pixels.py (frozen §66 model, every day):
+#   own-tile centre pixel  (solid, Python blue, on top of the black dots)
+#   neighbour-tile pixel   (dashed, light blue: the same station read 546 m off-centre)
+# One row per (station, depth).  Two figures: the full period and a zoom.
+# Prints RMSE / ubRMSE / bias / R per station-depth (observed days only) and the
+# observed-vs-predicted Ne1 - Ne2 difference (anomaly correlation, Jun-Sep 2019).
+#
+# Usage:
+#   python plot_mead_pred.py [--zoom 2019 2020]
+# ============================================================
+
+import argparse
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+import plot_style_bw
+
+ROOT    = Path("/gpfs/work3/0/prjs1968/data_mead")
+PRED    = ROOT / "pred" / "mead_pixels_2017-2024.parquet"
+FIG_DIR = Path("/gpfs/work3/0/prjs1968/soilMoisture/figures/mead")
+ST      = ["AmeriFlux_US-Ne1", "AmeriFlux_US-Ne2"]
+BINS    = ["0-10", "10-30", "30-100"]
+NAME    = {"AmeriFlux_US-Ne1": "Ne1 irrigated maize", "AmeriFlux_US-Ne2": "Ne2 irrigated maize/soy"}
+PRED_COLOR, OFF_COLOR = "#3776AB", plot_style_bw.GREEN
+
+
+def observed(st):
+    ds = xr.open_dataset(ROOT / "observed" / f"{st}_observed.nc")
+    t = pd.to_datetime(ds["date_time"].values)
+    sm = pd.DataFrame(ds["soil_moisture"].values, index=t,
+                      columns=[str(d) for d in ds["depth"].values])
+    ts = pd.Series(ds["ts_degc"].values, index=t) if "ts_degc" in ds else None
+    return sm, ts
+
+
+def predicted(df, st, own: bool):
+    """own=True: st at its own tile centre; False: st read from the other tile."""
+    sel = df[(df["station"] == st) & ((df["tile"] == st) if own else (df["tile"] != st))]
+    return sel.pivot_table(index="date", columns="depth", values="pred")
+
+
+def metrics(o, p):
+    j = pd.concat([o, p], axis=1, keys=["o", "p"]).dropna()
+    if len(j) < 30:
+        return dict(n=len(j))
+    e = j["p"] - j["o"]
+    return dict(n=len(j), rmse=np.sqrt((e ** 2).mean()), bias=e.mean(),
+                ubrmse=np.sqrt(((e - e.mean()) ** 2).mean()), r=j["o"].corr(j["p"]))
+
+
+def figure(obs, own, off, lo, hi, tag):
+    plot_style_bw.apply(globals(), "paper")
+    fig, axes = plt.subplots(6, 1, figsize=(12 if tag == "full" else 9, 14), sharex=True)
+    vals = pd.concat([obs[s][0].loc[lo:hi] for s in ST] + [own[s].loc[lo:hi] for s in ST]).stack()
+    y_lo, y_hi = np.nanpercentile(vals, 0.5) - 0.02, np.nanpercentile(vals, 99.5) + 0.03
+    letters = iter("abcdef")
+    for i, (s, b) in enumerate([(s, b) for s in ST for b in BINS]):
+        ax = axes[i]
+        ts = obs[s][1]
+        if ts is not None:                               # frozen soil: TDR misses ice
+            fz = ts.loc[lo:hi] <= 0
+            for d in fz.index[fz.values]:
+                ax.axvspan(d, d + pd.Timedelta("1D"), color="0.90", lw=0, zorder=0)
+        o = obs[s][0][b].loc[lo:hi]
+        ax.plot(o.index, o.values, "o", ms=1.6 if tag == "full" else 2.4, color="black",
+                label="Observed", zorder=2)
+        p2 = off[s][b].loc[lo:hi]
+        ax.plot(p2.index, p2.values, "--", color=OFF_COLOR, lw=1.2,
+                label="Model, read 546 m off-centre (neighbour tile)", zorder=3)
+        p = own[s][b].loc[lo:hi]
+        ax.plot(p.index, p.values, "-", color=PRED_COLOR, lw=1.4,
+                label="Model, own tile centre", zorder=4)
+        m = metrics(obs[s][0][b].loc[lo:hi], own[s][b].loc[lo:hi])
+        txt = (f"({next(letters)}) {NAME[s]}, {b} cm" +
+               (f"   ubRMSE {m['ubrmse']:.3f}  bias {m['bias']:+.3f}  R {m['r']:.2f}"
+                if "r" in m else ""))
+        ax.text(0.01, 0.95, txt, transform=ax.transAxes, va="top",
+                bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
+        ax.set_ylim(y_lo, y_hi)
+        ax.set_ylabel("SM (m$^3$ m$^{-3}$)")
+    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
+    fig.align_ylabels(axes)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(FIG_DIR / f"mead_pred_vs_obs_{tag}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_pred_vs_obs_{tag}.png")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--zoom", type=int, nargs="+", default=[2019, 2020])
+    args = ap.parse_args()
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    df = pd.read_parquet(PRED)
+    df["date"] = pd.to_datetime(df["date"])
+    obs = {s: observed(s) for s in ST}
+    own = {s: predicted(df, s, True) for s in ST}
+    off = {s: predicted(df, s, False) for s in ST}
+
+    print("Own-tile centre vs observed, 2017-2024 (observed days only)")
+    for s in ST:
+        for b in BINS:
+            m = metrics(obs[s][0][b].loc["2017":"2024"], own[s][b])
+            print(f"  {s[-3:]} {b:>6}: n {m['n']:>5}  RMSE {m.get('rmse', np.nan):.3f}  "
+                  f"ubRMSE {m.get('ubrmse', np.nan):.3f}  bias {m.get('bias', np.nan):+.3f}  "
+                  f"R {m.get('r', np.nan):.3f}")
+
+    print("\nNe1 - Ne2 difference, observed vs predicted (own-tile centres)")
+    for b in BINS:
+        do = (obs[ST[0]][0][b] - obs[ST[1]][0][b]).loc["2017":"2024"]
+        dp = own[ST[0]][b] - own[ST[1]][b]
+        j = pd.concat([do, dp], axis=1, keys=["o", "p"]).dropna()
+        jj = j[(j.index.year == 2019) & (j.index.month >= 6) & (j.index.month <= 9)]
+        print(f"  {b:>6}: all-days corr {j['o'].corr(j['p']):+.3f}  "
+              f"mean obs {j['o'].mean():+.3f} pred {j['p'].mean():+.3f} | "
+              f"JJAS 2019 obs {jj['o'].mean():+.3f} pred {jj['p'].mean():+.3f}")
+
+    figure(obs, own, off, "2017-01-01", "2024-12-31", "full")
+    lo, hi = f"{min(args.zoom)}-01-01", f"{max(args.zoom)}-12-31"
+    figure(obs, own, off, lo, hi, f"{min(args.zoom)}_{max(args.zoom)}")
+
+
+if __name__ == "__main__":
+    main()
