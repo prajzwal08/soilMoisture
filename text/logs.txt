@@ -8776,3 +8776,19 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     (passed its strategy-log checks: meteo 66 px all era5land_point, radiation 66 px).
   §68 fanout 27662622 COMPLETED 0:0 (1.5 min): 688 tiles <- 66 px, 19,952 files copied (29/tile), 0 pre-existing.
     ALL §68 INPUTS DOWNLOADED: S2+DEM, S1+LULC, SIF, soil, ERA5 meteo/rad/TWSA. Next = §68.7 verify -> zarr -> tokens -> predict (each needs OK).
+
+2026-10-06 Architecture flowchart (publication figure) of the baseline nolst_L3_wu200_20261005
+  User asked for a publication-quality algorithm flowchart with real images (S1/S2 -> TerraMind -> ... -> decoder).
+  Decided: left-to-right, baseline only (no LST head), TxSON CR200-18 imagery, day D 2019-09-28, paper style.
+  Architecture traced from code + CONFIG (log 27575211:288): TerraMind L12 only (L3/L6/L9 unused); 1038 tokens
+  (3 CLS + 8 DEM/LULC + 4 soil + 196 anchor + 240 S2 + 160 S1 + 365 ERA5 + 50 SIF + 12 TWSA); 3-layer full
+  self-attention (no cross-attention); fine CNN E1 32@112 / E2 64@56 / E3 128@28; decoder 512@14 -> 256@28 ->
+  128@56 -> 64@112, FiLM(context) on skips; 3 depth heads FiLM(z, CLS_d); Huber at pixel (56,56); 26.7 M trainable.
+  New: plot_architecture_s48.py (--prep / --render), slurm/plot_architecture_s48.sh. Old plot_architecture.py untouched.
+  §70 LST vs no-LST spatial comparison PARKED (not dropped).
+  SUBMITTED (user "yes"): job 27664776 (rome 16 CPU, prep + render)
+  render-only RESUBMITTED (user "yes") after label() ha fix: job 27664856 (prep of 27664776 OK: S2 0818/0823/0927, S1 0824/0905/0917, LULC 2018)
+
+2026-10-06 §68.7 TOKENS SMOKE submitted (user "go on"): job 27665785 (nl_tokens.sh smoke, gpu_h100 1 GPU, 16 CPU, 120G, 6 h)
+  3 tiles from /gpfs/scratch1/shared/pkhanal/nl/data_smoke/station_splits.csv: C_ITCSM-07b, C_ITCSM-08b (TWENTE controls), T076_092 (grid).
+  Steps: cloud mask -> cloudy filter -> raw zarr -> TerraMind tokens -> cm-fill -> token masks -> values18 splice -> §48 cache; isolation check at end.
