@@ -16,6 +16,7 @@
 #
 # Usage:
 #   python plot_mead_dry_irrigation.py [--year 2018]
+#   python plot_mead_dry_irrigation.py --pair [--year 2018]   (Ne2 logged irrigation, ERA5/Ne1/Ne2 dry; Ne2 vs Ne1)
 # ============================================================
 
 import argparse
@@ -64,14 +65,136 @@ def delta(series, d0, a, b):
     return x.iloc[1] - x.iloc[0]
 
 
+def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
+    """Ne1/Ne2 share weather.  Days inside a logged irr_site interval on which ERA5, the Ne1
+    and the Ne2 gauge all read < DRY_MM: irrigation is logged but nothing reached a gauge.
+    Per interval: observed and predicted SM change from start-1 to end+1, irrigated vs control."""
+    df = pd.read_parquet(PRED)
+    df["date"] = pd.to_datetime(df["date"])
+    obs = {s: observed(f"AmeriFlux_{s}")[0] for s in (irr_site, ctl)}
+    pred = {s: predicted(df, f"AmeriFlux_{s}", True) for s in (irr_site, ctl)}
+    s1, s2c = acquisitions(f"AmeriFlux_{irr_site}")
+    s2 = s2c.index
+    ctl_iv = intervals(irr[ctl], y)
+    g = {k: p[k] for k in ("ERA5", irr_site, ctl)}
+    a_, c_ = irr_site[-3:], ctl[-3:]
+
+    rows, events = [], []
+    print(f"\n{y}: logged {a_} irrigation, days with ERA5, {a_} and {c_} gauges all < {DRY_MM} mm")
+    for a, b, amt in intervals(irr[irr_site], y):
+        days = pd.date_range(a, b - pd.Timedelta("1D"))            # logged start .. end
+        dry = [d for d in days if all(g[k].get(d, np.inf) < DRY_MM for k in g)]
+        ov = [f"{x:%m-%d}..{(z - pd.Timedelta('1D')):%m-%d}" for x, z, _ in ctl_iv
+              if x <= b and z >= a - pd.Timedelta("1D")]
+        lo, hi = a - pd.Timedelta("1D"), b
+        r = dict(start=a.date(), end=(b - pd.Timedelta("1D")).date(),
+                 amount_mm=round(amt * 25.4, 1), n_days=len(days), n_all_dry=len(dry),
+                 all_dry_days=",".join(f"{d:%m-%d}" for d in dry),
+                 gauge_max={k[-4:] if k != "ERA5" else k: round(float(g[k].loc[a:b].max()), 1)
+                            for k in g},
+                 ctl_irrigated=",".join(ov),
+                 s1=",".join(f"{d:%m-%d}" for d in s1[(s1 >= a) & (s1 < b)]),
+                 s2=",".join(f"{d:%m-%d}({s2c[d]:.0%} clear)" for d in s2[(s2 >= a) & (s2 < b)]))
+        for bn in BINS:
+            for s in (irr_site, ctl):
+                r[f"obs{s[-3:]}_{bn}"] = delta(obs[s][bn], lo, 0, (hi - lo).days)
+                r[f"pred{s[-3:]}_{bn}"] = delta(pred[s][bn], lo, 0, (hi - lo).days)
+        rows.append(r)
+        events.append((a, b - pd.Timedelta("1D"), dry))
+        print(f"  {a:%m-%d}..{b - pd.Timedelta('1D'):%m-%d} {r['amount_mm']:5.1f} mm: "
+              f"{len(dry)}/{len(days)} all-dry days [{r['all_dry_days']}]  "
+              f"max gauge {r['gauge_max']}  {c_} irrigated: {r['ctl_irrigated'] or 'no'}  "
+              f"S1: {r['s1'] or 'none'}  S2: {r['s2'] or 'none'}")
+        for bn in BINS:
+            o = r[f"obs{a_}_{bn}"] - r[f"obs{c_}_{bn}"]
+            pr = r[f"pred{a_}_{bn}"] - r[f"pred{c_}_{bn}"]
+            print(f"      {bn:>5} dSM start-1 -> end+1: obs {a_} {r[f'obs{a_}_{bn}']:+.3f} "
+                  f"{c_} {r[f'obs{c_}_{bn}']:+.3f} ({a_}-{c_} {o:+.3f}) | model {a_} "
+                  f"{r[f'pred{a_}_{bn}']:+.3f} {c_} {r[f'pred{c_}_{bn}']:+.3f} ({a_}-{c_} {pr:+.3f})")
+    out = ROOT / "pred" / f"pair_irrigation_{a_}_{y}.csv"
+    pd.DataFrame(rows).to_csv(out, index=False)
+    print(f"table: {out}")
+    if not events:
+        return
+
+    plot_style_bw.apply(globals(), "paper")
+    n = len(events)
+    fig, axes = plt.subplots(3, n, figsize=(3.6 * n, 8), sharex="col", squeeze=False,
+                             gridspec_kw={"height_ratios": [0.8, 1, 1]})
+    col = {irr_site: plot_style_bw.BLUE, ctl: plot_style_bw.GREEN}
+    letters = iter("abcdefghijklmnopqrstuvwxyz")
+    for j, (a, e, dry) in enumerate(events):
+        lo, hi = a - pd.Timedelta(f"{PAD}D"), e + pd.Timedelta(f"{PAD}D")
+        for ax in axes[:, j]:
+            ax.axvspan(a, e + pd.Timedelta("1D"), color="0.92", lw=0, zorder=0)
+            for d in dry:
+                ax.axvspan(d, d + pd.Timedelta("1D"), color="#FDD0A2", alpha=0.6,
+                           lw=0, zorder=0)
+        e1 = e + pd.Timedelta("1D")
+        for i, ax in enumerate(axes[:, j]):              # passes inside the logged interval
+            x = ax.get_xaxis_transform()
+            p1, p2 = s1[(s1 >= a) & (s1 < e1)], s2[(s2 >= a) & (s2 < e1)]
+            ax.plot(p1 + pd.Timedelta("12h"), np.full(len(p1), 0.80), "*", ms=11, color="black",
+                    transform=x, zorder=6)
+            ax.plot(p2 + pd.Timedelta("12h"), np.full(len(p2), 0.80), "*", ms=11,
+                    color=plot_style_bw.RED, mec="black", mew=0.4, transform=x, zorder=6,
+                    label="S2 pass" if i == 1 else None)
+        ax = axes[0, j]
+        er = p["ERA5"].loc[lo:hi]
+        ax.bar(er.index, er.values, width=1.0, color="0.6", label="ERA5-Land")
+        for s, mk in ((ctl, "o"), (irr_site, "^")):
+            gg = p[s].loc[lo:hi]
+            gg = gg[gg >= 0.2]
+            ax.plot(gg.index, gg.values, mk, ms=5, color=col[s], label=f"{s[-3:]} gauge")
+        ax.text(0.03, 0.95, f"({next(letters)}) {a_} irrigation {a:%d %b}-{e:%d %b}",
+                transform=ax.transAxes, va="top",
+                bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
+        if j == 0:
+            ax.set_ylabel("P (mm d$^{-1}$)")
+        for i, bn in enumerate(BINS, start=1):
+            ax = axes[i, j]
+            for s in (irr_site, ctl):
+                o = obs[s][bn].loc[lo:hi]
+                ax.plot(o.index, o.values, "o", ms=2.8, color=col[s], label=f"Observed {s[-3:]}")
+                pp = pred[s][bn].loc[lo:hi]
+                ax.plot(pp.index, pp.values, "-" if s == irr_site else "--", color=col[s],
+                        lw=1.5, label=f"Model {s[-3:]}")
+            ax.text(0.03, 0.95, f"({next(letters)}) {bn} cm", transform=ax.transAxes, va="top",
+                    bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
+            if j == 0:
+                ax.set_ylabel("SM (m$^3$ m$^{-3}$)")
+        axes[2, j].tick_params(axis="x", rotation=45)
+    axes[0, 0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
+    from matplotlib.lines import Line2D
+    h = [Line2D([], [], marker="o", ls="", ms=4, color=col[irr_site], label=f"Observed {a_}"),
+         Line2D([], [], ls="-", lw=1.5, color=col[irr_site], label=f"Model {a_}"),
+         Line2D([], [], marker="o", ls="", ms=4, color=col[ctl], label=f"Observed {c_}"),
+         Line2D([], [], ls="--", lw=1.5, color=col[ctl], label=f"Model {c_}"),
+         Line2D([], [], marker="*", ls="", ms=10, color="black", label="S1 pass"),
+         Line2D([], [], marker="*", ls="", ms=10, color=plot_style_bw.RED, mec="black",
+                mew=0.4, label="S2 pass")]
+    fig.legend(handles=h, loc="lower center", ncol=6, frameon=False)
+    fig.align_ylabels(axes[:, 0])
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    for ext in ("png", "pdf"):
+        fig.savefig(FIG_DIR / f"mead_pair_irrigation_{a_}_{y}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_pair_irrigation_{a_}_{y}.png  (grey = logged interval, "
+          f"peach = ERA5/Ne1/Ne2 all dry, black * = S1, orange * = S2 inside the interval)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, default=2018)
+    ap.add_argument("--pair", action="store_true",
+                    help="Ne2 logged irrigation on days ERA5, Ne1 and Ne2 gauges all dry; Ne2 vs Ne1")
     args = ap.parse_args()
     y = args.year
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
     p, irr = load_precip()
+    if args.pair:
+        pair(p, irr, y)
+        return
     dry = rain_free(p, irr, y)
     print(f"{y}: {int(dry.sum())} rain-free days of {len(dry)} "
           f"(ERA5, Ne3 < {DRY_MM} mm; Ne1/Ne2 < {DRY_MM} mm outside own logged irrigation)")
