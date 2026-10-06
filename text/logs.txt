@@ -8517,3 +8517,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Note: §69 was taken by the Mead irrigation test (parallel session), hence §70.
   NOT submitted; smoke = sbatch slurm/effres_maps.sh smoke, waiting for the user's OK.
   §69 rerun with fixes SUBMITTED (user "yes"): job 27652198 (years 2018 2020 2022)
+  §70 smoke SUBMITTED (user "yes"): job 27652196 (slurm/effres_maps.sh smoke, CR200-18, blocks 0,1,2,112)
