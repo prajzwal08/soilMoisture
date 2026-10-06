@@ -8613,3 +8613,11 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   GEE re-authenticated by user 12:37 (credentials refreshed). §68 driver smoke RE-SUBMITTED: job 27655028
   §69.5 rain-free irrigation events 2018 (user asked; "yes"): job 27655265 (slurm/mead_dry_irr.sh --year 2018).
     Rain-free = ERA5 & Ne3 gauge < 1 mm, Ne1/Ne2 gauge < 1 mm outside own logged irrigation; d0 = gauge spike; keep if d0+-3 dry.
+  §69.5 job 27655265 DONE (22 s). 2018: 225 rain-free days, 7 logged events, NONE dry over the full d0+-3 window -> no figure.
+    Table: data_mead/pred/dry_irrigation_events_2018.csv. Closest to clean (ERA5 = Ne3 = 0 on d0):
+      Ne1 d0 Aug 3 (gauge 33.8 mm; wet 08-04..06): dSM d0-1->d0+1 0-10 obs +0.029 pred -0.012 Ne3 -0.007; 10-30 obs +0.027 pred -0.009
+      Ne2 d0 Jul 21 (gauge 31.5 mm; wet 07-19,20,23): 0-10 obs +0.006 pred -0.003 Ne3 -0.025; 10-30 obs +0.022 pred -0.001
+      Ne1 d0 Aug 11 (wet only 08-14): obs -0.003/-0.007, i.e. no observed response either.
+    READ: on the two clean pivot days the sensors wet up (+0.02..+0.03) while Ne3 dries, and the model DRIES (-0.01).
+    Jul 17 / Aug 6 events coincide with real rain and the model wets there (+0.05), i.e. it follows ERA5, not the pivot.
+    Window too strict: 2018 summer has rain every few days. Next (needs OK): name the wet source per day, rain-free = d0-1..d0+1.
