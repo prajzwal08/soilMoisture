@@ -8738,3 +8738,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     S2: Ne1/Ne2 far more alike than either vs south plots all year except Jan-Mar (snow, all ~0.9). S1: Ne1-Ne2 above south most dates,
     but on the Aug 1 (0.48) and Aug 25 (0.41) dips it drops to/below the south level.
   27661338 patch figure + south box: legend overlapped x label -> ncol 3, rerun 27661634 DONE (16 s).
+  §69.5 model-only scatter: Ne1 vs Ne2 against Ne1 vs south plots (12,6) [map px (100,52)], one Ne1-tile pass, by season (user asked): job 27662205
+  §68 status 15:10: SIF 27659724 DONE in 62 min (not 7-8 h: the 95 GB sstat read was a bad basis), 688/688 tiles x
+    2018-2025 sif_YYYY.nc, 0 tmp left. 2018 flush 14:11-15:03 ran under full read contention; later years flushed in 6-13 s.
+    S2 27659323 7/8 tasks done, task 3 at 59/68. One failed scene in total: NLGRID_T108_079 S2 20240718 "Index 0 is out
+    of bounds for axis 0 with size 0" (empty stack, likely deterministic) -> tile partial. ERA5 581/660, still 2 errors.
