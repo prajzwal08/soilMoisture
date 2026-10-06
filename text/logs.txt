@@ -8600,3 +8600,13 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Passed before that: py_compile 19 files OK; ERA5 pixel list 7,011 tiles -> 567 pixels (median 15, max 20 tiles/pixel);
     SIF --from-local 2018-2025 written for all 3 smoke tiles (~2.5 min/yr). Needs user GEE re-auth, then resubmit.
   §69.4 ERA5 vs gauge precipitation plot 2019 (user asked): job 27654977
+  §69.4 precip plot 2018 (user: 2018-2019 only): job 27655008
+  §69.4 precip 27654977 (2019) + 27655008 (2018), figures/mead/mead_precip_{2018,2019}.png. Annual mm
+  ERA5/Ne1/Ne2/Ne3: 2018 1108/937/932/845, 2019 1123/903/902/795 (table for 2017-2024 in job out).
+  READ: (1) Ne1 and Ne2 gauges are nearly identical day by day; ERA5 forcing is the same for both -> rain does
+  NOT explain the observed Ne1-Ne2 difference. (2) Gauges DO catch pivot water: ~30-34 mm spikes with no rain at
+  Ne3/ERA5 (2018: Ne1 ~Jul 20/Aug 3, Ne2 ~Jul 22/Aug 6/Aug 12; a few days off the logged START date).
+  (3) SUSPICIOUS: 2019 the Ne1 gauge shows the SAME 30.5 mm spikes as Ne2 although Ne1 had no irrigation ->
+  Ne1 P (P_PI_F) likely gap-filled from Ne2 in 2019; check P_PI_F_1_1_1 vs P_PI_F_2_2_1 and raw P.
+  (4) ERA5 ~20-25 % wetter than gauges; Jan-Apr ERA5 accumulates ~2x the gauges (snow undercatch by gauges).
+  (5) Ne3 gauge ~100 mm/yr below Ne1/Ne2 outside irrigation days too -> gauge/siting difference.
