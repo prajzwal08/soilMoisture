@@ -8470,3 +8470,9 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     (b). FIXED wording: base draw is stratified by climate x land cover only (create_evaluation_splits.py:181,217);
     elevation band only enters the §47.4 val top-up. Jobs 27648838, 27648993.
   split_flowchart: all connectors orthogonal (straight down / across buses), larger arrowheads (job 27649063).
+  SESSION SUMMARY 2026-10-06 (paper figures, all CPU, all committed):
+    ablation heatmap (+|bias| panel, shared scale) + horizontal publication variant; ablation.py within-station donor
+    gap made circular (NOT re-run, user); 5 multi-station tile figures + TxSON unbiased (plot_tile_paper.py);
+    bias_groups (OOS bias vs land cover / climate / texture / DEM: none beats random); data_overview (map, split
+    timeline, record length, data points); split_flowchart (QC + split assignment). Open: OOS/OOST metric split in
+    tile panels, 573 vs 565 train and 224 vs 222 OOS numbers for the paper, tile spatial maps (GPU).
