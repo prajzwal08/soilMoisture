@@ -256,3 +256,72 @@ class AblationDataset(torch.utils.data.Dataset):
                 f"fallback {s['n_fallback']}, "
                 f"donor from a different station {s['frac_donor_diff_station']:.1%}, "
                 f"median |Δdoy| {s['median_abs_doy_gap']:.0f} d")
+
+
+# ── §70 effective resolution: block-average the within-tile spatial inputs ─────────────────
+# Within a tile, map structure can only come from inputs that vary in space: the 20 m `fine`
+# patch, the 10 m `lulc` class map, the ~30 m `soil_patch` and the 14x14 x 160 m `anchor_l12`.
+# The s2/s1/dem/lulc pyramids are pooled vectors broadcast over the whole map, so they carry
+# no within-tile position and are left alone. Block size `b` is in 20 m MAP pixels and must
+# divide 112: every grid is averaged to (112/b) x (112/b) blocks and expanded back, so all
+# four inputs lose detail below the same length b * 20 m. A grid already coarser than that
+# (anchor for b < 8, soil for b < 2, lulc at b = 1) is untouched. b = 1 is the identity and
+# is the smoke check that this path reproduces the plain pass.
+_FINE_VALUE_VALID = ((0, 10, 10),    # S2 bands 0:10, masked by s2_valid (ch 10)
+                     (12, 14, 14),   # S1 VV|VH 12:14, masked by s1_valid (ch 14)
+                     (17, 18, 18))   # DEM 17,        masked by dem_valid (ch 18)
+_LULC_NCLASS = 11                    # TerraMind indices 0..9 + LULC_PAD (10)
+
+
+def _blocks(x: torch.Tensor, n: int) -> torch.Tensor:
+    """(C, H, W) float -> each of n x n blocks replaced by its mean, same shape."""
+    import torch.nn.functional as F
+    H, W = x.shape[-2:]
+    return F.interpolate(F.adaptive_avg_pool2d(x[None], n), size=(H, W), mode="nearest")[0]
+
+
+def coarsen_item(item: dict, b: int) -> dict:
+    """Return a copy of `item` whose spatial inputs hold no detail below b * 20 m."""
+    if 112 % b:
+        raise ValueError(f"block {b} must divide 112")
+    n = 112 // b
+    out = dict(item)
+
+    fine = item["fine"].float().clone()                  # FRESH tensor: never edit a cached array
+    for a, z, v in _FINE_VALUE_VALID:
+        val  = fine[v:v + 1]
+        mv   = _blocks(val, n)
+        mean = _blocks(fine[a:z] * val, n) / mv.clamp(min=1e-6)
+        fine[a:z] = torch.where(mv > 0, mean, fine[a:z])   # an all-invalid block keeps its values
+    out["fine"] = fine.to(item["fine"].dtype)
+
+    lulc = item["lulc"].long()                           # (224, 224) class ids: block MODE, not mean
+    if b > 1:                                            # b = 1: the model mask-pools 2x2 itself
+        onehot = torch.nn.functional.one_hot(lulc.clamp(0, _LULC_NCLASS - 1),
+                                             _LULC_NCLASS).permute(2, 0, 1).float()
+        out["lulc"] = _blocks(onehot, n).argmax(0).to(item["lulc"].dtype)
+
+    for key in ("soil_patch",):                          # (21, 74, 74)
+        if n < item[key].shape[-1]:
+            out[key] = _blocks(item[key].float(), n).to(item[key].dtype)
+
+    a12 = item["anchor_l12"]                             # (196, 768) = 14 x 14 tokens
+    if n < 14:
+        g = a12.float().reshape(14, 14, -1).permute(2, 0, 1)
+        out["anchor_l12"] = _blocks(g, n).permute(1, 2, 0).reshape(196, -1).to(a12.dtype)
+    return out
+
+
+class BlockAverageDataset(torch.utils.data.Dataset):
+    """Wraps SoilMoistureDataset; every item's spatial inputs block-averaged at b map pixels."""
+
+    def __init__(self, base, block: int):
+        if 112 % block:
+            raise ValueError(f"block {block} must divide 112")
+        self.base, self.block = base, block
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i):
+        return coarsen_item(self.base[i], self.block)

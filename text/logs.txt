@@ -8509,3 +8509,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   BUGS FIXED (not rerun): ".33 in" parsed as 33 in (72.95/122.03 in totals); "cancelled" events; LE_PI_F ends 2014
   -> combine with raw LE_1_1_1; rain axis was scaled by the bad amounts (rain invisible); frozen days now shaded
   (TS_1_1_1 <= 0); --year takes several years.
+
+2026-10-06 §70 effective spatial resolution (TxSON within-tile) — BUILT, not run
+  Discussed theory: effective resolution = smallest scale where predicted spatial differences are present AND correct.
+  User chose all three tests on TxSON (Twente ruled out: 8 stations in 8 separate tiles, nearest 5.7 km).
+  New: ablation.coarsen_item/BlockAverageDataset, effres_maps.py, effres_analysis.py, slurm/effres_maps.sh, slurm/effres_analysis.sh; runbook §70.
+  Note: §69 was taken by the Mead irrigation test (parallel session), hence §70.
+  NOT submitted; smoke = sbatch slurm/effres_maps.sh smoke, waiting for the user's OK.

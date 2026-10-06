@@ -17876,3 +17876,26 @@ Facts found while building:
   SWC rules are copied.
 
 Job: `sbatch slurm/mead_irrigation_step1.sh [year]` (rome, 16 CPU, 30 min, ~8 SBU). Needs explicit OK.
+
+## §70 Effective spatial resolution of predicted SM — TxSON within-tile study (Session 48, 2026-10-06, BUILT, not run)
+
+**Question.** The model writes SM at 20 m (112 x 112 map per 2.24 km tile). What is the smallest scale at which predicted spatial differences are present AND correct? Prior evidence says coarse: §53 (SM ignores the 20 m path), §56 (the within-tile map is a fixed decoder pattern), step-0 probe (pair sign 0.50).
+
+**Testbed: TxSON.** 30 of 40 stations are oos (§47 split); 27 of those share a 2.24 km tile with another station (CR200-18 holds 6, at 405-936 m). Twente was ruled out: its 8 stations are each in their own tile, nearest pair 5.7 km. Frozen baseline `nolst_L3_wu200_20261005` (best.pt, ep10). Eval only.
+
+**Definition.** L_eff = max(L_A, L_B, L_C), per depth. Truth = oos tiles and oos stations only.
+
+| Test | Question | Method | L |
+|---|---|---|---|
+| 0 | how noisy is truth? | observed semivariogram over all TxSON pairs, level and daily anomaly; nugget = unpredictable floor | ceiling for A |
+| A | are predicted Δ between stations right? | within-tile pairs (same forward pass), bins <0.5/0.5-1/1-1.6 km; cross-tile pairs (centre pixels) to 50 km; level corr across pairs + median daily-Δ corr; cluster bootstrap | smallest separation with corr > 0 (95 %) |
+| B | what scale does the model use? | block-average the within-tile spatial inputs (fine S2/S1/DEM masked by their valid channels, LULC block MODE, soil_patch, anchor_l12 14x14) at b = 2..112 map px (40 m..2.24 km), re-predict; S = median RMS(map_b - map_0) / SD_space(map_0) | largest b with S < 0.1 |
+| C | what scale is right in the map? | block-average the plain map in a b x b window on the station pixel; paired cluster bootstrap of Δ ubRMSE vs b = 1; plus variance retained and radial spectrum of time-anomaly maps (tile time-mean = §56 pattern removed) | largest b not significantly worse |
+
+The s2/s1/dem/lulc pyramids are pooled vectors broadcast over the map (no within-tile position), so Test B leaves them alone.
+
+**Control.** A synthetic field (Gaussian sigma 160 m, perfect model + 20 m noise) through the Test C machinery must give a few hundred m.
+
+**Code.** `ablation.py` (`coarsen_item`, `BlockAverageDataset`), `effres_maps.py` (GPU: maps_L0.npy 6.8 GB + per-block readouts/summaries), `effres_analysis.py` (CPU), `slurm/effres_maps.sh [smoke]`, `slurm/effres_analysis.sh`.
+
+**Smoke** (`sbatch slurm/effres_maps.sh smoke`, CR200-18, blocks 0,1,2,112): (1) plain pass equals eval_final's `predictions_network_txson.parquet` (max |diff| < 2e-3); (2) block 1 = identity; (3) block 112 moves the map; then the analysis on the smoke output. Full: ~90.8k samples per pass (eval_final network pass: 71 s loop), 8 passes, ~30 min on 1 H100. Every submission needs the user's OK.
