@@ -8971,3 +8971,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §72 smoke 27684312 PASS (21 stations, 175 events, 1.5 min on 16 CPU): rain spike day 0; SM +0.02..0.035 within 0-3 d
     while placebo keeps drying; Grass-Crop VV +1.4 dB at 2-4 d. Optical panels noise at n=7/macro.
     Fixes: satellite bins start at day 0 (0-2, 3-5, ...), peak diamond only if 95% CI excludes 0; full job mem 112G / 1.5 h.
+2026-10-06 22:20 §68 prep 27682356: filter --analyze DONE (~78 min): 465,273 S2 scenes, kept 200,225 (43.0%),
+  rejected 265,048 (57.0%) at >50% invalid patches; 0 tiles with 0 scenes, 0 with <10. Empty T103_084 20160714 is in the
+  reject manifest (masked_frac 1.0) -> dropped. Manifest nl/data/logs/cloudy_tile_manifest_27682356.csv.
+  PROBLEM: --delete is a serial unlink loop running at ~2-5 files/s on scratch -> 265k files ~15-30 h, job limit 6 h
+  -> will TIMEOUT before the raw zarr step. Asked user: cancel + parallel delete from the manifest, then zarr.
