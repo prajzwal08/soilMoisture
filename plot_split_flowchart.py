@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """Paper figure: how stations are assigned to Train / Validation / OOS, and OOT / OOST in time.
 
+(a) daily soil-moisture QC per station (preprocessing_*.py), (b) split assignment.
 Steps follow create_evaluation_splits.py + runbook §47 (constants from splits_config.py):
   inventory -> soil-moisture stations -> location groups (< COLOC_THRESHOLD_KM) ->
   stratified draw (climate x land cover x elevation band): OOS_FRACTION -> OOS, VAL_FRACTION -> Val ->
@@ -57,30 +58,59 @@ def main():
     print(f"inventory {n_inv}, SM {n_sm}, duplicate {n_dup}, splits {n.to_dict()}, "
           f"OOT {oot_tr}+{oot_va}, OOST {len(ev['oost'])}, OOS eval {len(ev['oos'])}")
 
-    fig, ax = plt.subplots(figsize=(13.0, 14.0))
+    fig, ax = plt.subplots(figsize=(19.0, 14.0))
     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
-    W, H = 0.62, 0.062
+
+    # (a) quality control, per station (preprocessing_ISMN_soilMoisture.py; ICOS / AmeriFlux use the
+    #     same pipeline with their own QC flag, preprocessing_icos.py / preprocessing_ameriflux.py)
+    XL, WL, HL = 0.205, 0.39, 0.048
+    qc = [
+        "Raw sub-daily soil moisture\n(ISMN hourly; ICOS and AmeriFlux half-hourly)",
+        "Keep good readings only\n(ISMN flag G or D*; ICOS / AmeriFlux QC = 0, measured)",
+        "Average sensors at the same depth; daily mean,\nkept only if at least 6 valid readings that day",
+        "Average into layers 0–10, 10–30, 30–100 cm\n(sensors deeper than 100 cm dropped)",
+        "Keep the longest 0–10 cm record (gaps of up to 7 days bridged);\n"
+        "deeper layers kept only if at least 95 % complete in that window",
+        "Keep stations with at least 3 years (1095 days) of valid daily data",
+        "Fill remaining gaps with the same calendar-day mean, flagged;\n"
+        "the model is trained and evaluated on observed days only",
+        f"{n_sm - n_dup} stations with daily soil moisture",
+    ]
+    yl = [0.958 - i * 0.073 for i in range(len(qc))]
+    for i, (t, y) in enumerate(zip(qc, yl)):
+        box(ax, XL, y, WL, HL, t, lw=1.5 if i == len(qc) - 1 else 1.2)
+        if i:
+            arrow(ax, XL, yl[i - 1] - HL / 2, XL, y + HL / 2)
+    ax.text(XL - WL / 2, 0.993, "(a)   Daily soil moisture, each station", ha="left", va="bottom")
+
+    # (b) assigning stations to sets (create_evaluation_splits.py + runbook §47)
+    XR, WR = 0.705, 0.53
     steps = [
-        f"Station inventory: {n_inv} stations\n(ISMN, ICOS, AmeriFlux)",
-        f"Keep stations with soil-moisture observations: {n_sm - n_dup}\n"
-        f"(drop {n_inv - n_sm} flux-only sites and {n_dup} duplicate record)",
         f"Group stations closer than {COLOC_THRESHOLD_KM:g} km into one location group\n"
-        "(nearby sensors always end up in the same split)",
-        "Stratify groups by climate × land cover × elevation band;\n"
-        f"draw {OOS_FRACTION:.0%} of groups → OOS, {VAL_FRACTION:.0%} → Validation, rest → Train",
+        "(nearby sensors always end up in the same set)",
+        "In each climate × land cover cell, draw at random\n"
+        f"{OOS_FRACTION:.0%} of the groups → OOS, then {VAL_FRACTION:.0%} of the rest → Validation;\n"
+        "the remaining groups → Train (cells with < 3 groups → Train)",
         "Move Train / Validation stations to OOS if they\n"
         "(1) share a 2.24 km image tile with another station (< 1120 m)\n"
         "(2) are in the Netherlands (held out for the national map)\n"
         f"(3) have < {MIN_PRE_CUT_DAYS} observed days before {cut}",
-        "Top up Validation to ~10 % with stratified groups drawn from OOS\n"
-        "(never from Train, so training data is unchanged)",
+        "Top up Validation to ~10 % with groups drawn from OOS, stratified by\n"
+        "climate × land cover × elevation band (never from Train)",
     ]
-    ys = [0.955, 0.86, 0.765, 0.67, 0.555, 0.44]
-    hs = [H, H, H, H, 0.088, H]
+    ys = [0.955, 0.835, 0.685, 0.535]
+    hs = [0.054, 0.078, 0.098, 0.062]
     for i, (t, y, h) in enumerate(zip(steps, ys, hs)):
-        box(ax, 0.5, y, W, h, t)
+        box(ax, XR, y, WR, h, t)
         if i:
-            arrow(ax, 0.5, ys[i - 1] - hs[i - 1] / 2, 0.5, y + h / 2)
+            arrow(ax, XR, ys[i - 1] - hs[i - 1] / 2, XR, y + h / 2)
+    ax.text(XR - WR / 2, 0.993, "(b)   Assigning stations to sets", ha="left", va="bottom")
+    # (a) feeds (b): right from the last QC box, up the gap, into the first split box
+    xm = (XL + WL / 2 + XR - WR / 2) / 2
+    ax.plot([XL + WL / 2, xm, xm], [yl[-1], yl[-1], ys[0]], color="black", lw=1.3, zorder=1)
+    arrow(ax, xm, ys[0], XR - WR / 2, ys[0])
+    ys, hs = [ys[-1]], [hs[-1]]                # the station-split row hangs off the last (b) box
+    xsrc = XR
 
     # final station split
     yS, wS, hS = 0.315, 0.27, 0.07
@@ -88,7 +118,7 @@ def main():
     final = [("Train", n.get("train", 0), GREY, "white"), ("Validation", n.get("val", 0), LBLUE, "black"),
              ("OOS", n.get("oos", 0), BLUE, "white")]
     for x, (lab, k, fc, tc) in zip(xs, final):
-        arrow(ax, 0.5, ys[-1] - hs[-1] / 2, x, yS + hS / 2)
+        arrow(ax, xsrc, ys[-1] - hs[-1] / 2, x, yS + hS / 2)
         box(ax, x, yS, wS, hS, f"{lab} stations\n{k}", fc=fc, tc=tc, lw=1.5)
 
     # time split
