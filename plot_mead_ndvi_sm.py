@@ -3,7 +3,8 @@
 # ============================================================
 # NDVI from the raw S2 store the model reads, both towers read in Ne1's tile
 # (5 x 5 px = 50 m box), CLEAR scenes only: cloud-mask clear fraction >= 0.99 in the
-# 640 m box AND no snow (mean B02 at both towers < SNOW_DN; the cloud mask calls snow clear).
+# 640 m box AND no snow at either tower (NDSI = (B03 - B11)/(B03 + B11) > 0.4 and B03 > 0.10;
+# the cloud mask calls snow clear).
 # SM difference on the scene date: observed, model (own tile centres), model (same tile).
 # Figures: mead_ndvi_sm_<year>       time series (dNDVI; dSM 0-10, 10-30)
 #          mead_ndvi_sm_scatter_<year>  dNDVI vs dSM, Spearman, Jun-Sep highlighted
@@ -28,7 +29,7 @@ from plot_mead_s2 import RAW, B, BOX, tower_px
 
 ST      = {"Ne1": "AmeriFlux_US-Ne1", "Ne2": "AmeriFlux_US-Ne2"}
 BINS    = ["0-10", "10-30"]
-SNOW_DN = 1500          # B02 reflectance 0.15: bare soil / canopy are well below
+NDSI_MIN, B03_MIN = 0.4, 1000   # standard Sentinel-2 snow test (B03 in DN)
 
 
 def main():
@@ -54,10 +55,11 @@ def main():
             box = (slice(ri - BOX, ri + BOX + 1), slice(ci - BOX, ci + BOX + 1))
             nir, red = a[B["B08"]][box], a[B["B04"]][box]
             r[f"ndvi_{s[-3:]}"] = float(np.mean((nir - red) / np.maximum(nir + red, 1)))
-            r[f"blue_{s[-3:]}"] = float(a[B["B02"]][box].mean())
+            g3, s11 = a[2][box].mean(), a[10][box].mean()              # B03, B11
+            r[f"snow_{s[-3:]}"] = bool((g3 - s11) / max(g3 + s11, 1) > NDSI_MIN and g3 > B03_MIN)
         rows.append(r)
     t = pd.DataFrame(rows).set_index("date")
-    t["snow"] = (t[["blue_Ne1", "blue_Ne2"]] >= SNOW_DN).any(axis=1)
+    t["snow"] = t[["snow_Ne1", "snow_Ne2"]].any(axis=1)
     t["use"] = (t["clear"] >= 0.99) & ~t["snow"]
     print(f"{y}: {len(t)} S2 scenes; cloud-clear {int((t['clear'] >= 0.99).sum())}, "
           f"snow {int(t['snow'].sum())} ({', '.join(f'{d:%m-%d}' for d in t.index[t['snow']])}), "
