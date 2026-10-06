@@ -165,7 +165,7 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
         ax.plot(o_d.index, o_d.values, "-", color="black", lw=1.4,
                 label="Observed Ne1 $-$ Ne2", zorder=2)
         ax.plot(p.index, p.values, "-", color=PRED_COLOR, lw=1.4,
-                label="Model Ne1 $-$ Ne2 (tile centre)", zorder=4)
+                label="Model Ne1 $-$ Ne2", zorder=4)
         j = pd.concat([o, p], axis=1, keys=["o", "p"]).dropna()
         ax.text(0.01, 0.95, f"({lab}) {dep} cm   mean observed {j['o'].mean():+.3f}  "
                 f"model {j['p'].mean():+.3f}   R {j['o'].corr(j['p']):+.2f}",

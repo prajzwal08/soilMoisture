@@ -8649,3 +8649,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     (23 failed scenes). 403s since 12:26 are retried with fresh signatures and mostly recover. Resubmitting s2 array retries
     error+partial tiles (checkpoint counts only done/no_data).
   27656397 DONE (23 s): grey boxes = ERA5, Ne1, Ne2 all < 1 mm, shaded in panels b-d.
+  §69.5 diff figure legend: dropped '(tile centre)' (user asked): job 27656505
