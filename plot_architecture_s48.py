@@ -149,13 +149,36 @@ def prep(day: str) -> None:
     era5 = np.asarray(tok["era5/values18"][:], np.float32)
     v, age = window(era5, tok["era5/date_ints"][:])
     a["era5"], a["era5_age"] = v, age
+    # context around the window (vertical figure): everything on [D-455, D+120], window or not.
+    # age = days before D, negative = after D. Out-of-window and capped values are drawn grey.
+    c0, c1 = int((D - timedelta(days=455)).strftime("%Y%m%d")), \
+             int((D + timedelta(days=120)).strftime("%Y%m%d"))
+    a["ctx"] = np.array([455, -120])
+    cs2 = _candidates(cache, ("s2",), c0, c1)
+    cs1 = _candidates(cache, ("s1_asc", "s1_desc"), c0, c1)
+    a["c_s2_age"] = np.array([(D - _ymd(c[0])).days for c in cs2])
+    a["c_s1_age"] = np.array([(D - _ymd(c[0])).days for c in cs1])
+    a["c_s1_desc"] = np.array([c[1] == "s1_desc" for c in cs1])
+    ei = np.asarray(tok["era5/date_ints"][:])
+    m = (ei >= c0) & (ei <= c1)
+    a["c_era5"] = era5[m]
+    a["c_era5_age"] = np.array([(D - _ymd(t)).days for t in ei[m]])
+
+    def ctx_mid(dints, doys):                  # the date the dataset stamps (year + doy)
+        dints, doys = np.asarray(dints), np.asarray(doys)
+        dd = np.array([datetime(int(i) // 10000, 1, 1) + timedelta(days=int(j) - 1)
+                       for i, j in zip(dints, doys)])
+        return np.array([(D - t).days for t in dd])
+    for key in ("sif", "twsa"):
+        age = ctx_mid(tok[f"{key}/date_ints"][:], tok[f"{key}/doys"][:])
+        a[f"c_{key}_age"] = age[(age <= 455) & (age >= -120)]
+
     # SIF / TWSA through the dataset's own slicers: last MAX_SIF values; TWSA month usable only
     # from stamp + 45 d, placed at its mid-month doy. age = days before D = 364 - rel_pos.
     from dataset import _load_zarr_sif, _load_zarr_twsa, load_sif_rolling, load_twsa_rolling
     for key, loader, slicer in (("sif", _load_zarr_sif, load_sif_rolling),
                                 ("twsa", _load_zarr_twsa, load_twsa_rolling)):
         vals, _, rel, valid = slicer(loader(tok), yr, doy)
-        valid = valid.numpy()
         a[key] = vals[valid, 0].numpy()
         a[f"{key}_age"] = 364 - rel[valid].numpy()
 

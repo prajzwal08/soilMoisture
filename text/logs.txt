@@ -8807,3 +8807,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     so the model sees only ~the last 50 days of SIF, not 365. Figure is faithful to that.
   - FIX (not yet re-run): prep's TWSA ignored the 45-d availability rule and mid-month doys;
     prep now calls dataset.load_sif_rolling / load_twsa_rolling directly.
+  - job 27666504: vertical figure redrawn as a SLIDING WINDOW (axis D-455..D+120, framed
+    [D-364, D], grey = not given: outside / SIF over cap / TWSA not yet released; dashed D+30
+    window). SIF/TWSA now from dataset.load_*_rolling: TWSA 11 (not 12) on 2019-09-28 because
+    the latest month fails the +45 d rule. SIF: last 50 of a near-daily series = ~last 7 weeks.
