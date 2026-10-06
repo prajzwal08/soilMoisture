@@ -8950,3 +8950,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §70 plain-language explainer (user asked for a PDF for a non-specialist): text/effres_explainer.tex -> text/effres_explainer.pdf (5 pages)
     teaching figs plot_effres_explainer.py (real tile CR200-18 mean/day/anomaly, toy variograms, 1-D Nyquist sketch) -> figures/effres/explainer/;
     built by slurm/effres_explainer.sh, jobs 27683297 + 27683470 (caption fix).
+
+2026-10-06 — NEW plot_terramind_value.py ("what TerraMind gives the model", panels a S2 seasons + L12 tokens, b DEM/LULC + tokens, c UMAP of 842 station tokens by Koppen; paper style). Prep+render sample job 27683739 (rome, 64 CPU).
+  §70 explainer: added §8 "How every number is computed" (anomaly, spectrum, blur test, model + observed variogram,
+    Tests C/control/B/A, verdict), 9 pages; rebuilt texonly 27683741 (27683700/27683728 failed on \tfrac/\text -> amsmath added).

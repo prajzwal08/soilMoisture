@@ -1,5 +1,6 @@
 \documentclass[11pt,a4paper]{article}
 \usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath}
 \usepackage{mathptmx}
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -226,6 +227,129 @@ Long-term differences: correlation about 0. Day-to-day differences: a weak but r
 \item Within a tile the model draws \textbf{texture}: the inputs move it around, but it does not follow the real
       differences between nearby points. It is also about 4 times smoother than the real ground.
 \end{enumerate}
+
+\clearpage
+\section{How every number is computed}
+
+This section lists the exact recipe behind each curve and test. Code: \texttt{effres\_maps.py} (GPU, makes the
+maps), \texttt{effres\_analysis.py} (Tests 0, A, B, C, control, spectrum, blur test) and \texttt{plot\_effres.py}
+(model variogram, figure). ``Held-out'' always means the 30 TxSON tiles and stations the model never trained on.
+
+\subsection*{8.1\quad Common first step: the anomaly maps}
+\begin{enumerate}
+\item Run the trained model once on every day of every tile: about 2{,}500 days $\times$ 3 depths $\times$ $112 \times 112$ pixels per tile.
+\item For each pixel, take its average over all days (the fixed pattern, Figure~\ref{fig:tile}a).
+\item Anomaly = map of the day $-$ that average, pixel by pixel (Figure~\ref{fig:tile}c).
+\end{enumerate}
+
+\subsection*{8.2\quad Anomaly power (Figure~\ref{fig:res}a, the spectrum)}
+For each tile and depth:
+\begin{enumerate}
+\item \textbf{Remove the tile-wide shift of each day.} Subtract each day's spatial mean from its anomaly map.
+      On a wet day the whole tile is, say, $+0.1$; that uniform part is dropped, so only the differences
+      \emph{within} the tile remain.
+\item \textbf{Split the map into waves.} A 2-D Fourier transform (FFT) rewrites the $112 \times 112$ map as a sum of
+      2-D sine waves. Each wave has a direction, a strength and a frequency $k$: the number of full waves that fit
+      across the tile ($k = 1 \ldots 56$).
+\item \textbf{Power = strength squared}, for every wave. A large value means the map contains a lot of that wave.
+\item \textbf{Average over days.}
+\item \textbf{Pool all directions.} A 300\,m blob is the same size whether it runs north--south or east--west, so all
+      waves with the same $k$ are averaged together whatever their direction (they lie on a ring of radius $k$ in
+      the Fourier plane). This leaves one number per $k$; hence the name \emph{radially averaged} spectrum.
+\item \textbf{Convert $k$ to a wave length:} wave length $= 2240\,\mathrm{m} / k$. So $k=1$ is 2240\,m (one wave across the tile),
+      $k=7$ is 320\,m (the shortest wave a 160\,m token grid can carry), $k=14$ is 160\,m, and $k=56$ is 40\,m (the shortest
+      wave a 20\,m pixel grid can carry).
+\item \textbf{Combine tiles:} the median over the 30 held-out tiles at each $k$. This is the plotted curve.
+\end{enumerate}
+\textbf{Why ``a.u.'' (arbitrary units)?} The FFT is not normalised, so the absolute numbers depend on the map size.
+Only the \emph{shape} and the \emph{ratios} matter. Summed over all $k$, the power is proportional to the spatial
+variance of the anomaly map, so the curve says how that variance is shared out among wave sizes.
+
+\subsection*{8.3\quad Variance retained (Figure~\ref{fig:res}b, the blur test)}
+For each tile, depth and block size $b$ (40, 80, 160, 280, 560, 1120\,m):
+\begin{enumerate}
+\item Cut each day's anomaly map into $b \times b$ blocks (for 160\,m: $14 \times 14$ blocks of $8 \times 8$ pixels) and
+      replace each block by its mean.
+\item Measure the spatial variance of the blurred map (variance across blocks) and of the original map
+      (variance across pixels). A variance across space ignores the tile-wide shift automatically.
+\item Average each variance over all days, then take the ratio: blurred $\div$ original.
+\item Median over the 30 tiles. 1.0 means blurring lost nothing; 0.0 means everything was smaller than the block.
+\end{enumerate}
+
+\subsection*{8.4\quad Model variogram (Figure~\ref{fig:res}c, lines)}
+For each tile and depth:
+\begin{enumerate}
+\item Pick 40{,}000 random pairs of pixels in the tile. For each pair, note its distance $h$ (in metres).
+\item For that pair, take the two anomaly time series $a_t$ and $b_t$ and compute
+      \begin{itemize}
+      \item the \textbf{semivariance} $g = \frac{1}{2} \cdot \mathrm{mean}_t\,(a_t - b_t)^2$, which measures how differently the two points behave over time;
+      \item the \textbf{variance} $v = \frac{1}{2}\,(\mathrm{var}_t\,a + \mathrm{var}_t\,b)$, which measures how much each point changes over time on its own.
+      \end{itemize}
+      A tile-wide shift on one day moves $a_t$ and $b_t$ equally, so it cancels in $a_t - b_t$.
+\item Group the pairs into 14 distance bins (logarithmic, 20\,m to 1.6\,km). Average $g$ and $v$ in each bin.
+\item Average $g$ and $v$ over the 30 tiles, then plot $g \div v$ against distance.
+      0 means the two points move identically; 1 means as different as two unrelated points.
+\end{enumerate}
+
+\subsection*{8.5\quad Observed variogram (Figure~\ref{fig:res}c, squares; ``Test 0'')}
+\begin{enumerate}
+\item Take every pair of the 40 TxSON stations, using the days on which both measured (at least 60 days in common).
+\item Anomaly of each station = its value $-$ its own mean over those common days. This matches the model's per-pixel average in 8.1.
+\item Compute $g$ and $v$ exactly as in 8.4. The distance comes from the stations' latitude and longitude.
+\item Group the pairs into distance bins (0--250\,m, 250--500\,m, 0.5--1\,km, 1--1.6\,km, 1.6--3\,km, 3--6\,km, 6--12\,km,
+      12--25\,km, 25--50\,km). Plot (mean $g$) $\div$ (mean $v$). The number above each square is the number of station pairs.
+\end{enumerate}
+Same formula as the model, so the two can be compared directly. Two cautions: a sensor measures a point, not a 20\,m
+pixel, and sensor noise adds to $g$. So the observed values are an upper limit for the real spatial variation.
+
+\subsection*{8.6\quad Test C: does blurring the output hurt accuracy?}
+\begin{enumerate}
+\item Use each held-out tile whose own station sits at the centre pixel. That gives 30 tiles.
+\item For each block size $b$ (20\,m $\ldots$ 2.24\,km), average the predicted map over a $b \times b$ window around the
+      station on every day. This gives one predicted time series per $b$.
+\item Error = \textbf{ubRMSE} against the station: the root-mean-square difference after removing each series' own mean.
+\item $\Delta$ = ubRMSE at $b$ $-$ ubRMSE at 20\,m, per tile, then averaged over tiles.
+\item 95\,\% interval: resample the 30 tiles with replacement 1{,}000 times (a bootstrap). A block is
+      ``significantly worse'' if the whole interval is above 0.
+\item $L_C$ = the largest block that is not significantly worse. Result: 2240\,m, because no block was worse.
+\end{enumerate}
+
+\subsection*{8.7\quad Control: can Test C detect real fine detail?}
+\begin{enumerate}
+\item Make 30 synthetic tiles of 300 days each. The ``true'' field is random noise smoothed to blobs of about 160\,m (Gaussian, $\sigma = 160$\,m).
+\item ``Perfect model'' = the true field plus a little 20\,m noise. ``Station'' = the true field at the centre pixel plus a little sensor noise.
+\item Run exactly the Test C recipe. Result: blocks up to 280\,m are fine, 560\,m and larger are significantly worse, so $L_C = 280$\,m.
+      The test works; the real model simply has no fine skill to find.
+\end{enumerate}
+
+\subsection*{8.8\quad Test B: does the model use fine inputs?}
+\begin{enumerate}
+\item For each block size $b$, blur the tile's \emph{inputs} before they enter the model:
+      the 20\,m satellite channels (S2, S1, DEM) are block-averaged using valid pixels only; land cover takes the most common class in each block;
+      the soil map is block-averaged; and the $14 \times 14$ tokens are block-averaged once $b$ exceeds 160\,m.
+\item Run the model again on every day (one full GPU pass per $b$).
+\item Map change $S$ = RMS(new map $-$ original map) $\div$ spatial SD of the original map, per day, then the median.
+      $S = 0$: blurring the inputs changed nothing. $S \approx 1$: the change is as large as the map's whole spatial pattern.
+\item Also recompute the station ubRMSE at the centre pixel with the blurred inputs.
+\item $L_B$ = the largest $b$ with $S < 0.1$. There is none: $S$ is already 0.29 at 40\,m. Yet the ubRMSE stays at 0.044--0.045 for every $b$.
+\end{enumerate}
+
+\subsection*{8.9\quad Test A: are predicted differences between stations right?}
+\begin{enumerate}
+\item For a pair of held-out stations A and B: predicted difference $d^{\mathrm{pred}}_t = $ pred$_A - $ pred$_B$, and
+      observed difference $d^{\mathrm{obs}}_t = $ obs$_A - $ obs$_B$, over their common days.
+      \emph{Within-tile pairs} use the station pixels of one map (same model run).
+      \emph{Cross-tile pairs} use the centre pixel of each station's own tile.
+\item \textbf{Level skill:} the long-term mean of $d^{\mathrm{pred}}$ versus that of $d^{\mathrm{obs}}$, correlated across all pairs in a distance bin.
+      This asks: is the wetter station predicted wetter?
+\item \textbf{Dynamic skill:} the correlation over time between $d^{\mathrm{pred}}_t$ and $d^{\mathrm{obs}}_t$ for each pair, then the median over pairs in the bin.
+      This asks: when A gets wetter than B, does the model see it?
+\item 95\,\% intervals: a bootstrap that resamples whole tiles (or stations, for cross-tile pairs), so that pairs sharing a tile are not counted as independent.
+\item $L_A$ = the shortest distance bin where either interval is entirely above 0. Result: 765\,m (the 0.5--1\,km bin, dynamic $r = 0.08$).
+\end{enumerate}
+
+\subsection*{8.10\quad The verdict}
+Effective resolution $L_{\mathrm{eff}} = $ the largest of $L_A$, $L_B$ and $L_C$, which is the most demanding answer. At 0--10\,cm: $\max(765, \text{none}, 2240) = $ \textbf{2240\,m}.
 
 \section*{Glossary}
 \begin{description}[leftmargin=2.6cm,style=nextline]
