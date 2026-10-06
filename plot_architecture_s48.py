@@ -42,6 +42,7 @@ TRAIN_FILL  = "#D6E7F4"           # opaque tint of LBLUE
 FROZEN_FILL, FROZEN_EDGE = "#D9D9D9", "#4D4D4D"
 LOSS_FILL   = "#FBDCCB"           # opaque tint of ORANGE
 INPUT_EDGE, INPUT_FILL = "#238B45", "#EEF7F0"   # input frames: green edge, faint green tint
+MASK        = "#7F7F7F"           # cloud-mask arrows (dashed): a mask, not data
 LINE        = "black"
 FS_T, FS_B  = 11, 10              # box titles / box body
 W, H        = 178, 114            # canvas units; 1 unit = 0.1 inch
@@ -244,11 +245,22 @@ def vbox(ax, x0, y0, x1, y1, text, kind="train"):
             fontsize=FS_B, zorder=3, linespacing=1.0)
 
 
-def path(ax, pts, head=True, lw=1.4, color=LINE):
-    """Orthogonal polyline; arrowhead on the last segment. Refuses diagonals."""
+def path(ax, pts, head=True, lw=1.4, color=LINE, dashed=False):
+    """Orthogonal polyline; arrowhead on the last segment. Refuses diagonals.
+    dashed=True: the whole line dashed, with a short solid stub carrying a solid head."""
     for (xa, ya), (xb, yb) in zip(pts[:-1], pts[1:]):
         assert xa == xb or ya == yb, f"diagonal segment {(xa, ya)} -> {(xb, yb)}"
     xs, ys = zip(*pts)
+    if dashed:
+        ax.add_line(Line2D(xs, ys, lw=lw, color=color, ls=(0, (3, 2)), zorder=1))
+        if head:
+            (x0, y0), (x1, y1) = pts[-2], pts[-1]
+            n = max(abs(x1 - x0), abs(y1 - y0))
+            stub = (x1 - 0.5 * (x1 - x0) / n, y1 - 0.5 * (y1 - y0) / n)
+            ax.annotate("", xy=pts[-1], xytext=stub, zorder=1,
+                        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.28",
+                                        lw=lw, color=color, shrinkA=0, shrinkB=0))
+        return
     if head:
         ax.add_line(Line2D(xs[:-1], ys[:-1], lw=lw, color=color, zorder=1,
                            solid_capstyle="butt"))
@@ -635,11 +647,13 @@ def render() -> None:
     xs2 = px[0] + pw / 2
     cs, off, cy0 = 6.4, 0.8, 29.4
     xa, xb = xs2 - (cs + 2 * off) / 2, xs2 - (cs + 2 * off) / 2 + cs + 2 * off + 10.0
-    path(ax, [(xs2, bus_b), (xs2, cy0 + cs + 2 * off)])      # S2 L2A -> cloud model
-    path(ax, [(xs2, cy0), (xs2, 26.4)])                      # pixel mask -> fine S2
-    label(ax, xs2 + 1.0, 28.0, "pixel mask", ha="left")
+    # mask branch = dashed grey (MASK): it leaves the S2 L2A frame on its own line, left of
+    # the S2 -> TerraMind bus, so it does not read as S2 data flowing down to the fine lane
+    path(ax, [(2.6, 44.4), (2.6, cy0 + cs)], color=MASK, dashed=True)   # S2 L2A -> SEnSeIv2
+    path(ax, [(xs2, cy0), (xs2, 26.3)], color=MASK, dashed=True)       # pixel mask -> fine S2
+    label(ax, xs2 + 1.0, 28.0, "pixel mask", ha="left", color=MASK)
     xm0, xm1 = xa + cs + 2 * off, xb
-    path(ax, [(xm0, 33.5), (xm1, 33.5)])
+    path(ax, [(xm0, 33.5), (xm1, 33.5)], color=MASK, dashed=True)
     label(ax, (xm0 + xm1) / 2, 35.0, "SEnSeIv2", fs=FS_B)
     label(ax, (xm0 + xm1) / 2, 32.0, "SegFormer-B2", fs=FS_B - 1)
     if "cm_rgbs" in a:
@@ -660,9 +674,9 @@ def render() -> None:
         label(ax, xb + cs / 2 + off, 27.9, f"tokens kept {kept} /196", fs=FS_B - 1)
     # the mask acts INSIDE the pyramid pooling (dataset._cpu_pyramid_pool: masked mean over
     # valid tokens per window) and in scene / anchor selection -> arrow onto the pyramid step
-    path(ax, [(xb + cs + 2 * off, 33.5), (84.8, 33.5), (84.8, 51.25)])
-    label(ax, 61, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
-    label(ax, 61, 35.0, "masked mean in pyramid ×4 · picks the clear anchor")
+    path(ax, [(xb + cs + 2 * off, 33.5), (84.8, 33.5), (84.8, 51.25)], color=MASK, dashed=True)
+    label(ax, 61, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token", color=MASK)
+    label(ax, 61, 35.0, "masked mean in pyramid ×4 · picks the clear anchor", color=MASK)
     # one 3x3 stem per input (model.py stem_s2 / stem_s1 / stem_dem / stem_lulc), then concat
     bus_c = 5.5
     for x, nm, ch in zip(px, ["S2", "S1", "DEM", "LULC"],
@@ -751,8 +765,11 @@ def render() -> None:
                               ("frozen", "frozen (TerraMind, SEnSeIv2; offline)", False),
                               ("train", "trainable (26.7 M parameters)", False),
                               ("plain", "training only", True),
-                              ("loss", "supervision", True)):
-        if kind == "input":
+                              ("loss", "supervision", True),
+                              ("mask", "cloud mask (not data)", False)):
+        if kind == "mask":
+            path(ax, [(lx, ly + 1.2), (lx + 3.4, ly + 1.2)], color=MASK, dashed=True)
+        elif kind == "input":
             frame(lx, ly, lx + 3.4, ly + 2.4)
         else:
             box(ax, lx, ly, lx + 3.4, ly + 2.4, None, kind=kind, dashed=dashed)
