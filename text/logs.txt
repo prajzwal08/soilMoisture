@@ -8662,3 +8662,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     towers (0.64-0.67, |diff| <= 0.01; Jul 14 0.58 vs 0.67 is cloud). Visible differences only in bare/senescent season
     (Jan-May residue, Sep 15-17 Ne2 browns first, Nov-Dec Ne2 brighter). In-season S2 cannot tell irrigated Ne2 from Ne1.
     Cloud mask calls snow scenes "100% clear" (Jan 23, Feb 12, Mar 11, Nov 11, Dec 9).
+  §69.5 Ne1 vs Ne2 L12 embedding cosine (S2, S1asc; same tile / tile centres / 480 m ref) vs |dSM| 2019 (user asked): job 27657743
