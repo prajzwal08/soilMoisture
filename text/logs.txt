@@ -8392,3 +8392,6 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
   Smoke 27629967 + afterok arrays 27629968 (S2) / 27629969 (S1) were SUBMITTED by mistake on a misread
   ("please use permission") and CANCELLED within a minute after the user said permission NOT granted.
   Nothing imagery-related ran. Code is NOT yet committed or reviewed.
+2026-10-06
+  §67 ablation heatmap: added panel (c) |bias| change (% of baseline median |bias|, * = 95% CI excludes 0) to plot_input_ablation.py.
+    Re-render only (no re-eval) via new slurm/plot_input_ablation.sh (rome, 16 CPU) SUBMITTED on the user's OK: job 27638450.

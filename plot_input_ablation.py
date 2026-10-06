@@ -5,6 +5,7 @@ Reads the summary CSV written by compare_ablation.py (one row per pass x soil la
 per-station medians with 95 % bootstrap CI) and draws, in the paper style (plot_style_bw):
   (a) heatmap pass x layer of the relative ubRMSE change (%)   — the dynamics
   (b) heatmap pass x layer of the relative RMSE change (%)     — dynamics + level (statics show here)
+  (c) heatmap pass x layer of the relative |bias| change (%)   — level only
 Cells whose 95 % CI excludes 0 are marked with an asterisk. Diverging colours centred on 0
 (orange = worse, blue = better), so "no effect" reads as white.
 Also writes the table as .md next to the figure.
@@ -54,6 +55,9 @@ def main():
     plt.rcParams.update(plot_style_bw.RC_PAPER)
     s = pd.read_csv(a.summary)
     s["key"] = s["ablation"].map(_pass_key)
+    # |bias| change as % of the baseline median |bias| (same convention as d_ubRMSE_pct)
+    for c in ("d_absbias", "d_absbias_lo", "d_absbias_hi"):
+        s[c + "_pct"] = 100 * s[c] / s["absbias_base"]
     order = [(k, lab) for k, lab in PASSES if k in set(s["key"])]
     extra = sorted(set(s["key"]) - {k for k, _ in order})
     order += [(k, k) for k in extra]
@@ -61,8 +65,9 @@ def main():
     # orange (worse) - white - blue (better), from palette H
     cmap = LinearSegmentedColormap.from_list("worse_better", [plot_style_bw.BLUE, "white", plot_style_bw.RED])
     panels = [("d_ubRMSE_pct", "d_ubRMSE_lo", "d_ubRMSE_hi", "(a) ubRMSE change (%)"),
-              ("d_RMSE_pct", "d_RMSE_lo", "d_RMSE_hi", "(b) RMSE change (%)")]
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 0.55 * len(order) + 1.6), constrained_layout=True,
+              ("d_RMSE_pct", "d_RMSE_lo", "d_RMSE_hi", "(b) RMSE change (%)"),
+              ("d_absbias_pct", "d_absbias_lo", "d_absbias_hi", "(c) |bias| change (%)")]
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 0.55 * len(order) + 1.6), constrained_layout=True,
                              sharey=True)
     for ax, (col, lo, hi, title) in zip(axes, panels):
         m = np.full((len(order), len(DEPTHS)), np.nan)
