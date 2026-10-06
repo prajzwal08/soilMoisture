@@ -8592,3 +8592,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Jul-Sep 2020 10-30 obs sawtooth to -0.15, model flat. 30-100: obs steady ~-0.02, model +0.02..+0.08 with WINTER
   humps (Dec-Feb 2020/2022/2024) -> R -0.20/-0.29: model difference is imagery seasonality, not water.
   Frozen periods dominate the obs difference extremes (TDR artefact) -> mask ts<=0 days in any score.
+  §69.3 diff figure, tile-centre model only (user asked): job 27654586
