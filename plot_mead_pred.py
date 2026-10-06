@@ -96,20 +96,55 @@ def figure(obs, own, off, lo, hi, tag):
     print(f"figure: {FIG_DIR}/mead_pred_vs_obs_{tag}.png")
 
 
-def diff_figure(obs, own, df, lo, hi, tag):
-    """Ne1 - Ne2 per depth: observed (dots) vs model at each station's own tile centre."""
+ZARR = Path("/gpfs/scratch1/shared/pkhanal/zarr/flux_only")
+CM_BAD = [3, 4, 5, 255]          # dataset.py CM_BAD_CLASSES (SEnSeIv2 classes, not SCL)
+CLEAR_WIN = 32                   # +-32 px at 10 m = 640 m box around the station
+
+
+def acquisitions(st):
+    """S1 ascending pass dates, and S2 dates with the clear fraction of the 640 m box
+    around the station from the stored cloud mask (NaN = no mask -> unusable)."""
+    import zarr
+    g = zarr.open_group(str(ZARR / st), mode="r")
+    to_dt = lambda a: pd.to_datetime([str(x)[:8] for x in np.asarray(a)], format="%Y%m%d")
+    s1 = to_dt(g["s1_asc/dates"][:]) if "s1_asc" in g else pd.DatetimeIndex([])
+    s2 = to_dt(g["s2/dates"][:])
+    cmd = to_dt(g["cm/dates"][:])
+    cm = g["cm/masks"]
+    c, w = 112, CLEAR_WIN
+    row = {d: i for i, d in enumerate(cmd)}
+    clear = []
+    for d in s2:
+        i = row.get(d)
+        if i is None:
+            clear.append(np.nan)
+            continue
+        box = np.asarray(cm[i, c - w:c + w, c - w:c + w])
+        clear.append(1.0 - np.isin(box, CM_BAD).mean())
+    return s1, pd.Series(clear, index=s2)
+
+
+def diff_figure(obs, own, df, lo, hi, tag, acq=None):
+    """Ne1 - Ne2 per depth: observed vs model at each station's own tile centre.
+    acq: optional (s1_dates, s2_clear_series, {site: irrigation DataFrame}) -> top strip."""
     plot_style_bw.apply(globals(), "paper")
     a, b = ST
     within = (df[df["tile"] == a].pivot_table(index=["date", "depth"], columns="station",
                                               values="pred"))
     within = (within[a] - within[b]).unstack("depth")
-    fig, axes = plt.subplots(3, 1, figsize=(12 if tag == "full" else 9, 8), sharex=True)
+    if acq is None:
+        fig, axes = plt.subplots(3, 1, figsize=(12 if tag == "full" else 9, 8), sharex=True)
+    else:
+        fig, ax_all = plt.subplots(4, 1, figsize=(9, 9.6), sharex=True,
+                                   gridspec_kw={"height_ratios": [0.55, 1, 1, 1]})
+        axes = ax_all[1:]
+        _acq_strip(ax_all[0], acq, lo, hi)
     series = {}
     for dep in BINS:
         series[dep] = ((obs[a][0][dep] - obs[b][0][dep]).loc[lo:hi],
                        (own[a][dep] - own[b][dep]).loc[lo:hi], within[dep].loc[lo:hi])
     lim = np.nanpercentile(np.abs(pd.concat([s for t in series.values() for s in t[:2]])), 99.5) + 0.01
-    for ax, dep, lab in zip(axes, BINS, "abc"):
+    for ax, dep, lab in zip(axes, BINS, "abc" if acq is None else "bcd"):
         ts = obs[a][1]
         if ts is not None:
             fz = ts.loc[lo:hi] <= 0
@@ -129,12 +164,55 @@ def diff_figure(obs, own, df, lo, hi, tag):
                 bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
         ax.set_ylim(-lim, lim)
         ax.set_ylabel("Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
-    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, frameon=False)
-    fig.align_ylabels(axes)
+        if acq is not None:                              # clear S2 scenes as faint guides
+            s2c = acq[1].loc[lo:hi]
+            for d in s2c.index[s2c.values >= 0.99]:
+                ax.axvline(d, color=plot_style_bw.RED, lw=0.6, alpha=0.5, zorder=1)
+    top = axes[0] if acq is None else fig.axes[0]
+    h, l = axes[0].get_legend_handles_labels()
+    if acq is not None:
+        h2, l2 = fig.axes[0].get_legend_handles_labels()
+        h, l = h + h2, l + l2
+    top.legend(h, l, loc="lower left", bbox_to_anchor=(0, 1.02),
+               ncol=2 if acq is None else 3, frameon=False)
+    fig.align_ylabels(fig.axes)
     fig.tight_layout()
+    suffix = "" if acq is None else "_acq"
     for ext in ("png", "pdf"):
-        fig.savefig(FIG_DIR / f"mead_diff_Ne1_Ne2_{tag}.{ext}", dpi=600)
-    print(f"figure: {FIG_DIR}/mead_diff_Ne1_Ne2_{tag}.png")
+        fig.savefig(FIG_DIR / f"mead_diff_Ne1_Ne2_{tag}{suffix}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_diff_Ne1_Ne2_{tag}{suffix}.png")
+
+
+def _acq_strip(ax, acq, lo, hi):
+    """Rows: Ne1/Ne2 irrigation (bottom), S2 scenes by clear fraction, S1 ascending (top)."""
+    s1, s2c, irr = acq
+    s1 = s1[(s1 >= lo) & (s1 <= hi)]
+    s2c = s2c.loc[lo:hi]
+    ax.plot(s1, np.full(len(s1), 3), "|", ms=12, mew=1.6, color="black", label="S1 pass")
+    ok = s2c.values >= 0.99
+    part = (s2c.values > 0.5) & ~ok
+    bad = ~(ok | part)                                   # cloudy or no cloud mask
+    ax.plot(s2c.index[ok], np.full(ok.sum(), 2), "^", ms=6, color=plot_style_bw.RED,
+            label="S2 clear (>=99 %)")
+    ax.plot(s2c.index[part], np.full(part.sum(), 2), "^", ms=6, mfc="white",
+            mec=plot_style_bw.RED, label="S2 partly cloudy")
+    ax.plot(s2c.index[bad], np.full(bad.sum(), 2), "x", ms=5, color="0.5",
+            label="S2 cloudy / no mask")
+    for k, (site, e) in enumerate(irr.items()):
+        if len(e):
+            e = e[(e["date_start"] >= lo) & (e["date_start"] <= hi)]
+            if "cancelled" in e:
+                e = e[~e["cancelled"].fillna(False).astype(bool)]
+            y = 1 if site.endswith("Ne1") else 0
+            ax.plot(e["date_start"], np.full(len(e), y), "s", ms=6,
+                    color=plot_style_bw.BLUE if y == 1 else plot_style_bw.GREEN,
+                    label=f"Irrigation {site[-3:]}")
+    ax.set_ylim(-0.6, 3.6)
+    ax.set_yticks([0, 1, 2, 3])
+    ax.set_yticklabels(["Irr. Ne2", "Irr. Ne1", "S2", "S1"])
+    ax.text(0.01, 0.97, "(a)", transform=ax.transAxes, va="top")
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(True)
 
 
 def main():
@@ -142,6 +220,8 @@ def main():
     ap.add_argument("--zoom", type=int, nargs="+", default=[2019, 2020])
     ap.add_argument("--diff-only", action="store_true", help="only the Ne1 - Ne2 figures")
     ap.add_argument("--per-year", action="store_true", help="Ne1 - Ne2 figure per year 2017-2024")
+    ap.add_argument("--acq-year", type=int, default=None,
+                    help="one Ne1 - Ne2 figure for this year with S1/S2/irrigation dates on top")
     args = ap.parse_args()
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -174,6 +254,19 @@ def main():
     if not args.diff_only:
         figure(obs, own, off, "2017-01-01", "2024-12-31", "full")
         figure(obs, own, off, lo, hi, zt)
+    if args.acq_year:                                   # one year + S1/S2/irrigation strip
+        s1, s2c = acquisitions(ST[0])
+        irr = {}
+        for s in ST:
+            f = ROOT / "bif" / f"{s.replace('AmeriFlux_', '')}_irrigation_events.csv"
+            irr[s] = pd.read_csv(f, parse_dates=["date_start"]) if f.exists() else pd.DataFrame()
+        y = args.acq_year
+        print(f"{y}: S1 passes {int(((s1 >= f'{y}-01-01') & (s1 <= f'{y}-12-31')).sum())}, "
+              f"S2 scenes {len(s2c.loc[str(y)])} "
+              f"(clear {int((s2c.loc[str(y)] >= 0.99).sum())}, "
+              f"no mask {int(s2c.loc[str(y)].isna().sum())})")
+        diff_figure(obs, own, df, f"{y}-01-01", f"{y}-12-31", str(y), acq=(s1, s2c, irr))
+        return
     if args.per_year:                                   # one Ne1 - Ne2 figure per year
         for y in range(2017, 2025):
             diff_figure(obs, own, df, f"{y}-01-01", f"{y}-12-31", str(y))
