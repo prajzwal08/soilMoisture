@@ -19,17 +19,17 @@ Writes <out>/rows.parquet (station-level bin means), composite.csv, lags.csv, st
 from __future__ import annotations
 
 import argparse
-import os
 from multiprocessing import Pool
 from pathlib import Path
-
-os.environ.setdefault("ZARR_ROOT", "/gpfs/work3/0/prjs1968/zarr_tokens")
 
 import numpy as np
 import pandas as pd
 import zarr
 
-from dataset import _load_zarr_era5, _load_zarr_labels, _open_zarr, CM_BAD_CLASSES, ZARR_ROOT
+import dataset as _ds
+_ds.ZARR_ROOT = Path("/gpfs/work3/0/prjs1968/zarr_tokens")   # permanent store (as analyse_s1_spatial_cv.py)
+from dataset import _load_zarr_era5, _load_zarr_labels, _open_zarr, CM_BAD_CLASSES  # noqa: E402
+ZARR_ROOT = _ds.ZARR_ROOT
 from splits_config import category_of, station_dir_name
 
 REPO   = Path(__file__).resolve().parent
