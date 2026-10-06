@@ -66,6 +66,8 @@ LOG_COLS = ["date", "n_stations_found", "status", "error_msg", "timestamp"]
 # --keep-dir (runbook §68.12): download-only mode that KEEPS each global L2B file at
 # {KEEP_DIR}/{YYYY}/{basename}, no station extraction (extraction later reads these files locally).
 KEEP_DIR: Path | None = None
+# --from-local (§68.12): extract from the kept files {FROM_LOCAL}/{YYYY}/{YYYYMMDD}_*.nc, no network.
+FROM_LOCAL: Path | None = None
 
 # ============================================================
 # LOGGING
@@ -184,6 +186,10 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
 
         # Valid pixels only (filter NaN and fill values)
         valid = np.isfinite(sif_arr) & np.isfinite(lat_arr) & np.isfinite(lon_arr)
+        # cut to the box around ALL stations first (same result; cheap when the stations are clustered, e.g. NL tiles)
+        m = 2 * EXTRACT_RADIUS_M / 111_000.0 / max(0.1, np.cos(np.deg2rad(stations_df["latitude"].abs().max())))
+        valid &= ((lat_arr >= stations_df["latitude"].min() - m) & (lat_arr <= stations_df["latitude"].max() + m) &
+                  (lon_arr >= stations_df["longitude"].min() - m) & (lon_arr <= stations_df["longitude"].max() + m))
         if not valid.any():
             return results
 
@@ -274,6 +280,14 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
         "error_msg":        "",
         "timestamp":        datetime.now(timezone.utc).isoformat(),
     }
+
+    if FROM_LOCAL is not None:
+        files = sorted((FROM_LOCAL / f"{day.year}").glob(f"{day:%Y%m%d}_*.nc"))
+        if not files:
+            return result
+        obs = extract_stations_from_file(files[0], stations_df, day)
+        result.update(n_stations_found=len(obs), status="done", observations=obs)
+        return result
 
     url = get_l2b_url(catalog, day)
     if url is None:
@@ -401,15 +415,18 @@ def main():
     parser.add_argument("--end-date", default=None, help="--keep-dir only: last day, YYYY-MM-DD.")
     parser.add_argument("--max-days", type=int, default=None, help="--keep-dir only: first N days (smoke).")
     parser.add_argument("--workers", type=int, default=N_WORKERS)
+    parser.add_argument("--from-local", type=Path, default=None,
+                        help="Extract from kept global files (KEEP_DIR layout) instead of downloading (§68.12).")
     args = parser.parse_args()
 
     if args.keep_dir is not None:
         return keep_main(args)
 
     if args.data_root is not None:
-        global DATA_ROOT, LOG_DIR
-        DATA_ROOT = args.data_root
-        LOG_DIR   = DATA_ROOT / "logs"
+        global DATA_ROOT, LOG_DIR, STATION_CSV
+        DATA_ROOT   = args.data_root
+        STATION_CSV = DATA_ROOT / "station_splits.csv"   # was bound at import to the training CSV (§68.3 trap)
+        LOG_DIR     = DATA_ROOT / "logs"
         LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     setup_logging()
@@ -426,6 +443,12 @@ def main():
 
     # Build the overall date range (SIF start → max station end date)
     max_end = date.today() - timedelta(days=LATENCY_DAYS)
+    if args.end_date:
+        max_end = date.fromisoformat(args.end_date)
+    if args.from_local is not None:
+        global FROM_LOCAL
+        FROM_LOCAL = args.from_local
+        log.info(f"from-local: {FROM_LOCAL}  stations from {STATION_CSV}")
     start_d = SIF_START_DATE
     end_d   = max_end
 
@@ -470,7 +493,7 @@ def main():
     done = [0]
 
     def _process_one_day(day):
-        catalog = pystac_client.Client.open(STAC_URL)
+        catalog = pystac_client.Client.open(STAC_URL) if FROM_LOCAL is None else None
         active = year_to_active.get(day.year, pd.DataFrame())
         if active.empty:
             log.debug(f"  Day {day}: all stations already have sif_{day.year}.nc, skipping")
@@ -478,7 +501,7 @@ def main():
                     "n_stations_found": 0, "error_msg": "", "timestamp": ""}
         return process_day(day, catalog, active)
 
-    with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         fut_to_day = {pool.submit(_process_one_day, d): d for d in all_days}
 
         for fut in as_completed(fut_to_day):
