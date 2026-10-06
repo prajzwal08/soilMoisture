@@ -8656,3 +8656,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   READ: same-tile difference is small (|mean| < 0.01, swings ~+-0.02 vs obs +-0.07), the two tiles agree after Jul 7,
     Ne1-wetter (wrong sign), steps at the Jun 24 S2 scene (Ne1 tile +0.05 at 0-10/10-30). No dips at Ne2 pivot dates.
   §69.5 S2 scenes over Ne1/Ne2 (RGB, NDVI, NDVI at towers; user asked): job 27656973 (Jul 15-Aug 1 2019), 27656974 (all 2019)
+  27656973 (Jul 15-Aug 1, 5 scenes) + 27656974 (2019, 63 scenes) DONE: figures/mead/mead_s2_{rgb,ndvi,ndvi_ts}_<window>.png,
+    data_mead/pred/s2_ndvi_towers_<window>.csv (NDVI 5x5 px at each tower). Tower px Ne1 (111.5,111.5), Ne2 (112.1,166.1).
+  READ: Ne1 and Ne2 are two adjacent pivot circles; from Jun 24 to Sep 2 both are full canopy and NDVI is IDENTICAL at the
+    towers (0.64-0.67, |diff| <= 0.01; Jul 14 0.58 vs 0.67 is cloud). Visible differences only in bare/senescent season
+    (Jan-May residue, Sep 15-17 Ne2 browns first, Nov-Dec Ne2 brighter). In-season S2 cannot tell irrigated Ne2 from Ne1.
+    Cloud mask calls snow scenes "100% clear" (Jan 23, Feb 12, Mar 11, Nov 11, Dec 9).
