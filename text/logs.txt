@@ -8579,3 +8579,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
       key smoke clue: flattening ALL inputs (b=112) leaves map SD ~unchanged (0.0267 vs 0.0273) -> structure is positional (§56);
       add: decoder-only null (Test A on map_112), translation consistency (same station at centre vs off-centre), shuffled-pattern null,
       split by distance to nearest train station (leakage). Expected honest headline: no correct detail below the tile, L_eff >= ~1.6-2.2 km (lower bound).
+  §69.3 pred-vs-obs 27653516 DONE (figures/mead/mead_pred_vs_obs_{full,2019_2020}.png). Own-tile centre vs BASE obs,
+  2017-2024: Ne1 ubRMSE .061/.059/.036 bias -.068/-.046/-.074 R .46/.35/.66; Ne2 ubRMSE .061/.052/.041
+  bias -.053/-.043/-.100 R .40/.38/.53. Obs-vs-pred Ne1-Ne2 corr +0.16/+0.02/-0.20 -> model has no field contrast.
+  READ: model is TOO DRY in irrigated summers/autumns: 2020 Ne1 30-100 obs stays 0.32-0.35, model falls to ~0.21,
+  i.e. it predicts a RAINFED trajectory (Ne3 fell to ~0.23). Irrigation pulses at 0-10/10-30 not reproduced.
+  Model ignores the frozen-soil TDR dips (correct physically; those obs days inflate errors).
