@@ -8955,3 +8955,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §70 explainer: added §8 "How every number is computed" (anomaly, spectrum, blur test, model + observed variogram,
     Tests C/control/B/A, verdict), 9 pages; rebuilt texonly 27683741 (27683700/27683728 failed on \tfrac/\text -> amsmath added).
 2026-10-06 — terramind_value sample: prep+render 27683739 (UMAP 839 stations: A 4, B 205, C 246, D 381, E 3; S2 L12 pca .088/.071/.045; DEM .140/.105/.060, LULC .200/.104/.076), layout fix render 27683765. Observed: L12 token maps nearly identical across the 4 seasons (static landscape, not seasonal); UMAP Koppen separation partial (C right, B/D mixed).
+2026-10-06 — terramind_value: panel (c) now UMAP coloured by station mean SM 0-10 cm (user), prep+render 27683778 (assets add umap_sm), spacing render 27683883. Pattern in (c) is weak (matches §27b: kNN skill 9.8% global vs 23.4% tabular).

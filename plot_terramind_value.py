@@ -7,11 +7,11 @@ Three rows, paper style (plot_style_bw "paper": palette H, Times bold, no titles
     (c) every sm_only station's own centre token (s2/l12, mean over its label window), UMAP
         fitted unsupervised, coloured by Koppen macro class
 
-Token-map rules come from plot_token_pca.py (§27a), reused, not re-implemented:
+Token-map rules come from plot_token_pca.py (Â§27a), reused, not re-implemented:
     one PCA basis per row, deterministic sign, each panel centred by its own valid-token
     mean (within-tile structure), sink tokens (> 5x median norm, ViT registers) excluded
     from the fit but still drawn, one 2-98 % colour stretch per row, masked tokens grey.
-UMAP settings and station features come from probe_token_sm_structure.py (§27b):
+UMAP settings and station features come from probe_token_sm_structure.py (Â§27b):
     StandardScaler -> UMAP(n_neighbors 15, min_dist 0.1, random_state 0), centre token 105,
     mean over <= 24 acquisitions inside the station's label window, sm_only, finite only.
 
@@ -45,7 +45,7 @@ KG = [("A", "Tropical", "#4D4D4D"), ("B", "Arid", ORANGE), ("C", "Temperate", LB
       ("D", "Cold", DBLUE), ("E", "Polar", "#A6A6A6")]
 
 
-# ══ prep ══════════════════════════════════════════════════════════════════════════════════
+# ââ prep ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def prep(workers: int) -> None:
     import pandas as pd
     from sklearn.preprocessing import StandardScaler
@@ -115,11 +115,13 @@ def prep(workers: int) -> None:
     have = [r for r in recs if "s2/l12" in r["X"] and "0-10" in r["y"]]
     X = np.stack([r["X"]["s2/l12"] for r in have]).astype(np.float64)
     kg = meta.loc[[r["station"] for r in have], "kg_macro"].fillna("?").to_numpy()
+    sm = np.array([r["y"]["0-10"] for r in have])       # station mean 0-10 cm SM, qc==0 days
     fin = np.isfinite(X).all(1)
-    X, kg = X[fin], kg[fin]
+    fin &= np.isfinite(sm)
+    X, kg, sm = X[fin], kg[fin], sm[fin]
     U = umap.UMAP(n_components=2, random_state=0, n_neighbors=15,
                   min_dist=0.1).fit_transform(StandardScaler().fit_transform(X))
-    a["umap"], a["umap_kg"] = U.astype(np.float32), kg.astype(str)
+    a["umap"], a["umap_kg"], a["umap_sm"] = U.astype(np.float32), kg.astype(str), sm
     print(f"UMAP: {len(U)} stations (dropped {int((~fin).sum())} non-finite)",
           {c: int((kg == c).sum()) for c in sorted(set(kg))})
 
@@ -128,7 +130,7 @@ def prep(workers: int) -> None:
     print(f"wrote {OUT / 'assets.npz'}")
 
 
-# ══ render ════════════════════════════════════════════════════════════════════════════════
+# ââ render ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def _img(ax, img, **kw):
     ax.imshow(img, extent=(-.5, PATCH - .5, PATCH - .5, -.5), interpolation="nearest", **kw)
     ax.set_xticks([]); ax.set_yticks([])
@@ -155,7 +157,7 @@ def render() -> None:
     # rows sized in inches: square panels are ~1.68 in wide at this width, so give each image
     # row exactly that, plus explicit spacer rows for titles, x-labels and the (c) legend
     #           a1    a2    gap   b     gap   c
-    hr = [1.68, 1.68, 0.30, 1.68, 0.75, 2.9]
+    hr = [1.68, 1.68, 0.30, 1.68, 1.15, 2.9]
     fig = plt.figure(figsize=(7.4, sum(hr) + 0.75))
     gs = fig.add_gridspec(6, 4, height_ratios=hr, hspace=0.05, wspace=0.06, left=0.09,
                           right=0.99, top=1 - 0.55 / (sum(hr) + 0.75), bottom=0.2 / (sum(hr) + 0.75))
@@ -202,26 +204,23 @@ def render() -> None:
     pos = fig.axes[-4].get_position()
     fig.text(0.012, pos.y1 + 0.006, "(b)", fontsize=13, va="bottom")
 
-    # (c) UMAP by Koppen
+    # (c) UMAP coloured by station mean 0-10 cm SM (wettest drawn last, on top)
     ax = fig.add_subplot(gs[5, :])
-    U, kg = a["umap"], a["umap_kg"]
-    handles = []
-    for code, name, col in KG:
-        m = kg == code
-        if not m.any():
-            continue
-        h = ax.scatter(U[m, 0], U[m, 1], s=14, color=col, edgecolors="none",
-                       label=f"{code} {name} ({int(m.sum())})", zorder=3)
-        handles.append(h)
+    U, sm = a["umap"], np.asarray(a["umap_sm"], float)
+    o = np.argsort(sm)
+    vmin, vmax = np.percentile(sm, 2), np.percentile(sm, 98)
+    sc = ax.scatter(U[o, 0], U[o, 1], c=sm[o], s=14, cmap="YlGnBu", vmin=vmin, vmax=vmax,
+                    edgecolors="none", zorder=3)
     ax.set_xticks([]); ax.set_yticks([])
     ax.set_xlabel("UMAP 1"); ax.set_ylabel("UMAP 2")
     for sp in ax.spines.values():
         sp.set_linewidth(1.2)
-    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=5,
-              frameon=False, handletextpad=0.2, columnspacing=0.9, markerscale=1.6,
-              fontsize=10.5)
+    cax = ax.inset_axes([0.30, 1.04, 0.40, 0.045])
+    cb = fig.colorbar(sc, cax=cax, orientation="horizontal", extend="both")
+    cb.ax.xaxis.set_ticks_position("top"); cb.ax.xaxis.set_label_position("top")
+    cb.set_label(f"station mean SM 0–10 cm (m³/m³), n = {len(sm)}", labelpad=4)
     pos = ax.get_position()
-    fig.text(0.012, pos.y1 + 0.035, "(c)", fontsize=13, va="bottom")
+    fig.text(0.012, pos.y1 + 0.075, "(c)", fontsize=13, va="bottom")
 
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"terramind_value.{ext}", dpi=600)
