@@ -119,8 +119,8 @@ def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
 
     plot_style_bw.apply(globals(), "paper")
     n = len(events)
-    fig, axes = plt.subplots(3, n, figsize=(3.6 * n, 8), sharex="col", squeeze=False,
-                             gridspec_kw={"height_ratios": [0.8, 1, 1]})
+    fig, axes = plt.subplots(3, n, figsize=(max(3.6 * n, 10), 8.5), sharex="col",
+                             squeeze=False, gridspec_kw={"height_ratios": [1, 1, 0.8]})
     col = {irr_site: plot_style_bw.BLUE, ctl: plot_style_bw.GREEN}
     letters = iter("abcdefghijklmnopqrstuvwxyz")
     for j, (a, e, dry) in enumerate(events):
@@ -139,19 +139,18 @@ def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
             ax.plot(p2 + pd.Timedelta("12h"), np.full(len(p2), 0.80), "*", ms=11,
                     color=plot_style_bw.RED, mec="black", mew=0.4, transform=x, zorder=6,
                     label="S2 pass" if i == 1 else None)
-        ax = axes[0, j]
+        ax = axes[2, j]
         er = p["ERA5"].loc[lo:hi]
         ax.bar(er.index, er.values, width=1.0, color="0.6", label="ERA5-Land")
         for s, mk in ((ctl, "o"), (irr_site, "^")):
             gg = p[s].loc[lo:hi]
             gg = gg[gg >= 0.2]
             ax.plot(gg.index, gg.values, mk, ms=5, color=col[s], label=f"{s[-3:]} gauge")
-        ax.text(0.03, 0.95, f"({next(letters)}) {a_} irrigation {a:%d %b}-{e:%d %b}",
-                transform=ax.transAxes, va="top",
-                bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
+        ax.text(0.03, 0.95, f"({chr(ord('a') + 3 * j + 2)}) precipitation", transform=ax.transAxes,
+                va="top", bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
         if j == 0:
             ax.set_ylabel("P (mm d$^{-1}$)")
-        for i, bn in enumerate(BINS, start=1):
+        for i, bn in enumerate(BINS):
             ax = axes[i, j]
             for s in (irr_site, ctl):
                 o = obs[s][bn].loc[lo:hi]
@@ -159,23 +158,30 @@ def pair(p, irr, y, irr_site="US-Ne2", ctl="US-Ne1"):
                 pp = pred[s][bn].loc[lo:hi]
                 ax.plot(pp.index, pp.values, "-" if s == irr_site else "--", color=col[s],
                         lw=1.5, label=f"Model {s[-3:]}")
-            ax.text(0.03, 0.95, f"({next(letters)}) {bn} cm", transform=ax.transAxes, va="top",
+            ax.text(0.03, 0.95, f"({chr(ord('a') + 3 * j + i)}) {bn} cm"
+                    + (f", {a_} irrigation {a:%d %b}-{e:%d %b}" if i == 0 else ""),
+                    transform=ax.transAxes, va="top",
                     bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5))
             if j == 0:
                 ax.set_ylabel("SM (m$^3$ m$^{-3}$)")
         axes[2, j].tick_params(axis="x", rotation=45)
-    axes[0, 0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
     h = [Line2D([], [], marker="o", ls="", ms=4, color=col[irr_site], label=f"Observed {a_}"),
          Line2D([], [], ls="-", lw=1.5, color=col[irr_site], label=f"Model {a_}"),
          Line2D([], [], marker="o", ls="", ms=4, color=col[ctl], label=f"Observed {c_}"),
          Line2D([], [], ls="--", lw=1.5, color=col[ctl], label=f"Model {c_}"),
          Line2D([], [], marker="*", ls="", ms=10, color="black", label="S1 pass"),
          Line2D([], [], marker="*", ls="", ms=10, color=plot_style_bw.RED, mec="black",
-                mew=0.4, label="S2 pass")]
+                mew=0.4, label="S2 pass"),
+         Patch(color="0.6", label="ERA5-Land P"),
+         Line2D([], [], marker="^", ls="", ms=5, color=col[irr_site], label=f"{a_} gauge"),
+         Line2D([], [], marker="o", ls="", ms=5, color=col[ctl], label=f"{c_} gauge"),
+         Patch(color="0.92", label=f"{a_} irrigation logged"),
+         Patch(color="#FDD0A2", alpha=0.6, label="ERA5, Ne1, Ne2 all dry")]
     fig.legend(handles=h, loc="lower center", ncol=6, frameon=False)
     fig.align_ylabels(axes[:, 0])
-    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_pair_irrigation_{a_}_{y}.{ext}", dpi=600)
     print(f"figure: {FIG_DIR}/mead_pair_irrigation_{a_}_{y}.png  (grey = logged interval, "
