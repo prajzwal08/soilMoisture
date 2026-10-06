@@ -8909,3 +8909,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   - assets backups: assets.npz.bak_20261006, assets.npz.bak_20261006b.
 
 2026-10-06 — architecture_s48.png renders 27682708 + 27682717: thick black rounded frames around the three input groups (drivers; S2/S1/DEM/LULC history; fine inputs on D) + "input" legend entry; lane-A headers lowered to clear the frame.
+2026-10-06 20:52 §68 refetch 27682352 COMPLETED (32 s): T103_084 20160714 re-downloaded, reads OK, but ALL ZEROS
+  (12x224x224 int16 min 0 max 0) = empty scene (no data over tile), like T108_079 20240718. Gate only checked readability.
+  cm task 0 rerun 27682355_0 COMPLETED (10 min). prep 27682356 RUNNING. To check: prep's cloudy filter drops the empty scene.
