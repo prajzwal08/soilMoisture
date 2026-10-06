@@ -8546,3 +8546,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   READ: Ne1 sits ~0.02-0.03 below Ne2 ALL YEAR (spring, winter) = site/sensor offset. Net 2019 irrigation effect
   is only ~0.01-0.03 in Aug-Sep: wet year, irrigation 129 mm vs heavy rain. Day-to-day difference swings +-0.1
   (event timing), dwarfing the mean. Ne1-vs-Ne2 is a WEAK contrast; Ne1/Ne2-vs-Ne3 in dry years is the strong one.
+  §70 analysis rerun on smoke output SUBMITTED (user "yes"): job 27652853 (rome, 16 CPU)
