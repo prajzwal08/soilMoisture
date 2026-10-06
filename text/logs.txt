@@ -8765,3 +8765,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     (observed Ne1-Ne2 ~ -0.02..-0.03: right sign, ~1.5x too big); at 0-10 patchwise Ne1 is WETTER than Ne2 (+0.03 in 2019) while observed Ne1 is drier -> wrong sign.
     Scatter: patchwise |dSM| DOES scale with patch dissimilarity (S2 JJAS Ne1-south squares higher; Oct-May 10-30 Ne1-south +0.40), unlike the 20 m map.
   READ: patchwise separates patches as static offsets (fingerprint) that scale with how different they look, but the day-to-day Ne1-Ne2 contrast still does not follow the observations.
+  §69.7 patchwise vs 20 m model scatter + both vs observed (user: 'plot between patchwise vs other'): job 27663697
+  27663697 DONE (25 s): mead_pw_vs_20m + mead_models_vs_obs. Patchwise vs 20 m: r +0.64..+0.75, patchwise WETTER by +0.016..+0.060 (largest 30-100 Ne2/south).
+    vs observed (2017-2024, ts>0), RMSE / bias / r, 20 m -> patchwise:
+      Ne1 0-10 .093/-.076/.38 -> .069/-.033/.30;  10-30 .073/-.052/.38 -> .050/-.020/.52;  30-100 .080/-.072/.65 -> .061/-.054/.59
+      Ne2 0-10 .103/-.088/.42 -> .082/-.067/.51;  10-30 .083/-.069/.51 -> .051/-.036/.59;  30-100 .096/-.088/.66 -> .045/-.036/.62
+  READ: patchwise has ~25-50% lower RMSE at Mead, almost all from a smaller dry bias; r similar (higher at 10-30, slightly lower at 30-100). Both too dry.
