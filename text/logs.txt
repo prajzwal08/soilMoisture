@@ -8878,3 +8878,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   truncated S2 TIF: NLGRID_T103_084/S2L2A/20160714.tif = 5,590 B, written 13:57 (S2 re-download window), GDAL
   "TIFFReadDirectory: Failed to read directory at offset 3560". Task 0: 57,525 masks written, errors 1, skipped 0.
   afterok chain prep 27681281 / tok 27681282 / post 27681284 auto-CANCELLED. Scanning all S2 TIFs < 20 KB for more.
+  §70 FULL run SUBMITTED (user "ok run full run"): effres_maps 27682304 (H100, all 40 TxSON tiles, blocks 0,2,4,8,14,28,56,112)
+    -> effres_analysis 27682305 (afterok) -> plot_effres 27682306 (afterok; per-tile map variogram, oos tiles, 50208b0)
+    -> figures/effres/effres_txson.{png,pdf}.
