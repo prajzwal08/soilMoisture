@@ -8405,3 +8405,11 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
   §67 publication heatmap (NEW file, original untouched, md5 checked): plot_input_ablation.py --layout horizontal ->
     input_ablation_heatmap_horizontal.{png,pdf}; inputs on x, layers on y, (a) ubRMSE + (b) |bias| only, shared scale;
     S2 160 m, S1 160 m (other station) and 20 m imagery dropped; S1 same-station row kept. Render job 27639404 COMPLETED.
+  TILE PAPER FIGURE (new plot_tile_paper.py + slurm/plot_tile_paper.sh, CPU, no GPU): first sample = FMI Sodankylä,
+    6 OOS stations in tile SOD101 (SOD101-103 2016-2020, 3/1/1 depths; SOD071-073 2020/2022-2025, 2/1/1 depths),
+    RGB S2 2018-07-16 (cloud 0.000), time series from allday parquets. Job 27640816 COMPLETED ->
+    figures/eval/baseline_selected_20261005_paper/tiles/fmi_sodankyla.{png,pdf}. Spatial map NOT included (user).
+    Check: SOD101-103 metrics match per_station_oos.csv exactly; SOD071-073 differ because panel metrics pool
+    OOS (<=2022) + OOST (2023-25). Seen in the figure: model underpredicts winter strongly (all stations, bias
+    -0.07..-0.19); observed has months-long flat segments (SOD071/072/073 2025, SOD101 winters) = frozen/stuck sensors
+    that pass QC=0. Awaiting user verification.
