@@ -8927,3 +8927,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 — architecture_s48.png render 27682845: three sections per user: upper = 365-day timeline (gap 7), middle = drivers+satellite+transformer, lower = fine 20 m lane + decoder (gap 7); drivers/satellite gap 4 kept.
 
 2026-10-06 — architecture_s48.png render 27682884: cloud-mask branch redrawn as DASHED GREY arrows (S2 L2A -> SEnSeIv2 on its own line left of the TerraMind bus; token mask -> pyramid x4; pixel mask -> S2 on D), grey mask labels, legend "cloud mask (not data)". path(dashed=True) = dashed line + solid head stub.
+
+2026-10-06 — architecture_s48.png render 27682915: pixel-mask arrow now leaves the SEnSeIv2 OUTPUT stack (was drawn from its input) and runs to the fine S2; "tokens kept" caption moved above the output stack. Fine-lane relabel (S2/S1 = latest scene <= D, not on D; ages 1 d / 11 d) proposed, not applied.

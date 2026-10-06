@@ -650,8 +650,10 @@ def render() -> None:
     # mask branch = dashed grey (MASK): it leaves the S2 L2A frame on its own line, left of
     # the S2 -> TerraMind bus, so it does not read as S2 data flowing down to the fine lane
     path(ax, [(2.6, 44.4), (2.6, cy0 + cs)], color=MASK, dashed=True)   # S2 L2A -> SEnSeIv2
-    path(ax, [(xs2, cy0), (xs2, 26.3)], color=MASK, dashed=True)       # pixel mask -> fine S2
-    label(ax, xs2 + 1.0, 28.0, "pixel mask", ha="left", color=MASK)
+    # pixel mask leaves the SEnSeIv2 OUTPUT stack (not its input) and goes to the fine S2
+    path(ax, [(xb + 1.0, cy0), (xb + 1.0, 28.3), (xs2, 28.3), (xs2, 26.3)], color=MASK,
+         dashed=True)
+    label(ax, (xs2 + xb + 1.0) / 2 + 1.0, 29.3, "pixel mask", color=MASK)
     xm0, xm1 = xa + cs + 2 * off, xb
     path(ax, [(xm0, 33.5), (xm1, 33.5)], color=MASK, dashed=True)
     label(ax, (xm0 + xm1) / 2, 35.0, "SEnSeIv2", fs=FS_B)
@@ -671,7 +673,7 @@ def render() -> None:
         stack(ax, list(rgbs), xa, cy0, cs, off=off)
         stack(ax, masked, xb, cy0, cs, off=off)
         kept = " · ".join(str(int(t.sum())) for t in a["cm_toks"])
-        label(ax, xb + cs / 2 + off, 27.9, f"tokens kept {kept} /196", fs=FS_B - 1)
+        label(ax, xb + cs / 2 + off, 38.4, f"tokens kept {kept} /196", fs=FS_B - 1)
     # the mask acts INSIDE the pyramid pooling (dataset._cpu_pyramid_pool: masked mean over
     # valid tokens per window) and in scene / anchor selection -> arrow onto the pyramid step
     path(ax, [(xb + cs + 2 * off, 33.5), (84.8, 33.5), (84.8, 51.25)], color=MASK, dashed=True)
