@@ -41,6 +41,7 @@ DBLUE, LBLUE, ORANGE = "#08519C", "#6BAED6", "#E6550D"
 TRAIN_FILL  = "#D6E7F4"           # opaque tint of LBLUE
 FROZEN_FILL, FROZEN_EDGE = "#D9D9D9", "#4D4D4D"
 LOSS_FILL   = "#FBDCCB"           # opaque tint of ORANGE
+INPUT_EDGE, INPUT_FILL = "#238B45", "#EEF7F0"   # input frames: green edge, faint green tint
 LINE        = "black"
 FS_T, FS_B  = 11, 10              # box titles / box body
 W, H        = 178, 114            # canvas units; 1 unit = 0.1 inch
@@ -285,6 +286,58 @@ def label(ax, x, y, s, **kw):
     ax.text(x, y, s, va="center", fontsize=kw.pop("fs", FS_B), zorder=6, **kw)
 
 
+def open_gaps(fig, ax, s1=58.75, d1=4.0, s2=26.9, d2=4.0):
+    """Open blank bands between the three lanes after everything is drawn.
+
+    Everything below s2 (fine 20 m lane, CNN, decoder, heads) moves down by d2. On the left
+    (x <= 86, up to the token-sequence box) everything above s1 (driver lane) moves up by d1,
+    and so does everything above y = 79 (timeline band, legend). The token sequence, the
+    transformer and the SM maps keep their shape; lines and boxes that cross a gap stretch.
+    """
+    def Y(x, y):
+        if y < s2:
+            return y - d2
+        if y > s1 and (x <= 86.01 or y > 79):
+            return y + d1
+        return y
+
+    for ln in ax.lines:
+        xs, ys = np.asarray(ln.get_xdata(), float), np.asarray(ln.get_ydata(), float)
+        ln.set_ydata([Y(x, y) for x, y in zip(xs, ys)])
+    for p in ax.patches:
+        if isinstance(p, matplotlib.patches.Ellipse):
+            cx, cy = p.center
+            p.center = (cx, Y(cx, cy))
+        elif hasattr(p, "get_bounds") or isinstance(p, (Rectangle, FancyBboxPatch)):
+            x0, y0, w, h = p.get_x(), p.get_y(), p.get_width(), p.get_height()
+            xc = x0 + w / 2
+            y0n, y1n = Y(xc, y0), Y(xc, y0 + h)
+            p.set_bounds(x0, y0n, w, y1n - y0n)
+    for t in ax.texts:
+        if isinstance(t, matplotlib.text.Annotation):
+            (x, y), (xa, ya) = t.xy, t.xyann
+            t.xy, t.xyann = (x, Y(x, y)), (xa, Y(xa, ya))
+        else:
+            x, y = t.get_position()
+            t.set_position((x, Y(x, y)))
+    for im in ax.images:
+        x0, x1, y0, y1 = im.get_extent()
+        xc = (x0 + x1) / 2
+        im.set_extent((x0, x1, Y(xc, y0), Y(xc, y1)))
+    Hn = H + d1 + d2
+    others = [a_ for a_ in fig.axes if a_ is not ax]
+    boxes = []
+    for a_ in others:                          # read positions in the OLD figure fractions
+        b = a_.get_position()
+        x0, x1, y0, y1 = b.x0 * W, b.x1 * W, b.y0 * H, b.y1 * H
+        xc = (x0 + x1) / 2
+        boxes.append((x0, x1, Y(xc, y0), Y(xc, y1)))
+    fig.set_size_inches(W / 10, Hn / 10)
+    ax.set_ylim(-d2, H + d1)
+    for a_, (x0, x1, y0, y1) in zip(others, boxes):
+        a_.set_position([x0 / W, (y0 + d2) / Hn, (x1 - x0) / W, (y1 - y0) / Hn])
+
+
 # ══ render ════════════════════════════════════════════════════════════════════════════════
 def render() -> None:
     plot_style_bw.apply(globals(), "paper")
@@ -405,36 +458,41 @@ def render() -> None:
         ax.text(7.2, y0 + 1.6, name, ha="right", va="center", fontsize=FS_B, zorder=6)
         ax.text(7.2, y0 + 0.45, "min·mean·max" if isinstance(col, tuple) else "daily sum",
                 ha="right", va="center", fontsize=7, color=FROZEN_EDGE, zorder=6)
-    label(ax, 13.9, 85.0, "ERA5-Land · 365 d × 18")
+    label(ax, 13.4, 85.0, "ERA5-Land · 365 d × 18")
     # SIF: the last 50 values span only ~7 weeks, so zoom to them (on a 365-d axis they are a
     # smudge at the right edge); TWSA: monthly points joined, last 45 d shaded = not released
+    # SIF / TWSA / soil: one wide frame each (label left, plot right), stacked in a column,
+    # each with ONE straight arrow to its own encoder at the same height
     o = np.argsort(-a["sif_age"])
-    t = inset(fig, 22.5, 75, 8.5, 9)
+    t = inset(fig, 29.4, 79.6, 12.6, 5.6)
     t.plot(-a["sif_age"][o], a["sif"][o], "-o", ms=1.6, lw=0.7, color="#3776AB", mfc=DBLUE,
            mec="none")
     t.set_xlim(-a["sif_age"].max() - 2, 1)
-    label(ax, 26.75, 85.0, "SIF · last 50")
+    label(ax, 22.6, 83.4, "SIF", ha="left")
+    label(ax, 22.6, 81.6, "last 50", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
     o = np.argsort(-a["twsa_age"])
-    t = inset(fig, 22.5, 64, 8.5, 9)
+    t = inset(fig, 29.4, 71.8, 12.6, 5.6)
     t.axvspan(-45, 0, color="#EDEDED", lw=0)
     t.plot(-a["twsa_age"][o], a["twsa"][o], "-o", ms=2.6, lw=1.0, color="#3776AB", mfc=DBLUE,
            mec="none")
     t.set_xlim(-365, 0)
-    label(ax, 26.75, 74.0, "TWSA · monthly")
-    image(ax, a["soc"], 33.8, 64, 8.5, 8.5, cmap="YlOrBr")
-    label(ax, 38.05, 74.0, "Soil 21 ch")
+    label(ax, 22.6, 75.6, "TWSA", ha="left")
+    label(ax, 22.6, 73.8, "monthly", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    image(ax, a["soc"], 33.7, 63.8, 5.6, 5.6, cmap="YlOrBr")
+    label(ax, 22.6, 67.8, "Soil", ha="left")
+    label(ax, 22.6, 66.0, "21 layers", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
     # one encoder per driver (model.py era5_mlp / twsa_mlp / soil_encoder / sif_mlp: separate
-    # weights), each fed by its own line; the outputs join on a collector into the sequence
-    drv = [("ERA5 MLP 18 → 768", 59.0), ("TWSA MLP 1 → 768", 63.2),
-           ("Soil CNN → 4 tokens", 67.4), ("SIF MLP 1 → 768", 73.6)]
+    # weights); the outputs join on a collector into the sequence
+    drv = [("ERA5 MLP 18 → 768", 59.0), ("Soil CNN → 4 tokens", 65.0),
+           ("TWSA MLP 1 → 768", 72.8), ("SIF MLP 1 → 768", 80.7)]
     for txt, y0 in drv:
         box(ax, 45, y0, 58, y0 + 3.2, [txt], fs=FS_B - 1)
         path(ax, [(58, y0 + 1.6), (59.6, y0 + 1.6)], head=False)
-    path(ax, [(59.6, 60.6), (59.6, 75.2)], head=False)
-    path(ax, [(13.0, 64.2), (13.0, 60.6), (45, 60.6)])                        # ERA5
-    path(ax, [(26.75, 64), (26.75, 62.4), (43.5, 62.4), (43.5, 64.8), (45, 64.8)])  # TWSA
-    path(ax, [(42.3, 69.0), (45, 69.0)])                                      # soil
-    path(ax, [(31, 75.2), (45, 75.2)])                                        # SIF
+    path(ax, [(59.6, 60.6), (59.6, 82.3)], head=False)
+    path(ax, [(13.0, 63.0), (13.0, 60.6), (45, 60.6)])                        # ERA5
+    path(ax, [(42.6, 66.6), (45, 66.6)])                                      # soil
+    path(ax, [(42.6, 74.4), (45, 74.4)])                                      # TWSA
+    path(ax, [(42.6, 82.3), (45, 82.3)])                                      # SIF
 
     # ── lane B: satellite tokens ───────────────────────────────────────────────────────────
     yb0, s = 45.0, 6.6
@@ -445,7 +503,7 @@ def render() -> None:
     image(ax, a["dem_hs"], px[2], yb0, pw, pw, cmap="gray")
     image(ax, lulc, px[3], yb0, pw, pw, cmap=cm, norm=BoundaryNorm(np.arange(-.5, 11), 11))
     for x, s_ in zip(px, ["S2 L2A ≤ 60", "S1 RTC ≤ 40", "DEM", "LULC"]):
-        label(ax, x + pw / 2, 54.8, s_)
+        label(ax, x + pw / 2, 54.8, s_, fs=FS_B - 1)
     bus_b = 42.0
     for x in px:
         path(ax, [(x + pw / 2, yb0), (x + pw / 2, bus_b)], head=False)
@@ -461,7 +519,7 @@ def render() -> None:
     for w in (7, 5, 3, 1):                                   # nested windows 14/10/6/2 tokens
         ax.add_patch(Rectangle((62 + (7 - w) * g, 45 + (7 - w) * g), 2 * w * g, 2 * w * g,
                                fill=False, ec="white", lw=1.1, zorder=6))
-    label(ax, 68.25, 59.6, "196 × 768 · 160 m")
+    label(ax, 68.25, 58.4, "196 × 768 · 160 m")
     path(ax, [(74.5, 51.25), (86, 51.25)])
     label(ax, 80.25, 53.2, "pyramid ×4")
     label(ax, 79.6, 49.3, "anchor 196")
@@ -513,9 +571,32 @@ def render() -> None:
     path(ax, [(100, 60), (104, 60)])
     # no causal mask: every token attends to every other (past/future, all inputs) except
     # key-padded ones (model.py forward: src_key_padding_mask only)
-    box(ax, 104, 42, 118, 78, ["Transformer", "3 layers", "d = 768", "12 heads", "bidirectional",
-                               "self-attention", "key-padding", "mask", "pre-norm"], kind="emph",
-        title_n=1)
+    # one pre-norm encoder layer drawn as coloured blocks (nn.TransformerEncoderLayer,
+    # norm_first=True, FFN 768 -> 3072 -> 768), repeated x3, then a final LayerNorm
+    box(ax, 104, 42, 118, 78, None)
+    ax.add_patch(FancyBboxPatch((104, 42), 14, 36, fill=False, ec=DBLUE, lw=2.6, zorder=2.1,
+                                boxstyle="round,pad=0,rounding_size=0.8"))   # thick border
+    label(ax, 111, 76.3, "Transformer", fs=FS_T)
+    label(ax, 111, 74.5, "d = 768 · pre-norm", fs=FS_B - 1)
+    ax.add_patch(FancyBboxPatch((105, 47.6), 12, 25.4, fill=False, ec=DBLUE, lw=1.0,
+                                ls=(0, (3, 2)), boxstyle="round,pad=0,rounding_size=0.6",
+                                zorder=2.2))
+    label(ax, 116.6, 72.0, "× 3", ha="right", fs=FS_B)
+    def blk(y0, y1, lines, fc, tc="black"):
+        ax.add_patch(FancyBboxPatch((106, y0), 10, y1 - y0, fc=fc, ec=DBLUE, lw=0.9,
+                                    boxstyle="round,pad=0,rounding_size=0.5", zorder=2.3))
+        n = len(lines)
+        for k, s in enumerate(lines):
+            ax.text(111, (y0 + y1) / 2 + (n - 1) * 0.85 - k * 1.7, s, ha="center",
+                    va="center", fontsize=FS_B - 1, color=tc, zorder=2.4)
+    blk(68.4, 70.6, ["LayerNorm"], "white")
+    blk(61.6, 67.6, ["self-attention", "12 heads", "bidirectional"], DBLUE, tc="white")
+    label(ax, 111, 60.5, "⊕ residual", fs=FS_B - 1)
+    blk(57.0, 59.2, ["LayerNorm"], "white")
+    blk(51.0, 56.2, ["feed-forward", "768→3072→768"], LBLUE)
+    label(ax, 111, 49.6, "⊕ residual", fs=FS_B - 1)
+    blk(43.6, 45.8, ["final LayerNorm"], "white")
+    label(ax, 111, 46.7, "key-padding mask", fs=FS_B - 2, color=FROZEN_EDGE)
 
     # ── lane C: fine 20 m path ─────────────────────────────────────────────────────────────
     yc0 = 14.0
@@ -538,7 +619,7 @@ def render() -> None:
                          ["masked 2×2 pool", "linear pool → dB", "asinh(Δh/1 m)/4",
                           "8-d embedding"]):
         label(ax, x + pw / 2, 25.4, s_)
-        label(ax, x + pw / 2, 23.7, n_, fs=FS_B - 1, color=FROZEN_EDGE)
+        label(ax, x + pw / 2, 23.7, n_, fs=FS_B - 2, color=FROZEN_EDGE)
 
     # ── cloud mask: SEnSeIv2 classes -> token mask (history, anchor, pyramid) + pixel mask ──
     # dataset.py CM_BAD_CLASSES = thin / thick cloud, shadow, nodata; a 160 m token is valid
@@ -586,17 +667,17 @@ def render() -> None:
         path(ax, [(xm, yc0), (xm, 11.8)])
         box(ax, x, 7.4, x + pw, 11.8, [f"{nm} stem", ch], title_n=1, fs=FS_B)
         path(ax, [(xm, 7.4), (xm, bus_c)], head=False)
-    path(ax, [(px[0] + pw / 2, bus_c), (51, bus_c), (51, 15)])
-    box(ax, 44, 15, 58, 25, ["concat", "32 @ 112", "(3×3 stems)"])
-    box(ax, 44, 27.0, 58, 31.4, ["fine modality", "dropout 0.2 (S2/S1)"], kind="plain",
+    path(ax, [(px[0] + pw / 2, bus_c), (51, bus_c), (51, 13.0)])
+    box(ax, 44, 13.0, 58, 21.0, ["concat", "32 @ 112", "(3×3 stems)"])
+    box(ax, 44, 21.8, 58, 26.2, ["fine modality", "dropout 0.2 (S2/S1)"], kind="plain",
         dashed=True, fs=FS_B)
     path(ax, [(58, 20), (62, 20)])
-    vbox(ax, 62, 12, 68, 28, "E1 · 32 @ 112")
+    vbox(ax, 62, 12.5, 68, 26.5, "E1 · 32 @ 112")
     path(ax, [(68, 20), (71, 20)])
-    vbox(ax, 71, 14, 77, 26, "E2 · 64 @ 56")
+    vbox(ax, 71, 14.5, 77, 25.5, "E2 · 64 @ 56")
     path(ax, [(77, 20), (80, 20)])
-    vbox(ax, 80, 15.5, 86, 24.5, "E3 · 128 @ 28")
-    label(ax, 74, 30.0, "GroupNorm CNN")
+    vbox(ax, 80, 15.3, 86, 24.7, "E3 · 128 @ 28")
+    label(ax, 74, 26.7, "GroupNorm CNN")
 
     # ── decoder ────────────────────────────────────────────────────────────────────────────
     vbox(ax, 122, 16.5, 127, 23.5, "512 @ 14")
@@ -605,20 +686,20 @@ def render() -> None:
     path(ax, [(135, 20), (137, 20)])
     vbox(ax, 137, 14, 144, 26, "128 @ 56")
     path(ax, [(144, 20), (146, 20)])
-    vbox(ax, 146, 12, 153, 28, "z · 64 @ 112")
+    vbox(ax, 146, 12.5, 153, 26.5, "z · 64 @ 112")
     label(ax, 114.5, 25.6, "U-Net decoder")
     label(ax, 114.5, 23.8, "bilinear ×2")
     # skips, nested so they never cross
-    path(ax, [(83, 15.5), (83, 8.0), (132, 8.0), (132, 15.5)])
-    path(ax, [(74, 14), (74, 5.5), (140.5, 5.5), (140.5, 14)])
-    path(ax, [(65, 12), (65, 3.0), (149.5, 3.0), (149.5, 12)])
+    path(ax, [(83, 15.3), (83, 8.0), (132, 8.0), (132, 15.5)])
+    path(ax, [(74, 14.5), (74, 5.5), (140.5, 5.5), (140.5, 14)])
+    path(ax, [(65, 12.5), (65, 3.0), (149.5, 3.0), (149.5, 12.5)])
     label(ax, 107, 6.8, "skips (FiLM by context)")
     # transformer outputs
     path(ax, [(107, 42), (107, 20), (122, 20)])
     label(ax, 106, 38.0, "bottleneck", ha="right")
     label(ax, 106, 36.2, "768 @ 14×14", ha="right")
     path(ax, [(114, 42), (114, 31.5), (149.5, 31.5)], head=False)
-    for xd, ytop in ((132, 24.5), (140.5, 26), (149.5, 28)):
+    for xd, ytop in ((132, 24.5), (140.5, 26), (149.5, 26.5)):
         path(ax, [(xd, 31.5), (xd, ytop)])
     label(ax, 131.5, 33.0, "context 768 (FiLM)")
     path(ax, [(118, 66), (121, 66), (121, 35.0), (156, 35.0), (156, 24), (158, 24)])
@@ -648,12 +729,17 @@ def render() -> None:
 
     # ── input frames: every model input sits inside a thick black frame ──────────────────
     def frame(x0, y0, x1, y1):
-        ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0, fill=False, ec="black",
+        ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0, fc=INPUT_FILL, ec=INPUT_EDGE,
                                     lw=2.4, boxstyle="round,pad=0,rounding_size=1.0",
                                     zorder=0.5))
-    frame(0.6, 63.3, 43.0, 86.45)        # lane A: ERA5-Land, SIF, TWSA, soil
-    frame(0.6, 43.4, 41.4, 56.0)         # lane B: S2 / S1 history, DEM, LULC
-    frame(0.6, 13.0, 41.4, 26.3)         # lane C: fine inputs on day D
+    # one frame per input, label included
+    frame(0.8, 63.0, 21.3, 86.0)         # ERA5-Land
+    frame(22.0, 78.8, 42.6, 86.0)        # SIF
+    frame(22.0, 70.9, 42.6, 78.1)        # TWSA
+    frame(22.0, 63.0, 42.6, 70.2)        # soil
+    for x in px:                         # S2 L2A / S1 RTC / DEM / LULC, then the fine four
+        frame(x - 0.4, 44.4, x + pw + 0.4, 55.7)
+        frame(x - 0.4, 13.2, x + pw + 0.4, 26.3)
 
     # ── legend row ─────────────────────────────────────────────────────────────────────────
     lx, ly = 2, 110.0
@@ -671,6 +757,7 @@ def render() -> None:
     ax.text(W - 2, ly + 1.2, f"TxSON CR200-18 · day D = {a['day']} · 2.24 km tile",
             ha="right", va="center", fontsize=FS_B)
 
+    open_gaps(fig, ax)
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"architecture_s48.{ext}", dpi=600)
     print(f"wrote {OUT}/architecture_s48.{{png,pdf}}")

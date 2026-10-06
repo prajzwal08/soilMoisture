@@ -8912,3 +8912,14 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 20:52 §68 refetch 27682352 COMPLETED (32 s): T103_084 20160714 re-downloaded, reads OK, but ALL ZEROS
   (12x224x224 int16 min 0 max 0) = empty scene (no data over tile), like T108_079 20240718. Gate only checked readability.
   cm task 0 rerun 27682355_0 COMPLETED (10 min). prep 27682356 RUNNING. To check: prep's cloudy filter drops the empty scene.
+
+2026-10-06 — architecture_s48.png renders 27682734/27682742/27682835/27682838 (session resumed after an
+  interrupted edit; that sed had NOT applied, redone):
+  - one input frame per input (green edge #238B45, faint green tint; legend "input").
+  - drivers relaid: ERA5-Land frame left; SIF / TWSA / Soil each a wide frame (label left, plot right)
+    with ONE straight arrow to its own encoder (fixes TWSA label collision and the bent SIF route).
+  - transformer drawn as blocks: x3 [LayerNorm, self-attention 12 heads bidirectional (dark blue),
+    residual, LayerNorm, feed-forward 768->3072->768 (light blue), residual], key-padding mask,
+    final LayerNorm (nn.TransformerEncoderLayer norm_first=True); thick border.
+  - open_gaps(): post-draw y-shift opening ~4-unit bands between drivers / satellite+cloud /
+    fine 20 m lanes; token list, transformer and maps stay rigid, crossing lines stretch.
