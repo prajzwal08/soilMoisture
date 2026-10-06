@@ -392,14 +392,21 @@ def render() -> None:
         t.set_xlim(-365, 0)
         ax.text(5.6, y0 + 1.15, name, ha="right", va="center", fontsize=FS_B, zorder=6)
     label(ax, 11.0, 85.6, "ERA5-Land · 365 d × 18")
+    # SIF: the last 50 values span only ~7 weeks, so zoom to them (on a 365-d axis they are a
+    # smudge at the right edge); TWSA: monthly points joined, last 45 d shaded = not released
+    o = np.argsort(-a["sif_age"])
     t = inset(fig, 22.5, 75, 8.5, 9)
-    t.plot(-a["sif_age"], a["sif"], "o", ms=2.2, color=DBLUE)
-    t.set_xlim(-365, 8)
-    label(ax, 26.75, 85.6, "SIF ≤ 50")
+    t.plot(-a["sif_age"][o], a["sif"][o], "-o", ms=1.6, lw=0.7, color="#3776AB", mfc=DBLUE,
+           mec="none")
+    t.set_xlim(-a["sif_age"].max() - 2, 1)
+    label(ax, 26.75, 85.6, "SIF · last 50")
+    o = np.argsort(-a["twsa_age"])
     t = inset(fig, 22.5, 64, 8.5, 9)
-    t.step(-a["twsa_age"], a["twsa"], where="post", color=DBLUE, lw=1.2)
+    t.axvspan(-45, 0, color="#EDEDED", lw=0)
+    t.plot(-a["twsa_age"][o], a["twsa"][o], "-o", ms=2.6, lw=1.0, color="#3776AB", mfc=DBLUE,
+           mec="none")
     t.set_xlim(-365, 0)
-    label(ax, 26.75, 74.0, "TWSA ≤ 12")
+    label(ax, 26.75, 74.0, "TWSA · monthly")
     image(ax, a["soc"], 33.8, 64, 8.5, 8.5, cmap="YlOrBr")
     label(ax, 38.05, 74.0, "Soil 21 ch")
     bus_a = 62.5
@@ -439,31 +446,65 @@ def render() -> None:
     path(ax, [(74.5, 51.25), (86, 51.25)])
     label(ax, 80.25, 53.2, "pyramid ×4")
     label(ax, 80.25, 49.3, "anchor 196")
-    box(ax, 62, 39.0, 76, 42.6, ["coarse drop 0.3"], kind="plain", dashed=True, fs=FS_B)
+    box(ax, 62, 38.3, 76, 42.8, ["satellite modality", "dropout 0.3"], kind="plain",
+        dashed=True, fs=FS_B)
 
     # ── token sequence + transformer ───────────────────────────────────────────────────────
     path(ax, [(58, 71), (86, 71)])
-    box(ax, 60, 72.6, 84, 76.2, ["ERA5 window drop 0.5"], kind="plain", dashed=True, fs=FS_B)
+    box(ax, 60, 72.4, 84, 77.2, ["ERA5 token dropout 0.15", "ERA5 modality dropout 0.5"],
+        kind="plain", dashed=True, fs=FS_B)
     box(ax, 86, 42, 100, 78, None)
     seq = [("Depth CLS", 3, "train"), ("DEM · LULC", 8, "frozen"), ("Soil", 4, "train"),
            ("Anchor", 196, "frozen"), ("S2 history", 240, "frozen"), ("S1 history", 160, "frozen"),
            ("ERA5", 365, "train"), ("SIF", 50, "train"), ("TWSA", 12, "train")]
     label(ax, 93, 76.2, "Token sequence", fs=FS_T)
+    # slots actually filled for this tile/day; the rest are key-padded (model.py
+    # _build_sequence -> src_key_padding_mask): empty history / SIF / TWSA slots, missing
+    # ERA5 days, and at training time whatever the dropouts withhold. 4 pyramid rows per scene.
+    filled = {"S2 history": 4 * len(a["h_s2_age"]), "S1 history": 4 * len(a["h_s1_age"]),
+              "ERA5": len(a["era5_age"]), "SIF": len(a["sif_age"]), "TWSA": len(a["twsa_age"])}
+    # one illustrative training draw of ERA5 token dropout: 15 % of the filled days
+    # (dataset.py: torch.rand(365) < 0.15 -> doy 0 -> key-padded)
+    era5_drop = np.flatnonzero(np.random.default_rng(0).random(filled["ERA5"]) < 0.15)
+    n_pad = sum(n - filled.get(name, n) for name, n, _ in seq) + len(era5_drop)
+    def hatched(x0, x1, yb):
+        ax.add_patch(Rectangle((x0, yb), x1 - x0, 0.4, fc="white", ec=FROZEN_EDGE,
+                               hatch="//////", lw=0.4, zorder=3))
+    def slots(x0, x1, yb, frac):
+        xm = x0 + (x1 - x0) * frac
+        ax.add_patch(Rectangle((x0, yb), xm - x0, 0.4, fc=DBLUE, ec="none", zorder=3))
+        if frac < 1:
+            hatched(xm, x1, yb)
     y = 73.6
     for name, n, kind in seq:
         fc = FROZEN_FILL if kind == "frozen" else LBLUE
         ax.add_patch(Rectangle((87.0, y - 0.8), 1.6, 1.6, fc=fc, ec="black", lw=0.6, zorder=3))
         ax.text(89.2, y, name, ha="left", va="center", fontsize=FS_B, zorder=3)
         ax.text(99.3, y, f"{n}", ha="right", va="center", fontsize=FS_B, zorder=3)
+        slots(89.2, 99.3, y - 1.35, filled.get(name, n) / n)
+        if name == "ERA5":                                   # dropped days, in place
+            ax.add_patch(Rectangle((89.2, y - 1.35), 99.3 - 89.2, 0.4, fill=False,
+                                   ec=FROZEN_EDGE, lw=0.4, zorder=3.5))
+            for i in era5_drop:
+                xd = 89.2 + (99.3 - 89.2) * i / n
+                ax.add_patch(Rectangle((xd, y - 1.35), (99.3 - 89.2) / n, 0.4, fc="white",
+                                       ec="none", zorder=3.2))
         y -= 2.55
     ax.add_line(Line2D([87, 99.3], [y + 1.1] * 2, color="black", lw=0.8, zorder=3))
     ax.text(99.3, y - 0.4, "1038", ha="right", va="center", fontsize=FS_B, zorder=3)
     ax.text(89.2, y - 0.4, "× 768", ha="left", va="center", fontsize=FS_B, zorder=3)
-    label(ax, 93, 45.4, "+ age 0–364 · DOY ·", fs=FS_B)
-    label(ax, 93, 43.6, "modality · position", fs=FS_B)
+    # key: attended vs key-padded (masked out of attention)
+    slots(87.0, 89.0, y - 2.4, 1.0)
+    ax.text(89.4, y - 2.2, f"attended {1038 - n_pad}", ha="left", va="center",
+            fontsize=FS_B - 1, zorder=3)
+    slots(87.0, 89.0, y - 4.0, 0.0)
+    ax.text(89.4, y - 3.8, f"excluded {n_pad}", ha="left", va="center",
+            fontsize=FS_B - 1, zorder=3)
+    label(ax, 93, 44.9, "+ age 0–364 · DOY ·", fs=FS_B)
+    label(ax, 93, 43.2, "modality · position", fs=FS_B)
     path(ax, [(100, 60), (104, 60)])
-    box(ax, 104, 42, 118, 78, ["Transformer", "3 layers", "d = 768", "12 heads", "full self-",
-                               "attention", "pre-norm"], title_n=1)
+    box(ax, 104, 42, 118, 78, ["Transformer", "3 layers", "d = 768", "12 heads", "masked self-",
+                               "attention", "(key padding)", "pre-norm"], title_n=1)
 
     # ── lane C: fine 20 m path ─────────────────────────────────────────────────────────────
     yc0 = 14.0
@@ -496,7 +537,8 @@ def render() -> None:
         path(ax, [(x + pw / 2, yc0), (x + pw / 2, bus_c)], head=False)
     path(ax, [(px[0] + pw / 2, bus_c), (51, bus_c), (51, 14)])
     box(ax, 44, 14, 58, 26, ["Stems 3×3", "S2 12 → 16", "S1 5 → 8", "DEM 2 → 4", "LULC 8 → 4"])
-    box(ax, 44, 27.4, 58, 31.0, ["modality drop 0.2"], kind="plain", dashed=True, fs=FS_B)
+    box(ax, 44, 27.0, 58, 31.4, ["fine modality", "dropout 0.2 (S2/S1)"], kind="plain",
+        dashed=True, fs=FS_B)
     path(ax, [(58, 20), (62, 20)])
     vbox(ax, 62, 12, 68, 28, "E1 · 32 @ 112")
     path(ax, [(68, 20), (71, 20)])

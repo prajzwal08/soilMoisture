@@ -8834,3 +8834,14 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   - fine-input notes: S2 masked 2x2 pool · S1 linear pool -> dB · DEM asinh(dh/1 m)/4
     (fine_dem_static) · LULC 8-d embedding (model._lulc_20m; NOT one-hot).
   - render job 27681252 (render only, vertical variant untouched).
+
+2026-10-06 — architecture_s48.png (horizontal only), renders 27681510 + 27681526:
+  - token-sequence slot bars: attended (dark blue) vs excluded by the key-padding mask
+    (hatched); this tile/day 161 padded (S2 30/60, S1 30/40 scenes x4, TWSA 11/12) + one
+    illustrative ERA5 token-dropout draw (rng seed 0, p 0.15, 53 days) = 214 excluded / 824 attended.
+  - transformer: "masked self-attention (key padding)".
+  - wording: random input withholding is TOKEN DROPOUT (ERA5 days 0.15, dataset.py:1675) and
+    MODALITY DROPOUT (ERA5 window 0.5, satellite 160 m 0.3, fine S2/S1 0.2); not "masking",
+    which reads as MTM (TerraMind's pretraining; this model reconstructs nothing).
+  - SIF panel zoomed to its last-50 span (was a smudge on a 365-d axis); TWSA monthly points
+    joined, last 45 d shaded (not released).
