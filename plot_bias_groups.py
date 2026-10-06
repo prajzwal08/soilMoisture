@@ -7,12 +7,17 @@ Figure (paper style, no titles):
   row 1  land cover (igbp_macro) x climate (Köppen main class): median signed bias per cell
   row 2  soil texture group (0-30 cm, OpenLandMap at the station) x climate: same
   row 3  "is it random?": share of the between-station bias variance explained by each factor
-         (R2 of the group-mean model) against its permutation null (2000 label shuffles, 95th pct)
+         (land cover, climate, soil texture, DEM elevation / slope / valley-ridge), one bar per depth;
+         R2 of the group-mean model vs its permutation null (2000 label shuffles, 95th pct, dashed);
+         * = above the dashed line
   one column per depth; cells with < MIN_N stations are left blank (count still printed).
 
 Soil texture: centre 3x3 of the 74x74 @30 m soil patch (90 m around the station), clay/sand/silt
 at 0-30 cm, USDA class -> Coarse (sand, loamy sand, sandy loam) / Medium (loam, silt loam, silt,
 sandy clay loam) / Fine (all clay classes).
+
+DEM (raw imagery store): elevation, slope (+-30 m), valley-ridge position (centre minus 500 m mean),
+each split into terciles for the test.
 
 Also writes bias_groups_tests.csv: R2, permutation p and Kruskal-Wallis p per factor x depth.
 CPU only, seconds.
@@ -34,6 +39,7 @@ from eval_metrics import _make_key
 
 RUN     = "baseline_selected_20261005"
 TOK     = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+SAT     = Path("/projects/prjs1968/satellite_zarr")
 DEPTHS  = ["0-10", "10-30", "30-100"]
 MIN_N   = 3
 N_PERM  = 2000
@@ -79,6 +85,26 @@ def station_soil(key: str, cat: str):
     return clay, sand, silt
 
 
+def station_dem(key: str):
+    """(elevation m, slope deg over +-30 m, centre minus 500 m-radius mean in m) or None."""
+    try:
+        z = zarr.open_group(str(SAT / f"{key}.zarr"), mode="r")["dem/data"][0].astype(np.float64)
+    except Exception:
+        return None
+    z = np.where(z == 0, np.nan, z)                     # fill_value 0 = no data
+    c = 111                                             # 224 px, station between 111 and 112
+    centre = np.nanmean(z[c - 1:c + 3, c - 1:c + 3])
+    dzdx = (np.nanmean(z[c:c + 2, c + 4]) - np.nanmean(z[c:c + 2, c - 3])) / 70.0
+    dzdy = (np.nanmean(z[c + 4, c:c + 2]) - np.nanmean(z[c - 3, c:c + 2])) / 70.0
+    slope = float(np.degrees(np.arctan(np.hypot(dzdx, dzdy))))
+    yy, xx = np.mgrid[:z.shape[0], :z.shape[1]]
+    ring = np.hypot(yy - 111.5, xx - 111.5) <= 50       # 500 m radius
+    tpi = centre - np.nanmean(z[ring])
+    if not np.isfinite([centre, slope, tpi]).all():
+        return None
+    return float(centre), slope, float(tpi)
+
+
 def r2_perm(y: np.ndarray, g: np.ndarray, rng) -> tuple[float, float, float]:
     """R2 of the group-mean model, its permutation p and the null 95th percentile."""
     def r2(lab):
@@ -113,6 +139,19 @@ def main():
             cls[k], tex[k] = c, texture_group(c)
     ps["texture"] = ps.station_key.map(tex)
     ps["climate"] = ps.kg_macro.map(KG)
+
+    # DEM at the station (raw imagery store, 224 x 10 m, station at the centre): elevation from
+    # the DEM, not the metadata (sentinel codes, see memory); slope over +-30 m; valley-ridge
+    # position = centre minus the mean within 500 m (negative = valley, positive = ridge).
+    dem = {k: station_dem(k) for k in ps.station_key}
+    for i, c in enumerate(["elev_m", "slope_deg", "tpi_m"]):
+        ps[c] = ps.station_key.map(lambda k: dem[k][i] if dem[k] is not None else np.nan)
+    print(f"DEM for {ps.elev_m.notna().sum()}/{len(ps)} stations")
+    for c, t_, labs in [("elev_m", "elev_t", ["Low", "Mid", "High"]),
+                        ("slope_deg", "slope_t", ["Flat", "Mid", "Steep"]),
+                        ("tpi_m", "tpi_t", ["Valley", "Mid", "Ridge"])]:          # terciles
+        ps[t_] = pd.qcut(ps[c], 3, labels=labs).astype(object)
+    print(ps[["elev_m", "slope_deg", "tpi_m"]].describe().round(2).to_string())
     print(f"soil texture for {ps.texture.notna().sum()}/{len(ps)} stations")
     print(pd.Series(cls).value_counts().to_string())
 
@@ -169,7 +208,8 @@ def main():
 
     # ── is it random? ────────────────────────────────────────────────────
     tests = []
-    factors = [("igbp_macro", "Land cover"), ("climate", "Climate"), ("texture", "Soil texture")]
+    factors = [("igbp_macro", "Land cover"), ("climate", "Climate"), ("texture", "Soil texture"),
+               ("elev_t", "Elevation"), ("slope_t", "Slope"), ("tpi_t", "Valley–ridge\nposition")]
     for d in DEPTHS:
         b = f"bias_{d.replace('-', '_')}"
         for col, lab in factors:
@@ -179,27 +219,30 @@ def main():
             y, g = sub[b].to_numpy(float), sub[col].to_numpy()
             r2, p, null95 = r2_perm(y, g, rng)
             kw = kruskal(*[y[g == k] for k in np.unique(g)]).pvalue
-            tests.append(dict(depth=d, factor=lab, n=len(y), groups=len(np.unique(g)),
-                              R2=r2, perm_p=p, null95=null95, kruskal_p=kw))
+            tests.append(dict(depth=d, factor=lab.replace("\n", " "), n=len(y),
+                              groups=len(np.unique(g)), R2=r2, perm_p=p, null95=null95,
+                              kruskal_p=kw))
     t = pd.DataFrame(tests)
     print("\n" + t.round(4).to_string(index=False))
 
+    # x = factor, one bar per depth; dashed = 95th pct of 2000 label shuffles ("random");
+    # * = bar above its dashed line (the same 95 % rule as the ablation heatmap)
     ax = fig.add_subplot(gs[2, 0:3])
-    w = 0.26
-    cols = [plot_style_bw.BLUE, plot_style_bw.GREEN, plot_style_bw.RED]
-    for fi, (_, lab) in enumerate(factors):
-        q = t[t.factor == lab].set_index("depth").loc[DEPTHS]
-        x = np.arange(len(DEPTHS)) + (fi - 1) * w
-        ax.bar(x, 100 * q.R2, w * 0.92, color=cols[fi], edgecolor="black", lw=0.8, label=lab)
+    w = 0.27
+    dcols = [plot_style_bw.BLUE, plot_style_bw.GREEN, plot_style_bw.RED]
+    for di, d in enumerate(DEPTHS):
+        q = t[t.depth == d].set_index("factor").loc[[l.replace("\n", " ") for _, l in factors]]
+        x = np.arange(len(factors)) + (di - 1) * w
+        ax.bar(x, 100 * q.R2, w * 0.92, color=dcols[di], edgecolor="black", lw=0.8, label=f"{d} cm")
         ax.plot(np.c_[x - w * 0.46, x + w * 0.46].T, np.c_[100 * q.null95, 100 * q.null95].T,
                 color="black", lw=2.0, ls="--")
-        for xi, (r2, p, nl) in zip(x, zip(q.R2, q.perm_p, q.null95)):
-            ax.text(xi, 100 * max(r2, nl) + 0.5, f"p = {p:.2f}" if p >= 0.01 else "p < 0.01",
-                    ha="center", va="bottom")
-    ax.plot([], [], color="black", lw=2.0, ls="--", label="random (95th pct of shuffles)")
-    ax.set_xticks(range(len(DEPTHS)), [f"{d} cm" for d in DEPTHS])
+        for xi, r2, nl in zip(x, q.R2, q.null95):
+            if r2 > nl:
+                ax.text(xi, 100 * r2 + 0.3, "*", ha="center", va="bottom")
+    ax.plot([], [], color="black", lw=2.0, ls="--", label="random labels (95 % of shuffles)")
+    ax.set_xticks(range(len(factors)), [l for _, l in factors])
     ax.set_ylabel("Bias variance explained (%)")
-    ax.set_ylim(0, max(100 * t[["R2", "null95"]].to_numpy().max() + 12, 10))
+    ax.set_ylim(0, max(100 * t[["R2", "null95"]].to_numpy().max() * 1.35, 10))
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=4, frameon=False)
     ax.text(0.0, 1.02, f"({next(letter)})", transform=ax.transAxes, ha="left", va="bottom")
 
@@ -207,7 +250,8 @@ def main():
     for ext in ("png", "pdf"):
         fig.savefig(out / f"bias_groups.{ext}", dpi=600)
     t.to_csv(out / "bias_groups_tests.csv", index=False)
-    ps[["station_key", "igbp_macro", "climate", "texture"]].assign(usda=ps.station_key.map(cls)) \
+    ps[["station_key", "igbp_macro", "climate", "texture", "elev_m", "slope_deg", "tpi_m",
+        "elev_t", "slope_t", "tpi_t"]].assign(usda=ps.station_key.map(cls)) \
         .to_csv(out / "bias_groups_stations.csv", index=False)
     print(f"wrote {out}/bias_groups.{{png,pdf}}, bias_groups_tests.csv, bias_groups_stations.csv")
 

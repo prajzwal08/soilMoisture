@@ -8431,3 +8431,7 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     not significant after 9 tests. Only hint: fine-textured soils run wet at 0-10 (+0.03..+0.05, n 3-17).
     -> figures/eval/baseline_selected_20261005_paper/bias_groups.{png,pdf} + bias_groups_tests.csv + _stations.csv
   bias_groups colours flipped on user request: BLUE = model too wet, ORANGE = too dry, labels at colourbar ends (job 27643837).
+  bias_groups panel (g) rebuilt (job 27644512): x = factor, bar per depth, dashed = 95th pct of 2000 label shuffles,
+    * if above (none); p-value labels removed. DEM factors ADDED (raw imagery DEM at station, 222/222): elevation,
+    slope (+-30 m), valley-ridge position (centre minus 500 m mean), terciles. RESULT: none explains the bias either
+    (R2 0.1-2.7% vs null 2.9-5.3%; perm p 0.10-0.88). Total: 6 factors x 3 depths, 0/18 above random.
