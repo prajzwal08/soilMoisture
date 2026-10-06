@@ -124,9 +124,10 @@ def acquisitions(st):
     return s1, pd.Series(clear, index=s2)
 
 
-def diff_figure(obs, own, df, lo, hi, tag, acq=None):
+def diff_figure(obs, own, df, lo, hi, tag, acq=None, precip=None):
     """Ne1 - Ne2 per depth: observed vs model at each station's own tile centre.
-    acq: optional (s1_dates, s2_clear_series, {site: irrigation DataFrame}) -> top strip."""
+    acq: optional (s1_dates, s2_clear_series, {site: irrigation DataFrame}) -> top strip.
+    precip: optional {"ERA5": s, "US-Ne1": s, "US-Ne2": s} daily mm -> bottom panel (needs acq)."""
     plot_style_bw.apply(globals(), "paper")
     a, b = ST
     within = (df[df["tile"] == a].pivot_table(index=["date", "depth"], columns="station",
@@ -135,9 +136,10 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None):
     if acq is None:
         fig, axes = plt.subplots(3, 1, figsize=(12 if tag == "full" else 9, 8), sharex=True)
     else:
-        fig, ax_all = plt.subplots(4, 1, figsize=(9, 9.6), sharex=True,
-                                   gridspec_kw={"height_ratios": [0.55, 1, 1, 1]})
-        axes = ax_all[1:]
+        nr = 4 if precip is None else 5
+        fig, ax_all = plt.subplots(nr, 1, figsize=(9, 9.6 if precip is None else 11.4), sharex=True,
+                                   gridspec_kw={"height_ratios": [0.55, 1, 1, 1, 0.8][:nr]})
+        axes = ax_all[1:4]
         _acq_strip(ax_all[0], acq, lo, hi)
     series = {}
     for dep in BINS:
@@ -168,11 +170,26 @@ def diff_figure(obs, own, df, lo, hi, tag, acq=None):
             s2c = acq[1].loc[lo:hi]
             for d in s2c.index[s2c.values >= 0.99]:
                 ax.axvline(d, color=plot_style_bw.RED, lw=0.6, alpha=0.5, zorder=1)
+    if precip is not None:                               # ERA5 bars, tower gauges as markers
+        ax = ax_all[4]
+        e = precip["ERA5"].loc[lo:hi]
+        ax.bar(e.index, e.values, width=1.0, color="0.6", label="ERA5-Land P", zorder=2)
+        for s, mk, c in (("US-Ne1", "o", plot_style_bw.BLUE), ("US-Ne2", "^", plot_style_bw.GREEN)):
+            g = precip[s].loc[lo:hi]
+            g = g[g >= 0.2]
+            ax.plot(g.index, g.values, mk, ms=4.5, color=c, label=f"{s[-3:]} gauge", zorder=3)
+        ax.text(0.01, 0.95, "(e) precipitation", transform=ax.transAxes, va="top",
+                bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
+        ax.set_ylabel("P (mm d$^{-1}$)")
+        ax.set_xlim(pd.Timestamp(lo), pd.Timestamp(hi) + pd.Timedelta("1D"))
     top = axes[0] if acq is None else fig.axes[0]
     h, l = axes[0].get_legend_handles_labels()
     if acq is not None:
         h2, l2 = fig.axes[0].get_legend_handles_labels()
         h, l = h + h2, l + l2
+        if precip is not None:
+            h3, l3 = ax_all[4].get_legend_handles_labels()
+            h, l = h + h3, l + l3
     top.legend(h, l, loc="lower left", bbox_to_anchor=(0, 1.02),
                ncol=2 if acq is None else 3, frameon=False)
     fig.align_ylabels(fig.axes)
@@ -222,6 +239,8 @@ def main():
     ap.add_argument("--per-year", action="store_true", help="Ne1 - Ne2 figure per year 2017-2024")
     ap.add_argument("--acq-year", type=int, default=None,
                     help="one Ne1 - Ne2 figure for this year with S1/S2/irrigation dates on top")
+    ap.add_argument("--acq-window", nargs=2, default=None, metavar=("START", "END"),
+                    help="as --acq-year over START..END, plus an ERA5 + tower-gauge precipitation panel")
     args = ap.parse_args()
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -254,12 +273,18 @@ def main():
     if not args.diff_only:
         figure(obs, own, off, "2017-01-01", "2024-12-31", "full")
         figure(obs, own, off, lo, hi, zt)
-    if args.acq_year:                                   # one year + S1/S2/irrigation strip
+    if args.acq_year or args.acq_window:                # S1/S2/irrigation strip on top
         s1, s2c = acquisitions(ST[0])
         irr = {}
         for s in ST:
             f = ROOT / "bif" / f"{s.replace('AmeriFlux_', '')}_irrigation_events.csv"
             irr[s] = pd.read_csv(f, parse_dates=["date_start"]) if f.exists() else pd.DataFrame()
+        if args.acq_window:
+            from plot_mead_precip import load as load_precip
+            lo, hi = args.acq_window
+            diff_figure(obs, own, df, lo, hi, f"{lo.replace('-', '')}_{hi.replace('-', '')}",
+                        acq=(s1, s2c, irr), precip=load_precip()[0])
+            return
         y = args.acq_year
         print(f"{y}: S1 passes {int(((s1 >= f'{y}-01-01') & (s1 <= f'{y}-12-31')).sum())}, "
               f"S2 scenes {len(s2c.loc[str(y)])} "
