@@ -8518,3 +8518,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   NOT submitted; smoke = sbatch slurm/effres_maps.sh smoke, waiting for the user's OK.
   §69 rerun with fixes SUBMITTED (user "yes"): job 27652198 (years 2018 2020 2022)
   §70 smoke SUBMITTED (user "yes"): job 27652196 (slurm/effres_maps.sh smoke, CR200-18, blocks 0,1,2,112)
+  §68 imagery smoke RERUN 27651557 FAILED gate (6:43) on ONE scene: ITCSM-08b 20190806 pb02.12, store - fresh = -1000.
+    All other shared S2 scenes identical (07b 79/79, 08b 125/126), s2_failed 0/0/0, S1 med 0.002 dB, DEM 0 m.
+    CAUSE (training-store defect, not the NL download): harmonize_s2_pre2022.py:69 idempotency check skips any pre-2022 scene
+    whose min non-zero DN >= 1000 ("already harmonised") -> BRIGHT un-offset scenes (haze/cloud/dry) were left WITHOUT +1000.
+    The "min DN 1002" closure check cannot see this (skipped scenes are >=1000 by construction). Earlier date-vs-baseline
+    double-offset hypothesis REJECTED (store is LOWER, not higher). NL keeps the baseline rule (physically correct).
