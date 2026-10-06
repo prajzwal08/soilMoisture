@@ -8747,3 +8747,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     0-10 0.014 vs 0.018, 10-30 0.017 vs 0.022 -- south patches are 2-3x more dissimilar (1-cos 0.4-0.7 vs 0-0.4) but the model SM gap is only ~1.3x.
     Oct-May: Ne1-south Spearman -0.55 / -0.48 (more dissimilar -> SMALLER model gap); S1 negative everywhere.
   READ: the model's map does not scale its SM contrast with how different the patches look; consistent with §56 (off-centre map = fixed decoder pattern).
+  §69.6 fixed-pattern tests on Mead maps 2017-2024: 1 overlap (same ground vs same position), 2 static (day vs mean map) (user: 'yes run 1 and 2'): job 27662552
+  27662552 FAILED (sed renamed the script path in slurm/mead_pattern.sh); fixed, resubmitted: job 27662610
+  §68 ERA5 retry submitted (user OK): 27662621 (nl_drivers.sh era5, afterany:27659722; skips existing meteo_YYYY.nc -> only
+    NLPIX_P5215_0645 2020+2021). Old fanout 27659732 cancelled; new fanout 27662622 afterok:27662621.
