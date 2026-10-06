@@ -8440,3 +8440,5 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
   bias_groups: NETWORK (sensor) added as factor (job 27645973). 15/25 networks have >=3 stations (206/222 at 0-10).
     R2 8.4% / 9.0% / 3.1% (0-10/10-30/30-100) vs random 95th pct 11.5 / 13.1 / 12.0 %; perm p 0.27 / 0.29 / 0.80.
     Largest bars of all factors but still below random: with 15 groups, chance alone explains ~11%. 0/21 above random.
+  bias_groups final edits (job 27646664): network REMOVED again (user), (g) note rewritten with the two "above/below the
+    dash" rules, station counts per depth in the (g) legend (221 / 144 / 119), note moved up.

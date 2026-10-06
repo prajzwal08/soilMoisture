@@ -185,9 +185,9 @@ def main():
     # user 2026-10-06: blue = model too WET (positive bias), orange = model too DRY (negative)
     cmap = LinearSegmentedColormap.from_list("dry_wet", [plot_style_bw.RED, "white", plot_style_bw.BLUE])
 
-    fig = plt.figure(figsize=(15.5, 13.6))
+    fig = plt.figure(figsize=(15.5, 13.4))
     gs = fig.add_gridspec(3, 4, width_ratios=[1, 1, 1, 0.05], height_ratios=[1.15, 0.85, 0.9],
-                          hspace=0.42, wspace=0.12, left=0.15, right=0.93, top=0.935, bottom=0.16)
+                          hspace=0.42, wspace=0.12, left=0.15, right=0.93, top=0.935, bottom=0.175)
     letter = iter("abcdefghijk")
     for ri, (col, order, ylab) in enumerate(rows):
         for dj, d in enumerate(DEPTHS):
@@ -216,8 +216,7 @@ def main():
     # ── is it random? ────────────────────────────────────────────────────
     tests = []
     factors = [("igbp_macro", "Land cover"), ("climate", "Climate"), ("texture", "Soil texture"),
-               ("elev_t", "Elevation"), ("slope_t", "Slope"), ("tpi_t", "Valley–ridge\nposition"),
-               ("network", "Network\n(sensor)")]
+               ("elev_t", "Elevation"), ("slope_t", "Slope"), ("tpi_t", "Valley–ridge\nposition")]
     for d in DEPTHS:
         b = f"bias_{d.replace('-', '_')}"
         for col, lab in factors:
@@ -241,7 +240,8 @@ def main():
     for di, d in enumerate(DEPTHS):
         q = t[t.depth == d].set_index("factor").loc[[l.replace("\n", " ") for _, l in factors]]
         x = np.arange(len(factors)) + (di - 1) * w
-        ax.bar(x, 100 * q.R2, w * 0.92, color=dcols[di], edgecolor="black", lw=0.8, label=f"{d} cm")
+        ax.bar(x, 100 * q.R2, w * 0.92, color=dcols[di], edgecolor="black", lw=0.8,
+               label=f"{d} cm ({ps['bias_' + d.replace('-', '_')].notna().sum()} stations)")
         ax.plot(np.c_[x - w * 0.46, x + w * 0.46].T, np.c_[100 * q.null95, 100 * q.null95].T,
                 color="black", lw=2.0, ls="--")
         for xi, r2, nl in zip(x, q.R2, q.null95):
@@ -255,7 +255,6 @@ def main():
     ax.text(0.0, 1.02, f"({next(letter)})", transform=ax.transAxes, ha="left", va="bottom")
 
     # note under the figure (user 2026-10-06): how every category is defined
-    nw = t[(t.factor == "Network (sensor)") & (t.depth == "0-10")].iloc[0]
     e, s_, tp = edges["elev_m"], edges["slope_deg"], edges["tpi_m"]
     grp = {g: ", ".join(sorted(set(present[present.map(texture_group) == g]))) for g in TX_ORDER}
     note = [
@@ -269,8 +268,11 @@ def main():
         f"Slope (steepness over ±35 m) Flat < {s_[1]:.1f}°, Steep > {s_[2]:.1f}°; "
         f"Valley–ridge = station height minus mean height within 500 m, Valley < {tp[1]:.1f} m, Ridge > {tp[2]:+.1f} m.",
         "(g) Share of the station-to-station bias variance explained by each factor; dashed = 95th percentile of 2000 random "
-        "shuffles of the labels; * = above it. Groups with fewer than 3 stations are left out of the test "
-        f"(Network at 0-10 cm: {nw.groups} of {ps.network.nunique()} networks, {nw.n} of {len(ps)} stations).",
+        "shuffles of the labels.",
+        "   • If the bar is above the dash, the factor explains more than 95 % of random labelings do. That is significant at "
+        "the 5 % level (p < 0.05) and gets a *.",
+        "   • If the bar is below the dash, a random label would do as well at least 5 % of the time, so we cannot say the "
+        "factor matters.",
     ]
     fig.text(0.04, 0.012, "\n".join(note), ha="left", va="bottom", fontsize=10.5, linespacing=1.45,
              wrap=True)
