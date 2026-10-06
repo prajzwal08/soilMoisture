@@ -43,7 +43,7 @@ FROZEN_FILL, FROZEN_EDGE = "#D9D9D9", "#4D4D4D"
 LOSS_FILL   = "#FBDCCB"           # opaque tint of ORANGE
 LINE        = "black"
 FS_T, FS_B  = 11, 10              # box titles / box body
-W, H        = 178, 110            # canvas units; 1 unit = 0.1 inch
+W, H        = 178, 114            # canvas units; 1 unit = 0.1 inch
 
 
 # ══ prep ══════════════════════════════════════════════════════════════════════════════════
@@ -276,63 +276,91 @@ def render() -> None:
     ax.set_xlim(0, W); ax.set_ylim(0, H); ax.set_aspect("equal"); ax.axis("off")
 
     # ── the 365-day window: every token at its real date ───────────────────────────────────
-    # dataset.py keeps only [D-364, D] (_window_ints) and tags each token with age = rel_pos,
-    # 0 = D-364 ... 364 = D (rel_pos_emb / rel_pos_emb_hist). Days before D -> x.
-    X0, X1 = 22.0, 104.0
+    # Sliding window: the axis runs past both ends (D-455 ... D+120). dataset.py keeps only
+    # [D-364, D] (_window_ints), framed white; everything the model is NOT given is grey
+    # (outside the window, SIF over its cap of 50, TWSA not yet released). Each token is tagged
+    # with age = rel_pos, 0 = D-364 ... 364 = D (rel_pos_emb / rel_pos_emb_hist).
+    X0, X1, CB, CA = 22.0, 104.0, 455, -120
     def tx(days_before):
-        return X1 - np.asarray(days_before, float) * (X1 - X0) / 364
+        return X0 + (CB - np.asarray(days_before, float)) * (X1 - X0) / (CB - CA)
     D = datetime.strptime(str(a["day"]), "%Y-%m-%d")
+    GREY, WASH = "#B0B0B0", "#EDEDED"
     rows_t = [("S2 history", 101.0), ("S1 ascending", 99.1), ("S1 descending", 97.2),
               ("ERA5-Land", 95.3), ("SIF", 93.4), ("TWSA", 91.5)]
     yr = dict(rows_t)
     hh = 0.75                                                  # half row height
     for name, y in rows_t:
         ax.text(16.6, y, name, ha="right", va="center", fontsize=FS_B, zorder=6)
-    ax.add_patch(Rectangle((18.2, 90.6), X0 - 18.2, 11.2, fc=FROZEN_FILL, ec="none",
-                           hatch="////", lw=0, zorder=1))      # before D-364: never loaded
+    wa, wb = float(tx(364.5)), float(tx(-0.5))
+    ax.add_patch(Rectangle((X0, 90.4), wa - X0, 11.6, fc=WASH, ec="none", zorder=0))
+    ax.add_patch(Rectangle((wb, 90.4), X1 - wb, 11.6, fc=WASH, ec="none", zorder=0))
+    ax.add_patch(Rectangle((wa, 90.4), wb - wa, 11.6, fill=False, ec="black", lw=1.4,
+                           zorder=5))
     def ticks(days, y, color, lw=1.0):
         for t in np.atleast_1d(days):
             ax.add_line(Line2D([tx(t)] * 2, [y - hh, y + hh], color=color, lw=lw, zorder=3))
-    asc = ~a["h_s1_desc"]
-    ticks(a["h_s2_age"], yr["S2 history"], FROZEN_EDGE)
-    ticks(a["h_s1_age"][asc], yr["S1 ascending"], FROZEN_EDGE)
-    ticks(a["h_s1_age"][~asc], yr["S1 descending"], FROZEN_EDGE)
+    def series(all_age, given_age, y, color, lw=1.0):
+        given = set(np.atleast_1d(given_age).tolist())
+        ticks([t for t in np.atleast_1d(all_age) if t not in given], y, GREY, lw)
+        ticks(list(given), y, color, lw)
+    asc, casc = ~a["h_s1_desc"], ~a["c_s1_desc"]
+    series(a["c_s2_age"], a["h_s2_age"], yr["S2 history"], FROZEN_EDGE)
+    series(a["c_s1_age"][casc], a["h_s1_age"][asc], yr["S1 ascending"], FROZEN_EDGE)
+    series(a["c_s1_age"][~casc], a["h_s1_age"][~asc], yr["S1 descending"], FROZEN_EDGE)
     anc_row = {"s2": "S2 history", "s1_asc": "S1 ascending",
                "s1_desc": "S1 descending"}[str(a["anchor_orbit"])]
-    ax.plot(tx(a["anchor_age"]), yr[anc_row] + hh + 0.45, "v", ms=4.5, color=ORANGE, zorder=6,
+    ax.plot(tx(a["anchor_age"]), yr[anc_row] + hh + 0.45, "v", ms=4.5, color=ORANGE, zorder=7,
             clip_on=False)
-    t2m = np.full(365, np.nan)
-    t2m[364 - a["era5_age"]] = a["era5"][:, 0]
-    ax.imshow(t2m[None], extent=(tx(364.5), tx(-0.5), yr["ERA5-Land"] - hh,
+    t2m = np.full(CB - CA + 1, np.nan)
+    t2m[CB - a["c_era5_age"]] = a["c_era5"][:, 0]
+    ax.imshow(t2m[None], extent=(tx(CB + 0.5), tx(CA - 0.5), yr["ERA5-Land"] - hh,
                                  yr["ERA5-Land"] + hh), aspect="auto", cmap="Blues",
-              interpolation="nearest", zorder=3)
-    ticks(a["sif_age"], yr["SIF"], DBLUE)
-    ticks(a["twsa_age"], yr["TWSA"], DBLUE, lw=1.6)
+              interpolation="nearest", zorder=2)
+    for x0, x1 in ((X0, wa), (wb, X1)):                       # outside the window: washed out
+        ax.add_patch(Rectangle((x0, yr["ERA5-Land"] - hh), x1 - x0, 2 * hh, fc="white",
+                               alpha=0.7, ec="none", zorder=2.5))
+    series(a["c_sif_age"], a["sif_age"], yr["SIF"], DBLUE)
+    series(a["c_twsa_age"], a["twsa_age"], yr["TWSA"], DBLUE, lw=1.6)
     for name, n in (("S2 history", len(a["h_s2_age"])), ("S1 ascending", int(asc.sum())),
                     ("S1 descending", int((~asc).sum())), ("ERA5-Land", len(a["era5_age"])),
                     ("SIF", len(a["sif_age"])), ("TWSA", len(a["twsa_age"]))):
         ax.text(X1 + 1.6, yr[name], f"{n}", ha="left", va="center", fontsize=FS_B, zorder=6)
-    ax.text(X1 + 1.6, 103.0, "tokens", ha="left", va="center", fontsize=FS_B, zorder=6)
-    ax.add_line(Line2D([X1] * 2, [90.2, 102.6], color="black", lw=1.8, zorder=5))
+    # brackets: the window for D, and (dashed) the window for D+30 -- it slides
+    for d_end, yb, dashed in ((0, 103.0, False), (-30, 106.4, True)):
+        xa, xb = float(tx(d_end + 364.5)), float(tx(d_end - 0.5))
+        ax.add_line(Line2D([xa, xa, xb, xb], [yb - 0.7, yb, yb, yb - 0.7], color="black",
+                           lw=1.1 if dashed else 1.4, ls=(0, (4, 2)) if dashed else "-",
+                           zorder=6))
+    ax.text(tx(182), 104.2, "window for day D: the last 365 days", ha="center", va="center",
+            fontsize=FS_T, zorder=6)
+    ax.text(tx(152), 107.6, "window for day D+30: it slides one day per day", ha="center",
+            va="center", fontsize=FS_B, zorder=6)
+    for x, s in (((X0 + wa) / 2, "dropped"), ((wb + X1) / 2, "future")):
+        ax.text(x, 104.2, s, ha="center", va="center", fontsize=FS_B, color=FROZEN_EDGE,
+                zorder=6)
+    ax.text(X1 + 1.6, 104.2, "tokens", ha="left", va="center", fontsize=FS_B, zorder=6)
     path(ax, [(X0, 90.2), (X1, 90.2)], head=False, lw=1.0)
-    for db in (364, 270, 180, 90, 0):
+    for db, dlab in ((364, "D−364"), (182, "D−182"), (0, "D")):
         x = float(tx(db))
         ax.add_line(Line2D([x, x], [89.7, 90.2], color="black", lw=1.0, zorder=3))
-        dlab = "D" if db == 0 else f"D−{db}"
         if db in (364, 0):
             dlab += f" · {(D - timedelta(days=db)):%Y-%m-%d}"
-        ax.text(x, 88.9, dlab, va="center", fontsize=FS_B, zorder=6,
-                ha={364: "left", 0: "right"}.get(db, "center"))
+        ax.text(x, 88.9, dlab, ha="center", va="center", fontsize=FS_B, zorder=6)
         ax.text(x, 87.3, f"{364 - db}", ha="center", va="center", fontsize=FS_B, zorder=6)
     ax.text(16.6, 88.9, "date", ha="right", va="center", fontsize=FS_B, zorder=6)
     ax.text(16.6, 87.3, "age token", ha="right", va="center", fontsize=FS_B, zorder=6)
-    ax.text(20.1, 96.2, "not loaded", rotation=90, ha="center", va="center",
-            fontsize=FS_B - 2, zorder=6, bbox=dict(fc="white", ec="none", pad=0.4))
-    ax.text(X0, 103.0, "365-day window ending on D", ha="left", va="center", fontsize=FS_T,
-            zorder=6)
-    ax.plot(X0 + 31, 103.0, "v", ms=4.5, color=ORANGE, zorder=6)
-    ax.text(X0 + 32, 103.0, "anchor (latest clear scene)", ha="left", va="center",
+    # key, right of the band
+    kx = 116.0
+    ax.plot(kx + 0.6, 101.0, "v", ms=4.5, color=ORANGE, zorder=6)
+    ax.text(kx + 2.0, 101.0, "anchor = latest clear scene", ha="left", va="center",
             fontsize=FS_B, zorder=6)
+    ax.add_line(Line2D([kx + 0.6] * 2, [97.9, 99.5], color=FROZEN_EDGE, lw=1.2, zorder=6))
+    ax.text(kx + 2.0, 98.7, "given to the model", ha="left", va="center", fontsize=FS_B,
+            zorder=6)
+    ax.add_line(Line2D([kx + 0.6] * 2, [95.4, 97.0], color=GREY, lw=1.2, zorder=6))
+    for k, s in enumerate(("not given: outside the window,", "over the cap (SIF last 50),",
+                           "not yet released (TWSA +45 d)")):
+        ax.text(kx + 2.0, 96.2 - k * 1.7, s, ha="left", va="center", fontsize=FS_B, zorder=6)
     # every token enters the sequence carrying its age
     path(ax, [(93, 86.4), (93, 78)])
     label(ax, 94.5, 83.6, "each token + age embedding", ha="left")
@@ -509,7 +537,7 @@ def render() -> None:
         kind="loss", dashed=True, title_n=1)
 
     # ── legend row ─────────────────────────────────────────────────────────────────────────
-    lx, ly = 2, 106.0
+    lx, ly = 2, 110.0
     for kind, txt, dashed in (("frozen", "frozen (TerraMind, offline)", False),
                               ("train", "trainable (26.7 M parameters)", False),
                               ("plain", "training only", True),
