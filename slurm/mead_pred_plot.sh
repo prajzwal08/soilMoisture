@@ -14,7 +14,7 @@
 # Runbook §69: model vs measurements time series. Args pass through to plot_mead_pred.py.
 set -euo pipefail
 source /gpfs/home5/pkhanal/miniforge3/etc/profile.d/conda.sh
-conda activate soilmoisture
+conda activate terramind
 cd /gpfs/work3/0/prjs1968/soilMoisture
 echo "Job $SLURM_JOB_ID  commit $(git rev-parse --short HEAD)  $(date)"
 $(which python) plot_mead_pred.py "$@"
