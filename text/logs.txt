@@ -8771,3 +8771,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
       Ne1 0-10 .093/-.076/.38 -> .069/-.033/.30;  10-30 .073/-.052/.38 -> .050/-.020/.52;  30-100 .080/-.072/.65 -> .061/-.054/.59
       Ne2 0-10 .103/-.088/.42 -> .082/-.067/.51;  10-30 .083/-.069/.51 -> .051/-.036/.59;  30-100 .096/-.088/.66 -> .045/-.036/.62
   READ: patchwise has ~25-50% lower RMSE at Mead, almost all from a smaller dry bias; r similar (higher at 10-30, slightly lower at 30-100). Both too dry.
+  §68 16:00: ERA5 27659722 COMPLETED (1:52:47): meteo 658/660 + 2 early HDF errors, TWSA 594/594, radiation 660 ok / 0 problem.
+    Retry 27662621 COMPLETED (1 min): NLPIX_P5215_0645 2020+2021 done -> 10/10 meteo years. Fanout 27662622 RUNNING
+    (passed its strategy-log checks: meteo 66 px all era5land_point, radiation 66 px).
