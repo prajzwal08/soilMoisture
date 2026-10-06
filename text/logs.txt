@@ -8945,3 +8945,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 — architecture_s48.png renders 27682979/27683025/27683168: fine lane no longer says "on D" (build_fine takes the most recent S2/S1 scene on or before D): labels "S2 · D − 1 d", "S1 · D − 11 d", "DEM · static", "LULC · 2018" (ages computed from assets), caption "fine 20 m path: most recent scene on or before D"; lower gap split moved 26.9 -> 27.6 so the caption sits with the fine lane.
 
 2026-10-06 — architecture_s48.png render 27683220: orange recency badges "D − 1 d" (S2) / "D − 11 d" (S1) on the fine images (same orange as the latest-clear-scene anchor marker); names "S2 · latest", "S1 · latest".
+
+2026-10-06 — architecture_s48.png render 27683228: removed the "fine 20 m path: most recent scene on or before D" caption (user); badges carry it.

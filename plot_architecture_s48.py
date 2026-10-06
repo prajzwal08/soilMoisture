@@ -642,7 +642,6 @@ def render() -> None:
                           "8-d embedding"]):
         label(ax, x + pw / 2, 25.4, s_)
         label(ax, x + pw / 2, 23.7, n_, fs=FS_B - 2, color=FROZEN_EDGE)
-    label(ax, 23.0, 27.3, "fine 20 m path: most recent scene on or before D", fs=FS_B - 1)
     # recency badges on the images, same orange as the "latest clear scene" anchor marker
     for x, ag in ((px[0], age2), (px[1], age1)):
         ax.text(x + 0.35, yc0 + pw - 0.35, f"D − {ag} d", ha="left", va="top", fontsize=FS_B - 1,
