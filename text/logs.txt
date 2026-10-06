@@ -8993,3 +8993,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   textbook fig v2 (user): all 13 S2 bands labelled; VV-only panel replaced by (b) VV/VH vs SM and (c) VV/VH vs vegetation
     water content with in-panel explanations; NDVI/NDMI formula lines replaced by in-panel band explanations (visible,
     NIR->NDVI, SWIR->NDMI, atmosphere bands). Jobs 27684467, 27684472.
+  textbook fig v3 (user): graphs (b)(c)(d) removed. Now (a) spectra + all 13 S2 bands; (b) role of indices as points
+    (NDVI, NDRE, NDMI, MSI, STR, OPTRAM); (c) C-band scattering schematic: bare soil / sparse canopy / dense forest with
+    VV, VH, VH/VV links to SM (direct, via vegetation, none), 1-5 cm soil penetration, forest not reached.
+    Jobs 27684566, 27684569, 27684647 -> figures/textbook/sm_signals.{png,pdf}

@@ -2,14 +2,16 @@
 
     (a) spectral signatures 400-2500 nm: dry soil, wet soil, green vegetation, water-stressed vegetation,
         with all 13 S2 bands and the water absorption bands
-    (b) VV / VH vs soil moisture   (c) VV / VH vs vegetation water content
-    (d) idealised response after a rain event: SM, VV, SWIR darkening (same day), NDMI (days), NDVI (weeks)
+    (b) the role of the optical indices (NDVI, NDRE, NDMI, MSI, STR, OPTRAM)
+    (c) C-band scattering over bare soil, sparse canopy and dense forest: how VV, VH and VH/VV relate to soil
+        moisture (directly, through vegetation, or not at all) and how deep 5.6 cm waves get
 
     python plot_textbook_sm_signals.py --out figures/textbook/sm_signals
 """
 from __future__ import annotations
 
 import argparse
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -77,55 +79,119 @@ def panel_a(ax):
     ax.legend(loc="upper right", bbox_to_anchor=(1.0, 0.86), frameon=True, framealpha=1, edgecolor="black")
 
 
-def panel_b(ax):
-    """VV and VH against soil moisture (bare / sparse vegetation)."""
-    sm = np.linspace(0.05, 0.45, 100)
-    ax.plot(sm, -20 + 25 * (sm - 0.05), color=RED, lw=2.2, label="VV")
-    ax.plot(sm, -27 + 15 * (sm - 0.05), color=BLUE, lw=2.2, label="VH")
-    ax.text(0.06, -9.5, "VV: surface scattering\nsoil moisture, roughness\n(~0.25 dB per 1 % vol.)", fontsize=10.5, va="top")
-    ax.text(0.20, -27.2, "VH: weak, depolarised\nless sensitive to soil", fontsize=10.5, va="top")
-    ax.set_xlim(0.05, 0.45); ax.set_ylim(-30, -6)
-    ax.set_xlabel("Soil moisture (m3/m3)"); ax.set_ylabel("C-band backscatter (dB)")
-    ax.legend(loc="lower right", frameon=True, framealpha=1, edgecolor="black")
 
 
-def panel_c(ax):
-    """VV and VH against vegetation water content (fixed soil moisture)."""
-    v = np.linspace(0, 5, 100)
-    ax.plot(v, -12 + 2.5 * (1 - np.exp(-v / 1.5)), color=RED, lw=2.2, label="VV")
-    ax.plot(v, -26 + 12 * (1 - np.exp(-v / 2.0)), color=BLUE, lw=2.2, label="VH")
-    ax.text(0.15, -7.0, "VV: soil signal increasingly\nhidden (attenuated) by canopy", fontsize=10.5, va="top")
-    ax.text(1.6, -23.0, "VH: volume scattering\nin leaves and stems\n= canopy biomass, structure", fontsize=10.5, va="top")
-    ax.text(4.95, -12.6, "VH \u2212 VV rises:\nvegetation index", fontsize=10.5, ha="right", va="top")
-    ax.set_xlim(0, 5); ax.set_ylim(-30, -6)
-    ax.set_xlabel("Vegetation water content (kg/m2)"); ax.set_ylabel("C-band backscatter (dB)")
-    ax.legend(loc="lower right", frameon=True, framealpha=1, edgecolor="black")
+INDICES = [
+    ("NDVI = (B8 - B4) / (B8 + B4)",
+     "green biomass and cover: how much soil is hidden by plants. Follows soil moisture with a lag of weeks; "
+     "saturates over dense canopy."),
+    ("NDRE = (B8A - B5) / (B8A + B5)",
+     "chlorophyll from the red edge; keeps working where NDVI saturates."),
+    ("NDMI = (B8 - B11) / (B8 + B11)",
+     "water held in the leaves (canopy water). Drops within days when plants run short of water."),
+    ("MSI = B11 / B8",
+     "moisture stress index, the inverse view of NDMI: higher = drier canopy."),
+    ("STR = (1 - B12)^2 / (2 B12)",
+     "SWIR transformed reflectance: rises as the visible soil gets wetter. The only direct optical soil "
+     "signal, and only where bare soil is seen."),
+    ("NDVI-STR trapezoid (OPTRAM)",
+     "STR read against NDVI separates soil wetness from vegetation cover."),
+]
 
 
-def panel_d(ax):
-    t = np.linspace(-5, 40, 901)
-    pos = np.clip(t, 0, None)
+def panel_indices(ax):
+    ax.axis("off")
+    for k, (name, role) in enumerate(INDICES):
+        col, row = k % 2, k // 2
+        x, y = 0.0 + 0.5 * col, 0.97 - 0.34 * row
+        ax.text(x, y, name, fontsize=11.5, va="top", transform=ax.transAxes)
+        ax.text(x + 0.015, y - 0.12, textwrap.fill(role, 78), fontsize=10.5, va="top", transform=ax.transAxes)
 
-    def pulse(tau_rise, tau_fall):
-        r = (1 - np.exp(-pos / tau_rise)) * np.exp(-pos / tau_fall)
-        return r / r.max()
 
-    sm = np.where(t >= 0, np.exp(-pos / 7), 0.0)
-    curves = [("Soil moisture", sm, "black", "-"),
-              ("S1 VV", 0.85 * sm, RED, "-"),
-              ("SWIR darkening", 0.75 * np.where(t >= 0, np.exp(-pos / 4), 0.0), RED, "--"),
-              ("NDMI (leaf water)", 0.6 * pulse(2.0, 9.0), GREEN, "-"),
-              ("NDVI (green biomass)", 0.45 * pulse(9.0, 25.0), BLUE, "-")]
-    ax.bar([0], [1.08], width=0.8, color="0.6", zorder=1)
-    ax.text(0.6, 1.08, "rain", fontsize=11, va="center")
-    for lab, y, c, ls in curves:
-        ax.plot(t, y, color=c, lw=2.2, ls=ls, label=lab, zorder=3)
-    for x, y, lab in [(1.0, 1.0, "same day"), (3.6, 0.63, "days"), (12.0, 0.48, "weeks")]:
-        ax.text(x + 0.6, y, lab, fontsize=11, va="bottom")
-    ax.axhline(0, color="0.5", lw=0.8)
-    ax.set_xlim(-5, 40); ax.set_ylim(-0.02, 1.15)
-    ax.set_xlabel("Days after rain"); ax.set_ylabel("Response (normalised)")
-    ax.legend(loc="upper right", frameon=True, framealpha=1, edgecolor="black")
+# ── radar scattering schematic ─────────────────────────────────────────────────────────────────
+GROUND = 1.5
+
+
+def _arrow(ax, p0, p1, color, lw=2.2, ls="-"):
+    ax.annotate("", xy=p1, xytext=p0,
+                arrowprops=dict(arrowstyle="-|>", lw=lw, color=color, linestyle=ls, mutation_scale=16))
+
+
+def _scene_base(ax, title):
+    ax.set_xlim(0, 10); ax.set_ylim(-8.2, 10); ax.axis("off")
+    ax.add_patch(plt.Rectangle((0, 0), 10, GROUND, color=RED, alpha=0.22, lw=0))
+    ax.add_patch(plt.Rectangle((0, GROUND - 0.35), 10, 0.35, color=RED, alpha=0.55, lw=0))
+    ax.plot([0, 10], [GROUND, GROUND], color="black", lw=1.2)
+    ax.text(9.9, 0.55, "soil: C-band enters\nonly the top ~1-5 cm", fontsize=9.5, ha="right", va="center")
+    ax.add_patch(plt.Rectangle((0.35, 8.9), 0.7, 0.45, color="0.3"))
+    ax.add_patch(plt.Rectangle((0.0, 9.0), 0.35, 0.25, color=GREEN, ec="black", lw=0.6))
+    ax.add_patch(plt.Rectangle((1.05, 9.0), 0.35, 0.25, color=GREEN, ec="black", lw=0.6))
+    ax.text(1.6, 9.15, "S1, C-band, 5.6 cm", fontsize=10, va="center")
+    ax.text(0.0, -0.4, title, fontsize=12, va="top")
+
+
+def _bullets(ax, lines, y0=-1.5):
+    ax.text(0.0, y0, "\n".join(textwrap.fill(s, 46, initial_indent="- ", subsequent_indent="  ") for s in lines),
+            fontsize=10, va="top", linespacing=1.25)
+
+
+def scene_bare(ax):
+    _scene_base(ax, "Bare soil")
+    _arrow(ax, (0.9, 8.7), (5.2, GROUND + 0.05), "black")
+    _arrow(ax, (5.2, GROUND + 0.05), (9.3, 7.0), "0.55", ls="--")
+    _arrow(ax, (5.4, GROUND + 0.05), (1.6, 8.2), RED, lw=2.6)
+    _arrow(ax, (5.6, GROUND + 0.05), (2.6, 7.0), BLUE, lw=1.0)
+    ax.text(1.85, 8.25, "VV", color=RED, fontsize=12, va="center")
+    ax.text(4.0, 5.2, "VH (weak)", color=BLUE, fontsize=11)
+    ax.text(9.0, 4.0, "specular,\nlost", fontsize=10, color="0.4", ha="center")
+    _bullets(ax, [
+        "Surface scattering dominates.",
+        "VV rises ~0.25 dB per 1 % soil moisture: water raises the soil dielectric constant (dry ~4, wet ~25).",
+        "VH is low: a bare surface barely depolarises the wave, so VH/VV is low.",
+        "Roughness (ploughing, crust) also changes VV.",
+        "Direct link to soil moisture, but only the top few cm, not the root zone.",
+    ])
+
+
+def scene_crop(ax):
+    _scene_base(ax, "Grass / crop (sparse canopy)")
+    for x in np.arange(2.6, 9.8, 0.75):
+        ax.plot([x, x], [GROUND, 4.6], color=BLUE, lw=1.6)
+        for h, s in [(2.6, 1), (3.3, -1), (4.0, 1)]:
+            ax.plot([x, x + 0.35 * s], [h, h + 0.35], color=BLUE, lw=1.4)
+    _arrow(ax, (0.9, 8.7), (6.2, GROUND + 0.05), "black")
+    _arrow(ax, (6.4, GROUND + 0.05), (3.0, 8.4), RED, lw=1.8)
+    _arrow(ax, (3.4, 4.3), (0.4, 7.4), BLUE, lw=2.4)
+    ax.text(3.6, 8.2, "VV: soil + canopy", color=RED, fontsize=11)
+    ax.text(0.1, 5.4, "VH: canopy\nvolume", color=BLUE, fontsize=11, va="top")
+    _bullets(ax, [
+        "The wave crosses the canopy twice and is attenuated, but part of it still reaches the soil.",
+        "VV = soil (direct soil moisture) + canopy; VH = mostly volume scattering in leaves and stems.",
+        "Stem-ground double bounce brightens VV over wet ground.",
+        "VH/VV grows with biomass: used to remove the vegetation part from VV (water cloud model).",
+        "Wetter plants raise the canopy dielectric: VH follows soil moisture indirectly, through plant water.",
+    ])
+
+
+def scene_forest(ax):
+    _scene_base(ax, "Dense forest")
+    from matplotlib.patches import Ellipse
+    for x in (2.6, 5.2, 7.8):
+        ax.add_patch(plt.Rectangle((x - 0.18, GROUND), 0.36, 3.0, color="0.35", lw=0))
+    for x, y in ((2.6, 5.6), (5.2, 6.0), (7.8, 5.6), (3.9, 6.6), (6.5, 6.6)):
+        ax.add_patch(Ellipse((x, y), 3.0, 2.8, color=GREEN, ec=BLUE, lw=1.4, alpha=0.95))
+    _arrow(ax, (0.9, 8.7), (3.9, 7.4), "black")
+    for p1, c in [((1.5, 8.2), RED), ((2.4, 8.3), BLUE), ((1.2, 7.7), BLUE)]:
+        _arrow(ax, (3.9, 7.4), p1, c, lw=1.6)
+    ax.text(5.2, 3.0, "ground not\nreached", fontsize=10, ha="center", va="center",
+            bbox=dict(boxstyle="round", fc="white", ec="black", lw=0.8))
+    ax.text(4.2, 8.4, "VV + VH from the crown", fontsize=10.5)
+    _bullets(ax, [
+        "5.6 cm waves are scattered by leaves and twigs in the crown; almost nothing reaches the soil.",
+        "VV and VH both come from the canopy and saturate; VH/VV is high.",
+        "Direct sensitivity to soil moisture is ~0; only an indirect link through canopy water.",
+        "Seeing forest soil needs longer waves: L-band (24 cm) or P-band (70 cm).",
+    ])
 
 
 def main():
@@ -133,14 +199,16 @@ def main():
     ap.add_argument("--out", default="figures/textbook/sm_signals")
     args = ap.parse_args()
     plot_style_bw.apply(globals(), "paper")
-    fig = plt.figure(figsize=(16, 10.5), constrained_layout=True)
-    gs = fig.add_gridspec(2, 3, height_ratios=[1.05, 1])
+    fig = plt.figure(figsize=(16, 18), constrained_layout=True)
+    gs = fig.add_gridspec(3, 3, height_ratios=[1.0, 0.42, 1.2])
     ax_a = fig.add_subplot(gs[0, :])
-    axs = [fig.add_subplot(gs[1, k]) for k in range(3)]
-    for ax, f, lab in [(ax_a, panel_a, "(a)"), (axs[0], panel_b, "(b)"), (axs[1], panel_c, "(c)"),
-                       (axs[2], panel_d, "(d)")]:
+    ax_i = fig.add_subplot(gs[1, :])
+    axs = [fig.add_subplot(gs[2, k]) for k in range(3)]
+    panel_a(ax_a); panel_indices(ax_i)
+    for ax, f in zip(axs, (scene_bare, scene_crop, scene_forest)):
         f(ax)
-        ax.text(-0.05 if ax is ax_a else -0.17, 1.02, lab, transform=ax.transAxes, fontsize=13)
+    for ax, lab, x in [(ax_a, "(a)", -0.05), (ax_i, "(b)", -0.05), (axs[0], "(c)", -0.02)]:
+        ax.text(x, 1.02, lab, transform=ax.transAxes, fontsize=13)
     out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out.with_suffix(".png"), dpi=600)
     fig.savefig(out.with_suffix(".pdf"))
