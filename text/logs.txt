@@ -8706,3 +8706,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     S1 dips: ~Aug 1 (0.48, but ref west also 0.56 -> scene-wide), Aug 25 (0.41, ref 0.74 -> station-specific), Jul 9 (0.61).
     Spearman same-tile, all/Jun-Sep: S2 obs +0.09/-0.07 (0-10) +0.11/+0.34 (10-30); S1 anomaly obs +0.21/+0.47, +0.53/+0.65; model same S1 -0.39/-0.42.
     2019-12-21 S2 cos ~0 for every pair -> degenerate scene, still in the store.
+  §69.5 cos time series: tile-centre line only (same tile + 480 m ref removed) (user asked): job 27659878
+  27659878 DONE (30 s): figures/mead/mead_embed_cos_2019_alldates.png, tile-centre line only.

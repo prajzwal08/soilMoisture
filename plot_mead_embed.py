@@ -180,9 +180,7 @@ def main():
     for k, sensor in enumerate(("S2", "S1")):
         a = ax[k]
         r = res[sensor]
-        for c, mk, col, lab in (("same_tile", "o", PRED_COLOR, "Ne1 vs Ne2, same tile"),
-                                ("tile_centre", "^", plot_style_bw.GREEN, "Ne1 vs Ne2, tile centres"),
-                                ("ref_west", "x", "0.5", "Ne1 vs 480 m west (reference)")):
+        for c, mk, col, lab in (("tile_centre", "o", PRED_COLOR, "Ne1 vs Ne2, tile centres"),):
             s = r[c].dropna()
             a.plot(s.index, s.values, "-" + mk, ms=3.5, lw=0.8, color=col, label=lab)
         a.text(0.01, 0.95, f"({'ab'[k]}) {sensor} L12 cosine similarity", transform=a.transAxes, va="top",
