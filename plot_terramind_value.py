@@ -1,17 +1,17 @@
 """Publication figure: what the frozen TerraMind encoder gives the soil-moisture model.
 
-Three rows, paper style (plot_style_bw "paper": palette H, Times bold, no titles):
+Three panels, paper style (plot_style_bw "paper": palette H, Times bold, no titles):
     (a) one tile (TxSON CR200-18): S2 true colour for 4 seasons, and below each the L12
         token map (14 x 14 tokens, 160 m), PCA -> RGB with ONE basis for all four seasons
-    (b) the same tile, static modalities: DEM hillshade | DEM tokens | LULC map | LULC tokens
-    (c) every sm_only station's own centre token (s2/l12, mean over its label window), UMAP
-        fitted unsupervised, coloured by Koppen macro class
+    (b) the same tile, S1 ascending pass nearest each S2 date: VV and its L12 token map
+    (c) the same tile, static modalities: DEM hillshade | DEM tokens | LULC map | LULC tokens
+    The station UMAP (--umap) is still fitted on request but NOT drawn (user: later).
 
-Token-map rules come from plot_token_pca.py (Â§27a), reused, not re-implemented:
+Token-map rules come from plot_token_pca.py (§27a), reused, not re-implemented:
     one PCA basis per row, deterministic sign, each panel centred by its own valid-token
     mean (within-tile structure), sink tokens (> 5x median norm, ViT registers) excluded
     from the fit but still drawn, one 2-98 % colour stretch per row, masked tokens grey.
-UMAP settings and station features come from probe_token_sm_structure.py (Â§27b):
+UMAP settings and station features come from probe_token_sm_structure.py (§27b):
     StandardScaler -> UMAP(n_neighbors 15, min_dist 0.1, random_state 0), centre token 105,
     mean over <= 24 acquisitions inside the station's label window, sm_only, finite only.
 
@@ -45,11 +45,9 @@ KG = [("A", "Tropical", "#4D4D4D"), ("B", "Arid", ORANGE), ("C", "Temperate", LB
       ("D", "Cold", DBLUE), ("E", "Polar", "#A6A6A6")]
 
 
-# ââ prep ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-def prep(workers: int) -> None:
+# ══ prep ══════════════════════════════════════════════════════════════════════════════════
+def prep(workers: int, do_umap: bool = False) -> None:
     import pandas as pd
-    from sklearn.preprocessing import StandardScaler
-    import umap
 
     from plot_tile_context import LULC_COLOURS, hillshade, open_raw, open_tokens
     from plot_token_pca import Basis, load_seasons, station_table
@@ -79,7 +77,24 @@ def prep(workers: int) -> None:
     a["s2_var"] = basis.var_ratio
     print("seasons", list(zip(a["s2_label"], a["s2_date"])), "pca", basis.var_ratio)
 
-    # (b) DEM and LULC tokens, one basis each (single panel)
+    # (b) S1 ascending, the pass nearest each S2 date (load_seasons' rule), VV + L12 tokens,
+    # one basis for all four. Ascending: CR200-18 has 27 asc vs 3 desc passes in 2018-19.
+    s1 = load_seasons(tok, raw, float(row.latitude), str(row.kg_macro), YEARS, "s1_asc")
+    panels = [(s["layers"]["l12"], s["valid"]) for s in s1]
+    basis = Basis(panels)
+    projs = [basis.project(t, i) for i, (t, _) in enumerate(panels)]
+    basis.calibrate(projs)
+    rgbs = []
+    for p, (_, v) in zip(projs, panels):
+        rgb = basis.rgb(p)
+        rgb[~v.reshape(GRID, GRID)] = 0.6
+        rgbs.append(rgb)
+    a["s1_img"] = np.stack([s["img"] for s in s1])
+    a["s1_tok"] = np.stack(rgbs)
+    a["s1_date"] = np.array([s["date"] for s in s1])
+    print("s1_asc", list(a["s1_date"]), "pca", basis.var_ratio)
+
+    # (c) DEM and LULC tokens, one basis each (single panel)
     for mod in ("dem", "lulc"):
         t = np.asarray(tok[mod][:], np.float32)
         mk = f"{mod}_token_mask"
@@ -103,7 +118,12 @@ def prep(workers: int) -> None:
     st = station_table(TILE)
     a["st_rc"] = st[["row", "col"]].to_numpy()
 
-    # (c) UMAP of every sm_only station's centre token, s2/l12
+    # UMAP of every sm_only station's centre token, s2/l12 -- only with --umap (not drawn now)
+    if not do_umap:
+        OUT.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(OUT / "assets.npz", **a)
+        print(f"wrote {OUT / 'assets.npz'} (no UMAP)")
+        return
     disk = P.disk_index(("sm_only",))
     meta = meta.dropna(subset=["source_network", "network", "station_id"]).copy()
     meta["dir"] = [P.station_dir(r) for _, r in meta.iterrows()]
@@ -119,6 +139,8 @@ def prep(workers: int) -> None:
     fin = np.isfinite(X).all(1)
     fin &= np.isfinite(sm)
     X, kg, sm = X[fin], kg[fin], sm[fin]
+    from sklearn.preprocessing import StandardScaler
+    import umap
     U = umap.UMAP(n_components=2, random_state=0, n_neighbors=15,
                   min_dist=0.1).fit_transform(StandardScaler().fit_transform(X))
     a["umap"], a["umap_kg"], a["umap_sm"] = U.astype(np.float32), kg.astype(str), sm
@@ -130,7 +152,7 @@ def prep(workers: int) -> None:
     print(f"wrote {OUT / 'assets.npz'}")
 
 
-# ââ render ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# ══ render ════════════════════════════════════════════════════════════════════════════════
 def _img(ax, img, **kw):
     ax.imshow(img, extent=(-.5, PATCH - .5, PATCH - .5, -.5), interpolation="nearest", **kw)
     ax.set_xticks([]); ax.set_yticks([])
@@ -156,11 +178,12 @@ def render() -> None:
     a = np.load(OUT / "assets.npz", allow_pickle=True)
     # rows sized in inches: square panels are ~1.68 in wide at this width, so give each image
     # row exactly that, plus explicit spacer rows for titles, x-labels and the (c) legend
-    #           a1    a2    gap   b     gap   c
-    hr = [1.68, 1.68, 0.30, 1.68, 1.15, 2.9]
-    fig = plt.figure(figsize=(7.4, sum(hr) + 0.75))
-    gs = fig.add_gridspec(6, 4, height_ratios=hr, hspace=0.05, wspace=0.06, left=0.09,
-                          right=0.99, top=1 - 0.55 / (sum(hr) + 0.75), bottom=0.2 / (sum(hr) + 0.75))
+    # UMAP (assets umap / umap_sm, --umap prep) is NOT drawn: user, 2026-10-06, "leave for later"
+    #     S2    S2 tok gap  S1    S1 tok gap   static
+    hr = [1.68, 1.68, 0.40, 1.68, 1.68, 0.40, 1.68]
+    fig = plt.figure(figsize=(7.4, sum(hr) + 1.0))
+    gs = fig.add_gridspec(7, 4, height_ratios=hr, hspace=0.05, wspace=0.06, left=0.09,
+                          right=0.99, top=1 - 0.55 / (sum(hr) + 1.0), bottom=0.45 / (sum(hr) + 1.0))
 
     # (a) S2 seasons + L12 token maps
     for j in range(4):
@@ -179,48 +202,48 @@ def render() -> None:
         if j == 0:
             ax.set_ylabel("L12 tokens")
     pos = fig.axes[0].get_position()
-    fig.text(0.012, pos.y1 + 0.025, "(a)", fontsize=13, va="bottom")
+    fig.text(0.012, pos.y1 + 0.022, "(a)", fontsize=13, va="bottom")
 
-    # (b) DEM / LULC
-    ax = fig.add_subplot(gs[3, 0])
+    # (b) S1 (ascending) nearest each S2 date: VV + L12 tokens, one basis for all four
+    first_b = len(fig.axes)
+    for j in range(4):
+        ax = fig.add_subplot(gs[3, j])
+        _img(ax, a["s1_img"][j], cmap="gray", vmin=0, vmax=1)
+        _stations(ax, a["st_rc"])
+        d = str(a["s1_date"][j])
+        ax.set_title(f"{d[:4]}-{d[4:6]}-{d[6:]}", fontsize=11, pad=3)
+        if j == 0:
+            ax.set_ylabel("S1 VV")
+        ax = fig.add_subplot(gs[4, j])
+        _img(ax, a["s1_tok"][j])
+        _stations(ax, a["st_rc"])
+        if j == 0:
+            ax.set_ylabel("L12 tokens")
+    pos = fig.axes[first_b].get_position()
+    fig.text(0.012, pos.y1 + 0.012, "(b)", fontsize=13, va="bottom")
+
+    # (c) DEM / LULC
+    ax = fig.add_subplot(gs[6, 0])
     _img(ax, a["dem_hs"], cmap="gray", alpha=0.9)
     ax.imshow(a["dem"], extent=(-.5, PATCH - .5, PATCH - .5, -.5), cmap="terrain", alpha=0.45)
     _stations(ax, a["st_rc"])
     ax.set_xlabel("DEM")
-    ax = fig.add_subplot(gs[3, 1])
+    ax = fig.add_subplot(gs[6, 1])
     _img(ax, a["dem_tok"]); _stations(ax, a["st_rc"])
     ax.set_xlabel("DEM tokens")
     lulc = a["lulc"]
     present = sorted(int(x) for x in np.unique(lulc))
     cm = ListedColormap([str(a["lulc_colours"][x]) for x in present])
-    ax = fig.add_subplot(gs[3, 2])
+    ax = fig.add_subplot(gs[6, 2])
     _img(ax, np.searchsorted(present, lulc), cmap=cm,
          norm=BoundaryNorm(np.arange(-.5, len(present)), cm.N))
     _stations(ax, a["st_rc"])
     ax.set_xlabel(f"LULC {int(a['lulc_year'])}")
-    ax = fig.add_subplot(gs[3, 3])
+    ax = fig.add_subplot(gs[6, 3])
     _img(ax, a["lulc_tok"]); _stations(ax, a["st_rc"])
     ax.set_xlabel("LULC tokens")
     pos = fig.axes[-4].get_position()
-    fig.text(0.012, pos.y1 + 0.006, "(b)", fontsize=13, va="bottom")
-
-    # (c) UMAP coloured by station mean 0-10 cm SM (wettest drawn last, on top)
-    ax = fig.add_subplot(gs[5, :])
-    U, sm = a["umap"], np.asarray(a["umap_sm"], float)
-    o = np.argsort(sm)
-    vmin, vmax = np.percentile(sm, 2), np.percentile(sm, 98)
-    sc = ax.scatter(U[o, 0], U[o, 1], c=sm[o], s=14, cmap="YlGnBu", vmin=vmin, vmax=vmax,
-                    edgecolors="none", zorder=3)
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.set_xlabel("UMAP 1"); ax.set_ylabel("UMAP 2")
-    for sp in ax.spines.values():
-        sp.set_linewidth(1.2)
-    cax = ax.inset_axes([0.30, 1.04, 0.40, 0.045])
-    cb = fig.colorbar(sc, cax=cax, orientation="horizontal", extend="both")
-    cb.ax.xaxis.set_ticks_position("top"); cb.ax.xaxis.set_label_position("top")
-    cb.set_label(f"station mean SM 0–10 cm (m³/m³), n = {len(sm)}", labelpad=4)
-    pos = ax.get_position()
-    fig.text(0.012, pos.y1 + 0.075, "(c)", fontsize=13, va="bottom")
+    fig.text(0.012, pos.y1 + 0.006, "(c)", fontsize=13, va="bottom")
 
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"terramind_value.{ext}", dpi=600)
@@ -233,9 +256,10 @@ def main():
     ap.add_argument("--prep", action="store_true")
     ap.add_argument("--render", action="store_true")
     ap.add_argument("--workers", type=int, default=64)
+    ap.add_argument("--umap", action="store_true", help="also fit the station UMAP (not drawn)")
     args = ap.parse_args()
     if args.prep:
-        prep(args.workers)
+        prep(args.workers, args.umap)
     if args.render:
         render()
 
