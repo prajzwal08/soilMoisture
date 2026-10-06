@@ -117,12 +117,13 @@ def diff_figure(obs, own, df, lo, hi, tag):
                 ax.axvspan(d, d + pd.Timedelta("1D"), color="0.90", lw=0, zorder=0)
         o, p, w = series[dep]
         ax.axhline(0, color="black", lw=1.0, zorder=1)
-        ax.plot(o.index, o.values, "o", ms=1.6 if tag == "full" else 2.4, color="black",
-                label="Observed", zorder=2)
+        o_d = o.asfreq("D")                              # NaN gaps break the line
+        ax.plot(o_d.index, o_d.values, "-", color="black", lw=1.4,
+                label="Observed Ne1 $-$ Ne2", zorder=2)
         ax.plot(p.index, p.values, "-", color=PRED_COLOR, lw=1.4,
-                label="Model (tile centre)", zorder=4)
+                label="Model Ne1 $-$ Ne2 (tile centre)", zorder=4)
         j = pd.concat([o, p], axis=1, keys=["o", "p"]).dropna()
-        ax.text(0.01, 0.95, f"({lab}) {dep} cm   mean obs {j['o'].mean():+.3f}  "
+        ax.text(0.01, 0.95, f"({lab}) {dep} cm   mean observed {j['o'].mean():+.3f}  "
                 f"model {j['p'].mean():+.3f}   R {j['o'].corr(j['p']):+.2f}",
                 transform=ax.transAxes, va="top",
                 bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.5), zorder=5)
