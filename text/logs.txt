@@ -8547,3 +8547,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   is only ~0.01-0.03 in Aug-Sep: wet year, irrigation 129 mm vs heavy rain. Day-to-day difference swings +-0.1
   (event timing), dwarfing the mean. Ne1-vs-Ne2 is a WEAK contrast; Ne1/Ne2-vs-Ne3 in dry years is the strong one.
   §70 analysis rerun on smoke output SUBMITTED (user "yes"): job 27652853 (rome, 16 CPU)
+  §70 analysis smoke 27652853 COMPLETED (44 s): all tests + control run end-to-end.
+    Control (synthetic field, Gaussian sigma 160 m): L_C = 280 m -> the estimator recovers a known scale. PASS.
+    CR200-18 only (1 tile, NOT a result): Test B: 40 m blocks already move the map (S = 0.28), whole tile S = 1.03;
+      Test C: 0-10 ubRMSE IMPROVES when the map is averaged (0.0631 at 20 m -> 0.0556 at 2.24 km);
+      anomaly-map variance retained 0.64 at 160 m, 0.35 at 280 m, 0.04 at 1.12 km.
+    Fixes: CIs need >= 5 tiles (1-tile CI was a point and declared L_A = 438 m and "worse" at 40 m);
+      L_C = largest block not significantly worse than 20 m (no prefix rule: noise averaging makes it non-monotone).

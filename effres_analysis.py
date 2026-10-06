@@ -38,6 +38,7 @@ MAP_PX, PX_M = 112, 20
 BLOCKS = [1, 2, 4, 8, 14, 28, 56, 112]            # Test C, in 20 m map pixels
 MIN_DAYS = 60                                       # common days for a pair / station to count
 NBOOT = 1000
+MIN_CLUSTERS = 5                                    # bootstrap CIs need at least this many tiles/stations
 WITHIN_BINS = [0, 500, 1000, 1600]                  # m; max within-tile separation ~1.6 km
 CROSS_BINS  = [0, 1600, 3000, 6000, 12000, 25000, 50000]
 VARIO_BINS  = [0, 250, 500, 1000, 1600, 3000, 6000, 12000, 25000, 50000]
@@ -66,6 +67,8 @@ def corr(a, b) -> float:
 def boot_ci(groups: np.ndarray, stat, rng, nboot=NBOOT):
     """Cluster bootstrap: resample unique `groups` with replacement; stat(mask_rows) -> float."""
     ug = np.unique(groups)
+    if len(ug) < MIN_CLUSTERS:                          # a 1-tile "CI" is a point, not an interval
+        return (np.nan, np.nan)
     rows = {g: np.flatnonzero(groups == g) for g in ug}
     vals = []
     for _ in range(nboot):
@@ -210,20 +213,25 @@ def l_from_accuracy(acc: pd.DataFrame, rng) -> pd.DataFrame:
         for b in BLOCKS:
             dlt = w[b].to_numpy() - base
             vals = [dlt[rng.integers(0, len(dlt), len(dlt))].mean() for _ in range(NBOOT)]
-            lo, hi = np.percentile(vals, [2.5, 97.5])
+            lo, hi = (np.percentile(vals, [2.5, 97.5]) if len(dlt) >= MIN_CLUSTERS
+                      else (np.nan, np.nan))              # too few tiles: no verdict
             out.append(dict(depth=dep, block=b, L_m=b * PX_M, n_tiles=len(dlt),
                             ubRMSE_mean=float(w[b].mean()), d_ubRMSE=float(dlt.mean()),
                             d_lo=float(lo), d_hi=float(hi), worse=bool(lo > 0)))
     return pd.DataFrame(out)
 
 
-def largest_ok(df: pd.DataFrame, ok_col: str) -> dict:
-    """Per depth: largest block b such that every block <= b is ok."""
+def largest_ok(df: pd.DataFrame, ok_col: str, prefix: bool = True) -> dict:
+    """Per depth: largest ok block. prefix=True: every smaller block must be ok too (Test B: the
+    first block that moves the map ends it). prefix=False: Test C, where noise-averaging makes
+    accuracy non-monotone in b, so the largest block not significantly worse than b = 1."""
     res = {}
     for dep, s in df.sort_values("block").groupby("depth"):
         L = None
         for _, r in s.iterrows():
             if not r[ok_col]:
+                if not prefix:
+                    continue
                 break
             L = int(r["L_m"])
         res[dep] = L
@@ -376,13 +384,13 @@ def main():
     lc.to_csv(out / "testC_accuracy.csv", index=False)
     print("\nTest C -- spatial anomaly variance retained\n" + vs.to_string(index=False))
     print("\nTest C -- station accuracy vs block size\n" + lc.to_string(index=False))
-    summary["L_C_m"] = largest_ok(lc, "ok")
+    summary["L_C_m"] = largest_ok(lc, "ok", prefix=False)
 
     # Control
     ctl = l_from_accuracy(control(rng), rng)
     ctl["ok"] = ~ctl["worse"]
     ctl.to_csv(out / "control.csv", index=False)
-    summary["control_L_C_m (field sigma 160 m)"] = largest_ok(ctl, "ok")
+    summary["control_L_C_m (field sigma 160 m)"] = largest_ok(ctl, "ok", prefix=False)
     print("\nControl -- synthetic sigma-160 m field\n" + ctl.to_string(index=False))
 
     summary["L_eff_m"] = {dep: max([x for x in (summary.get(k, {}).get(dep)
