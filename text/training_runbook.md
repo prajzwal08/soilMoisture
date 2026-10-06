@@ -17877,7 +17877,7 @@ Facts found while building:
 
 Job: `sbatch slurm/mead_irrigation_step1.sh [year]` (rome, 16 CPU, 30 min, ~8 SBU). Needs explicit OK.
 
-## §70 Effective spatial resolution of predicted SM — TxSON within-tile study (Session 48, 2026-10-06, BUILT, not run)
+## §70 Effective spatial resolution of predicted SM — TxSON within-tile study (Session 48, 2026-10-06, RAN 27682304-06: L_eff 0-10 = 2240 m; map range ~250 m but not correct)
 
 **Question.** The model writes SM at 20 m (112 x 112 map per 2.24 km tile). What is the smallest scale at which predicted spatial differences are present AND correct? Prior evidence says coarse: §53 (SM ignores the 20 m path), §56 (the within-tile map is a fixed decoder pattern), step-0 probe (pair sign 0.50).
 

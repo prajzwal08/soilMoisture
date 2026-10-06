@@ -8929,3 +8929,15 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 — architecture_s48.png render 27682884: cloud-mask branch redrawn as DASHED GREY arrows (S2 L2A -> SEnSeIv2 on its own line left of the TerraMind bus; token mask -> pyramid x4; pixel mask -> S2 on D), grey mask labels, legend "cloud mask (not data)". path(dashed=True) = dashed line + solid head stub.
 
 2026-10-06 — architecture_s48.png render 27682915: pixel-mask arrow now leaves the SEnSeIv2 OUTPUT stack (was drawn from its input) and runs to the fine S2; "tokens kept" caption moved above the output stack. Fine-lane relabel (S2/S1 = latest scene <= D, not on D; ages 1 d / 11 d) proposed, not applied.
+  §70 FULL chain DONE: 27682304 (25 min) / 27682305 (5.5 min) / 27682306 -> figures/effres/effres_txson.{png,pdf}; 30 oos tiles.
+    Map variogram (anomaly g/var): rises 20 -> ~250 m, sill 0-10 0.048 / 10-30 0.088 / 30-100 0.116. Observed (0-10, 40 stns):
+      0.16-0.22 below 3 km, 0.27-0.28 at 6-50 km (n 2..357). Model within-tile contrast ~4x below observed.
+    Test C variance retained (0-10): 40 m 97%, 80 m 88%, 160 m 64%, 280 m 37%, 560 m 16%. Spectrum cliff 320 -> 160 m.
+    Test C accuracy: blurring the output up to 2.24 km never hurts ubRMSE (0.0452 -> 0.0443 at 2.24 km) -> L_C = 2240 m.
+      Control (sigma 160 m field) gives 280 m -> machinery works.
+    Test B: blurring INPUTS moves the map (S = 0.29 at 40 m, 0.58 at 160 m, ~1 by 560 m) -> L_B undefined (S never < 0.1),
+      but station ubRMSE unchanged (0.0452 -> 0.0443-0.0453) -> fine inputs change the map, not its accuracy.
+    Test A within-tile: level r ~0 (CIs span 0); daily-Δ r 0.076 [0.023, 0.108] at 500-1000 m (only significant bin) -> L_A 765 m.
+      Cross-tile 1.6-50 km: level and daily-Δ r ~0, CIs span 0.
+    VERDICT: map CONTAINS structure down to ~250 m (token grid) and the inputs drive it, but it is not CORRECT below the tile:
+      L_eff (0-10) = 2240 m = whole tile. Within-tile detail is texture, not skill.
