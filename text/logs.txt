@@ -8563,3 +8563,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   READ: the sign FLIPS with the tile -> the centre pixel is always ~0.004-0.009 wetter than the off-centre one.
   That is the decoder's centre-vs-edge pattern, not the field. Observed Ne1-Ne2 offset is ~-0.02..-0.03 (Ne1 drier),
   and 2019 (Ne2-only irrigation) is not visible in the means. Within-tile map does NOT separate the two fields.
+  §68 driver SMOKE submitted (user OK): job 27653254 (nl_drivers.sh static: py_compile 19 files, ERA5 pixel list, SIF/ERA5/rad/TWSA/soil on 3 smoke tiles, rome 16 CPU)
