@@ -8710,3 +8710,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   27659878 DONE (30 s): figures/mead/mead_embed_cos_2019_alldates.png, tile-centre line only.
   §69.5 cos time series: dSM as dots, solid on S1/S2 acquisition days, faded otherwise (user asked): job 27659903
   27659903 DONE (26 s): mead_embed_cos_2019_alldates.png with dSM solid on S1/S2 days, faded otherwise.
+  §69 daily SM maps 2019 -> GeoTIFF (export_mead_maps_tif.py, from saved npz, CPU) (user asked): job 27660328
+  §69 daily SM map GIF 2019 (make_mead_sm_gif.py, 2 tiles x 3 depths, date + S1/S2/irrigation tags) (user asked): job 27660383
+  §68 status 14:22: soil 27659727 DONE 688/688, 0 failed (5 min). S2 27659323: 3/8 tasks done, ~137 of 364 todo tiles
+    processed, 0 failed scenes, 0 x 403, 0 partial/error so far. SIF 27659724 at 2018 (of 2018-2025). ERA5 27659722 168/660
+    px-years; 2 errors = NLPIX_P5215_0645 2020+2021 "NetCDF: HDF error" at the simultaneous first writes (14:06:13).
+    fanout checks every pixel's files BEFORE the first copy -> it will refuse cleanly; needs an ERA5 retry first.
