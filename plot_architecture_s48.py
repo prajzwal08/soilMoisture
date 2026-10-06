@@ -636,13 +636,18 @@ def render() -> None:
     Dd = datetime.strptime(str(a["day"]), "%Y-%m-%d")
     age2 = (Dd - _ymd(a["s2_dates"][-1])).days
     age1 = (Dd - _ymd(a["s1_dates"][-1])).days
-    for x, s_, n_ in zip(px, [f"S2 · D − {age2} d", f"S1 · D − {age1} d", "DEM · static",
+    for x, s_, n_ in zip(px, ["S2 · latest", "S1 · latest", "DEM · static",
                               f"LULC · {int(a['lulc_year'])}"],
                          ["masked 2×2 pool", "linear pool → dB", "asinh(Δh/1 m)/4",
                           "8-d embedding"]):
         label(ax, x + pw / 2, 25.4, s_)
         label(ax, x + pw / 2, 23.7, n_, fs=FS_B - 2, color=FROZEN_EDGE)
     label(ax, 23.0, 27.3, "fine 20 m path: most recent scene on or before D", fs=FS_B - 1)
+    # recency badges on the images, same orange as the "latest clear scene" anchor marker
+    for x, ag in ((px[0], age2), (px[1], age1)):
+        ax.text(x + 0.35, yc0 + pw - 0.35, f"D − {ag} d", ha="left", va="top", fontsize=FS_B - 1,
+                color="white", zorder=7, bbox=dict(boxstyle="round,pad=0.25", fc=ORANGE,
+                                                   ec="none"))
 
     # ── cloud mask: SEnSeIv2 classes -> token mask (history, anchor, pyramid) + pixel mask ──
     # dataset.py CM_BAD_CLASSES = thin / thick cloud, shadow, nodata; a 160 m token is valid
