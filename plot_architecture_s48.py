@@ -409,13 +409,18 @@ def render() -> None:
     label(ax, 26.75, 74.0, "TWSA · monthly")
     image(ax, a["soc"], 33.8, 64, 8.5, 8.5, cmap="YlOrBr")
     label(ax, 38.05, 74.0, "Soil 21 ch")
-    bus_a = 62.5
-    for x in (13.0, 26.75, 38.05):
-        path(ax, [(x, 64), (x, bus_a)], head=False)
-    path(ax, [(31, 79.5), (32.4, 79.5), (32.4, bus_a)], head=False)     # SIF, beside TWSA
-    path(ax, [(13.0, bus_a), (51, bus_a), (51, 65)])
-    box(ax, 44, 65, 58, 77, ["Driver MLPs", "ERA5 18 → 768", "SIF, TWSA 1 → 768",
-                             "Soil CNN → 4"])
+    # one encoder per driver (model.py era5_mlp / twsa_mlp / soil_encoder / sif_mlp: separate
+    # weights), each fed by its own line; the outputs join on a collector into the sequence
+    drv = [("ERA5 MLP 18 → 768", 59.0), ("TWSA MLP 1 → 768", 63.2),
+           ("Soil CNN → 4 tokens", 67.4), ("SIF MLP 1 → 768", 73.6)]
+    for txt, y0 in drv:
+        box(ax, 45, y0, 58, y0 + 3.2, [txt], fs=FS_B - 1)
+        path(ax, [(58, y0 + 1.6), (59.6, y0 + 1.6)], head=False)
+    path(ax, [(59.6, 60.6), (59.6, 75.2)], head=False)
+    path(ax, [(13.0, 64.2), (13.0, 60.6), (45, 60.6)])                        # ERA5
+    path(ax, [(26.75, 64), (26.75, 62.4), (43.5, 62.4), (43.5, 64.8), (45, 64.8)])  # TWSA
+    path(ax, [(42.3, 69.0), (45, 69.0)])                                      # soil
+    path(ax, [(31, 75.2), (45, 75.2)])                                        # SIF
 
     # ── lane B: satellite tokens ───────────────────────────────────────────────────────────
     yb0, s = 45.0, 6.6
@@ -450,8 +455,8 @@ def render() -> None:
         dashed=True, fs=FS_B)
 
     # ── token sequence + transformer ───────────────────────────────────────────────────────
-    path(ax, [(58, 71), (86, 71)])
-    box(ax, 60, 72.4, 84, 77.2, ["ERA5 token dropout 0.15", "ERA5 modality dropout 0.5"],
+    path(ax, [(59.6, 71), (86, 71)])
+    box(ax, 61.5, 72.4, 84, 77.2, ["ERA5 token dropout 0.15", "ERA5 modality dropout 0.5"],
         kind="plain", dashed=True, fs=FS_B)
     box(ax, 86, 42, 100, 78, None)
     seq = [("Depth CLS", 3, "train"), ("DEM · LULC", 8, "frozen"), ("Soil", 4, "train"),
@@ -526,11 +531,16 @@ def render() -> None:
     path(ax, [(19.5, 33.5), (93, 33.5), (93, 42)])           # token mask -> token sequence
     label(ax, 70, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
     label(ax, 70, 35.0, "→ S2 history · anchor · pyramid")
-    bus_c = 11.5
-    for x in px:
-        path(ax, [(x + pw / 2, yc0), (x + pw / 2, bus_c)], head=False)
-    path(ax, [(px[0] + pw / 2, bus_c), (51, bus_c), (51, 14)])
-    box(ax, 44, 14, 58, 26, ["Stems 3×3", "S2 12 → 16", "S1 5 → 8", "DEM 2 → 4", "LULC 8 → 4"])
+    # one 3x3 stem per input (model.py stem_s2 / stem_s1 / stem_dem / stem_lulc), then concat
+    bus_c = 5.5
+    for x, nm, ch in zip(px, ["S2", "S1", "DEM", "LULC"],
+                         ["12 → 16", "5 → 8", "2 → 4", "emb 8 → 4"]):
+        xm = x + pw / 2
+        path(ax, [(xm, yc0), (xm, 11.8)])
+        box(ax, x, 7.4, x + pw, 11.8, [f"{nm} stem", ch], title_n=1, fs=FS_B)
+        path(ax, [(xm, 7.4), (xm, bus_c)], head=False)
+    path(ax, [(px[0] + pw / 2, bus_c), (51, bus_c), (51, 15)])
+    box(ax, 44, 15, 58, 25, ["concat", "32 @ 112", "(3×3 stems)"])
     box(ax, 44, 27.0, 58, 31.4, ["fine modality", "dropout 0.2 (S2/S1)"], kind="plain",
         dashed=True, fs=FS_B)
     path(ax, [(58, 20), (62, 20)])
