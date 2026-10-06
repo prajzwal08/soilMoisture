@@ -8881,3 +8881,11 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §70 FULL run SUBMITTED (user "ok run full run"): effres_maps 27682304 (H100, all 40 TxSON tiles, blocks 0,2,4,8,14,28,56,112)
     -> effres_analysis 27682305 (afterok) -> plot_effres 27682306 (afterok; per-tile map variogram, oos tiles, 50208b0)
     -> figures/effres/effres_txson.{png,pdf}.
+
+2026-10-06 — architecture_s48.png prep+render 27682234, render 27682298:
+  - cloud box -> "SEnSeIv2 · SegFormer-B2 · frozen · 7 cl." + two panels: a partly cloudy S2 scene in
+    the window (2019-03-06, picked as most recent with 20-60 % cloud/shadow) and the same scene with
+    its 14x14 token mask (dataset._cm_token_mask): kept 113/196, rejected tokens shaded.
+  - transformer box filled LBLUE ("emph"), label "bidirectional self-attention, key-padding mask"
+    (no causal mask in model.py, only src_key_padding_mask).
+  - assets.npz regenerated (prep adds cm_date/cm_rgb/cm_tok; prior copy assets.npz.bak_20261006).

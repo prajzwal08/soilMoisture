@@ -141,6 +141,20 @@ def prep(day: str) -> None:
     anc = max(clear or cands, key=lambda c: (c[0], -ANCHOR_ORBIT_ID[c[1]]))
     a["anchor_age"], a["anchor_orbit"] = (D - _ymd(anc[0])).days, anc[1]
 
+    # cloud-mask panel: the most recent S2 scene in the window that is 20-60 % cloud/shadow,
+    # with its 14x14 token mask exactly as dataset._cm_token_mask computes it
+    if cm_idx:
+        best = None
+        for d in rdates:
+            if d.isdigit() and w0 <= int(d) <= w1 and d in cm_idx:
+                cmk = cm_arr[cm_idx[d], :224, :224]
+                f = np.isin(cmk, [3, 4, 5]).mean()                # thin / thick cloud, shadow
+                if 0.2 <= f <= 0.6 and (best is None or d > best[0]):
+                    best = (d, cmk)
+        if best:
+            a["cm_date"], a["cm_rgb"] = best[0], s2_rgb(raw, rdates.index(best[0]))
+            a["cm_tok"] = _cm_token_mask(best[1][None])[0]
+
     # drivers in the same window [D-364, D]
     def window(vals, dints):
         dints = np.asarray(dints)
@@ -205,7 +219,8 @@ def prep(day: str) -> None:
 # ══ drawing helpers ═══════════════════════════════════════════════════════════════════════
 def box(ax, x0, y0, x1, y1, lines, kind="train", dashed=False, title_n=1, fs=None):
     fc, ec = {"train": (TRAIN_FILL, DBLUE), "frozen": (FROZEN_FILL, FROZEN_EDGE),
-              "loss": (LOSS_FILL, ORANGE), "plain": ("white", "black")}[kind]
+              "loss": (LOSS_FILL, ORANGE), "plain": ("white", "black"),
+              "emph": (LBLUE, DBLUE)}[kind]
     ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0,
                                 boxstyle="round,pad=0,rounding_size=0.8", fc=fc, ec=ec,
                                 lw=1.4, ls=(0, (4, 2)) if dashed else "-", zorder=2))
@@ -497,8 +512,11 @@ def render() -> None:
     label(ax, 93, 44.9, "+ age 0–364 · DOY ·", fs=FS_B)
     label(ax, 93, 43.2, "modality · position", fs=FS_B)
     path(ax, [(100, 60), (104, 60)])
-    box(ax, 104, 42, 118, 78, ["Transformer", "3 layers", "d = 768", "12 heads", "masked self-",
-                               "attention", "(key padding)", "pre-norm"], title_n=1)
+    # no causal mask: every token attends to every other (past/future, all inputs) except
+    # key-padded ones (model.py forward: src_key_padding_mask only)
+    box(ax, 104, 42, 118, 78, ["Transformer", "3 layers", "d = 768", "12 heads", "bidirectional",
+                               "self-attention", "key-padding", "mask", "pre-norm"], kind="emph",
+        title_n=1)
 
     # ── lane C: fine 20 m path ─────────────────────────────────────────────────────────────
     yc0 = 14.0
@@ -519,11 +537,33 @@ def render() -> None:
     # at <= 1 % bad pixels (_cm_token_mask); fine S2 pools clear pixels only (fine_s2_scene).
     xs2 = px[0] + pw / 2
     path(ax, [(xs2, bus_b), (xs2, 36.5)])                    # S2 L2A -> cloud model
-    box(ax, 1.0, 30.5, 19.5, 36.5, ["SEnSeIv2 cloud mask", "frozen · 7 classes"],
+    box(ax, 1.0, 30.2, 12.2, 36.8, ["SEnSeIv2", "SegFormer-B2", "frozen · 7 cl."],
         kind="frozen", title_n=1)
-    path(ax, [(xs2, 30.5), (xs2, 26.4)])                     # pixel mask -> fine S2
+    path(ax, [(xs2, 30.2), (xs2, 26.4)])                     # pixel mask -> fine S2
     label(ax, xs2 + 1.0, 28.5, "pixel mask", ha="left")
-    path(ax, [(19.5, 33.5), (93, 33.5), (93, 42)])           # token mask -> token sequence
+    x_tm = 12.2
+    if "cm_rgb" in a:                                        # one cloudy scene + its token mask
+        cs, cy0 = 7.4, 29.8
+        path(ax, [(12.2, 33.5), (14.0, 33.5)])
+        image(ax, a["cm_rgb"], 14.0, cy0, cs, cs)
+        path(ax, [(21.4, 33.5), (23.2, 33.5)])
+        image(ax, a["cm_rgb"], 23.2, cy0, cs, cs)
+        rej = np.kron(~a["cm_tok"], np.ones((16, 16), bool))
+        ov = np.zeros(rej.shape + (4,))
+        ov[rej] = (0.30, 0.30, 0.30, 0.8)
+        ax.imshow(ov, extent=(23.2, 23.2 + cs, cy0, cy0 + cs), zorder=4.5,
+                  interpolation="nearest")
+        g = cs / 14
+        for k in range(1, 14):
+            ax.add_line(Line2D([23.2 + k * g] * 2, [cy0, cy0 + cs], color="white", lw=0.2,
+                               zorder=4.6))
+            ax.add_line(Line2D([23.2, 23.2 + cs], [cy0 + k * g] * 2, color="white", lw=0.2,
+                               zorder=4.6))
+        dd = str(a["cm_date"])
+        label(ax, 17.7, 28.7, f"S2 {dd[:4]}-{dd[4:6]}-{dd[6:]}", fs=FS_B - 1)
+        label(ax, 26.9, 28.7, f"kept {int(a['cm_tok'].sum())}/196", fs=FS_B - 1)
+        x_tm = 30.6
+    path(ax, [(x_tm, 33.5), (93, 33.5), (93, 42)])           # token mask -> token sequence
     label(ax, 70, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
     label(ax, 70, 35.0, "→ S2 history · anchor · pyramid")
     # one 3x3 stem per input (model.py stem_s2 / stem_s1 / stem_dem / stem_lulc), then concat
