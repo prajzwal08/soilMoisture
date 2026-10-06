@@ -472,8 +472,25 @@ def render() -> None:
     image(ax, a["s1_vv"][-1][::2, ::2], px[1], yc0, pw, pw, cmap="gray", vmin=0, vmax=1)
     image(ax, a["dem_hs"][::2, ::2], px[2], yc0, pw, pw, cmap="gray")
     image(ax, lulc, px[3], yc0, pw, pw, cmap=cm, norm=BoundaryNorm(np.arange(-.5, 11), 11))
-    for x, s_ in zip(px, ["S2 on D", "S1 on D", "DEM 20 m", "LULC 10 m"]):
-        label(ax, x + pw / 2, 23.8, s_)
+    # name + what dataset.py / model.py do to it before the stem (fine_*_scene, _lulc_20m)
+    for x, s_, n_ in zip(px, ["S2 on D", "S1 on D", "DEM 20 m", "LULC 10 m"],
+                         ["masked 2×2 pool", "linear pool → dB", "asinh(Δh/1 m)/4",
+                          "8-d embedding"]):
+        label(ax, x + pw / 2, 25.4, s_)
+        label(ax, x + pw / 2, 23.7, n_, fs=FS_B - 1, color=FROZEN_EDGE)
+
+    # ── cloud mask: SEnSeIv2 classes -> token mask (history, anchor, pyramid) + pixel mask ──
+    # dataset.py CM_BAD_CLASSES = thin / thick cloud, shadow, nodata; a 160 m token is valid
+    # at <= 1 % bad pixels (_cm_token_mask); fine S2 pools clear pixels only (fine_s2_scene).
+    xs2 = px[0] + pw / 2
+    path(ax, [(xs2, bus_b), (xs2, 36.5)])                    # S2 L2A -> cloud model
+    box(ax, 1.0, 30.5, 19.5, 36.5, ["SEnSeIv2 cloud mask", "frozen · 7 classes"],
+        kind="frozen", title_n=1)
+    path(ax, [(xs2, 30.5), (xs2, 26.4)])                     # pixel mask -> fine S2
+    label(ax, xs2 + 1.0, 28.5, "pixel mask", ha="left")
+    path(ax, [(19.5, 33.5), (93, 33.5), (93, 42)])           # token mask -> token sequence
+    label(ax, 70, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
+    label(ax, 70, 35.0, "→ S2 history · anchor · pyramid")
     bus_c = 11.5
     for x in px:
         path(ax, [(x + pw / 2, yc0), (x + pw / 2, bus_c)], head=False)
@@ -538,7 +555,7 @@ def render() -> None:
 
     # ── legend row ─────────────────────────────────────────────────────────────────────────
     lx, ly = 2, 110.0
-    for kind, txt, dashed in (("frozen", "frozen (TerraMind, offline)", False),
+    for kind, txt, dashed in (("frozen", "frozen (TerraMind, SEnSeIv2; offline)", False),
                               ("train", "trainable (26.7 M parameters)", False),
                               ("plain", "training only", True),
                               ("loss", "supervision", True)):

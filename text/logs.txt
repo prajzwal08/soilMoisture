@@ -8826,3 +8826,11 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Seam discussion: product is one value per 2.24 km tile, so tile steps are resolution, not artifact. Real risk = ERA5
   0.1 deg pixel lines (66 px / 682 tiles). Plan: no change now; on first map compare neighbour jumps across vs within
   ERA5 pixels; if seams, bilinear ERA5 to tile centre (rebuild values18 + re-predict only, check on TWENTE controls).
+
+2026-10-06 — architecture_s48.png (horizontal only): added the missing preprocessing.
+  - SEnSeIv2 cloud mask box (frozen, 7 classes) fed from S2 L2A; token mask (<= 1 % bad px per
+    160 m token, dataset._cm_token_mask) -> token sequence (S2 history, anchor, pyramid);
+    pixel mask -> fine S2 (fine_s2_scene masked 2x2 pool).
+  - fine-input notes: S2 masked 2x2 pool · S1 linear pool -> dB · DEM asinh(dh/1 m)/4
+    (fine_dem_static) · LULC 8-d embedding (model._lulc_20m; NOT one-hot).
+  - render job 27681252 (render only, vertical variant untouched).
