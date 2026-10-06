@@ -216,7 +216,8 @@ def main():
     # ── is it random? ────────────────────────────────────────────────────
     tests = []
     factors = [("igbp_macro", "Land cover"), ("climate", "Climate"), ("texture", "Soil texture"),
-               ("elev_t", "Elevation"), ("slope_t", "Slope"), ("tpi_t", "Valley–ridge\nposition")]
+               ("elev_t", "Elevation"), ("slope_t", "Slope"), ("tpi_t", "Valley–ridge\nposition"),
+               ("network", "Network\n(sensor)")]
     for d in DEPTHS:
         b = f"bias_{d.replace('-', '_')}"
         for col, lab in factors:
@@ -254,6 +255,7 @@ def main():
     ax.text(0.0, 1.02, f"({next(letter)})", transform=ax.transAxes, ha="left", va="bottom")
 
     # note under the figure (user 2026-10-06): how every category is defined
+    nw = t[(t.factor == "Network (sensor)") & (t.depth == "0-10")].iloc[0]
     e, s_, tp = edges["elev_m"], edges["slope_deg"], edges["tpi_m"]
     grp = {g: ", ".join(sorted(set(present[present.map(texture_group) == g]))) for g in TX_ORDER}
     note = [
@@ -267,7 +269,8 @@ def main():
         f"Slope (steepness over ±35 m) Flat < {s_[1]:.1f}°, Steep > {s_[2]:.1f}°; "
         f"Valley–ridge = station height minus mean height within 500 m, Valley < {tp[1]:.1f} m, Ridge > {tp[2]:+.1f} m.",
         "(g) Share of the station-to-station bias variance explained by each factor; dashed = 95th percentile of 2000 random "
-        "shuffles of the labels; * = above it (none is).",
+        "shuffles of the labels; * = above it. Groups with fewer than 3 stations are left out of the test "
+        f"(Network at 0-10 cm: {nw.groups} of {ps.network.nunique()} networks, {nw.n} of {len(ps)} stations).",
     ]
     fig.text(0.04, 0.012, "\n".join(note), ha="left", va="bottom", fontsize=10.5, linespacing=1.45,
              wrap=True)
