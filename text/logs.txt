@@ -8990,3 +8990,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     plot_textbook_sm_signals.py (idealised curves, not data): (a) spectra dry/wet soil, green/stressed veg + S2 B4/B8/B11/B12,
     water bands; (b) C-band VV vs SM bare/grass/forest; (c) idealised response after rain (SM, VV, SWIR same day; NDMI days;
     NDVI weeks). Jobs 27684395 (first render), 27684406 (smooth veg spectrum, label fixes) -> figures/textbook/sm_signals.{png,pdf}
+  textbook fig v2 (user): all 13 S2 bands labelled; VV-only panel replaced by (b) VV/VH vs SM and (c) VV/VH vs vegetation
+    water content with in-panel explanations; NDVI/NDMI formula lines replaced by in-panel band explanations (visible,
+    NIR->NDVI, SWIR->NDMI, atmosphere bands). Jobs 27684467, 27684472.
