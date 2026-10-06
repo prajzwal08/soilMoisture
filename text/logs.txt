@@ -8530,3 +8530,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   (irrigated stays ~0.32-0.35, rainfed falls to ~0.23) -> ROOT ZONE carries the largest, smoothest signal.
   Irrigated surface swings 0.20 <-> 0.32 within days: one S1 snapshot can land on either.
   Cosmetic: Ne1 Jan 0-10 (frozen) dips below the y-axis floor.
+  §70 smoke 27652196: GPU half PASS — (1) L0 = eval_final TxSON readout, 45,054/45,054 rows, max |diff| 3.1e-4;
+    (2) block 1 identity, max |diff| 0; (3) block 2 (40 m) map RMS diff 0.0082 vs map SD 0.0289, block 112 0.0349 -> inputs DO reach the map.
+    2,503 samples/pass in 0.1 min. Analysis CRASHED in Test B (groupby.apply on one station collapsed to a Series) -> fixed (explicit loop).
+    Tests C + control not yet exercised. Within-tile Test A on one tile (CR200-18, 0-10): level r 0.02 (500-1000 m), -0.56 (1-1.6 km); daily Δ r 0.06-0.10.

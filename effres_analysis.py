@@ -325,10 +325,12 @@ def main():
             s = sm[sm["depth"] == dep]; r = rb[rb["depth"] == dep]
             spread = r.groupby("idx")["pred0"].transform(lambda x: x - x.mean())
             c = r[r["is_centre"]].merge(obs, on=["station", "date", "depth"]).dropna(subset=["obs"])
-            acc = c.groupby("station").apply(
-                lambda g: pd.Series(dict(ub_b=ubrmse(g["pred"].to_numpy(), g["obs"].to_numpy()),
-                                         ub_0=ubrmse(g["pred0"].to_numpy(), g["obs"].to_numpy())))
-                if len(g) >= MIN_DAYS else pd.Series(dict(ub_b=np.nan, ub_0=np.nan)))
+            # explicit loop: groupby.apply collapses to a Series when there is one station
+            acc = pd.DataFrame(
+                [dict(ub_b=ubrmse(g["pred"].to_numpy(), g["obs"].to_numpy()),
+                      ub_0=ubrmse(g["pred0"].to_numpy(), g["obs"].to_numpy()))
+                 for _, g in c.groupby("station") if len(g) >= MIN_DAYS],
+                columns=["ub_b", "ub_0"])
             rows_b.append(dict(
                 depth=dep, block=b, L_m=b * PX_M,
                 S_map=float(np.median(s["rms_diff"] / s["sd_L0"].clip(lower=1e-6))),
