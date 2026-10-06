@@ -137,31 +137,54 @@ def t4_le(le):
 
 
 def sample_figure(sm, rain, irr, year):
+    """One row per site: SM at three depths (left axis) and, hanging from the
+    top (right axis, inverted), the site's tower rain (black) and irrigation
+    events (filled = over the towers, hollow = log says not over the towers)."""
     plot_style_bw.apply(globals(), "paper")
     FIG_DIR.mkdir(parents=True, exist_ok=True)
-    lo, hi = f"{year}-04-01", f"{year}-10-31"
-    fig, axes = plt.subplots(4, 1, figsize=(8, 9), sharex=True,
-                             gridspec_kw={"height_ratios": [0.6, 1, 1, 1]})
-    p = rain[RAINFED].loc[lo:hi]
-    axes[0].bar(p.index, p.values, width=1.0, color="black")
-    axes[0].set_ylabel("Rain (mm d$^{-1}$)")
-    for s in ["US-Ne1", "US-Ne2"]:
+    lo, hi = f"{year}-01-01", f"{year}-12-31"
+    depth_col = {"0-10": plot_style_bw.BLUE, "10-30": plot_style_bw.GREEN,
+                 "30-100": plot_style_bw.RED}
+
+    sm_all = pd.concat([sm[s].loc[lo:hi] for s in SITES]).stack()
+    y_lo, y_hi = np.nanpercentile(sm_all, 0.5) - 0.02, np.nanpercentile(sm_all, 99.5) + 0.12
+    p_max = max(rain[s].loc[lo:hi].max() for s in SITES if rain[s] is not None)
+    i_max = max([irr[s]["amount_in"].max() * 25.4 for s in SITES if len(irr[s])] + [0])
+    w_max = 2.5 * max(p_max, i_max)                     # bars use the top ~40 %
+
+    fig, axes = plt.subplots(3, 1, figsize=(9, 9), sharex=True)
+    for ax, (s, name), lab in zip(axes, SITES.items(), ["(a)", "(b)", "(c)"]):
+        for b in BINS:
+            if b in sm[s]:
+                v = sm[s][b].loc[lo:hi]
+                ax.plot(v.index, v.values, color=depth_col[b], lw=1.6, label=f"{b} cm")
+        ax.set_ylim(y_lo, y_hi)
+        ax.set_ylabel("SM (m$^3$ m$^{-3}$)")
+        ax.text(0.01, 0.04, f"{lab} {name}", transform=ax.transAxes, va="bottom")
+
+        ax2 = ax.twinx()
+        if rain[s] is not None:
+            p = rain[s].loc[lo:hi]
+            ax2.bar(p.index, p.values, width=1.0, color="black", label="Rain")
         e = irr[s]
         if len(e):
             e = e[(e["date_start"] >= lo) & (e["date_start"] <= hi)]
             for _, r in e.iterrows():
-                axes[0].axvline(r["date_start"], color=SITE_COLORS[s], lw=1.6,
-                                ls=":" if r["not_over_tower"] else "-")
-    for ax, b, lab in zip(axes[1:], BINS, ["(b)", "(c)", "(d)"]):
-        for s, name in SITES.items():
-            if b in sm[s]:
-                v = sm[s][b].loc[lo:hi]
-                ax.plot(v.index, v.values, color=SITE_COLORS[s], lw=1.6, label=name)
-        ax.set_ylabel(f"SM {b} cm (m$^3$ m$^{{-3}}$)")
-        ax.text(0.01, 0.92, lab, transform=ax.transAxes, va="top")
-    axes[0].text(0.01, 0.92, "(a)", transform=axes[0].transAxes, va="top")
-    axes[1].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
-    fig.align_ylabels(axes)
+                mm = r["amount_in"] * 25.4 if pd.notna(r["amount_in"]) else 0.3 * w_max
+                hollow = bool(r["not_over_tower"])
+                ax2.bar(r["date_start"], mm, width=3.0, color="white" if hollow else "0.55",
+                        edgecolor="black", lw=1.0,
+                        label="Irrigation (not over towers)" if hollow else "Irrigation")
+        ax2.set_ylim(w_max, 0)
+        ax2.set_ylabel("Rain, irrigation (mm d$^{-1}$)")
+
+    hs, ls = map(list, axes[0].get_legend_handles_labels())
+    for ax2 in [a for a in fig.axes if a not in axes]:
+        for h, l in zip(*ax2.get_legend_handles_labels()):
+            if l not in ls:
+                hs.append(h)
+                ls.append(l)
+    axes[0].legend(hs, ls, loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3, frameon=False)
     fig.tight_layout()
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_sample_{year}.{ext}", dpi=600)
