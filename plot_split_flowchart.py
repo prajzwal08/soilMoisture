@@ -35,8 +35,12 @@ def box(ax, x, y, w, h, text, fc="white", tc="black", lw=1.2):
     ax.text(x, y, text, ha="center", va="center", color=tc, zorder=3, linespacing=1.35)
 
 
+def line(ax, xs, ys):
+    ax.plot(xs, ys, color="black", lw=1.3, zorder=1, solid_capstyle="butt")
+
+
 def arrow(ax, x0, y0, x1, y1):
-    ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), arrowstyle="-|>", mutation_scale=16,
+    ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), arrowstyle="-|>", mutation_scale=22,
                                  lw=1.3, color="black", zorder=1, shrinkA=0, shrinkB=0))
 
 
@@ -63,7 +67,7 @@ def main():
 
     # (a) quality control, per station (preprocessing_ISMN_soilMoisture.py; ICOS / AmeriFlux use the
     #     same pipeline with their own QC flag, preprocessing_icos.py / preprocessing_ameriflux.py)
-    XL, WL, HL = 0.205, 0.39, 0.048
+    XL, WL, HL = 0.195, 0.37, 0.048
     qc = [
         "Raw sub-daily soil moisture\n(ISMN hourly; ICOS and AmeriFlux half-hourly)",
         "Keep good readings only\n(ISMN flag G or D*; ICOS / AmeriFlux QC = 0, measured)",
@@ -84,7 +88,7 @@ def main():
     ax.text(XL - WL / 2, 0.993, "(a)   Daily soil moisture, each station", ha="left", va="bottom")
 
     # (b) assigning stations to sets (create_evaluation_splits.py + runbook §47)
-    XR, WR = 0.705, 0.53
+    XR, WR = 0.71, 0.52
     steps = [
         f"Group stations closer than {COLOC_THRESHOLD_KM:g} km into one location group\n"
         "(nearby sensors always end up in the same set)",
@@ -107,7 +111,7 @@ def main():
     ax.text(XR - WR / 2, 0.993, "(b)   Assigning stations to sets", ha="left", va="bottom")
     # (a) feeds (b): right from the last QC box, up the gap, into the first split box
     xm = (XL + WL / 2 + XR - WR / 2) / 2
-    ax.plot([XL + WL / 2, xm, xm], [yl[-1], yl[-1], ys[0]], color="black", lw=1.3, zorder=1)
+    line(ax, [XL + WL / 2, xm, xm], [yl[-1], yl[-1], ys[0]])
     arrow(ax, xm, ys[0], XR - WR / 2, ys[0])
     ys, hs = [ys[-1]], [hs[-1]]                # the station-split row hangs off the last (b) box
     xsrc = XR
@@ -117,8 +121,11 @@ def main():
     xs = [0.17, 0.5, 0.83]
     final = [("Train", n.get("train", 0), GREY, "white"), ("Validation", n.get("val", 0), LBLUE, "black"),
              ("OOS", n.get("oos", 0), BLUE, "white")]
+    YB1 = 0.395                                         # horizontal bus under (b)
+    line(ax, [xsrc, xsrc], [ys[-1] - hs[-1] / 2, YB1])
+    line(ax, [xs[0], xs[-1]], [YB1, YB1])
     for x, (lab, k, fc, tc) in zip(xs, final):
-        arrow(ax, xsrc, ys[-1] - hs[-1] / 2, x, yS + hS / 2)
+        arrow(ax, x, YB1, x, yS + hS / 2)                 # straight down from the bus
         box(ax, x, yS, wS, hS, f"{lab} stations\n{k}", fc=fc, tc=tc, lw=1.5)
 
     # time split
@@ -130,9 +137,11 @@ def main():
             f"OOST\nnew stations,\nnew years\n2023–2025\n{len(ev['oost'])} stations"]
     cpre = [(GREY, "white"), (LBLUE, "black"), (BLUE, "white")]
     cpost = [(LBLUE, "black"), (LBLUE, "black"), (ORANGE, "white")]
+    YB2 = 0.235
     for x, p0, p1, c0, c1 in zip(xs, pre, post, cpre, cpost):
+        line(ax, [x, x], [yS - hS / 2, YB2]); line(ax, [x - 0.072, x + 0.072], [YB2, YB2])
         for dx, t, (fc, tc) in [(-0.072, p0, c0), (0.072, p1, c1)]:
-            arrow(ax, x, yS - hS / 2, x + dx, yT + hT / 2)
+            arrow(ax, x + dx, YB2, x + dx, yT + hT / 2)        # straight down from the small bus
             box(ax, x + dx, yT, wT, hT, t, fc=fc, tc=tc)
     ax.text(0.5, 0.035, f"Bottom row: each set split in time at {cut}. OOT and OOST only use stations with at least "
             f"{MIN_POST_CUT_DAYS} observed days after the cut.", ha="center", va="center")

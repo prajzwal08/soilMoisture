@@ -8469,3 +8469,4 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     layers >=95 % complete; >=1095 days; climatological gap-fill flagged, training/eval on observed days only) feeding
     (b). FIXED wording: base draw is stratified by climate x land cover only (create_evaluation_splits.py:181,217);
     elevation band only enters the §47.4 val top-up. Jobs 27648838, 27648993.
+  split_flowchart: all connectors orthogonal (straight down / across buses), larger arrowheads (job 27649063).
