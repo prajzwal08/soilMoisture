@@ -8820,3 +8820,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   cm 3/3, raw zarr .complete 3/3, era5/twsa/sif/soil 3/3, token masks 3/3 (17,879 masked patches, 0 missing, 0 errors),
   values18 splice 3 ok, §48 cache 3/3 OK (S2 714 / S1 asc 2,738 / desc 2,793 scenes, 0 nonfinite, 0 s2_no_cm), isolation OK.
   Next: full tokens (688 tiles) -> predict; each needs OK.
+
+2026-10-06 §68.7 FULL TOKENS submitted (user "ok lets go"; 688 tiles, afterok chain, drivers already done so no driver deps):
+  cm   27681280 (gpu_a100 x8 array, 2 h)  ->  prep 27681281 (rome, 6 h)  ->  tok 27681282 (gpu_h100 x16 array, 8 h)  ->  post 27681284 (rome, 6 h)
+  Seam discussion: product is one value per 2.24 km tile, so tile steps are resolution, not artifact. Real risk = ERA5
+  0.1 deg pixel lines (66 px / 682 tiles). Plan: no change now; on first map compare neighbour jumps across vs within
+  ERA5 pixels; if seams, bilinear ERA5 to tile centre (rebuild values18 + re-predict only, check on TWENTE controls).
