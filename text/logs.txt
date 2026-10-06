@@ -8792,3 +8792,18 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 §68.7 TOKENS SMOKE submitted (user "go on"): job 27665785 (nl_tokens.sh smoke, gpu_h100 1 GPU, 16 CPU, 120G, 6 h)
   3 tiles from /gpfs/scratch1/shared/pkhanal/nl/data_smoke/station_splits.csv: C_ITCSM-07b, C_ITCSM-08b (TWENTE controls), T076_092 (grid).
   Steps: cloud mask -> cloudy filter -> raw zarr -> TerraMind tokens -> cm-fill -> token masks -> values18 splice -> §48 cache; isolation check at end.
+
+2026-10-06  architecture figure: 365-day input timeline + vertical-input variant
+  - plot_architecture_s48.py: timeline band (S2/S1 asc/desc/ERA5/SIF/TWSA at real dates on
+    [D-364, D], age 0-364 row, anchor marker, "not loaded" stub), ERA5-Land 18-column list,
+    token box now "+ age 0-364 · DOY". Prep selects history with dataset._window_ints /
+    _candidates / select_anchor rule (MAX_S2 60, MAX_S1 40).
+  - NEW plot_architecture_s48_vertical.py -> architecture_s48_vertical.{png,pdf}: inputs as one
+    vertical column (image + 365-d ticks per row) -> encoders -> one token sequence; rest as before.
+  - original figure kept as figures/architecture_s48/architecture_s48_v0_original.{png,pdf}
+  - job 27666011 (prep+render both): window 20180929-20190928, S2 30, S1 30 (desc 3),
+    anchor S2 20190927, ERA5 365, SIF 50, TWSA 12. OK.
+  - FOUND: SIF = last MAX_SIF=50 values in the window (load_sif_rolling), and SIF is near-daily,
+    so the model sees only ~the last 50 days of SIF, not 365. Figure is faithful to that.
+  - FIX (not yet re-run): prep's TWSA ignored the 45-d availability rule and mid-month doys;
+    prep now calls dataset.load_sif_rolling / load_twsa_rolling directly.
