@@ -8671,3 +8671,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     S1 differs more and its dissimilarity tracks the observed SM difference (n=9, weak evidence) but the model does not use it.
   §69.5 NDVI diff vs SM diff 2019, clear scenes only (cloud clear >= 0.99, no snow B02 < 1500) (user asked): job 27657914
   27657914 snow rule (B02 >= 1500) flagged bare soil as snow (36 scenes); switched to NDSI > 0.4 & B03 > 0.1, rerun: job 27657971
+  27657971 DONE: NDVI vs SM, NDSI snow test -> 5 snow scenes, 51 clear used. dNDVI Ne1-Ne2 tiny (Jun-Sep mean +0.003, |max| 0.043).
+    Spearman dNDVI vs dSM: obs 0-10 +0.10, 10-30 -0.21 (n 51); model own +0.51 / +0.25, same tile +0.32 / +0.26.
+  READ: NDVI difference does NOT explain the observed SM difference, but the MODEL's difference follows NDVI -> model contrast is vegetation.
+  §69.5 embedding rerun, clear S2 only + S1 unfrozen only, + scatter (1-cos) vs |dSM| (user: only clear, same for S1): job 27658107

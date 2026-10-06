@@ -13,7 +13,10 @@
 # Blocks with any invalid token (cloud for S2, token_mask for S1) -> NaN.
 # Then: Spearman of (1 - cos) with |Ne1 - Ne2| SM on the acquisition day, observed and model.
 # Figures: mead_embed_cos_<year>  time series (S2, S1, |dSM| obs/model, P)
+#          mead_embed_scatter_<year> (1 - cos) vs |dSM|, observed and model
 #          mead_embed_matrix_<year>  date x date cosine (Ne1-Ne1, Ne2-Ne2, Ne1-Ne2) per sensor
+# Dates: S2 = clear scenes from plot_mead_ndvi_sm.py (cloud >= 0.99 clear, no snow; run it first),
+#        S1 = soil unfrozen (ts > 0) at both sites.
 #
 # Usage:
 #   python plot_mead_embed.py [--year 2019]
@@ -86,6 +89,9 @@ def main():
     df = pd.read_parquet(PRED)
     df["date"] = pd.to_datetime(df["date"])
     obs = {k: observed(v)[0] for k, v in ST.items()}
+    tsoil = {k: observed(v)[1] for k, v in ST.items()}
+    f = ROOT / "pred" / f"ndvi_sm_diff_{y}.csv"           # written by plot_mead_ndvi_sm.py
+    s2_ok = pd.DatetimeIndex(pd.read_csv(f, index_col=0, parse_dates=True).index)
     own = {k: predicted(df, v, True) for k, v in ST.items()}
     w = df[df["tile"] == ST["Ne1"]].pivot_table(index=["date", "depth"], columns="station", values="pred")
     same = (w[ST["Ne1"]] - w[ST["Ne2"]]).unstack("depth")
@@ -106,6 +112,16 @@ def main():
         b_ne2 = block(t2, v2, BLK["ne1"])[i2]                 # Ne2 at its own tile centre
         r = pd.DataFrame({"same_tile": cos(a_ne1, a_ne2), "tile_centre": cos(a_ne1, b_ne2),
                           "ref_west": cos(a_ne1, a_ref)}, index=common)
+        if sensor == "S2":                               # clear: cloud-free >= 0.99, no snow
+            keep = common.isin(s2_ok)
+        else:                                            # S1: drop frozen soil (ts <= 0 at either site)
+            keep = np.ones(len(common), bool)
+            for k in ST:
+                keep &= (tsoil[k].reindex(common) > 0).values
+        print(f"\n{sensor} {y}: keep {int(keep.sum())} of {len(common)} shared dates "
+              f"({'clear S2 from ' + f.name if sensor == 'S2' else 'unfrozen soil at both sites'})")
+        r = r[keep]
+        common, a_ne1, b_ne2 = common[keep], a_ne1[keep], b_ne2[keep]
         for b in BINS:
             r[f"obs_{b}"] = (obs["Ne1"][b] - obs["Ne2"][b]).reindex(common).values
             r[f"own_{b}"] = (own["Ne1"][b] - own["Ne2"][b]).reindex(common).values
@@ -183,6 +199,35 @@ def main():
     for ext in ("png", "pdf"):
         fig.savefig(FIG_DIR / f"mead_embed_cos_{y}.{ext}", dpi=600)
     print(f"figure: {FIG_DIR}/mead_embed_cos_{y}.png")
+
+    # --- scatter: embedding difference vs SM difference (filtered dates) ---
+    fig, ax = plt.subplots(2, 2, figsize=(8, 7.5))
+    for k, sensor in enumerate(("S2", "S1")):
+        r = res[sensor]
+        js = (r.index.month >= 6) & (r.index.month <= 9)
+        for j, b in enumerate(BINS):
+            a = ax[k, j]
+            x = 1 - r["tile_centre"]
+            txt = []
+            for lab, col, mk, name in (("obs", "black", "o", "observed"),
+                                       ("own", PRED_COLOR, "^", "model")):
+                z = r[f"{lab}_{b}"].abs()
+                for sel, fill in ((js, col), (~js, "white")):
+                    a.plot(x[sel], z[sel], mk, ms=5, mfc=fill, mec=col, mew=0.9,
+                           label=f"{name}, {'Jun-Sep' if fill == col else 'Oct-May'}")
+                ok = np.isfinite(x.values) & np.isfinite(z.values)
+                txt.append(f"{name} {spearmanr(x.values[ok], z.values[ok])[0]:+.2f}")
+            a.text(0.03, 0.97, f"({'abcd'[2 * k + j]}) {sensor}, {b} cm  (n {len(r)})\nSpearman "
+                   + ", ".join(txt), transform=a.transAxes, va="top", fontsize="small",
+                   bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.0))
+            if j == 0:
+                a.set_ylabel("|$\\Delta$SM| Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
+            a.set_xlabel(f"1 $-$ cosine, {sensor} L12 (tile centres)")
+    ax[0, 0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, frameon=False)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(FIG_DIR / f"mead_embed_scatter_{y}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_embed_scatter_{y}.png")
 
     # --- date x date matrices ---
     fig, ax = plt.subplots(2, 3, figsize=(12, 8))
