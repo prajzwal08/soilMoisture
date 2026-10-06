@@ -8845,3 +8845,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     which reads as MTM (TerraMind's pretraining; this model reconstructs nothing).
   - SIF panel zoomed to its last-50 span (was a smudge on a 365-d axis); TWSA monthly points
     joined, last 45 d shaded (not released).
+
+2026-10-06 — architecture_s48.png render 27681731: token-sequence bars now HIGHLIGHT random
+  token dropout (orange ticks on the ERA5 bar, one illustrative p=0.15 draw, 53 days) instead of
+  attended/excluded; empty slots (no data, 161) plain light grey. Key: "token dropout 53" (orange),
+  "empty slot 161".

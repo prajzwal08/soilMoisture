@@ -466,15 +466,13 @@ def render() -> None:
     # one illustrative training draw of ERA5 token dropout: 15 % of the filled days
     # (dataset.py: torch.rand(365) < 0.15 -> doy 0 -> key-padded)
     era5_drop = np.flatnonzero(np.random.default_rng(0).random(filled["ERA5"]) < 0.15)
-    n_pad = sum(n - filled.get(name, n) for name, n, _ in seq) + len(era5_drop)
-    def hatched(x0, x1, yb):
-        ax.add_patch(Rectangle((x0, yb), x1 - x0, 0.4, fc="white", ec=FROZEN_EDGE,
-                               hatch="//////", lw=0.4, zorder=3))
+    n_empty = sum(n - filled.get(name, n) for name, n, _ in seq)
+    EMPTY = "#D9D9D9"
     def slots(x0, x1, yb, frac):
         xm = x0 + (x1 - x0) * frac
         ax.add_patch(Rectangle((x0, yb), xm - x0, 0.4, fc=DBLUE, ec="none", zorder=3))
         if frac < 1:
-            hatched(xm, x1, yb)
+            ax.add_patch(Rectangle((xm, yb), x1 - xm, 0.4, fc=EMPTY, ec="none", zorder=3))
     y = 73.6
     for name, n, kind in seq:
         fc = FROZEN_FILL if kind == "frozen" else LBLUE
@@ -482,23 +480,23 @@ def render() -> None:
         ax.text(89.2, y, name, ha="left", va="center", fontsize=FS_B, zorder=3)
         ax.text(99.3, y, f"{n}", ha="right", va="center", fontsize=FS_B, zorder=3)
         slots(89.2, 99.3, y - 1.35, filled.get(name, n) / n)
-        if name == "ERA5":                                   # dropped days, in place
-            ax.add_patch(Rectangle((89.2, y - 1.35), 99.3 - 89.2, 0.4, fill=False,
-                                   ec=FROZEN_EDGE, lw=0.4, zorder=3.5))
+        if name == "ERA5":                    # randomly dropped days, in place, widened to show
             for i in era5_drop:
                 xd = 89.2 + (99.3 - 89.2) * i / n
-                ax.add_patch(Rectangle((xd, y - 1.35), (99.3 - 89.2) / n, 0.4, fc="white",
+                ax.add_patch(Rectangle((xd - 0.03, y - 1.55), 0.08, 0.8, fc=ORANGE,
                                        ec="none", zorder=3.2))
         y -= 2.55
     ax.add_line(Line2D([87, 99.3], [y + 1.1] * 2, color="black", lw=0.8, zorder=3))
     ax.text(99.3, y - 0.4, "1038", ha="right", va="center", fontsize=FS_B, zorder=3)
     ax.text(89.2, y - 0.4, "× 768", ha="left", va="center", fontsize=FS_B, zorder=3)
-    # key: attended vs key-padded (masked out of attention)
-    slots(87.0, 89.0, y - 2.4, 1.0)
-    ax.text(89.4, y - 2.2, f"attended {1038 - n_pad}", ha="left", va="center",
-            fontsize=FS_B - 1, zorder=3)
+    # key: random token dropout (training) vs empty slot (no data); both key-padded
+    for k in range(4):
+        ax.add_patch(Rectangle((87.2 + k * 0.5, y - 2.6), 0.08, 0.8, fc=ORANGE, ec="none",
+                               zorder=3))
+    ax.text(89.4, y - 2.2, f"token dropout {len(era5_drop)}", ha="left", va="center",
+            fontsize=FS_B - 1, zorder=3, color=ORANGE)
     slots(87.0, 89.0, y - 4.0, 0.0)
-    ax.text(89.4, y - 3.8, f"excluded {n_pad}", ha="left", va="center",
+    ax.text(89.4, y - 3.8, f"empty slot {n_empty}", ha="left", va="center",
             fontsize=FS_B - 1, zorder=3)
     label(ax, 93, 44.9, "+ age 0–364 · DOY ·", fs=FS_B)
     label(ax, 93, 43.2, "modality · position", fs=FS_B)
