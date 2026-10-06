@@ -8554,3 +8554,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
       anomaly-map variance retained 0.64 at 160 m, 0.35 at 280 m, 0.04 at 1.12 km.
     Fixes: CIs need >= 5 tiles (1-tile CI was a point and declared L_A = 438 m and "worse" at 40 m);
       L_C = largest block not significantly worse than 20 m (no prefix rule: noise averaging makes it non-monotone).
+  §69.3 Ne1+Ne2 pixel readout SUBMITTED (user "lets ... predict"): job 27653186, gpu_h100 1 GPU <=1 h
