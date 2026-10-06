@@ -405,7 +405,7 @@ def render() -> None:
         ax.text(7.2, y0 + 1.6, name, ha="right", va="center", fontsize=FS_B, zorder=6)
         ax.text(7.2, y0 + 0.45, "min·mean·max" if isinstance(col, tuple) else "daily sum",
                 ha="right", va="center", fontsize=7, color=FROZEN_EDGE, zorder=6)
-    label(ax, 13.9, 85.6, "ERA5-Land · 365 d × 18")
+    label(ax, 13.9, 85.0, "ERA5-Land · 365 d × 18")
     # SIF: the last 50 values span only ~7 weeks, so zoom to them (on a 365-d axis they are a
     # smudge at the right edge); TWSA: monthly points joined, last 45 d shaded = not released
     o = np.argsort(-a["sif_age"])
@@ -413,7 +413,7 @@ def render() -> None:
     t.plot(-a["sif_age"][o], a["sif"][o], "-o", ms=1.6, lw=0.7, color="#3776AB", mfc=DBLUE,
            mec="none")
     t.set_xlim(-a["sif_age"].max() - 2, 1)
-    label(ax, 26.75, 85.6, "SIF · last 50")
+    label(ax, 26.75, 85.0, "SIF · last 50")
     o = np.argsort(-a["twsa_age"])
     t = inset(fig, 22.5, 64, 8.5, 9)
     t.axvspan(-45, 0, color="#EDEDED", lw=0)
@@ -646,13 +646,26 @@ def render() -> None:
     box(ax, 156, 67, 172, 78, ["Huber loss", "pixel (56, 56)", "vs ISMN", "training only"],
         kind="loss", dashed=True, title_n=1)
 
+    # ── input frames: every model input sits inside a thick black frame ──────────────────
+    def frame(x0, y0, x1, y1):
+        ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0, fill=False, ec="black",
+                                    lw=2.4, boxstyle="round,pad=0,rounding_size=1.0",
+                                    zorder=0.5))
+    frame(0.6, 63.3, 43.0, 86.45)        # lane A: ERA5-Land, SIF, TWSA, soil
+    frame(0.6, 43.4, 41.4, 56.0)         # lane B: S2 / S1 history, DEM, LULC
+    frame(0.6, 13.0, 41.4, 26.3)         # lane C: fine inputs on day D
+
     # ── legend row ─────────────────────────────────────────────────────────────────────────
     lx, ly = 2, 110.0
-    for kind, txt, dashed in (("frozen", "frozen (TerraMind, SEnSeIv2; offline)", False),
+    for kind, txt, dashed in (("input", "input", False),
+                              ("frozen", "frozen (TerraMind, SEnSeIv2; offline)", False),
                               ("train", "trainable (26.7 M parameters)", False),
                               ("plain", "training only", True),
                               ("loss", "supervision", True)):
-        box(ax, lx, ly, lx + 3.4, ly + 2.4, None, kind=kind, dashed=dashed)
+        if kind == "input":
+            frame(lx, ly, lx + 3.4, ly + 2.4)
+        else:
+            box(ax, lx, ly, lx + 3.4, ly + 2.4, None, kind=kind, dashed=dashed)
         ax.text(lx + 4.2, ly + 1.2, txt, ha="left", va="center", fontsize=FS_B)
         lx += 4.2 + 0.62 * len(txt) + 4
     ax.text(W - 2, ly + 1.2, f"TxSON CR200-18 · day D = {a['day']} · 2.24 km tile",

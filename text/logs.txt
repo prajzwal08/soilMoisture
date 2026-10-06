@@ -8907,3 +8907,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   - ERA5 "inputs, 18 per day" text block removed; per-row statistic (min·mean·max / daily sum)
     under each sparkline name; sparklines shifted right to fit.
   - assets backups: assets.npz.bak_20261006, assets.npz.bak_20261006b.
+
+2026-10-06 — architecture_s48.png renders 27682708 + 27682717: thick black rounded frames around the three input groups (drivers; S2/S1/DEM/LULC history; fine inputs on D) + "input" legend entry; lane-A headers lowered to clear the frame.
