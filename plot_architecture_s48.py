@@ -298,7 +298,7 @@ def label(ax, x, y, s, **kw):
     ax.text(x, y, s, va="center", fontsize=kw.pop("fs", FS_B), zorder=6, **kw)
 
 
-def open_gaps(fig, ax, s0=86.35, d0=7.0, s1=58.75, d1=4.0, s2=26.9, d2=7.0):
+def open_gaps(fig, ax, s0=86.35, d0=7.0, s1=58.75, d1=4.0, s2=27.6, d2=7.0):
     """Open blank bands between the three lanes after everything is drawn.
 
     Three sections, per the user: upper = the 365-day timeline band (above s0, up d0 + d1),
@@ -631,11 +631,18 @@ def render() -> None:
     image(ax, np.nan_to_num(rel), px[2], yc0, pw, pw, cmap="RdBu_r", vmin=-lim, vmax=lim)
     image(ax, lulc, px[3], yc0, pw, pw, cmap=cm, norm=BoundaryNorm(np.arange(-.5, 11), 11))
     # name + what dataset.py / model.py do to it before the stem (fine_*_scene, _lulc_20m)
-    for x, s_, n_ in zip(px, ["S2 on D", "S1 on D", "DEM 20 m", "LULC 10 m"],
+    # NOT "on D": dataset.build_fine takes the most recent S2 / S1 scene on or before D (its
+    # age is an input channel); LULC = latest year before D's year. Ages from the shown scenes.
+    Dd = datetime.strptime(str(a["day"]), "%Y-%m-%d")
+    age2 = (Dd - _ymd(a["s2_dates"][-1])).days
+    age1 = (Dd - _ymd(a["s1_dates"][-1])).days
+    for x, s_, n_ in zip(px, [f"S2 · D − {age2} d", f"S1 · D − {age1} d", "DEM · static",
+                              f"LULC · {int(a['lulc_year'])}"],
                          ["masked 2×2 pool", "linear pool → dB", "asinh(Δh/1 m)/4",
                           "8-d embedding"]):
         label(ax, x + pw / 2, 25.4, s_)
         label(ax, x + pw / 2, 23.7, n_, fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 23.0, 27.3, "fine 20 m path: most recent scene on or before D", fs=FS_B - 1)
 
     # ── cloud mask: SEnSeIv2 classes -> token mask (history, anchor, pyramid) + pixel mask ──
     # dataset.py CM_BAD_CLASSES = thin / thick cloud, shadow, nodata; a 160 m token is valid

@@ -8941,3 +8941,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
       Cross-tile 1.6-50 km: level and daily-Δ r ~0, CIs span 0.
     VERDICT: map CONTAINS structure down to ~250 m (token grid) and the inputs drive it, but it is not CORRECT below the tile:
       L_eff (0-10) = 2240 m = whole tile. Within-tile detail is texture, not skill.
+
+2026-10-06 — architecture_s48.png renders 27682979/27683025/27683168: fine lane no longer says "on D" (build_fine takes the most recent S2/S1 scene on or before D): labels "S2 · D − 1 d", "S1 · D − 11 d", "DEM · static", "LULC · 2018" (ages computed from assets), caption "fine 20 m path: most recent scene on or before D"; lower gap split moved 26.9 -> 27.6 so the caption sits with the fine lane.
