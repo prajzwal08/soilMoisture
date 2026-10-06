@@ -141,6 +141,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zoom", type=int, nargs="+", default=[2019, 2020])
     ap.add_argument("--diff-only", action="store_true", help="only the Ne1 - Ne2 figures")
+    ap.add_argument("--per-year", action="store_true", help="Ne1 - Ne2 figure per year 2017-2024")
     args = ap.parse_args()
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -173,8 +174,12 @@ def main():
     if not args.diff_only:
         figure(obs, own, off, "2017-01-01", "2024-12-31", "full")
         figure(obs, own, off, lo, hi, zt)
-    diff_figure(obs, own, df, "2017-01-01", "2024-12-31", "full")
-    diff_figure(obs, own, df, lo, hi, zt)
+    if args.per_year:                                   # one Ne1 - Ne2 figure per year
+        for y in range(2017, 2025):
+            diff_figure(obs, own, df, f"{y}-01-01", f"{y}-12-31", str(y))
+    else:
+        diff_figure(obs, own, df, "2017-01-01", "2024-12-31", "full")
+        diff_figure(obs, own, df, lo, hi, zt)
 
 
 if __name__ == "__main__":
