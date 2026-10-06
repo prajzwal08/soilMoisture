@@ -8947,3 +8947,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 2026-10-06 — architecture_s48.png render 27683220: orange recency badges "D − 1 d" (S2) / "D − 11 d" (S1) on the fine images (same orange as the latest-clear-scene anchor marker); names "S2 · latest", "S1 · latest".
 
 2026-10-06 — architecture_s48.png render 27683228: removed the "fine 20 m path: most recent scene on or before D" caption (user); badges carry it.
+  §70 plain-language explainer (user asked for a PDF for a non-specialist): text/effres_explainer.tex -> text/effres_explainer.pdf (5 pages)
+    teaching figs plot_effres_explainer.py (real tile CR200-18 mean/day/anomaly, toy variograms, 1-D Nyquist sketch) -> figures/effres/explainer/;
+    built by slurm/effres_explainer.sh, jobs 27683297 + 27683470 (caption fix).
