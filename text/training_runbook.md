@@ -17900,7 +17900,7 @@ The s2/s1/dem/lulc pyramids are pooled vectors broadcast over the map (no within
 
 **Smoke** (`sbatch slurm/effres_maps.sh smoke`, CR200-18, blocks 0,1,2,112): (1) plain pass equals eval_final's `predictions_network_txson.parquet` (max |diff| < 2e-3); (2) block 1 = identity; (3) block 112 moves the map; then the analysis on the smoke output. Full: ~90.8k samples per pass (eval_final network pass: 71 s loop), 8 passes, ~30 min on 1 H100. Every submission needs the user's OK.
 
-## §71 S2/S1 history token dropout (Session 48, 2026-10-06, PLANNED, not built)
+## §71 S2/S1 history token dropout (Session 48, 2026-10-06, PLANNED, not built — awaiting user OK)
 
 **Why.** While drawing the architecture figure (architecture_s48.png, 1840f4e) it came out that ERA5 is the
 only input dropped token by token (15 % of days, dataset.py:1675). The S2/S1 history is only ever dropped
@@ -17934,3 +17934,49 @@ locate memorisation in a site fingerprint, which a thinned history does not remo
 **Figure.** If kept, architecture_s48.png gets orange token-dropout ticks on the S2/S1 history bars too.
 
 Status: PLANNED. Build -> smoke -> full each need the user's OK.
+
+## §72 Paper figures: model architecture + what TerraMind gives the model (Session 48, 2026-10-06, DONE)
+
+Figures only, no training. Both in paper style (plot_style_bw "paper"). Each render is a small rome job
+(`sbatch --wrap`, render-only unless noted); logged in text/logs.txt with job ids.
+
+### §72.1 architecture_s48.png (plot_architecture_s48.py, horizontal only; vertical variant NOT updated)
+Final decisions, all checked against the code:
+- **Inputs** sit in green frames (one per input; legend "input"). Drivers: ERA5-Land (8 sparklines,
+  min·mean·max / daily sum written per row), SIF (last 50 values, ~7 weeks, zoomed), TWSA (monthly,
+  last 45 d not released), Soil (21 layers); each has its own encoder box (ERA5 MLP 18→768, SIF/TWSA
+  MLP 1→768, Soil CNN → 4 tokens) and one straight arrow.
+- **Cloud mask** = SEnSeIv2 SegFormer-B2 (7 classes; bad = thin/thick cloud, shadow, nodata). Drawn as
+  stacks (3 real cloudy scenes in → same scenes with grey rejected tokens out, "tokens kept 173 · 142 ·
+  141 /196") with DASHED GREY arrows = mask, not data: S2 L2A → SEnSeIv2 on its own line; token mask
+  (≤ 1 % cloudy px per 160 m token) → pyramid ×4 (masked mean in dataset._cpu_pyramid_pool, picks the
+  clear anchor); pixel mask from the OUTPUT stack → fine S2 (masked 2×2 pool).
+- **Fine 20 m lane** = most recent scene on or before D (dataset.build_fine), NOT "on D": orange badges
+  "D − 1 d" (S2) / "D − 11 d" (S1), DEM static, LULC latest year before D. Per-input notes: S2 masked
+  2×2 pool, S1 linear-power pool → dB, DEM asinh((h − tile mean)/1 m)/4 (image shows this, not raw
+  elevation), LULC 8-d embedding. One 3×3 stem per input (12→16, 5→8, 2→4, emb 8→4) → concat 32 @ 112.
+- **Token sequence** (1038 = 3 CLS + 8 DEM·LULC + 4 soil + 196 anchor + 60×4 S2 + 40×4 S1 + 365 ERA5 +
+  50 SIF + 12 TWSA). Slot bars: blue = filled, grey ends = no data (key-padded), orange ticks = ERA5
+  token dropout (one illustrative p = 0.15 draw). No "empty slot" text (user).
+- **Transformer** drawn as blocks: ×3 pre-norm [LayerNorm, self-attention 12 heads bidirectional,
+  ⊕, LayerNorm, FFN 768→3072→768, ⊕], key-padding mask, final LayerNorm. No causal mask exists.
+- **Terminology** (also for the paper): token dropout (ERA5 days 0.15) and modality dropout (ERA5
+  window 0.5, satellite 160 m 0.3, fine S2/S1 0.2), excluded via the key-padding mask, never
+  reconstructed. Never "masking" (reads as MTM, which is TerraMind's pretraining, not this model).
+- Layout: open_gaps() post-shifts the artists into three sections (365-day timeline / drivers +
+  satellite + transformer / fine lane + decoder); token list, transformer and maps stay rigid.
+
+### §72.2 terramind_value.png (plot_terramind_value.py; `--prep` reads stores, `--render` draws)
+(a) S2 true colour, 4 seasons 2019 + L12 token maps (one PCA basis, sink tokens excluded from the fit,
+§27a rules); (b) S1 ascending pass nearest each S2 date, VV + L12 tokens; (c) DEM / DEM tokens / LULC /
+LULC tokens. Findings to keep honest in the caption:
+- DEM tokens trace the drainage, LULC tokens the tree / crop patches, at 160 m.
+- S2 L12 tokens are nearly identical across the four seasons (stable landscape); S1 tokens change more.
+- Station UMAP (s2/L12 centre token, 839 sm_only stations) is DEFERRED (`--umap`, not drawn; user).
+  It organises partly by climate and only weakly by mean SM (§27b: kNN skill 9.8 % global vs 23.4 %
+  tabular, 2.9 % within network).
+- The strongest "TerraMind is useful" number is §67, not these maps: swapping all 160 m satellite
+  tokens with another station's raises ubRMSE +37 % (0-10), more than ERA5 (+30 %); 20 m raw imagery ~0 %.
+
+Open: grey out S1 sink tokens if the black squares in (b) are sinks; agent review of terramind_value.png;
+vertical architecture variant.
