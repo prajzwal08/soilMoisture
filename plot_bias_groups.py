@@ -137,11 +137,12 @@ def main():
             cells[(col, d)] = (m, n)
     vmax = max(np.nanmax(np.abs(m)) for m, _ in cells.values())
     norm = TwoSlopeNorm(0, -vmax, vmax)
-    cmap = LinearSegmentedColormap.from_list("dry_wet", [plot_style_bw.BLUE, "white", plot_style_bw.RED])
+    # user 2026-10-06: blue = model too WET (positive bias), orange = model too DRY (negative)
+    cmap = LinearSegmentedColormap.from_list("dry_wet", [plot_style_bw.RED, "white", plot_style_bw.BLUE])
 
     fig = plt.figure(figsize=(15.5, 12.0))
     gs = fig.add_gridspec(3, 4, width_ratios=[1, 1, 1, 0.05], height_ratios=[1.15, 0.85, 0.9],
-                          hspace=0.42, wspace=0.12, left=0.11, right=0.93, top=0.95, bottom=0.07)
+                          hspace=0.42, wspace=0.12, left=0.11, right=0.93, top=0.93, bottom=0.07)
     letter = iter("abcdefghijk")
     for ri, (col, order, ylab) in enumerate(rows):
         for dj, d in enumerate(DEPTHS):
@@ -163,6 +164,8 @@ def main():
                     ha="left", va="bottom")
     cax = fig.add_subplot(gs[0:2, 3])
     fig.colorbar(im, cax=cax, label="median bias, predicted − observed (m$^3$/m$^3$)")
+    cax.text(0.5, 1.015, "blue = model\ntoo wet", transform=cax.transAxes, ha="center", va="bottom")
+    cax.text(0.5, -0.015, "orange = model\ntoo dry", transform=cax.transAxes, ha="center", va="top")
 
     # ── is it random? ────────────────────────────────────────────────────
     tests = []
