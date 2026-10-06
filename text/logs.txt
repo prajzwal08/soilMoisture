@@ -8719,3 +8719,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   27660328 DONE (24 s): GeoTIFFs at /gpfs/work3/0/prjs1968/data_mead/maps_tif/2019/ (55 MB): SM_<Ne1|Ne2>_<depth>_2019.tif (365 bands, band desc = date)
     + daily/SM_<tile>_YYYYMMDD.tif (3 bands = depths); EPSG:32614 from satellite_zarr bounds_utm; Ne1 SM 0.096-0.431, Ne2 0.137-0.459.
   27660383 DONE (88 s): figures/mead/mead_sm_maps_2019.gif (60.6 MB, 365 frames, 5 fps); S2 61 / S1 20 acquisition days, 29 irrigation days tagged.
+  §69 root-zone GIF, Ne1 tile only, (10*SM0-10+20*SM10-30+70*SM30-100)/100 (user asked): job 27660640
+  27660640 DONE (62 s): figures/mead/mead_sm_rootzone_Ne1_2019.gif (19.2 MB, 365 frames, 5 fps).
