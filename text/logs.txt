@@ -8815,3 +8815,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     style (axis D-455..D+120, framed window, grey = not given, dashed D+30 bracket, key at right);
     "not loaded" hatched stub removed. Canvas H 110 -> 114.
   - job 27667578 (render only): dashed-bracket label -> "slides per day" in both figures.
+
+2026-10-06 §68.7 TOKENS SMOKE 27665785 COMPLETED 0:0 (26 min, done 16:55): 3/3 tiles through every step --
+  cm 3/3, raw zarr .complete 3/3, era5/twsa/sif/soil 3/3, token masks 3/3 (17,879 masked patches, 0 missing, 0 errors),
+  values18 splice 3 ok, §48 cache 3/3 OK (S2 714 / S1 asc 2,738 / desc 2,793 scenes, 0 nonfinite, 0 s2_no_cm), isolation OK.
+  Next: full tokens (688 tiles) -> predict; each needs OK.
