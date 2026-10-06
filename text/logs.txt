@@ -8599,3 +8599,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §68 driver smoke 27653254 FAILED (37 min) at C1: GEE RefreshError "invalid_grant: Token has been expired or revoked".
     Passed before that: py_compile 19 files OK; ERA5 pixel list 7,011 tiles -> 567 pixels (median 15, max 20 tiles/pixel);
     SIF --from-local 2018-2025 written for all 3 smoke tiles (~2.5 min/yr). Needs user GEE re-auth, then resubmit.
+  §69.4 ERA5 vs gauge precipitation plot 2019 (user asked): job 27654977
