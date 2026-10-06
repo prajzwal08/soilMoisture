@@ -8863,3 +8863,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Soil CNN, TWSA MLP, ERA5 MLP; separate weights in model.py), each fed by its own line, joined on a
   collector into the token sequence; one stem per fine input (S2 12->16, S1 5->8, DEM 2->4,
   LULC emb 8->4) under its image, joined into "concat 32 @ 112 (3x3 stems)" -> E1.
+
+2026-10-06 — architecture_s48.png render 27682129: removed the "token dropout" key text (user); orange ticks stay, unlabelled.

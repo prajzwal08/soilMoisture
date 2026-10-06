@@ -493,12 +493,7 @@ def render() -> None:
     ax.add_line(Line2D([87, 99.3], [y + 1.1] * 2, color="black", lw=0.8, zorder=3))
     ax.text(99.3, y - 0.4, "1038", ha="right", va="center", fontsize=FS_B, zorder=3)
     ax.text(89.2, y - 0.4, "× 768", ha="left", va="center", fontsize=FS_B, zorder=3)
-    # key: random token dropout (training); grey bar ends = no data, key-padded, not labelled
-    for k in range(4):
-        ax.add_patch(Rectangle((87.2 + k * 0.5, y - 2.6), 0.08, 0.8, fc=ORANGE, ec="none",
-                               zorder=3))
-    ax.text(89.4, y - 2.2, f"token dropout {len(era5_drop)}", ha="left", va="center",
-            fontsize=FS_B - 1, zorder=3, color=ORANGE)
+    # no key (user): orange ticks = random ERA5 token dropout, grey bar ends = no data, both key-padded
     label(ax, 93, 44.9, "+ age 0–364 · DOY ·", fs=FS_B)
     label(ax, 93, 43.2, "modality · position", fs=FS_B)
     path(ax, [(100, 60), (104, 60)])
