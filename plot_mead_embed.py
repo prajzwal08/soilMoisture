@@ -225,26 +225,29 @@ def main():
         fig.savefig(FIG_DIR / f"mead_embed_cos_{tag}.{ext}", dpi=600)
     print(f"figure: {FIG_DIR}/mead_embed_cos_{tag}.png")
 
-    # --- scatter: embedding difference vs SM difference (filtered dates) ---
-    fig, ax = plt.subplots(2, 2, figsize=(8, 7.5))
-    for k, sensor in enumerate(("S2", "S1")):
+    # --- scatter: embedding difference vs SM difference; rows sensor x depth, cols season ---
+    rows = [(s, b) for s in ("S2", "S1") for b in BINS]
+    fig, ax = plt.subplots(len(rows), 2, figsize=(8, 12))
+    for k, (sensor, b) in enumerate(rows):
         r = res[sensor]
         js = (r.index.month >= 6) & (r.index.month <= 9)
-        for j, b in enumerate(BINS):
+        x = 1 - r["same_tile"]
+        top = max(np.nanmax(r[f"obs_{b}"].abs()), np.nanmax(r[f"same_{b}"].abs())) * 1.35
+        for j, (sel, season) in enumerate(((js, "Jun-Sep"), (~js, "Oct-May"))):
             a = ax[k, j]
-            x = 1 - r["same_tile"]
             txt = []
             for lab, col, mk, name in (("obs", "black", "o", "observed"),
                                        ("same", PRED_COLOR, "^", "model")):
                 z = r[f"{lab}_{b}"].abs()
-                for sel, fill in ((js, col), (~js, "white")):
-                    a.plot(x[sel], z[sel], mk, ms=5, mfc=fill, mec=col, mew=0.9,
-                           label=f"{name}, {'Jun-Sep' if fill == col else 'Oct-May'}")
-                ok = np.isfinite(x.values) & np.isfinite(z.values)
-                txt.append(f"{name} {spearmanr(x.values[ok], z.values[ok])[0]:+.2f}")
-            a.text(0.03, 0.97, f"({'abcd'[2 * k + j]}) {sensor}, {b} cm  (n {int(r['same_tile'].notna().sum())})\nSpearman "
+                a.plot(x[sel], z[sel], mk, ms=5, color=col, label=name)
+                ok = sel & np.isfinite(x.values) & np.isfinite(z.values)
+                n = int(ok.sum())
+                txt.append(f"{name} {spearmanr(x.values[ok], z.values[ok])[0]:+.2f}" if n >= 5
+                           else f"{name} n/a")
+            a.text(0.03, 0.97, f"({'abcdefgh'[2 * k + j]}) {sensor}, {b} cm, {season}  (n {n})\nSpearman "
                    + ", ".join(txt), transform=a.transAxes, va="top", fontsize="small",
                    bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.0))
+            a.set_ylim(-0.005, top)                      # same y per row, headroom for the label
             if j == 0:
                 a.set_ylabel("|$\\Delta$SM| Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
             a.set_xlabel(f"1 $-$ cosine, {sensor} L12 station patches")
