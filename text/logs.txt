@@ -8889,3 +8889,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   - transformer box filled LBLUE ("emph"), label "bidirectional self-attention, key-padding mask"
     (no causal mask in model.py, only src_key_padding_mask).
   - assets.npz regenerated (prep adds cm_date/cm_rgb/cm_tok; prior copy assets.npz.bak_20261006).
+  Size scan stopped: small S2 TIFs are normal (T084_088 has many <20 KB that masked fine). cm read every TIF:
+  t0-t7 masks 57525/57999/57667/57378/57759/58188/58642/58386, errors 1/0/0/0/0/0/0/0 -> exactly ONE bad file.
+  FIX (user "go on"): new slurm/nl_s2_refetch.sh (moves bad TIF to nl/quarantine, download_s2_mpc on one-row CSV in
+  nl/data_fix_T103_084, then rasterio full read or exit 1). Chain: refetch 27682352 -> cm task 0 only 27682355 (resumes) ->
+  prep 27682356 -> tok 27682358 (x16) -> post 27682359, all afterok.
