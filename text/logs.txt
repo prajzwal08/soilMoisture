@@ -8423,3 +8423,10 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
   TxSON CR200-18 UNBIASED tile figure (plot_tile_paper.py --unbiased: line shifted by each station x depth observed-day
     mean bias; ubRMSE/r unchanged), job 27642405 -> tiles/txson_cr200-18_unbiased.{png,pdf}. Biased version kept.
     Reading: timing matches at all 6; CR200-18/-25 (the two over-wet stations) also swing TOO WIDE (dry-downs reach ~0).
+  OOS BIAS BY GROUP (new plot_bias_groups.py + slurm/plot_bias_groups.sh, CPU; jobs 27642977, 27643269):
+    heatmaps land cover x climate and soil texture (USDA 0-30 cm from OpenLandMap centre 3x3 -> Coarse/Medium/Fine)
+    x climate, median signed bias per cell, 3 depths; + permutation test (R2 of group means vs 2000 shuffles).
+    RESULT: bias is NOT explained by land cover, climate or texture: R2 0.0-5.2%, every factor at or below its
+    random 95th pct; perm p 0.05-0.97 (best: land cover 0-10 p=0.055); Kruskal-Wallis only land cover 30-100 p=0.034,
+    not significant after 9 tests. Only hint: fine-textured soils run wet at 0-10 (+0.03..+0.05, n 3-17).
+    -> figures/eval/baseline_selected_20261005_paper/bias_groups.{png,pdf} + bias_groups_tests.csv + _stations.csv
