@@ -8397,3 +8397,6 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     Re-render only (no re-eval) via new slurm/plot_input_ablation.sh (rome, 16 CPU) SUBMITTED on the user's OK: job 27638450.
   §67 heatmap: switched to ONE shared colour scale across (a)/(b)/(c) (single colourbar, +-39%) so equal colour = equal %.
     Re-plot job 27638620 COMPLETED 08:36; figure checked: bias panel now reads near-white except soil 10-30 (+14.3*).
+  ablation.py within_station donor rule FIXED (not run, user: "fix it but do not run"): the >60 d day-of-year gap is now
+    circular, min(|d|, 365-|d|), so 30 Dec vs 2 Jan (3 d) is no longer accepted as "other season"; reported
+    median_abs_doy_gap made circular too. Existing results (27627597 era5/s1 within_station) used the old non-circular rule.

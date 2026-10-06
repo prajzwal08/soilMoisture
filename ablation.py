@@ -155,7 +155,8 @@ def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
                 continue
             for _ in range(max_tries):
                 j = int(pool[rng.integers(len(pool))])
-                if abs(int(doys[j]) - int(doys[i])) > min_doy_gap:
+                g = abs(int(doys[j]) - int(doys[i]))
+                if min(g, 365 - g) > min_doy_gap:     # circular: 30 Dec vs 2 Jan is 3 days, not 363
                     donor[i] = j
                     break
             else:
@@ -164,13 +165,14 @@ def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
         raise ValueError(f"unknown mode {mode!r}")
 
     changed = donor != np.arange(n)
+    gap = np.abs(doys[donor].astype(int) - doys.astype(int))
+    gap = np.minimum(gap, 365 - gap)                                 # circular, as in the rule
     stats = {
         "mode": mode, "seed": seed, "n_samples": n,
         "n_fallback": int(n_fallback),
         "frac_donor_assigned": float(changed.mean()),
         "frac_donor_diff_station": float((stations[donor] != stations).mean()),
-        "median_abs_doy_gap": float(np.median(np.abs(doys[donor].astype(int)
-                                                    - doys.astype(int)))),
+        "median_abs_doy_gap": float(np.median(gap)),
     }
     return donor, stats
 
