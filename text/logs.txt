@@ -8751,3 +8751,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   27662552 FAILED (sed renamed the script path in slurm/mead_pattern.sh); fixed, resubmitted: job 27662610
   §68 ERA5 retry submitted (user OK): 27662621 (nl_drivers.sh era5, afterany:27659722; skips existing meteo_YYYY.nc -> only
     NLPIX_P5215_0645 2020+2021). Old fanout 27659732 cancelled; new fanout 27662622 afterok:27662621.
+  27662610 DONE (23 s): fixed-pattern tests, Mead maps 2017-2024 (2922 d), Ne2 tile = Ne1 shifted 27.3 px E / 0.3 px S.
+    TEST 1 mean-map corr SAME GROUND vs SAME POSITION: 0-10 +0.73 / +0.74, 10-30 +0.71 / +0.73, 30-100 +0.71 / +0.73 -> no ground preference:
+      map is about as much position as ground. Same-ground diff: level offset -0.031/-0.022/+0.010 plus a strong EDGE band (~5 px) at the tile borders.
+    TEST 2 day-vs-mean-map corr median +0.65 (5% ~+0.45); static share of spatial variance ~0.41 -> map is NOT frozen; ~60% of its spatial variance moves day to day.
+  READ: not a pure fixed pattern; position and ground contribute about equally; tile edges are a clear artefact. Figure colourbars of col 3 overlap col 4 (fix).
