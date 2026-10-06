@@ -8663,3 +8663,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     (Jan-May residue, Sep 15-17 Ne2 browns first, Nov-Dec Ne2 brighter). In-season S2 cannot tell irrigated Ne2 from Ne1.
     Cloud mask calls snow scenes "100% clear" (Jan 23, Feb 12, Mar 11, Nov 11, Dec 9).
   §69.5 Ne1 vs Ne2 L12 embedding cosine (S2, S1asc; same tile / tile centres / 480 m ref) vs |dSM| 2019 (user asked): job 27657743
+  27657743 DONE (28 s): figures/mead/mead_embed_{cos,matrix}_2019.png, data_mead/pred/embed_cos_{S2,S1}_2019.csv.
+    Cosine Ne1 vs Ne2 (2x2 L12 tokens), Jun-Sep mean: S2 same tile 0.943, tile centres 0.953, 480 m-west ref 0.797;
+    S1 0.912 / 0.911 / 0.805. Spearman (1-cos) vs |dSM|: S2 obs ~0 (JJAS -0.03/+0.08), model own +0.64 (0-10, all year);
+    S1 JJAS obs +0.68 (0-10) +0.60 (10-30) but n=9, model own -0.15/-0.67. S1 dips: Aug 13 (0.77 tile centre), Aug 25 (0.72 same tile), Sep 30 (0.71).
+  READ: in season the two fields are nearly the same in S2 embedding space (more alike than Ne1 vs a field 480 m west);
+    S1 differs more and its dissimilarity tracks the observed SM difference (n=9, weak evidence) but the model does not use it.
+  §69.5 NDVI diff vs SM diff 2019, clear scenes only (cloud clear >= 0.99, no snow B02 < 1500) (user asked): job 27657914
