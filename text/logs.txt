@@ -8585,3 +8585,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   READ: model is TOO DRY in irrigated summers/autumns: 2020 Ne1 30-100 obs stays 0.32-0.35, model falls to ~0.21,
   i.e. it predicts a RAINFED trajectory (Ne3 fell to ~0.23). Irrigation pulses at 0-10/10-30 not reproduced.
   Model ignores the frozen-soil TDR dips (correct physically; those obs days inflate errors).
+  §69.3 Ne1-Ne2 difference plot (user asked): job 27654551
+  §69.3 diff figure 27654551 DONE (figures/mead/mead_diff_Ne1_Ne2_{full,2019_2020}.png).
+  READ: observed Ne1-Ne2 has real irrigation episodes the model misses: JJAS 2019 10-30 obs -0.05..-0.09 (only Ne2
+  irrigated) vs model ~0..+0.03; Aug-Oct 2020 0-10 obs +0.05..+0.08 (Ne1 262 mm vs Ne2 187 mm) vs model ~-0.05;
+  Jul-Sep 2020 10-30 obs sawtooth to -0.15, model flat. 30-100: obs steady ~-0.02, model +0.02..+0.08 with WINTER
+  humps (Dec-Feb 2020/2022/2024) -> R -0.20/-0.29: model difference is imagery seasonality, not water.
+  Frozen periods dominate the obs difference extremes (TDR artefact) -> mask ts<=0 days in any score.
