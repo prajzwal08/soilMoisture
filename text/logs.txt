@@ -8435,3 +8435,4 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     * if above (none); p-value labels removed. DEM factors ADDED (raw imagery DEM at station, 222/222): elevation,
     slope (+-30 m), valley-ridge position (centre minus 500 m mean), terciles. RESULT: none explains the bias either
     (R2 0.1-2.7% vs null 2.9-5.3%; perm p 0.10-0.88). Total: 6 factors x 3 depths, 0/18 above random.
+  bias_groups: texture tick labels now list the USDA classes in each group (job 27644882).

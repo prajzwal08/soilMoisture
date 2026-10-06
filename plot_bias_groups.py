@@ -158,7 +158,11 @@ def main():
     # a climate class with fewer than MIN_N stations overall (E: 1) is dropped from the maps
     climates = [KG[c] for c in "BCDE" if (ps.climate == KG[c]).sum() >= MIN_N]
     rows = [("igbp_macro", [c for c in LC_ORDER if c in set(ps.igbp_macro)], "Land cover"),
-            ("texture", TX_ORDER, "Soil texture (0-30 cm)")]
+            ("texture", TX_ORDER, "Soil texture, USDA class at 0-30 cm")]
+    # tick label = group + the USDA classes that actually occur in it among these stations
+    present = pd.Series(cls)
+    tx_lab = {g: g + "\n(" + ",\n".join(sorted(set(present[present.map(texture_group) == g]))) + ")"
+              for g in TX_ORDER}
 
     # shared colour scale over every cell that is drawn
     cells = {}
@@ -181,7 +185,7 @@ def main():
 
     fig = plt.figure(figsize=(15.5, 12.0))
     gs = fig.add_gridspec(3, 4, width_ratios=[1, 1, 1, 0.05], height_ratios=[1.15, 0.85, 0.9],
-                          hspace=0.42, wspace=0.12, left=0.11, right=0.93, top=0.93, bottom=0.07)
+                          hspace=0.42, wspace=0.12, left=0.15, right=0.93, top=0.93, bottom=0.07)
     letter = iter("abcdefghijk")
     for ri, (col, order, ylab) in enumerate(rows):
         for dj, d in enumerate(DEPTHS):
@@ -196,7 +200,8 @@ def main():
                     ax.text(j, i, txt, ha="center", va="center", linespacing=1.3,
                             color="white" if np.isfinite(m[i, j]) and abs(m[i, j]) > 0.6 * vmax else "black")
             ax.set_xticks(range(len(climates)), [c.replace(" ", "\n") for c in climates])
-            ax.set_yticks(range(len(order)), order if dj == 0 else [""] * len(order))
+            labs = [tx_lab.get(o, o) for o in order] if col == "texture" else order
+            ax.set_yticks(range(len(order)), labs if dj == 0 else [""] * len(order))
             if dj == 0:
                 ax.set_ylabel(ylab)
             ax.text(0.0, 1.02, f"({next(letter)}) {d} cm", transform=ax.transAxes,
