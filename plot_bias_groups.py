@@ -147,10 +147,12 @@ def main():
     for i, c in enumerate(["elev_m", "slope_deg", "tpi_m"]):
         ps[c] = ps.station_key.map(lambda k: dem[k][i] if dem[k] is not None else np.nan)
     print(f"DEM for {ps.elev_m.notna().sum()}/{len(ps)} stations")
+    edges = {}
     for c, t_, labs in [("elev_m", "elev_t", ["Low", "Mid", "High"]),
                         ("slope_deg", "slope_t", ["Flat", "Mid", "Steep"]),
                         ("tpi_m", "tpi_t", ["Valley", "Mid", "Ridge"])]:          # terciles
-        ps[t_] = pd.qcut(ps[c], 3, labels=labs).astype(object)
+        ps[t_], edges[c] = pd.qcut(ps[c], 3, labels=labs, retbins=True)
+        ps[t_] = ps[t_].astype(object)
     print(ps[["elev_m", "slope_deg", "tpi_m"]].describe().round(2).to_string())
     print(f"soil texture for {ps.texture.notna().sum()}/{len(ps)} stations")
     print(pd.Series(cls).value_counts().to_string())
@@ -183,9 +185,9 @@ def main():
     # user 2026-10-06: blue = model too WET (positive bias), orange = model too DRY (negative)
     cmap = LinearSegmentedColormap.from_list("dry_wet", [plot_style_bw.RED, "white", plot_style_bw.BLUE])
 
-    fig = plt.figure(figsize=(15.5, 12.0))
+    fig = plt.figure(figsize=(15.5, 13.6))
     gs = fig.add_gridspec(3, 4, width_ratios=[1, 1, 1, 0.05], height_ratios=[1.15, 0.85, 0.9],
-                          hspace=0.42, wspace=0.12, left=0.15, right=0.93, top=0.93, bottom=0.07)
+                          hspace=0.42, wspace=0.12, left=0.15, right=0.93, top=0.935, bottom=0.16)
     letter = iter("abcdefghijk")
     for ri, (col, order, ylab) in enumerate(rows):
         for dj, d in enumerate(DEPTHS):
@@ -250,6 +252,25 @@ def main():
     ax.set_ylim(0, max(100 * t[["R2", "null95"]].to_numpy().max() * 1.35, 10))
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=4, frameon=False)
     ax.text(0.0, 1.02, f"({next(letter)})", transform=ax.transAxes, ha="left", va="bottom")
+
+    # note under the figure (user 2026-10-06): how every category is defined
+    e, s_, tp = edges["elev_m"], edges["slope_deg"], edges["tpi_m"]
+    grp = {g: ", ".join(sorted(set(present[present.map(texture_group) == g]))) for g in TX_ORDER}
+    note = [
+        "Note. Bias = mean(predicted − observed) over the observed days of each OOS station; each cell shows the median "
+        "over its stations and the number of stations (– = fewer than 3).",
+        "Land cover: IGBP class grouped into Forest / Grass-Crop / Shrub-Savanna / Other. Climate: Köppen–Geiger main class.",
+        "Soil texture: USDA class from OpenLandMap sand, silt and clay at 0–30 cm (mean of the 3 × 3 30 m pixels at the station): "
+        f"Coarse = {grp['Coarse']}; Medium = {grp['Medium']}; Fine = {grp['Fine']}.",
+        "Terrain from the 10 m DEM at the station, each split into equal thirds of the stations: "
+        f"Elevation Low < {e[1]:.0f} m, High > {e[2]:.0f} m; "
+        f"Slope (steepness over ±35 m) Flat < {s_[1]:.1f}°, Steep > {s_[2]:.1f}°; "
+        f"Valley–ridge = station height minus mean height within 500 m, Valley < {tp[1]:.1f} m, Ridge > {tp[2]:+.1f} m.",
+        "(g) Share of the station-to-station bias variance explained by each factor; dashed = 95th percentile of 2000 random "
+        "shuffles of the labels; * = above it (none is).",
+    ]
+    fig.text(0.04, 0.012, "\n".join(note), ha="left", va="bottom", fontsize=10.5, linespacing=1.45,
+             wrap=True)
 
     out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
