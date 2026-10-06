@@ -8700,3 +8700,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     One S2 date has cos ~ -0.02 (1-cos 1.02): outlier, to check. Right-column x labels clipped.
   §68 FULL drivers submitted (user OK): era5 27659722 (66 ERA5 px = Overijssel+controls, subset root nl/era5pix_ov; full NL list
     is 567 px), sif 27659724, soil 27659727 (688 tiles), fanout 27659732 afterok:27659722. nl_drivers.sh era5/fanout now point at era5pix_ov.
+  §69.5 patch cosine on EVERY date the model reads (S2 all scenes with valid station tokens, S1 asc all dates; Mead has no s1_desc), --all-dates, x-label clip fixed (user asked): job 27659783
+  27659783 DONE (29 s): all dates the model reads, 2019: S2 61 scenes (56 with both station patches valid), S1 asc 20.
+    S2 patch cos is HIGHEST (0.85-0.97) in Jul-Aug, exactly over the Ne2 irrigation windows -> S2 cannot see the irrigation.
+    S1 dips: ~Aug 1 (0.48, but ref west also 0.56 -> scene-wide), Aug 25 (0.41, ref 0.74 -> station-specific), Jul 9 (0.61).
+    Spearman same-tile, all/Jun-Sep: S2 obs +0.09/-0.07 (0-10) +0.11/+0.34 (10-30); S1 anomaly obs +0.21/+0.47, +0.53/+0.65; model same S1 -0.39/-0.42.
+    2019-12-21 S2 cos ~0 for every pair -> degenerate scene, still in the store.

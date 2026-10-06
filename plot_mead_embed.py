@@ -88,8 +88,11 @@ def cos(a, b):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, default=2019)
+    ap.add_argument("--all-dates", action="store_true",
+                    help="every acquisition the model reads (no clear-S2 / unfrozen-S1 filter); outputs *_<year>_alldates")
     args = ap.parse_args()
     y = args.year
+    tag = f"{y}_alldates" if args.all_dates else f"{y}"
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_parquet(PRED)
@@ -118,7 +121,9 @@ def main():
         b_ne2 = block(t2, v2, BLK["ne1"])[i2]                 # Ne2 at its own tile centre
         r = pd.DataFrame({"same_tile": cos(a_ne1, a_ne2), "tile_centre": cos(a_ne1, b_ne2),
                           "ref_west": cos(a_ne1, a_ref)}, index=common)
-        if sensor == "S2":                               # clear: cloud-free >= 0.99, no snow
+        if args.all_dates:                               # what the model reads: valid tokens only
+            keep = np.ones(len(common), bool)
+        elif sensor == "S2":                             # clear: cloud-free >= 0.99, no snow
             keep = common.isin(s2_ok)
         else:                                            # S1: drop frozen soil (ts <= 0 at either site)
             keep = np.ones(len(common), bool)
@@ -165,7 +170,7 @@ def main():
                     out.append(f"{spearmanr(x[ok], z[ok])[0]:+.2f} (n {ok.sum()})" if ok.sum() >= 5
                                else "   n/a")
                 print(f"    same_tile vs {lab:>10} {b:>5}: {out[0]}   {out[1]}")
-        r.to_csv(ROOT / "pred" / f"embed_cos_{sensor}_{y}.csv")
+        r.to_csv(ROOT / "pred" / f"embed_cos_{sensor}_{tag}.csv")
 
     # --- time series ---
     plot_style_bw.apply(globals(), "paper")
@@ -215,8 +220,8 @@ def main():
     fig.align_ylabels(ax)
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(FIG_DIR / f"mead_embed_cos_{y}.{ext}", dpi=600)
-    print(f"figure: {FIG_DIR}/mead_embed_cos_{y}.png")
+        fig.savefig(FIG_DIR / f"mead_embed_cos_{tag}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_embed_cos_{tag}.png")
 
     # --- scatter: embedding difference vs SM difference (filtered dates) ---
     fig, ax = plt.subplots(2, 2, figsize=(8, 7.5))
@@ -235,17 +240,17 @@ def main():
                            label=f"{name}, {'Jun-Sep' if fill == col else 'Oct-May'}")
                 ok = np.isfinite(x.values) & np.isfinite(z.values)
                 txt.append(f"{name} {spearmanr(x.values[ok], z.values[ok])[0]:+.2f}")
-            a.text(0.03, 0.97, f"({'abcd'[2 * k + j]}) {sensor}, {b} cm  (n {len(r)})\nSpearman "
+            a.text(0.03, 0.97, f"({'abcd'[2 * k + j]}) {sensor}, {b} cm  (n {int(r['same_tile'].notna().sum())})\nSpearman "
                    + ", ".join(txt), transform=a.transAxes, va="top", fontsize="small",
                    bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.0))
             if j == 0:
                 a.set_ylabel("|$\\Delta$SM| Ne1 $-$ Ne2 (m$^3$ m$^{-3}$)")
-            a.set_xlabel(f"1 $-$ cosine, {sensor} L12 (station patches, same scene)")
+            a.set_xlabel(f"1 $-$ cosine, {sensor} L12 station patches")
     ax[0, 0].legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=2, frameon=False)
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(FIG_DIR / f"mead_embed_scatter_{y}.{ext}", dpi=600)
-    print(f"figure: {FIG_DIR}/mead_embed_scatter_{y}.png")
+        fig.savefig(FIG_DIR / f"mead_embed_scatter_{tag}.{ext}", dpi=600)
+    print(f"figure: {FIG_DIR}/mead_embed_scatter_{tag}.png")
 
     # --- date x date matrices ---
     fig, ax = plt.subplots(2, 3, figsize=(12, 8))
@@ -270,8 +275,8 @@ def main():
     fig.tight_layout(rect=[0, 0, 0.92, 1])
     fig.colorbar(im, cax=fig.add_axes([0.93, 0.25, 0.015, 0.5]), label="Cosine similarity")
     for ext in ("png", "pdf"):
-        fig.savefig(FIG_DIR / f"mead_embed_matrix_{y}.{ext}", dpi=300)
-    print(f"figure: {FIG_DIR}/mead_embed_matrix_{y}.png  (tile-centre patches, valid dates only)")
+        fig.savefig(FIG_DIR / f"mead_embed_matrix_{tag}.{ext}", dpi=300)
+    print(f"figure: {FIG_DIR}/mead_embed_matrix_{tag}.png  (tile-centre patches, valid dates only)")
 
 
 if __name__ == "__main__":
