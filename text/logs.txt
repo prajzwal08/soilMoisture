@@ -8611,3 +8611,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   (4) ERA5 ~20-25 % wetter than gauges; Jan-Apr ERA5 accumulates ~2x the gauges (snow undercatch by gauges).
   (5) Ne3 gauge ~100 mm/yr below Ne1/Ne2 outside irrigation days too -> gauge/siting difference.
   GEE re-authenticated by user 12:37 (credentials refreshed). §68 driver smoke RE-SUBMITTED: job 27655028
+  §69.5 rain-free irrigation events 2018 (user asked; "yes"): job 27655265 (slurm/mead_dry_irr.sh --year 2018).
+    Rain-free = ERA5 & Ne3 gauge < 1 mm, Ne1/Ne2 gauge < 1 mm outside own logged irrigation; d0 = gauge spike; keep if d0+-3 dry.
