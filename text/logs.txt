@@ -8976,3 +8976,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   reject manifest (masked_frac 1.0) -> dropped. Manifest nl/data/logs/cloudy_tile_manifest_27682356.csv.
   PROBLEM: --delete is a serial unlink loop running at ~2-5 files/s on scratch -> 265k files ~15-30 h, job limit 6 h
   -> will TIMEOUT before the raw zarr step. Asked user: cancel + parallel delete from the manifest, then zarr.
+  User: "leave it" -> prep 27682356 left running as is (expect TIMEOUT ~02:50; resume needs a new OK).
