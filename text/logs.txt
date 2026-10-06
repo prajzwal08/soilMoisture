@@ -8894,3 +8894,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   FIX (user "go on"): new slurm/nl_s2_refetch.sh (moves bad TIF to nl/quarantine, download_s2_mpc on one-row CSV in
   nl/data_fix_T103_084, then rasterio full read or exit 1). Chain: refetch 27682352 -> cm task 0 only 27682355 (resumes) ->
   prep 27682356 -> tok 27682358 (x16) -> post 27682359, all afterok.
+
+2026-10-06 — architecture_s48.png render 27682346: SEnSeIv2 / SegFormer-B2 written on the scene -> token-mask arrow (grey box removed); rejected-token shading 0.10 grey, alpha 0.92 (was 0.30, 0.8).

@@ -535,35 +535,34 @@ def render() -> None:
     # ── cloud mask: SEnSeIv2 classes -> token mask (history, anchor, pyramid) + pixel mask ──
     # dataset.py CM_BAD_CLASSES = thin / thick cloud, shadow, nodata; a 160 m token is valid
     # at <= 1 % bad pixels (_cm_token_mask); fine S2 pools clear pixels only (fine_s2_scene).
+    # scene -> [SEnSeIv2 on the arrow] -> token mask; the model is named on the arrow, no box
     xs2 = px[0] + pw / 2
-    path(ax, [(xs2, bus_b), (xs2, 36.5)])                    # S2 L2A -> cloud model
-    box(ax, 1.0, 30.2, 12.2, 36.8, ["SEnSeIv2", "SegFormer-B2", "frozen · 7 cl."],
-        kind="frozen", title_n=1)
-    path(ax, [(xs2, 30.2), (xs2, 26.4)])                     # pixel mask -> fine S2
+    cs, cy0 = 7.4, 29.8
+    xa, xb = xs2 - cs / 2, xs2 - cs / 2 + cs + 10.0           # scene / token-mask panels
+    path(ax, [(xs2, bus_b), (xs2, cy0 + cs)])                # S2 L2A -> cloudy scene
+    path(ax, [(xs2, cy0), (xs2, 26.4)])                      # pixel mask -> fine S2
     label(ax, xs2 + 1.0, 28.5, "pixel mask", ha="left")
-    x_tm = 12.2
+    path(ax, [(xa + cs, 33.5), (xb, 33.5)])
+    label(ax, (xa + cs + xb) / 2, 35.0, "SEnSeIv2", fs=FS_B)
+    label(ax, (xa + cs + xb) / 2, 32.0, "SegFormer-B2", fs=FS_B - 1)
     if "cm_rgb" in a:                                        # one cloudy scene + its token mask
-        cs, cy0 = 7.4, 29.8
-        path(ax, [(12.2, 33.5), (14.0, 33.5)])
-        image(ax, a["cm_rgb"], 14.0, cy0, cs, cs)
-        path(ax, [(21.4, 33.5), (23.2, 33.5)])
-        image(ax, a["cm_rgb"], 23.2, cy0, cs, cs)
+        image(ax, a["cm_rgb"], xa, cy0, cs, cs)
+        image(ax, a["cm_rgb"], xb, cy0, cs, cs)
         rej = np.kron(~a["cm_tok"], np.ones((16, 16), bool))
         ov = np.zeros(rej.shape + (4,))
-        ov[rej] = (0.30, 0.30, 0.30, 0.8)
-        ax.imshow(ov, extent=(23.2, 23.2 + cs, cy0, cy0 + cs), zorder=4.5,
+        ov[rej] = (0.10, 0.10, 0.10, 0.92)
+        ax.imshow(ov, extent=(xb, xb + cs, cy0, cy0 + cs), zorder=4.5,
                   interpolation="nearest")
         g = cs / 14
         for k in range(1, 14):
-            ax.add_line(Line2D([23.2 + k * g] * 2, [cy0, cy0 + cs], color="white", lw=0.2,
+            ax.add_line(Line2D([xb + k * g] * 2, [cy0, cy0 + cs], color="white", lw=0.2,
                                zorder=4.6))
-            ax.add_line(Line2D([23.2, 23.2 + cs], [cy0 + k * g] * 2, color="white", lw=0.2,
+            ax.add_line(Line2D([xb, xb + cs], [cy0 + k * g] * 2, color="white", lw=0.2,
                                zorder=4.6))
         dd = str(a["cm_date"])
-        label(ax, 17.7, 28.7, f"S2 {dd[:4]}-{dd[4:6]}-{dd[6:]}", fs=FS_B - 1)
-        label(ax, 26.9, 28.7, f"kept {int(a['cm_tok'].sum())}/196", fs=FS_B - 1)
-        x_tm = 30.6
-    path(ax, [(x_tm, 33.5), (93, 33.5), (93, 42)])           # token mask -> token sequence
+        label(ax, xb + cs / 2, 28.7, f"{dd[:4]}-{dd[4:6]}-{dd[6:]} · kept "
+              f"{int(a['cm_tok'].sum())}/196", fs=FS_B - 1)
+    path(ax, [(xb + cs, 33.5), (93, 33.5), (93, 42)])        # token mask -> token sequence
     label(ax, 70, 36.7, "token mask: ≤ 1 % cloudy px per 160 m token")
     label(ax, 70, 35.0, "→ S2 history · anchor · pyramid")
     # one 3x3 stem per input (model.py stem_s2 / stem_s1 / stem_dem / stem_lulc), then concat
