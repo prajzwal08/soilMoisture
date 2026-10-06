@@ -8595,3 +8595,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §69.3 diff figure, tile-centre model only (user asked): job 27654586
   §69.3 diff figure, observed line + Ne1-Ne2 labels (user asked): job 27654684
   §69.3 Ne1-Ne2 diff, one figure per year 2017-2024 (user asked): job 27654786
+  §69.3 2019 diff + S1/S2/irrigation strip (user asked): job 27654905
