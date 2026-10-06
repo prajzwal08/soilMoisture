@@ -17833,3 +17833,46 @@ Imagery (B1-B4) and tokens (D) stay Overijssel-only. They scale with tiles and a
 - **FIRST CHECK Tue morning:** project quota usage (5 TB; 1.4 TB zarr_tokens + 247 GB satellite_zarr + checkpoints
   already). If 1.1 TB does not fit, ask the user; the fallback is to keep only the SIF + geolocation variables per
   file.
+
+## §69 Irrigation test at Mead (US-Ne1/Ne2/Ne3) (Session 48, 2026-10-06, BUILT, not run)
+
+Motivation: Brocca et al. 2024 (STOTEN 945, 174087) judged 1 km SM products by whether they show irrigation
+and fire. Our controlled version is Mead, Nebraska: three AmeriFlux fields within 1.6 km, same soil and
+weather, Ne1 irrigated continuous maize, Ne2 irrigated maize/soy, Ne3 rainfed maize/soy (no-till, maize odd
+years). §44.8 reserved them for validation. Sardinia (Arborea irrigation, Montiferru 2021 fire) comes after.
+
+Physics of the test: ERA5 has no irrigation, LULC/soil/DEM do not separate irrigated from rainfed. Any
+irrigated-minus-rainfed difference in the model must come from S1 (soil water, revisit days only, canopy
+attenuates) or S2 (green crop as a proxy). Step 3 has to tell those two apart.
+
+```
+BASE-BADM zips (Ne1/2/3) + BASE_MeasurementHeight_20260908.csv
+   /projects/prjs1968/raw_soil_moisture/ameriflux_base_mead/  (read-only copy, md5 = scratch)
+        |
+        v
+ step 1  preprocessing_mead_base.py ----> data_mead/observed/   observed-only daily SM, rain, LE
+        |  raw SWC_H_V_R, 0<theta<=0.6,      data_mead/level1/     training-label pipeline 2017-2025
+        |  >=6 obs/day, depth from MH file   data_mead/bif/        irrigation log, depths, mgmt
+        v
+ step 2  analyse_mead_irrigation.py ----> T1 monthly gap, T2 JJAS per year, T3 dry-day wetting,
+        |                                 T4 LE, sample figure figures/mead/mead_sample_<year>
+        v
+   GATE: summer gap vs §66 OOS ubRMSE (.052/.048/.047)
+        v
+ step 3  (plan only) Ne3 input build, frozen §66 model on 3 sites, S1-off / S2-off / fine-off ablation
+```
+
+Facts found while building:
+- The BIF has NO `GRP_VAR_INFO`, so it cannot give sensor depths. Depths come from the AmeriFlux "BASE
+  Measurement Height" product (https://ftp.fluxdata.org/.ameriflux_downloads/measurement_height/): TDR at 10,
+  25, 50, 100 cm at all three sites, Ne3 also 175 cm (below 100 cm, dropped). Bins: 0-10 = 10 cm, 10-30 = 25 cm,
+  30-100 = 50 + 100 cm. openpyxl is not needed for this.
+- The BIF irrigation log (`GRP_DM_WATER`) records some events as "No irrigation over Towers": the sensors
+  may not see irrigation in those years. Step 2 T2 prints it per year; years without tower irrigation are
+  NOT irrigated for this test.
+- Precipitation is the tower gauge in BASE (`P_PI_F_1_1_1`, `P_PI_F_2_2_1`). FLUXNET `P_F` is the same gauge
+  with ERA gap-filling. Ne3 has no FLUXNET release, and we have no FLUXNET files for Mead stored locally.
+- `preprocessing_ameriflux.py` cannot be imported (it mkdirs dead /home/khanalp paths at import); its
+  SWC rules are copied.
+
+Job: `sbatch slurm/mead_irrigation_step1.sh [year]` (rome, 16 CPU, 30 min, ~8 SBU). Needs explicit OK.

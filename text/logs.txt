@@ -8483,3 +8483,13 @@ Imagery: built make_nl_splits.py, verify_nl_download.py, slurm/nl_imagery.sh; do
     Fixed: write_metadata() merge under fcntl lock (download_s2_mpc.py, used by download_s1_lulc_mpc.py); verify lists every
     mismatching scene with baseline + store-fresh offset; "n/a" now FAILS. Deleted the 3 smoke tiles' fresh S2L2A + smoke S2 ckpt.
   §68 imagery smoke RE-SUBMITTED (user "go on"): job 27651557
+
+SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps 1+2 BUILT, not run
+  User: irrigation + wildfire like Brocca et al. 2024 (Sardinia); irrigation FIRST, at Mead Ne1/Ne2/Ne3;
+  build daily SM from AmeriFlux with our processing, compare irrigated vs rainfed, then the model.
+  Precip from the flux tower (user). BASE zips + MeasurementHeight copied to
+  /projects/prjs1968/raw_soil_moisture/ameriflux_base_mead/ (md5 match, chmod a-w).
+  FOUND: BIF has no VAR_INFO -> SWC depths from BASE_MeasurementHeight_20260908.csv: 10/25/50/100 cm (Ne3 +175).
+  FOUND: BIF irrigation log says "No irrigation over Towers" for some events -> per-year check before use.
+  New: preprocessing_mead_base.py, analyse_mead_irrigation.py, slurm/mead_irrigation_step1.sh; runbook §69.
+  NOT submitted, waiting for the user's OK.
