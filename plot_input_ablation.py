@@ -69,7 +69,8 @@ def main():
               ("d_absbias_pct", "d_absbias_lo", "d_absbias_hi", "(c) |bias| change (%)")]
     fig, axes = plt.subplots(1, 3, figsize=(14.5, 0.55 * len(order) + 1.6), constrained_layout=True,
                              sharey=True)
-    for ax, (col, lo, hi, title) in zip(axes, panels):
+    mats = []
+    for col, lo, hi, _ in panels:
         m = np.full((len(order), len(DEPTHS)), np.nan)
         sig = np.zeros_like(m, dtype=bool)
         for i, (k, _) in enumerate(order):
@@ -78,8 +79,12 @@ def main():
                 if len(r):
                     m[i, jx] = r[col].iloc[0]
                     sig[i, jx] = (r[lo].iloc[0] > 0) or (r[hi].iloc[0] < 0)
-        vmax = max(np.nanmax(np.abs(m)), 1.0)
-        im = ax.imshow(m, cmap=cmap, norm=TwoSlopeNorm(0, -vmax, vmax), aspect="auto")
+        mats.append((m, sig))
+    # ONE colour scale across panels, so equal colour = equal % change
+    vmax = max(max(np.nanmax(np.abs(m)) for m, _ in mats), 1.0)
+    norm = TwoSlopeNorm(0, -vmax, vmax)
+    for ax, (m, sig), (_, _, _, title) in zip(axes, mats, panels):
+        im = ax.imshow(m, cmap=cmap, norm=norm, aspect="auto")
         for i in range(m.shape[0]):
             for jx in range(m.shape[1]):
                 if np.isfinite(m[i, jx]):
@@ -89,7 +94,7 @@ def main():
         ax.set_xticks(range(len(DEPTHS)), [f"{d} cm" for d in DEPTHS])
         ax.xaxis.tick_top()
         ax.set_title(title, loc="left", pad=28)
-        fig.colorbar(im, ax=ax, shrink=0.9, label="% change vs. baseline")
+    fig.colorbar(im, ax=axes, shrink=0.9, label="% change vs. baseline")
     axes[0].set_yticks(range(len(order)), [lab for _, lab in order])
 
     out = Path(a.out_dir)
