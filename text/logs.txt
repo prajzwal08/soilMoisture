@@ -8651,3 +8651,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   27656397 DONE (23 s): grey boxes = ERA5, Ne1, Ne2 all < 1 mm, shaded in panels b-d.
   §69.5 diff figure legend: dropped '(tile centre)' (user asked): job 27656505
   §69.5 Jun-Aug 2019 diff, model Ne1-Ne2 from ONE forward pass (Ne1 tile + Ne2 tile) (user asked): job 27656754
+  27656754 DONE: figures/mead/mead_diff_Ne1_Ne2_20190601_20190831_acq_sametile.png. Jun-Aug 2019 mean (R vs obs):
+    obs -0.009/-0.014/-0.026; Ne1 tile +0.007(-0.22)/+0.008(-0.36)/+0.006(-0.38); Ne2 tile +0.003(+0.03)/+0.004(-0.19)/+0.003(-0.47).
+  READ: same-tile difference is small (|mean| < 0.01, swings ~+-0.02 vs obs +-0.07), the two tiles agree after Jul 7,
+    Ne1-wetter (wrong sign), steps at the Jun 24 S2 scene (Ne1 tile +0.05 at 0-10/10-30). No dips at Ne2 pivot dates.
