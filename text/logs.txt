@@ -8524,3 +8524,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     whose min non-zero DN >= 1000 ("already harmonised") -> BRIGHT un-offset scenes (haze/cloud/dry) were left WITHOUT +1000.
     The "min DN 1002" closure check cannot see this (skipped scenes are >=1000 by construction). Earlier date-vs-baseline
     double-offset hypothesis REJECTED (store is LOWER, not higher). NL keeps the baseline rule (physically correct).
+  §69 rerun 27652198 DONE. Irrigation totals now sane (Ne1 1.5-10.3 in/yr, Ne2 2.8-7.5). Figures 2018/2020/2022 in
+  figures/mead/. 2020 (dry, 190 mm JJAS): every logged pivot event (~25-30 mm) = sawtooth at 0-10 and 10-30 in
+  Ne1/Ne2; Ne3 dries smoothly to ~0.19-0.22. Gap 0-10 ~+0.05..0.08 Jul-Aug; 30-100 cm gap grows to ~0.10 by Sep
+  (irrigated stays ~0.32-0.35, rainfed falls to ~0.23) -> ROOT ZONE carries the largest, smoothest signal.
+  Irrigated surface swings 0.20 <-> 0.32 within days: one S1 snapshot can land on either.
+  Cosmetic: Ne1 Jan 0-10 (frozen) dips below the y-axis floor.
