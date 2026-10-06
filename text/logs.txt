@@ -8648,3 +8648,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     ~1.5 h left). 16 tiles status=error = MPC STAC "rate limit exceeded" at the simultaneous 11:41 start (no scenes); 2 partial
     (23 failed scenes). 403s since 12:26 are retried with fresh signatures and mostly recover. Resubmitting s2 array retries
     error+partial tiles (checkpoint counts only done/no_data).
+  27656397 DONE (23 s): grey boxes = ERA5, Ne1, Ne2 all < 1 mm, shaded in panels b-d.
