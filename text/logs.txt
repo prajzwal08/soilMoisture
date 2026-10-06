@@ -8623,3 +8623,14 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Window too strict: 2018 summer has rain every few days. Next (needs OK): name the wet source per day, rain-free = d0-1..d0+1.
   §69.5 --pair (user: Ne2 logged irrigation on days ERA5, Ne1, Ne2 all dry; S1/S2 as asterisks; P bottom panel): job 27655589 (2018)
   §69.5 --pair --window Aug 2019 (user: other plot, Aug 2019 only): job 27655590
+  §69.5 --pair DONE: 27655589 (2018) 22 s, 27655590 (Aug 2019 window) 27 s. figures/mead/mead_pair_irrigation_Ne2_{2018,20190801_20190831}.png
+    dSM logged start-1 -> end+1, Ne2 minus Ne1 (obs | model):
+      2018 Jul 19-24 (Ne1 not irrigated in window; 2 all-dry days; S1 none): 0-10 +0.078 | -0.062, 10-30 +0.050 | -0.064
+      2018 Aug 4-9 / Aug 10-15: Ne1 also irrigated Aug 1-14 -> no clean control.
+      2019 Jul 8-13 (4/6 all dry, S1 Jul 9, Ne1 never irrigated in 2019): 0-10 +0.054 | +0.018, 10-30 +0.069 | +0.015
+      2019 Jul 15-20 (4/6 dry, no S1): 0-10 +0.013 | -0.005, 10-30 -0.049 | -0.007
+      2019 Jul 29-Aug 2 (1/5 dry, S1 Aug 2): 0-10 +0.054 | +0.031, 10-30 +0.020 | +0.010
+      2019 Aug 9-18 (4/10 dry, S1 Aug 14): 0-10 +0.056 | -0.002, 10-30 +0.022 | -0.015
+    READ: observed Ne2 wets 0.05-0.08 more than Ne1 during its irrigation; model gives ~0-0.03 and only in
+    windows with an S1 pass (Jul 9, Aug 2); without S1 it is ~0 or the wrong sign.
+    CONFIRMED: 2019 Ne1 gauge copies Ne2 pivot spikes (both 30.5 mm max, Ne1 not irrigated) -> Ne1 P gap-filled from Ne2.
