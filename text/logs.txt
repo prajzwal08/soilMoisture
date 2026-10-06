@@ -8986,3 +8986,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   13,245 / 265,048), tok 27682358, post 27682359. State for tomorrow: cm DONE for all 688 tiles (27681280 t1-7 +
   27682355 t0); refetch done; ~13.2k rejected S2 TIFs already deleted, ~251.8k still on disk; raw zarr / tokens / post NOT
   started. Resume = resubmit prep (re-runs analyze ~80 min on remaining scenes, then delete, then raw zarr) -> tok -> post.
+  §72 user: "NO LEAVE IT, MAKE CLASSICAL TEXTBOOK FIGURE" -> full lag-ladder run NOT submitted (scripts kept).
+    plot_textbook_sm_signals.py (idealised curves, not data): (a) spectra dry/wet soil, green/stressed veg + S2 B4/B8/B11/B12,
+    water bands; (b) C-band VV vs SM bare/grass/forest; (c) idealised response after rain (SM, VV, SWIR same day; NDMI days;
+    NDVI weeks). Jobs 27684395 (first render), 27684406 (smooth veg spectrum, label fixes) -> figures/textbook/sm_signals.{png,pdf}
