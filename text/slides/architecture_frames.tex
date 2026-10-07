@@ -1,0 +1,22 @@
+% Architecture slides (method), shared by text/research_questions_slides.tex and text/slides/motivation_slides.tex
+% Source figure: figures/architecture_s48/architecture_s48.pdf, 1281.6 x 950.4 bp; zooms are trim crops of it.
+
+\begin{frame}{Method\quad{\color{tumblue}Model architecture}}
+\centering
+\includegraphics[width=\linewidth,height=0.91\textheight,keepaspectratio]{architecture_s48/architecture_s48.pdf}
+\end{frame}
+
+\begin{frame}{Method\quad{\color{tumblue}Inputs: what the model sees for day D}}
+\centering
+\includegraphics[width=\linewidth,height=0.90\textheight,keepaspectratio,trim=60 740 225 36,clip]{architecture_s48/architecture_s48.pdf}
+\end{frame}
+
+\begin{frame}{Method\quad{\color{tumblue}Coarse path: tokens $\rightarrow$ transformer}}
+\centering
+\includegraphics[width=\linewidth,height=0.90\textheight,keepaspectratio,trim=0 290 370 234,clip]{architecture_s48/architecture_s48.pdf}
+\end{frame}
+
+\begin{frame}{Method\quad{\color{tumblue}Fine path: 20\,m CNN $\rightarrow$ U-Net decoder $\rightarrow$ depth heads}}
+\centering
+\includegraphics[width=\linewidth,height=0.90\textheight,keepaspectratio,trim=0 0 0 430,clip]{architecture_s48/architecture_s48.pdf}
+\end{frame}
