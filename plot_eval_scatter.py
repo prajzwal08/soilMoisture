@@ -229,6 +229,7 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
     sc = None
     for i, split in enumerate(splits):
         df = preds[split]
+        ps = per_station_metrics(df)       # same per-station numbers as the box plots
         for j, depth in enumerate(SM_DEPTHS):
             ax = axes[i][j]
             g = df[df["depth"] == depth]
@@ -249,10 +250,11 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
             sc = ax.scatter(t[o], p[o], c=d[o], s=0.6, cmap=cmap, norm=norm,
                             linewidths=0, rasterized=True, zorder=1)
             ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
-            m = metrics_from_arrays(p, t)
+            q = ps[ps["depth"].astype(str) == depth]     # per-station medians (cf. box plots)
             ax.text(0.97, 0.03,
-                    f"ubRMSE {m['ubRMSE']:.3f}\n$r^2$ {m['R2_pearson']:.2f}\n"
-                    f"bias {m['bias']:+.3f}\nn {m['n']:,}",
+                    "median per station\n"
+                    f"ubRMSE {q['ubRMSE'].median():.3f}\nr {q['R'].median():.2f}\n"
+                    f"{len(q)} stations",
                     transform=ax.transAxes, va="bottom", ha="right",
                     fontsize=_afs(6), zorder=4,
                     bbox=dict(fc="white", ec="none", pad=1.5))

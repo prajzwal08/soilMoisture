@@ -9085,3 +9085,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     region the model never predicts. Envelope: pred capped ~0.40-0.42, obs ~0.42 (porosity); deep pred floor ~0.03.
   Backup slide 3 'Voids in the density plot' (scatter_pred_obs_stations) added (user: keep as backup).
   Talk deck renamed (user): text/slides/motivation_slides.{tex,pdf} -> prajwal_khanal_uTwente_ITC.{tex,pdf} (27 pp).
+  Density panels: pooled metrics replaced by per-station medians (per_station_metrics, same as box plots), job 27713397:
+    OOS ubRMSE 0.050/0.048/0.048 r 0.77/0.76/0.70; OOT 0.047/0.043/0.043 r 0.80/0.81/0.77; OOST 0.051/0.044/0.050
+    r 0.77/0.78/0.74. Low pooled OOST r2 was station level offsets, not dynamics.
