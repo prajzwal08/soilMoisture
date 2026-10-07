@@ -6,13 +6,14 @@
 \setbeamertemplate{navigation symbols}{}
 \setbeamertemplate{footline}{\hfill\tiny\insertframenumber\hspace{6pt}\vspace{4pt}}
 \setbeamercolor{frametitle}{fg=black}
+\definecolor{tumblue}{HTML}{0065BD}
 \setbeamerfont{frametitle}{size=\normalsize,series=\bfseries}
 \setbeamertemplate{itemize items}{\textbullet}
 \graphicspath{{../figures/}{slides/}}
 
 % One layout for every RQ slide: question as title, figure box left (fixed size), bullets right.
 \newcommand{\rqslide}[5]{%
-\begin{frame}{#1\quad #2}
+\begin{frame}{#1\quad{\color{tumblue}#2}}
 \begin{columns}[T,onlytextwidth]
 \begin{column}{0.56\textwidth}
 \centering
@@ -75,7 +76,7 @@ Outlook   & RQ7 & Can the model detect management signals (irrigation)? \\
 \item Within-station S2 shuffle
 \end{itemize}}
 
-\begin{frame}{RQ1\quad What does the model use the GFM embeddings for? (shuffle ablation)}
+\begin{frame}{RQ1\quad{\color{tumblue}What does the model use the GFM embeddings for? (shuffle ablation)}}
 \scriptsize
 \centering
 \begin{tabular}{@{}l rr rr rr@{}}
@@ -106,7 +107,7 @@ Baseline: ubRMSE 0.050 / 0.048 / 0.048, $r$ 0.766 / 0.761 / 0.702 ($n$ = 221 / 1
 \emph{Cross} = another station's input (kills site identity); \emph{within} = same station, shuffled dates (kills timing).
 \end{frame}
 
-\begin{frame}{RQ1\quad What we can and cannot claim today}
+\begin{frame}{RQ1\quad{\color{tumblue}What we can and cannot claim today}}
 \footnotesize
 \begin{columns}[T,onlytextwidth]
 \begin{column}{0.55\textwidth}

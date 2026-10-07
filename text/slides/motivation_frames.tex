@@ -3,7 +3,7 @@
 \setbeamercolor{msgbox}{bg=black!6,fg=black}
 \providecommand{\figcap}[1]{\par\vspace{1pt}{\scriptsize\itshape #1}\par}
 \providecommand{\msg}[1]{\par\vspace{5pt}\begin{beamercolorbox}[wd=0.94\linewidth,sep=5pt,center,rounded=true]{msgbox}\small\textbf{#1}\end{beamercolorbox}}
-\begin{frame}{Motivation\quad Different ways of obtaining soil moisture}
+\begin{frame}{Motivation\quad{\color{tumblue}Different ways of obtaining soil moisture}}
 \scriptsize
 \centering
 \renewcommand{\arraystretch}{1.25}
@@ -44,7 +44,7 @@ Source & How SM is obtained & Depth & Main limitation \\
 \end{tabular}
 \end{frame}
 
-\begin{frame}{Motivation\quad Multimodal remote sensing}
+\begin{frame}{Motivation\quad{\color{tumblue}Multimodal remote sensing}}
 \centering
 \begin{columns}[T,onlytextwidth]
 \begin{column}{0.56\textwidth}
@@ -61,21 +61,21 @@ Source & How SM is obtained & Depth & Main limitation \\
 \msg{Soil and vegetation water change both optical reflectance and SAR backscatter}
 \end{frame}
 
-\begin{frame}{Motivation\quad Geospatial foundation models (GFMs)}
+\begin{frame}{Motivation\quad{\color{tumblue}Geospatial foundation models (GFMs)}}
 \centering
 \includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{DOFA1-1.png}
 \figcap{DOFA: one model for many sensors and many downstream tasks (Xiong et al., 2024, arXiv:2403.15356)}
 \msg{Once pre-trained on multimodal, unlabelled data, it works for many downstream tasks}
 \end{frame}
 
-\begin{frame}{Motivation\quad TerraMind embeddings for soil moisture}
+\begin{frame}{Motivation\quad{\color{tumblue}TerraMind embeddings for soil moisture}}
 \centering
 \includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{gfm_embedding_schematic.pdf}
 \figcap{S2, S1, DEM and LULC $\rightarrow$ frozen TerraMind ViT-B $\rightarrow$ one 768-d embedding per 160\,m patch $\rightarrow$ downstream tasks}
 \msg{The same embedding can serve many tasks; in this case, soil moisture}
 \end{frame}
 
-\begin{frame}{Motivation\quad Example: TerraMind embeddings at one site (TxSON, 2019)}
+\begin{frame}{Motivation\quad{\color{tumblue}Example: TerraMind embeddings at one site (TxSON, 2019)}}
 \centering
 % figure is 532.8 x 734.4 bp (600 dpi); panels cropped with trim so they sit side by side
 \includegraphics[width=0.49\linewidth,trim=0 451 0 0,clip]{terramind_value/terramind_value.png}\hfill
