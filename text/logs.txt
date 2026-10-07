@@ -9078,3 +9078,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Title: 'from multimodal drivers' -> 'with multimodal drivers' (user).
   Title: 'dr. J. Beckers (Joost)' (user).
   Density plot: sparsest 20 % of samples per panel not drawn (min_pct=20, metrics on all), job 27712717; caption says so.
+  Density cut 20 % -> 10 % (user, 'there is a void'); new diagnostic fig scatter_pred_obs_stations (distinct stations per
+    obs x pred cell, 62 bins), job 27713013. Reading: the density voids are NOT empty -- OOS/OOST 30-100 cells inside the
+    voids hold 6-20 stations; each station passes through briefly, while a few stations sitting for years at one level
+    make the dense blobs, so the voids are low RELATIVE density (percentile cut), a station-clustering effect, not a
+    region the model never predicts. Envelope: pred capped ~0.40-0.42, obs ~0.42 (porosity); deep pred floor ~0.03.

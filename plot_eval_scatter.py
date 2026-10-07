@@ -210,7 +210,7 @@ def fig_pred_obs_kde(preds: dict, out_dir: Path, nbin: int = 250, sigma: float =
 
 
 def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: float = 2.0,
-                         min_pct: float = 20.0):
+                         min_pct: float = 10.0):
     """Every sample as a point, coloured by its local density (densest drawn on top).
 
     Density = Gaussian-smoothed 2-D histogram looked up at each point (a gridded KDE,
@@ -265,6 +265,57 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
                 ax.set_xlabel("observed SM (m$^3$/m$^3$)")
     fig.colorbar(sc, ax=axes[:, -1].tolist(), label="point density (percentile)", shrink=0.9)
     save(fig, out_dir, "scatter_pred_obs_density")
+
+
+def fig_pred_obs_stations(preds: dict, out_dir: Path, nbin: int = 62):
+    """Same grid as scatter_pred_obs_density, coloured by how many DISTINCT stations have a
+    sample in each (observed, predicted) cell. Explains voids / blobs in the density plot:
+    with ~80-220 held-out stations each covering a narrow SM range, the cloud is a union of
+    per-station patches, and a void is a range no station visits (sampling, not the model).
+    """
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    splits = [s for s in HELD_OUT if s in preds]
+    edges = np.linspace(*SM_LIM, nbin + 1)
+    bounds = [0.5, 1.5, 2.5, 5.5, 10.5, 20.5, 1e6]
+    labels = ["1", "2", "3-5", "6-10", "11-20", ">20"]
+    cmap = ListedColormap(plt.get_cmap("viridis")(np.linspace(0, 1, len(labels))))
+    cmap.set_bad("white")
+    norm = BoundaryNorm(bounds, cmap.N)
+    fig, axes = plt.subplots(len(splits), len(SM_DEPTHS),
+                             figsize=(9.6, 2.75 * len(splits) + 0.4),
+                             constrained_layout=True, squeeze=False)
+    pm = None
+    for i, split in enumerate(splits):
+        df = preds[split]
+        for j, depth in enumerate(SM_DEPTHS):
+            ax = axes[i][j]
+            g = df[df["depth"] == depth]
+            if g.empty:
+                ax.set_axis_off()
+                continue
+            ix = np.clip(np.digitize(g["obs"].to_numpy(), edges) - 1, 0, nbin - 1)
+            iy = np.clip(np.digitize(g["pred"].to_numpy(), edges) - 1, 0, nbin - 1)
+            c = (pd.DataFrame({"ix": ix, "iy": iy, "st": g["station_key"].to_numpy()})
+                 .groupby(["ix", "iy"])["st"].nunique())
+            z = np.full((nbin, nbin), np.nan)
+            z[c.index.get_level_values("iy"), c.index.get_level_values("ix")] = c.to_numpy()
+            pm = ax.pcolormesh(edges, edges, np.ma.masked_invalid(z), cmap=cmap, norm=norm,
+                               rasterized=True, zorder=1)
+            ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
+            ax.text(0.97, 0.03, f"{g['station_key'].nunique()} stations",
+                    transform=ax.transAxes, va="bottom", ha="right", fontsize=_afs(6),
+                    zorder=4, bbox=dict(fc="white", ec="none", pad=1.5))
+            ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
+            if i == 0:
+                ax.set_title(DEPTH_LABELS[depth])
+            if j == 0:
+                ax.set_ylabel(f"{split.upper()}\npredicted SM (m$^3$/m$^3$)")
+            if i == len(splits) - 1:
+                ax.set_xlabel("observed SM (m$^3$/m$^3$)")
+    cb = fig.colorbar(pm, ax=axes[:, -1].tolist(), label="stations in cell", shrink=0.9,
+                      ticks=[1, 2, 4, 8, 15.5, 25])
+    cb.ax.set_yticklabels(labels)
+    save(fig, out_dir, "scatter_pred_obs_stations")
 
 
 # ── 2. Station-mean predicted vs observed ─────────────────────────────────────
@@ -543,6 +594,7 @@ def main():
     figs = {"scatter_pred_obs":         lambda: fig_pred_obs(preds, out_dir),
             "scatter_pred_obs_kde":     lambda: fig_pred_obs_kde(preds, out_dir),
             "scatter_pred_obs_density": lambda: fig_pred_obs_density(preds, out_dir),
+            "scatter_pred_obs_stations": lambda: fig_pred_obs_stations(preds, out_dir),
             "scatter_station_mean":     lambda: fig_station_mean(preds, out_dir),
             "scatter_station_metrics":  lambda: fig_station_metrics(ps_all, out_dir),
             "scatter_ubrmse_vs_offset": lambda: fig_ubrmse_vs_offset(ps_all, out_dir),
