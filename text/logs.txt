@@ -9013,3 +9013,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   (drivers+soil, no tokens) and Run B (A + static descriptors) + within-station S2 shuffle -- not submitted.
   -> text/research_questions.pdf (article) and text/research_questions_slides.pdf (16:9, 12 slides,
      one RQ per slide with an existing figure; RQ1 gets the ablation table + claims slide).
+2026-10-07  Slides (text/slides/motivation_slides.pdf + research_questions_slides.pdf, no jobs):
+  motivation (SM sources table, multimodal RS, DOFA, TerraMind schematic, TxSON tokens) -> architecture (plain, boxed,
+  3 zooms with thumbnail) -> data (map, depth/record/splits, climate + land cover, "Data points in total").
+  Scene counts read from satellite_zarr/*/{s2,s1_asc,s1_desc}/dates/.zarray shapes (login node, metadata only):
+  S2 272,281 (994 sites), S1 asc 251,310 (993) + desc 245,525 (910) = 496,835. S2 download filter: scene cloud < 75 %
+  (download_s2_mpc.py:62), cloudy 160 m tokens masked later. Observed SM station-days (data_overview_points.csv):
+  2,098,912 / 1,676,037 / 1,367,793 = 5,142,742 over 0-10/10-30/30-100.
