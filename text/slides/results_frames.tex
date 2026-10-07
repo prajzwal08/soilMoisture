@@ -15,8 +15,8 @@
 
 \begin{frame}{Results\quad{\color{tumblue}Predicted vs observed, by split and depth}}
 \centering
-\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs_kde.pdf}
-\figcap{All daily samples, smoothed density; shaded bands hold 50/75/90/99\,\% of samples; rows OOS, OOT, OOST}
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs_density.pdf}
+\figcap{All daily samples, coloured by point density; rows OOS, OOT, OOST}
 \msg{New years at known sites (OOT, r$^2$ 0.70--0.74) fit far better than new sites (r$^2$ 0.29--0.46)}
 \end{frame}
 
@@ -27,18 +27,18 @@
 \msg{Similar error across land cover; forest slightly highest, shrub--savanna lowest}
 \end{frame}
 
-\begin{frame}{Results\quad{\color{tumblue}Sites where all three depths match}}
+\begin{frame}{Results\quad{\color{tumblue}Sites where the time series match}}
 \centering
 \begin{minipage}[t]{0.495\linewidth}\centering
-\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/BEST_01_ISMN_NGARI_ALI02.png}\\[-1pt]
-{\scriptsize\bfseries NGARI ALI02, Tibetan Plateau (best)}
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries_twente/named/oos/NAMED_05_ISMN_TWENTE_ITCSM-13.png}\\[-1pt]
+{\scriptsize\bfseries TWENTE ITCSM-13, Netherlands}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.495\linewidth}\centering
 \includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/BEST_05_ISMN_SCAN_DoeRidge.png}\\[-1pt]
 {\scriptsize\bfseries SCAN Doe Ridge, California}
 \end{minipage}
-\figcap{OOS stations observed at all three depths, lowest ubRMSE; blue predicted, black observed}
-\msg{Dynamics right at all depths (ubRMSE 0.013--0.036, r 0.57--0.73); level off by up to 0.05}
+\figcap{OOS stations; blue predicted, black observed; Twente has two depths, Doe Ridge three}
+\msg{Dynamics right at every depth (r 0.57--0.88, ubRMSE 0.024--0.056); level off by up to 0.04}
 \end{frame}
 
 \begin{frame}{Results\quad{\color{tumblue}Sites where the depths do not match}}

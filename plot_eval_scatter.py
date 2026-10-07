@@ -209,6 +209,61 @@ def fig_pred_obs_kde(preds: dict, out_dir: Path, nbin: int = 250, sigma: float =
     save(fig, out_dir, "scatter_pred_obs_kde")
 
 
+def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: float = 2.0):
+    """Every sample as a point, coloured by its local density (densest drawn on top).
+
+    Density = Gaussian-smoothed 2-D histogram looked up at each point (a gridded KDE,
+    fast for ~10^5-10^6 points), scaled to the panel maximum and shown on a log scale.
+    Points are rasterised so the PDF stays small.
+    """
+    from matplotlib.colors import ListedColormap, LogNorm
+    from scipy.ndimage import gaussian_filter
+    splits = [s for s in HELD_OUT if s in preds]
+    edges = np.linspace(*SM_LIM, nbin + 1)
+    cmap = ListedColormap(plt.get_cmap("Blues")(np.linspace(0.3, 1.0, 256)))
+    norm = LogNorm(vmin=1e-3, vmax=1.0)
+    fig, axes = plt.subplots(len(splits), len(SM_DEPTHS),
+                             figsize=(9.0, 3.0 * len(splits)),
+                             constrained_layout=True, squeeze=False)
+    sc = None
+    for i, split in enumerate(splits):
+        df = preds[split]
+        for j, depth in enumerate(SM_DEPTHS):
+            ax = axes[i][j]
+            g = df[df["depth"] == depth]
+            if g.empty:
+                ax.set_axis_off()
+                continue
+            p = g["pred"].to_numpy(np.float64)
+            t = g["obs"].to_numpy(np.float64)
+            h, _, _ = np.histogram2d(t, p, bins=[edges, edges])
+            z = gaussian_filter(h, sigma)
+            z /= z.max()
+            ix = np.clip(np.digitize(t, edges) - 1, 0, nbin - 1)
+            iy = np.clip(np.digitize(p, edges) - 1, 0, nbin - 1)
+            d = np.clip(z[ix, iy], norm.vmin, None)
+            o = np.argsort(d)
+            sc = ax.scatter(t[o], p[o], c=d[o], s=0.6, cmap=cmap, norm=norm,
+                            linewidths=0, rasterized=True, zorder=1)
+            ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
+            m = metrics_from_arrays(p, t)
+            ax.text(0.97, 0.03,
+                    f"ubRMSE {m['ubRMSE']:.3f}\n$r^2$ {m['R2_pearson']:.2f}\n"
+                    f"bias {m['bias']:+.3f}\nn {m['n']:,}",
+                    transform=ax.transAxes, va="bottom", ha="right",
+                    fontsize=_afs(6), zorder=4,
+                    bbox=dict(fc="white", ec="none", pad=1.5))
+            ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
+            if i == 0:
+                ax.set_title(DEPTH_LABELS[depth])
+            if j == 0:
+                ax.set_ylabel(f"{split.upper()}\npredicted SM (m$^3$/m$^3$)")
+            if i == len(splits) - 1:
+                ax.set_xlabel("observed SM (m$^3$/m$^3$)")
+    fig.colorbar(sc, ax=axes[:, -1].tolist(), label="relative point density")
+    save(fig, out_dir, "scatter_pred_obs_density")
+
+
 # ── 2. Station-mean predicted vs observed ─────────────────────────────────────
 
 def fig_station_mean(preds: dict, out_dir: Path):
@@ -484,6 +539,7 @@ def main():
 
     figs = {"scatter_pred_obs":         lambda: fig_pred_obs(preds, out_dir),
             "scatter_pred_obs_kde":     lambda: fig_pred_obs_kde(preds, out_dir),
+            "scatter_pred_obs_density": lambda: fig_pred_obs_density(preds, out_dir),
             "scatter_station_mean":     lambda: fig_station_mean(preds, out_dir),
             "scatter_station_metrics":  lambda: fig_station_metrics(ps_all, out_dir),
             "scatter_ubrmse_vs_offset": lambda: fig_ubrmse_vs_offset(ps_all, out_dir),

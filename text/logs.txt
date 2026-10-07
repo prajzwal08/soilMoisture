@@ -9030,3 +9030,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   the soil enough in summer (deep pred ~0.2 vs obs ~0.1); Burts Miller deep is dried too much.
   CR200-15 label was clipped at the map edge; margin fixed (left=0.045), re-rendered by job 27705238 COMPLETED,
   all labels inside; both decks recompiled.
+  Pred-vs-obs: user disliked the contour-band KDE ("style not so good"), chose a density-coloured scatter:
+    plot_eval_scatter.py fig_pred_obs_density (gridded KDE looked up per point, densest on top, rasterised),
+    job 27705864 (slurm/slides_density_fig.sh) COMPLETED -> scatter_pred_obs_density.{png,pdf}; now on the slide.
+    Seen: single-hue Blues + log norm gives little contrast (everything mid/dark blue); fix proposed, not run.
+  Match slide: NGARI ALI02 (Tibet) replaced by TWENTE ITCSM-13 (user); 2 depths (0-10 r 0.88 ubRMSE 0.046
+    bias +0.041; 10-30 r 0.81 ubRMSE 0.056 bias +0.019) -> title now "Sites where the time series match".
