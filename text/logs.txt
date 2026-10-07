@@ -9002,3 +9002,14 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     scattering; SWIR liquid-water absorption; wetting darkens soil, largest in SWIR; B1/B9/B10 atmospheric only;
     H2O absorption bands), legend above. Bug found: plot_style_bw.apply overwrites a global FS (=1.5) -> renamed to TXT.
     Jobs 27684724-27684849 -> figures/textbook/sm_signals.{png,pdf}
+
+2026-10-07  Research questions write-up (no jobs)
+  8 RQs drafted from current results: RQ1 GFM added skill, RQ2 places vs processes, RQ3 landscape,
+  RQ4 modality x depth, RQ5 fine path, RQ6 LST (negative), RQ7 Mead irrigation, RQ8 Overijssel transfer.
+  RQ1 answerable today only as "reliance": from baseline_selected_20261005_ablation (221 OOS),
+  all-sat cross shuffle +37% ubRMSE at all depths (r 0.77->0.52), S1 within-station 0% -> tokens are a
+  static landscape descriptor conditioning the weather response, not a dynamic SM observation; S1 reliance
+  grows with depth (+4.8 -> +14.4%); S2+S1+DEM+LULC sum ~28% < 37% joint. Added skill needs Run A
+  (drivers+soil, no tokens) and Run B (A + static descriptors) + within-station S2 shuffle -- not submitted.
+  -> text/research_questions.pdf (article) and text/research_questions_slides.pdf (16:9, 12 slides,
+     one RQ per slide with an existing figure; RQ1 gets the ablation table + claims slide).
