@@ -9048,3 +9048,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Slide msgs (user): mismatch slide = deep layer only (30-100 cm wrong in summer: too dry Burts Miller, too wet
     Hopewell); ablation = ERA5 surface-heavy (+30-39 % vs +14-15 % deep), satellite equal across depths (+37-38 %),
     DEM / land cover / soil grow with depth.
+  Conclusions slide added (user wording for #1): GFM embeddings carry a site-specific, time-invariant signal,
+    comparable to climate (sat swap +37-38 % all depths vs ERA5 other-station +15-30 %; S1 same-station time
+    shuffle ~0 %); then transfer bottleneck, timing vs level, depth reliance, open: reliance != added skill.
