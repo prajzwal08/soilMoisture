@@ -26,6 +26,17 @@
 \includegraphics[width=\linewidth,height=0.91\textheight,keepaspectratio]{architecture_s48/architecture_s48.pdf}
 \end{frame}
 
+% same figure, the three parts we zoom into boxed (no words)
+\begin{frame}{Method\quad{\color{tumblue}Model architecture}}
+\centering
+\begin{tikzpicture}[x={(1.34848*0.91\textheight,0)}, y={(0,0.91\textheight)}]
+  \node[inner sep=0pt, anchor=south west] at (0,0) {\includegraphics[height=0.91\textheight]{architecture_s48/architecture_s48.pdf}};
+  \draw[boxA, line width=1.6pt, rounded corners=3pt] (0.047,0.779) rectangle (0.824,0.962);
+  \draw[boxB, line width=1.6pt, rounded corners=3pt] (0.004,0.255) rectangle (0.711,0.754);
+  \draw[boxC, line width=1.6pt, rounded corners=3pt] \fineregion;
+\end{tikzpicture}
+\end{frame}
+
 \begin{frame}{Method\quad{\color{tumblue}Inputs: what the model sees for day D}}
 \centering
 \includegraphics[width=0.96\linewidth,height=0.86\textheight,keepaspectratio,trim=60 740 225 36,clip]{architecture_s48/architecture_s48.pdf}
@@ -37,13 +48,6 @@
 % crop is 911.6 x 481.4 bp; boxes are fractions of the crop
 \begin{tikzpicture}[x={(1.89364*0.78\textheight,0)}, y={(0,0.78\textheight)}]
   \node[inner sep=0pt, anchor=south west] at (0,0) {\includegraphics[height=0.78\textheight,trim=0 235 370 234,clip]{architecture_s48/architecture_s48.pdf}};
-  \begin{scope}[boxB, line width=1.4pt, rounded corners=3pt]
-    \draw (0.004,0.557) rectangle (0.461,0.978);   % drivers: ERA5, SIF, TWSA, soil -> encoders
-    \draw (0.004,0.187) rectangle (0.672,0.505);   % satellite -> TerraMind -> pyramid tokens
-    \draw (0.004,0.020) rectangle (0.620,0.180);   % cloud mask -> token mask
-    \draw (0.679,0.250) rectangle (0.797,0.785);   % token sequence
-    \draw (0.815,0.250) rectangle (0.940,0.930);   % transformer
-  \end{scope}
 \end{tikzpicture}
 \cornerthumb{boxB}{(0,0.247) rectangle (0.711,0.754)}
 \end{frame}
