@@ -2,28 +2,22 @@
 % Style: figure -> one-line caption (\figcap) -> one-line message in a rounded box (\msg).
 % Model: baseline_selected_20261005 (the selected §59 run); figures from figures/eval/baseline_selected_20261005_paper/,
 % numbers from eval_output/baseline_selected_20261005/per_station_oos.csv.
-% Best / worst = lowest / highest mean OOS ubRMSE among stations observed at all three depths.
-
-% r2 row cropped from scatter_station_metrics.pdf (656.4 x 591.6 bp; middle row)
-\begin{frame}{Results\quad{\color{tumblue}Per-station r$^2$ by depth}}
-\centering
-\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio,trim=0 196 0 206,clip]{eval/baseline_selected_20261005_paper/scatter_station_metrics.pdf}
-\figcap{Columns: 0--10, 10--30, 30--100\,cm; one point per station; OOS, OOT (2023--2025), OOST (2023--2025)}
-\msg{Median r$^2$ about 0.6 near the surface, lower at 30--100\,cm for new stations (0.49)}
-\end{frame}
-
-\begin{frame}{Results\quad{\color{tumblue}Predicted vs observed, by split and depth}}
-\centering
-\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs.pdf}
-\figcap{All daily samples; rows OOS (new stations), OOT (known stations, 2023--2025), OOST (new stations, 2023--2025)}
-\msg{New years at known sites (OOT, r$^2$ 0.70--0.74) fit far better than new sites (r$^2$ 0.29--0.46)}
-\end{frame}
+% Order (user, 2026-10-07): ubRMSE by depth -> pred vs obs (density) -> ubRMSE by land cover ->
+% 3-depth sites that match -> 3-depth sites that do not -> TxSON (tile left, series right).
+% Match / mismatch = lowest / highest mean OOS ubRMSE among stations observed at all three depths.
 
 \begin{frame}{Results\quad{\color{tumblue}Per-station ubRMSE by depth}}
 \centering
 \includegraphics[width=\linewidth,height=0.66\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/box_ubrmse_by_depth.pdf}
 \figcap{One point per station; medians above, station counts below}
 \msg{Median per-station ubRMSE 0.043--0.051\,m$^3$/m$^3$ at every depth and split}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Predicted vs observed, by split and depth}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs_kde.pdf}
+\figcap{All daily samples, smoothed density; shaded bands hold 50/75/90/99\,\% of samples; rows OOS, OOT, OOST}
+\msg{New years at known sites (OOT, r$^2$ 0.70--0.74) fit far better than new sites (r$^2$ 0.29--0.46)}
 \end{frame}
 
 \begin{frame}{Results\quad{\color{tumblue}Per-station ubRMSE by land cover}}
@@ -33,23 +27,37 @@
 \msg{Similar error across land cover; forest slightly highest, shrub--savanna lowest}
 \end{frame}
 
-\begin{frame}{Results\quad{\color{tumblue}Best site: NGARI ALI02 (Tibetan Plateau)}}
+\begin{frame}{Results\quad{\color{tumblue}Sites where all three depths match}}
 \centering
-\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/BEST_01_ISMN_NGARI_ALI02.png}
-\figcap{Lowest OOS ubRMSE among stations observed at all three depths; blue predicted, black observed}
-\msg{Dynamics right at all depths (ubRMSE 0.019 / 0.015 / 0.013), but biased low by 0.02--0.05}
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/BEST_01_ISMN_NGARI_ALI02.png}\\[-1pt]
+{\scriptsize\bfseries NGARI ALI02, Tibetan Plateau (best)}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/BEST_05_ISMN_SCAN_DoeRidge.png}\\[-1pt]
+{\scriptsize\bfseries SCAN Doe Ridge, California}
+\end{minipage}
+\figcap{OOS stations observed at all three depths, lowest ubRMSE; blue predicted, black observed}
+\msg{Dynamics right at all depths (ubRMSE 0.013--0.036, r 0.57--0.73); level off by up to 0.05}
 \end{frame}
 
-\begin{frame}{Results\quad{\color{tumblue}Worst site: SNOTEL Burts Miller Ranch (Utah)}}
+\begin{frame}{Results\quad{\color{tumblue}Sites where the depths do not match}}
 \centering
-\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/WORST_02_ISMN_SNOTEL_BurtsMillerRanch.png}
-\figcap{Highest OOS ubRMSE among stations observed at all three depths; shaded = 2023--2025 (OOST)}
-\msg{Snow-fed site: the deep layer stays near saturation, but the model dries it every summer}
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/WORST_02_ISMN_SNOTEL_BurtsMillerRanch.png}\\[-1pt]
+{\scriptsize\bfseries SNOTEL Burts Miller Ranch, Utah}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/WORST_04_ISMN_SNOTEL_Hopewell.png}\\[-1pt]
+{\scriptsize\bfseries SNOTEL Hopewell, New Mexico}
+\end{minipage}
+\figcap{OOS stations observed at all three depths, highest ubRMSE; shaded = 2023--2025 (OOST)}
+\msg{Snowmelt peaks timed right; summer dry-down wrong: too dry deep at Burts Miller, too wet at Hopewell}
 \end{frame}
 
 \begin{frame}{Results\quad{\color{tumblue}TxSON: six stations inside one 2.2\,km tile}}
 \centering
-\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/tiles/txson_cr200-18.pdf}
-\figcap{(a) Sentinel-2 true colour with the six stations; (b--g) 0--10\,cm time series, predicted vs observed}
+\includegraphics[width=0.95\linewidth,keepaspectratio,trim=0 12 0 26,clip]{eval/baseline_selected_20261005_paper/tiles/txson_cr200-18_side.pdf}
+\figcap{(a) Sentinel-2 true colour with the six stations; (b--g) 0--10\,cm, predicted vs observed}
 \msg{Timing right at every station (r 0.69--0.85); offsets remain (bias $-$0.12 to +0.11)}
 \end{frame}

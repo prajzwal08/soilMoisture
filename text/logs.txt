@@ -9020,3 +9020,13 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   S2 272,281 (994 sites), S1 asc 251,310 (993) + desc 245,525 (910) = 496,835. S2 download filter: scene cloud < 75 %
   (download_s2_mpc.py:62), cloudy 160 m tokens masked later. Observed SM station-days (data_overview_points.csv):
   2,098,912 / 1,676,037 / 1,367,793 = 5,142,742 over 0-10/10-30/30-100.
+2026-10-07  Results slides reordered (user): ubRMSE by depth -> pred vs obs (KDE) -> ubRMSE by land cover ->
+  3-depth sites that match (NGARI ALI02 + SCAN Doe Ridge) -> 3-depth sites that do not (SNOTEL Burts Miller Ranch
+  + Hopewell) -> TxSON (tile left, six 0-10 cm series right). Per-station r2 slide dropped.
+  New: plot_eval_scatter.py fig_pred_obs_kde (gaussian-smoothed 2-D histogram, HDR bands 50/75/90/99 %) + --only;
+  plot_tile_paper.py --layout side. Job 27704538 (slurm/slides_results_figs.sh, CPU) COMPLETED ->
+  scatter_pred_obs_kde.{png,pdf}, tiles/txson_cr200-18_side.{png,pdf}; TxSON ubRMSE matches per_station_oos.csv.
+  Seen: Hopewell is the opposite failure to Burts Miller -- snowmelt peaks timed right, but the model does not dry
+  the soil enough in summer (deep pred ~0.2 vs obs ~0.1); Burts Miller deep is dried too much.
+  Open: CR200-15 label clipped at the map's left edge in the rendered side figure; margin fixed in code (left=0.045),
+  re-render not yet submitted.

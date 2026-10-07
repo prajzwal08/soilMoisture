@@ -157,6 +157,9 @@ def main():
     ap.add_argument("--category", default="sm_only")
     ap.add_argument("--unbiased", action="store_true",
                     help="shift each station x depth prediction by its observed-day mean bias")
+    ap.add_argument("--layout", choices=["stack", "side"], default="stack",
+                    help="stack = image on top, series below; side = full tile left, one column "
+                         "of series right (slides)")
     a = ap.parse_args()
     plt.rcParams.update(plot_style_bw.RC_PAPER)
 
@@ -206,7 +209,10 @@ def main():
                         q["pred"] = q["pred"] - q.attrs["offset"]
                     panels.append((key, dep, q))
         cols.append((g, panels))
-    if len(cols) > 2:            # many separate stations (e.g. TxSON): two balanced columns
+    side = a.layout == "side"
+    if side:                     # one column of series next to the image
+        cols = [(None, [p for _, ps in cols for p in ps])]
+    elif len(cols) > 2:          # many separate stations (e.g. TxSON): two balanced columns
         flat = [p for _, ps in cols for p in ps]
         h = (len(flat) + 1) // 2
         cols = [(None, flat[:h]), (None, flat[h:])]
@@ -220,10 +226,20 @@ def main():
     print("\nstation x depth: ubRMSE here vs per_station_oos.csv  (n here / n csv)")
 
     # ── figure ─────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(7.0 * ncol + 0.6, 5.1 + 1.75 * nrow))
-    # rows: images | legend strip | time series -- the legend gets its own space
-    outer = GridSpec(3, 1, figure=fig, height_ratios=[4.6, 0.5, 1.75 * nrow], hspace=0.04,
-                     left=0.07, right=0.985, top=0.975, bottom=0.04)
+    if side:
+        # columns: full tile | (legend strip over the series column)
+        fig = plt.figure(figsize=(16.0, 8.0))
+        outer = GridSpec(1, 2, figure=fig, width_ratios=[1.0, 1.25], wspace=0.10,
+                         left=0.045, right=0.99, top=0.95, bottom=0.05)
+        rgt = GridSpecFromSubplotSpec(2, 1, subplot_spec=outer[1], height_ratios=[0.5, 7.5],
+                                      hspace=0.0)
+        map_spec, leg_spec, ts_spec = outer[0], rgt[0], rgt[1]
+    else:
+        fig = plt.figure(figsize=(7.0 * ncol + 0.6, 5.1 + 1.75 * nrow))
+        # rows: images | legend strip | time series -- the legend gets its own space
+        outer = GridSpec(3, 1, figure=fig, height_ratios=[4.6, 0.5, 1.75 * nrow], hspace=0.04,
+                         left=0.07, right=0.985, top=0.975, bottom=0.04)
+        map_spec, leg_spec, ts_spec = outer[0], outer[1], outer[2]
 
     idx, date, cf = pick_rgb_scene(raw, tok, a.rgb_date)
     print(f"\nRGB scene {date} (cloud fraction {cf:.3f})")
@@ -234,7 +250,7 @@ def main():
     # Stations spread over most of the tile (TxSON) -> no zoom, ONE panel with the markers.
     cx, cy = st["col"].mean(), st["row"].mean()
     half = max(0.5 * max(np.ptp(st["col"]), np.ptp(st["row"])) + 12, 200 / res)
-    zoom = 2 * half <= 0.55 * npx
+    zoom = 2 * half <= 0.55 * npx and not side
     if zoom:
         x0 = float(np.clip(cx - half, -0.5, npx - 0.5 - 2 * half))
         y0 = float(np.clip(cy - half, -0.5, npx - 0.5 - 2 * half))
@@ -257,7 +273,7 @@ def main():
                         zorder=8, bbox=dict(fc="white", ec="black", lw=0.8, pad=2.5))
 
     if zoom:
-        top = GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[0], wspace=0.06)
+        top = GridSpecFromSubplotSpec(1, 2, subplot_spec=map_spec, wspace=0.06)
         axA = fig.add_subplot(top[0, 0])
         axA.imshow(rgb, interpolation="nearest")
         axA.add_patch(mpatches.Rectangle((box[0], box[1]), box[2], box[2], fill=False,
@@ -280,8 +296,11 @@ def main():
                  transform=axB.transAxes, va="bottom", ha="left")
         first_letter = "c"
     else:
-        top = GridSpecFromSubplotSpec(1, 3, subplot_spec=outer[0], wspace=0.0)
-        axA = fig.add_subplot(top[0, 1])
+        if side:
+            axA = fig.add_subplot(map_spec)
+        else:
+            top = GridSpecFromSubplotSpec(1, 3, subplot_spec=map_spec, wspace=0.0)
+            axA = fig.add_subplot(top[0, 1])
         axA.imshow(rgb, interpolation="nearest")
         draw_markers(axA, box)
         scale_bar(axA, npx - 10 - 500 / res, npx - 14, 500, res)    # bottom-right: clear of labels
@@ -294,7 +313,7 @@ def main():
     allv = np.concatenate([np.r_[p[2]["pred"].to_numpy(float), p[2]["obs"].to_numpy(float)]
                            for _, ps in cols for p in ps])
     ylo, yhi = ylim_all(allv)
-    ts = GridSpecFromSubplotSpec(nrow, ncol, subplot_spec=outer[2], hspace=0.55, wspace=0.12)
+    ts = GridSpecFromSubplotSpec(nrow, ncol, subplot_spec=ts_spec, hspace=0.55, wspace=0.12)
     letter = ord(first_letter)
     first_ax, shaded = None, False
     for j, (g, panels) in enumerate(cols):
@@ -340,10 +359,16 @@ def main():
         handles.append(mpatches.Patch(facecolor=OOST_SHADE, alpha=0.12, edgecolor=OOST_SHADE,
                                       ls="--"))
         labels.append("2023–2025 (OOST)")
-    axL = fig.add_subplot(outer[1]); axL.axis("off")
+    axL = fig.add_subplot(leg_spec); axL.axis("off")
     axL.legend(handles, labels, loc="center", ncol=len(labels), frameon=False, markerscale=5)
-    fig.supylabel("Soil moisture (m$^3$/m$^3$)", x=0.005, y=outer[2].get_position(fig).y1 / 2,
-                  fontsize=plt.rcParams["axes.labelsize"], fontweight="bold")
+    if side:     # the image sits left of the series, so the label goes beside the series
+        x0 = ts_spec.get_position(fig).x0
+        fig.text(x0 - 0.035, ts_spec.get_position(fig).y0 + ts_spec.get_position(fig).height / 2,
+                 "Soil moisture (m$^3$/m$^3$)", rotation=90, ha="center", va="center",
+                 fontsize=plt.rcParams["axes.labelsize"], fontweight="bold")
+    else:
+        fig.supylabel("Soil moisture (m$^3$/m$^3$)", x=0.005, y=outer[2].get_position(fig).y1 / 2,
+                      fontsize=plt.rcParams["axes.labelsize"], fontweight="bold")
 
     out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):

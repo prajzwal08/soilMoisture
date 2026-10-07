@@ -145,6 +145,70 @@ def fig_pred_obs(preds: dict, out_dir: Path):
     save(fig, out_dir, "scatter_pred_obs")
 
 
+# ── 1b. Predicted vs observed, density (KDE-style) ────────────────────────────
+
+KDE_MASS = (0.99, 0.90, 0.75, 0.50)     # filled regions enclosing these fractions of samples
+
+
+def _hdr_levels(z: np.ndarray, masses) -> list:
+    """Density thresholds whose super-level sets enclose the given sample fractions."""
+    v = np.sort(z.ravel())[::-1]
+    c = np.cumsum(v) / v.sum()
+    return [float(v[min(np.searchsorted(c, m), v.size - 1)]) for m in masses]
+
+
+def fig_pred_obs_kde(preds: dict, out_dir: Path, nbin: int = 250, sigma: float = 2.5):
+    """Same grid as scatter_pred_obs, drawn as smoothed-density contours.
+
+    A Gaussian-smoothed 2-D histogram (equivalent to a KDE on a grid, but fast for
+    millions of samples); filled bands = highest-density regions holding 50/75/90/99 %
+    of the samples, so every panel is read the same way regardless of its n.
+    """
+    from scipy.ndimage import gaussian_filter
+    splits = [s for s in HELD_OUT if s in preds]
+    edges = np.linspace(*SM_LIM, nbin + 1)
+    mid = 0.5 * (edges[:-1] + edges[1:])
+    shades = plt.get_cmap("Blues")(np.linspace(0.25, 0.95, len(KDE_MASS)))
+    fig, axes = plt.subplots(len(splits), len(SM_DEPTHS),
+                             figsize=(9.0, 3.0 * len(splits)),
+                             constrained_layout=True, squeeze=False)
+    for i, split in enumerate(splits):
+        df = preds[split]
+        for j, depth in enumerate(SM_DEPTHS):
+            ax = axes[i][j]
+            g = df[df["depth"] == depth]
+            if g.empty:
+                ax.set_axis_off()
+                continue
+            p = g["pred"].to_numpy(np.float64)
+            t = g["obs"].to_numpy(np.float64)
+            h, _, _ = np.histogram2d(t, p, bins=[edges, edges])
+            z = gaussian_filter(h.T, sigma)            # rows = pred (y), cols = obs (x)
+            lv = _hdr_levels(z, KDE_MASS) + [z.max() * 1.001]
+            ax.contourf(mid, mid, z, levels=lv, colors=shades, zorder=1)
+            ax.contour(mid, mid, z, levels=lv[:-1], colors="black", linewidths=0.4, zorder=2)
+            ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
+            m = metrics_from_arrays(p, t)
+            ax.text(0.97, 0.03,
+                    f"ubRMSE {m['ubRMSE']:.3f}\n$r^2$ {m['R2_pearson']:.2f}\n"
+                    f"bias {m['bias']:+.3f}\nn {m['n']:,}",
+                    transform=ax.transAxes, va="bottom", ha="right",
+                    fontsize=_afs(6), zorder=4,
+                    bbox=dict(fc="white", ec="none", pad=1.5))
+            ax.set_xlim(SM_LIM); ax.set_ylim(SM_LIM); ax.set_aspect("equal")
+            if i == 0:
+                ax.set_title(DEPTH_LABELS[depth])
+            if j == 0:
+                ax.set_ylabel(f"{split.upper()}\npredicted SM (m$^3$/m$^3$)")
+            if i == len(splits) - 1:
+                ax.set_xlabel("observed SM (m$^3$/m$^3$)")
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=c, ec="black", lw=0.4) for c in shades]
+    fig.legend(handles, [f"{int(round(100 * m))} %" for m in KDE_MASS],
+               title="samples enclosed", loc="outside upper center",
+               ncol=len(KDE_MASS), frameon=False)
+    save(fig, out_dir, "scatter_pred_obs_kde")
+
+
 # ── 2. Station-mean predicted vs observed ─────────────────────────────────────
 
 def fig_station_mean(preds: dict, out_dir: Path):
@@ -400,6 +464,8 @@ def main():
     p.add_argument("--out-dir", default="figures/eval")
     p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
                    help="bw = black-and-white; paper = blue/green/red, Times (plot_style_bw.py)")
+    p.add_argument("--only", nargs="+", default=None,
+                   help="draw only these figures, e.g. --only scatter_pred_obs_kde")
     args = p.parse_args()
     if args.style != "color":
         import plot_style_bw
@@ -416,11 +482,14 @@ def main():
         ps_all.append(ps)
     ps_all = pd.concat(ps_all, ignore_index=True)
 
-    fig_pred_obs(preds, out_dir)
-    fig_station_mean(preds, out_dir)
-    fig_station_metrics(ps_all, out_dir)
-    fig_ubrmse_vs_offset(ps_all, out_dir)
-    fig_oot_error_vs_doy(preds, out_dir)
+    figs = {"scatter_pred_obs":         lambda: fig_pred_obs(preds, out_dir),
+            "scatter_pred_obs_kde":     lambda: fig_pred_obs_kde(preds, out_dir),
+            "scatter_station_mean":     lambda: fig_station_mean(preds, out_dir),
+            "scatter_station_metrics":  lambda: fig_station_metrics(ps_all, out_dir),
+            "scatter_ubrmse_vs_offset": lambda: fig_ubrmse_vs_offset(ps_all, out_dir),
+            "oot_error_vs_doy":         lambda: fig_oot_error_vs_doy(preds, out_dir)}
+    for name in args.only or figs:
+        figs[name]()
     print(f"\nAll figures in {out_dir}/")
 
 
