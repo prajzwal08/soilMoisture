@@ -9070,3 +9070,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Flowchart resolutions rendered (jobs 27709459, 27709524): S2 '10-60 m · 5 d' (bands 10/20/60 m, resampled to 10 m),
     fine path left unlabelled (user); ERA5 header 'ERA5-Land · 9 km · daily' ('× 18' dropped, overflowed the frame).
     Decks recompiled.
+  Title (user): 'Daily root-zone soil moisture (0-100 cm) at 20 m (?) from multimodal drivers and geospatial foundation
+    model embeddings', '20 m (?)' in red; 'PhD candidate' under the name. Conclusions: RQ2 'How does the model generalise
+    to unseen sites?', RQ3 'How does skill vary within the same tile?'.
