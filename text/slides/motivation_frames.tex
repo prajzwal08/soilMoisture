@@ -1,4 +1,8 @@
 % Motivation slides 1-5, shared by text/research_questions_slides.tex and text/slides/motivation_slides.tex
+% Style (slides 2-5): figure -> one-line caption of what is shown (\figcap) -> one-line key message in a rounded box (\msg)
+\setbeamercolor{msgbox}{bg=black!6,fg=black}
+\providecommand{\figcap}[1]{\par\vspace{1pt}{\scriptsize\itshape #1}\par}
+\providecommand{\msg}[1]{\par\vspace{5pt}\begin{beamercolorbox}[wd=0.94\linewidth,sep=5pt,center,rounded=true]{msgbox}\small\textbf{#1}\end{beamercolorbox}}
 \begin{frame}{Motivation\quad Different ways of obtaining soil moisture}
 \scriptsize
 \centering
@@ -41,55 +45,42 @@ Source & How SM is obtained & Depth & Main limitation \\
 \end{frame}
 
 \begin{frame}{Motivation\quad Multimodal remote sensing}
+\centering
 \begin{columns}[T,onlytextwidth]
 \begin{column}{0.56\textwidth}
 \centering
-\textbf{\footnotesize 1.\ Optical: reflectance spectrum}\\[2pt]
-\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{textbook/sm_signals.pdf}
-\scriptsize
-\begin{itemize}
-\item Dry and wet soil reflect differently: wetting darkens soil in every band, most in the SWIR (B11, B12)
-\item Green and water-stressed vegetation reflect differently: stress lowers NIR and raises SWIR
-\end{itemize}
+\includegraphics[width=\linewidth,height=0.56\textheight,keepaspectratio]{textbook/sm_signals.pdf}
+\figcap{Optical: dry vs wet soil; green vs water-stressed vegetation}
 \end{column}
 \begin{column}{0.41\textwidth}
 \centering
-\textbf{\footnotesize 2.\ SAR: scattering mechanisms}\\[2pt]
-\includegraphics[width=\linewidth,height=0.46\textheight,keepaspectratio]{sensors-25-02512-g003.png}\\[-1pt]
-{\tiny Nurmemet et al.\ (2025), \textit{Sensors} 25(8), 2512, doi:10.3390/s25082512}
-\scriptsize
-\begin{itemize}
-\item Bare soil: surface scattering, set by moisture (dielectric) and roughness
-\item Canopy: volume and double-bounce scattering mask the soil signal
-\end{itemize}
+\includegraphics[width=\linewidth,height=0.56\textheight,keepaspectratio]{sensors-25-02512-g003.png}
+\figcap{SAR scattering types (Nurmemet et al., 2025)}
 \end{column}
 \end{columns}
+\msg{Soil and vegetation water change both optical reflectance and SAR backscatter}
 \end{frame}
 
 \begin{frame}{Motivation\quad Geospatial foundation models (GFMs)}
 \centering
-\includegraphics[width=\linewidth,height=0.70\textheight,keepaspectratio]{DOFA1-1.png}\\[-1pt]
-{\tiny DOFA: Xiong et al.\ (2024), Neural plasticity-inspired multimodal foundation model for Earth observation, arXiv:2403.15356}\\[6pt]
-\fcolorbox{black!40}{black!4}{\parbox{0.9\linewidth}{\centering \small\textbf{Once pre-trained on multimodal, unlabelled data, its representation works for many downstream tasks}}}
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{DOFA1-1.png}
+\figcap{DOFA: one model for many sensors and many downstream tasks (Xiong et al., 2024, arXiv:2403.15356)}
+\msg{Once pre-trained on multimodal, unlabelled data, it works for many downstream tasks}
 \end{frame}
 
 \begin{frame}{Motivation\quad TerraMind embeddings for soil moisture}
 \centering
-\includegraphics[width=\linewidth,height=0.80\textheight,keepaspectratio]{gfm_embedding_schematic.pdf}\\[4pt]
-\footnotesize Frozen TerraMind ViT-B turns each 160\,m patch of S2, S1, DEM and LULC into a 768-d embedding;
-the same embedding can serve many tasks; in this case, \textbf{soil moisture}.
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{gfm_embedding_schematic.pdf}
+\figcap{S2, S1, DEM and LULC $\rightarrow$ frozen TerraMind ViT-B $\rightarrow$ one 768-d embedding per 160\,m patch $\rightarrow$ downstream tasks}
+\msg{The same embedding can serve many tasks; in this case, soil moisture}
 \end{frame}
 
 \begin{frame}{Motivation\quad Example: TerraMind embeddings at one site (TxSON, 2019)}
-\begin{columns}[c,onlytextwidth]
-\begin{column}{0.50\textwidth}
 \centering
-\includegraphics[width=\linewidth,height=0.90\textheight,keepaspectratio]{terramind_value/terramind_value.png}
-\end{column}
-\begin{column}{0.48\textwidth}
-\footnotesize
-S2, S1, DEM and LULC with their TerraMind L12 tokens.\\[10pt]
-\fcolorbox{black!40}{black!4}{\parbox{0.95\linewidth}{\footnotesize Each 160\,m patch $\rightarrow$ one 768-d vector; colours show its first 3 principal components (one basis per row, each panel centred on its own mean).}}
-\end{column}
-\end{columns}
+% figure is 532.8 x 734.4 bp (600 dpi); panels cropped with trim so they sit side by side
+\includegraphics[width=0.49\linewidth,trim=0 451 0 0,clip]{terramind_value/terramind_value.png}\hfill
+\includegraphics[width=0.49\linewidth,trim=0 180 0 286,clip]{terramind_value/terramind_value.png}\\[2pt]
+\includegraphics[height=0.22\textheight,trim=0 0 0 562,clip]{terramind_value/terramind_value.png}
+\figcap{(a) S2 in four seasons, (b) S1 VV, (c) DEM and LULC, each with its TerraMind L12 tokens}
+\msg{Each 160\,m patch $\rightarrow$ one 768-d vector; colours show its first 3 principal components}
 \end{frame}
