@@ -106,7 +106,19 @@ def main():
                     help="drop the first N logged batch points (batch 0001 is logged "
                          "at wu=0.00, an order of magnitude above the rest, and "
                          "stretches the log axis)")
+    ap.add_argument("--style", choices=["house", "paper"], default="house",
+                    help="paper = plot_style_bw RC_PAPER (palette H, Times bold, no titles, 600 dpi)")
+    ap.add_argument("--panels", default="abc",
+                    help="'ab' drops panel (c), the val ubRMSE panel")
     args = ap.parse_args()
+
+    global C_TRAIN, C_VAL, INK, MUTED
+    paper = args.style == "paper"
+    if paper:
+        import plot_style_bw as psb
+        C_TRAIN, C_VAL, INK, MUTED = psb.BLUE, psb.RED, "black", "black"
+    # paper style: no annotation smaller than the tick labels
+    ANN = 10.5 if paper else 7
 
     ep, tr, va, sel, bx, bl, orphans, floor = parse(args.log)
     n_batch_raw = len(bx)
@@ -124,7 +136,7 @@ def main():
         print("NOTE: no `SELECT val_ubrmse_depth_mean=` lines in this log -- ringing the "
               "val_loss minimum instead, which is NOT necessarily the saved checkpoint.")
 
-    plt.rcParams.update({
+    rc = psb.RC_PAPER if paper else {
         "font.family": "serif",
         "font.size": 9,
         "axes.labelsize": 9,
@@ -139,14 +151,24 @@ def main():
         "xtick.color": MUTED,
         "ytick.color": MUTED,
         "figure.dpi": 300,
-        "savefig.bbox": "tight",
-    })
+    }
+    plt.rcParams.update({**rc, "savefig.bbox": "tight"})
+
+    def title(ax, text):
+        # paper style: panel letter only, the caption carries the description
+        ax.set_title(text.split(" ", 1)[0] if paper else text, loc="left", pad=8)
+
+    def ticklabels(ax):
+        # 22 labels collide at this width; 11 fit in the paper layout
+        ax.set_xticks(ep)
+        ax.set_xticklabels([str(e) if (paper and len(ep) <= 12) or i % 2 == 0 else ""
+                            for i, e in enumerate(ep)])
 
     # Panel (c), val ubRMSE, needs the SELECT lines; older logs keep the two-panel figure.
-    if sel:
+    if sel and "c" in args.panels:
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(11.2, 2.9))
     else:
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 2.9))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.6, 3.8) if paper else (7.6, 2.9))
         ax3 = None
 
     # ── (a) per-batch train vs per-epoch val, single log axis ─────────
@@ -164,7 +186,7 @@ def main():
         ax1.axhline(floor, color=MUTED, lw=0.6, ls="--", zorder=1)
         ax1.annotate("below log print precision", (ep[-1], floor),
                      textcoords="offset points", xytext=(-3, 3), ha="right",
-                     fontsize=6, color=MUTED, zorder=6)
+                     fontsize=ANN, color=MUTED, zorder=6)
 
     if bx:
         ax1.plot(bx, bl, "-", color=C_TRAIN, lw=0.7, alpha=0.35, zorder=2,
@@ -182,37 +204,41 @@ def main():
     ax1.set_yscale("log")
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Huber loss (per-depth mean)")
-    ax1.set_title("(a) Per-batch train vs. validation loss" if bx
-                  else "(a) Train vs. validation loss", loc="left", pad=8)
+    title(ax1, "(a) Per-batch train vs. validation loss" if bx
+          else "(a) Train vs. validation loss")
 
     ax1.plot(ep[best_i], va[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=6)
-    ax1.annotate(best_txt, (ep[best_i], va[best_i]),
+    ax1.annotate(f"Selected: epoch {ep[best_i]}" if paper else best_txt,
+                 (ep[best_i], va[best_i]),
                  # below the ring: above it the label sits on the flat val curve
                  textcoords="offset points", xytext=(0, -18),
                  # right half of the axis: anchor right so the label stays inside panel (a)
                  ha="right" if ep[best_i] > 0.5 * ep[-1] else "left",
-                 fontsize=7, color=MUTED)
+                 fontsize=ANN, color=MUTED)
 
     ax1.set_xlim(0, ep[-1] + 0.35)
-    ax1.set_xticks(ep)
-    # 22 labels collide at this width — label every other tick.
-    ax1.set_xticklabels([str(e) if i % 2 == 0 else "" for i, e in enumerate(ep)])
-    ax1.legend(frameon=False, loc="lower left", handlelength=1.6, labelspacing=0.3)
+    ticklabels(ax1)
+    if paper:   # legend outside/above the data, never on points
+        ax1.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1.08), ncol=2,
+                   handlelength=1.6, labelspacing=0.3, columnspacing=1.0, borderaxespad=0)
+    else:
+        ax1.legend(frameon=False, loc="lower left", handlelength=1.6, labelspacing=0.3)
 
     # ── (b) generalisation gap ────────────────────────────────────────
     ax2.plot(ep, ratio, "-o", color=INK, lw=1.8, ms=4.5, mec="white", mew=0.8, zorder=3)
     ax2.axhline(1.0, color=MUTED, lw=0.8, ls=":", zorder=1)
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel(r"Validation / train loss")
-    ax2.set_title("(b) Generalisation gap", loc="left", pad=8)
+    title(ax2, "(b) Generalisation gap")
     ax2.set_ylim(0, max(ratio) * 1.28)
-    ax2.set_xticks(ep)
-    ax2.set_xticklabels([str(e) if i % 2 == 0 else "" for i, e in enumerate(ep)])
+    ticklabels(ax2)
     ax2.set_xlim(ep[0] - 0.35, ep[-1] + 0.35)
+    if paper:   # same ring as panel (a), so the selected epoch reads across both
+        ax2.plot(ep[best_i], ratio[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=4)
     # Annotating all 22 would be unreadable; label the ends and the best epoch.
     for i in {0, best_i, len(ep) - 1}:
         ax2.annotate(f"{ratio[i]:.1f}x", (ep[i], ratio[i]), textcoords="offset points",
-                     xytext=(0, 8), ha="center", fontsize=7, color=MUTED)
+                     xytext=(0, 10 if paper else 8), ha="center", fontsize=ANN, color=MUTED)
 
     # ── (c) validation ubRMSE, the selection metric ───────────────────
     if ax3 is not None:
@@ -221,10 +247,10 @@ def main():
         ax3.annotate(f"{sel[best_i]:.4f} (epoch {ep[best_i]})", (ep[best_i], sel[best_i]),
                      textcoords="offset points", xytext=(0, -18),
                      ha="right" if ep[best_i] > 0.5 * ep[-1] else "left",
-                     fontsize=7, color=MUTED)
+                     fontsize=ANN, color=MUTED)
         ax3.set_xlabel("Epoch")
         ax3.set_ylabel("Validation ubRMSE (m$^3$ m$^{-3}$)")
-        ax3.set_title("(c) Validation ubRMSE (depth mean)", loc="left", pad=8)
+        title(ax3, "(c) Validation ubRMSE (depth mean)")
         ax3.set_xticks(ep)
         ax3.set_xticklabels([str(e) if i % 2 == 0 else "" for i, e in enumerate(ep)])
         ax3.set_xlim(ep[0] - 0.35, ep[-1] + 0.35)
@@ -241,7 +267,7 @@ def main():
     outdir.mkdir(exist_ok=True)
     for ext in ("png", "pdf"):
         p = outdir / f"loss_curves_{args.run}.{ext}"
-        fig.savefig(p)
+        fig.savefig(p, dpi=600 if paper else None)
         print(f"wrote {p}")
 
     print(f"\nbatch points: {n_batch_raw} parsed, {args.clip_warmup} clipped as warmup, "

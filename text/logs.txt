@@ -9097,3 +9097,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     predicted), depth label in-panel, one y-label; jobs 27713659/27713681/27713769. P5-P95: prediction narrower at every
     split/depth, mostly a raised dry end (e.g. OOS 10-30 0.03 -> 0.06, OOST 10-30 0.04 -> 0.06).
   Backup slide 4 'Distribution of soil moisture' (hist_pred_obs) added (user: only backup).
+  2026-10-07 BASELINE LOSS FIGURE (user OK): job 27717145, plot_loss_curves.py --style paper --panels ab (new flags) on
+    logs/lst_tmean_diff/train_nolst_L3_wu200_27575211.out -> figures/eval/baseline_selected_20261005_paper/loss_curves_baseline_selected_20261005.{png,pdf}.
+    (a) train vs val Huber (epoch means; log has no batch lines), (b) val/train gap; epochs 1-11 (run went one past the cap), ep10 ringed as selected.
+    Gap 0.9x ep1 -> 2.7x ep8 -> 2.9x ep10 -> 3.1x ep11; val SELECT ep10 0.04879, ep11 0.05109 (turns up). User confirmed baseline stays ep10 (ep8 was a mix-up).
