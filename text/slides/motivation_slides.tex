@@ -3,6 +3,8 @@
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{tikz}
+% strike-through (ulem is not installed): a line across the middle of the text
+\newcommand{\strike}[1]{\tikz[baseline=(s.base)]{\node[inner sep=0pt,outer sep=0pt](s){#1};\draw[line width=1.2pt]([yshift=0.15ex]s.west)--([yshift=0.15ex]s.east);}}
 \usetikzlibrary{calc}
 \usefonttheme{serif}
 \setbeamertemplate{navigation symbols}{}
