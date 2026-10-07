@@ -47,25 +47,30 @@
 Source & How SM is obtained & Depth & Main limitation \\
 \midrule
 \textbf{Microwave}\newline (SMAP, SMOS, ASCAT, S1)
-  & invert $\sigma^0$ or $T_B = f(\mathrm{SM}, \text{roughness}, \text{vegetation})$
+  & invert:\newline $\sigma^0$ or $T_B = f(\mathrm{SM}, \text{roughness}, \text{vegetation})$
   & top $\sim$5\,cm; informs part of the root zone (Feldman et al., 2023)
   & shallow; assumes vegetation and roughness; coarse (9--40\,km) except S1 \\
-\textbf{Optical / thermal}\newline (S2, Landsat LST)
-  & $\rho_\mathrm{SWIR},\ \mathrm{LST} = f(\mathrm{SM}, \text{texture}, \text{canopy})$ --- indirect
+\addlinespace[7pt]
+\textbf{Optical / thermal}\newline (S2, Landsat, MODIS)
+  & empirical relations with surface properties: reflectance and indices; LST--vegetation space (e.g. triangle method, TVDI)
   & skin / surface
-  & clouds; canopy hides the soil \\
+  & indirect, site-specific calibration; clouds; canopy hides the soil \\
+\addlinespace[7pt]
 \textbf{Land-surface models}
   & $d\theta/dt = P - ET - Q - D$, with parameters $p$
   & full profile
   & forcing errors, soil and vegetation parameters, process representation (Koster et al., 2009; Seneviratne et al., 2010) \\
+\addlinespace[7pt]
 \textbf{Reanalysis}\newline (ERA5-Land)
   & LSM driven by reanalysis meteorology
   & full profile
   & model assumptions dominate deep layers with few observational constraints (Li et al., 2021; Miguez-Macho and Fan, 2021) \\
+\addlinespace[7pt]
 \textbf{In situ} (ISMN)
   & direct probe measurement
   & several depths
   & point scale; sparse, uneven global coverage \\
+\addlinespace[7pt]
 \textbf{Data-driven}\newline (ML / DL)
   & $\mathrm{SM} = f_\theta(\text{inputs})$, learned from in-situ labels; no ad-hoc process assumptions
   & any depth with labels
