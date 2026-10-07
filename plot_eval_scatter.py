@@ -209,7 +209,8 @@ def fig_pred_obs_kde(preds: dict, out_dir: Path, nbin: int = 250, sigma: float =
     save(fig, out_dir, "scatter_pred_obs_kde")
 
 
-def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: float = 2.0):
+def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: float = 2.0,
+                         min_pct: float = 20.0):
     """Every sample as a point, coloured by its local density (densest drawn on top).
 
     Density = Gaussian-smoothed 2-D histogram looked up at each point (a gridded KDE,
@@ -221,7 +222,7 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
     splits = [s for s in HELD_OUT if s in preds]
     edges = np.linspace(*SM_LIM, nbin + 1)
     cmap = "viridis"
-    norm = Normalize(vmin=0.0, vmax=100.0)
+    norm = Normalize(vmin=min_pct, vmax=100.0)   # sparsest min_pct % of samples not drawn
     fig, axes = plt.subplots(len(splits), len(SM_DEPTHS),
                              figsize=(9.6, 2.75 * len(splits) + 0.4),
                              constrained_layout=True, squeeze=False)
@@ -244,6 +245,7 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
             d = z[ix, iy]
             d = 100.0 * (np.argsort(np.argsort(d)) + 0.5) / d.size   # density percentile
             o = np.argsort(d)
+            o = o[d[o] >= min_pct]          # drop the sparse tail (metrics still use every sample)
             sc = ax.scatter(t[o], p[o], c=d[o], s=0.6, cmap=cmap, norm=norm,
                             linewidths=0, rasterized=True, zorder=1)
             ax.plot(SM_LIM, SM_LIM, "k--", lw=0.8, zorder=3)
