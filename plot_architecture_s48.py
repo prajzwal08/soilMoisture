@@ -474,7 +474,7 @@ def render() -> None:
         ax.text(7.2, y0 + 1.6, name, ha="right", va="center", fontsize=FS_B, zorder=6)
         ax.text(7.2, y0 + 0.45, "min·mean·max" if isinstance(col, tuple) else "daily sum",
                 ha="right", va="center", fontsize=7, color=FROZEN_EDGE, zorder=6)
-    label(ax, 13.4, 85.0, "ERA5-Land · 365 d × 18")
+    label(ax, 13.4, 85.0, "ERA5-Land · 9 km · daily")
     # SIF: the last 50 values span only ~7 weeks, so zoom to them (on a 365-d axis they are a
     # smudge at the right edge); TWSA: monthly points joined, last 45 d shaded = not released
     # SIF / TWSA / soil: one wide frame each (label left, plot right), stacked in a column,
@@ -485,7 +485,8 @@ def render() -> None:
            mec="none")
     t.set_xlim(-a["sif_age"].max() - 2, 1)
     label(ax, 22.6, 83.4, "SIF", ha="left")
-    label(ax, 22.6, 81.6, "last 50", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 22.6, 81.8, "5 km · daily", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 22.6, 80.4, "last 50", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
     o = np.argsort(-a["twsa_age"])
     t = inset(fig, 29.4, 71.8, 12.6, 5.6)
     t.axvspan(-45, 0, color="#EDEDED", lw=0)
@@ -493,10 +494,12 @@ def render() -> None:
            mec="none")
     t.set_xlim(-365, 0)
     label(ax, 22.6, 75.6, "TWSA", ha="left")
-    label(ax, 22.6, 73.8, "monthly", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 22.6, 74.0, "55 km", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 22.6, 72.6, "monthly", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
     image(ax, a["soc"], 33.7, 63.8, 5.6, 5.6, cmap="YlOrBr")
     label(ax, 22.6, 67.8, "Soil", ha="left")
-    label(ax, 22.6, 66.0, "21 layers", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 22.6, 66.2, "30 m · static", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
+    label(ax, 22.6, 64.8, "21 layers", ha="left", fs=FS_B - 2, color=FROZEN_EDGE)
     # one encoder per driver (model.py era5_mlp / twsa_mlp / soil_encoder / sif_mlp: separate
     # weights); the outputs join on a collector into the sequence
     drv = [("ERA5 MLP 18 → 768", 59.0), ("Soil CNN → 4 tokens", 65.0),
@@ -519,7 +522,9 @@ def render() -> None:
     image(ax, a["dem_hs"], px[2], yb0, pw, pw, cmap="gray")
     image(ax, lulc, px[3], yb0, pw, pw, cmap=cm, norm=BoundaryNorm(np.arange(-.5, 11), 11))
     for x, s_ in zip(px, ["S2 L2A ≤ 60", "S1 RTC ≤ 40", "DEM", "LULC"]):
-        label(ax, x + pw / 2, 54.8, s_, fs=FS_B - 1)
+        label(ax, x + pw / 2, 56.4, s_, fs=FS_B - 1)
+    for x, r_ in zip(px, ["10–60 m · 5 d", "10 m · 6–12 d", "30 m · static", "10 m · yearly"]):
+        label(ax, x + pw / 2, 54.6, r_, fs=FS_B - 2, color=FROZEN_EDGE)
     bus_b = 42.0
     for x in px:
         path(ax, [(x + pw / 2, yb0), (x + pw / 2, bus_b)], head=False)
@@ -769,7 +774,7 @@ def render() -> None:
     frame(22.0, 70.9, 42.6, 78.1)        # TWSA
     frame(22.0, 63.0, 42.6, 70.2)        # soil
     for x in px:                         # S2 L2A / S1 RTC / DEM / LULC, then the fine four
-        frame(x - 0.4, 44.4, x + pw + 0.4, 55.7)
+        frame(x - 0.4, 44.4, x + pw + 0.4, 57.4)
         frame(x - 0.4, 13.2, x + pw + 0.4, 26.3)
 
     # ── legend row ─────────────────────────────────────────────────────────────────────────

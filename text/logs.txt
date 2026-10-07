@@ -9067,3 +9067,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Flowchart: resolutions added to every input label in plot_architecture_s48.py (ERA5 9 km daily; SIF 5 km daily;
   TWSA 55 km monthly; soil 30 m static; S2 10 m 5 d; S1 10 m 6-12 d; DEM 30 m static; LULC 10 m yearly; fine lane
   20 m); render NOT yet submitted.
+  Flowchart resolutions rendered (jobs 27709459, 27709524): S2 '10-60 m · 5 d' (bands 10/20/60 m, resampled to 10 m),
+    fine path left unlabelled (user); ERA5 header 'ERA5-Land · 9 km · daily' ('× 18' dropped, overflowed the frame).
+    Decks recompiled.
