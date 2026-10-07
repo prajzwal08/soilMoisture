@@ -1,0 +1,45 @@
+% Data slides, shared by text/research_questions_slides.tex and text/slides/motivation_slides.tex.
+% Style as motivation slides 2-5: figure -> one-line caption (\figcap) -> one-line message in a rounded box (\msg).
+% Figures: figures/eval/baseline_selected_20261005_paper/ (data_overview 1116 x 864 bp; stations_by_* 685.2 x 267.6 bp).
+% Numbers: data_overview_points.csv (observed station-days), csvs/_s2_store_dates_post_backfill.json (S2 scenes),
+% text/logs.txt splice dry run (ERA5 station-days).
+
+\begin{frame}{Data\quad{\color{tumblue}In-situ soil moisture: global coverage}}
+\centering
+\includegraphics[width=\linewidth,height=0.66\textheight,keepaspectratio,trim=0 434 0 0,clip]{eval/baseline_selected_20261005_paper/data_overview.pdf}
+\figcap{886 soil-moisture stations (ISMN and flux sites): train 573, validation 89, out-of-sample (OOS) 224}
+\msg{Dense in North America and Europe; sparse in the tropics and the Southern Hemisphere}
+\end{frame}
+
+\begin{frame}{Data\quad{\color{tumblue}Depth coverage, record length and splits}}
+\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio,trim=0 0 0 455,clip]{eval/baseline_selected_20261005_paper/data_overview.pdf}
+\figcap{(b) train / validation / OOS stations, time cut 2023-01-01; (c) observed record per station; (d) observed station-days}
+\msg{0--10 cm: 885 stations (median 6.2 yr); 10--30 cm: 682 (6.6 yr); 30--100 cm: 551 (6.6 yr)}
+\end{frame}
+
+\begin{frame}{Data\quad{\color{tumblue}Climate and land-cover coverage}}
+\centering
+\includegraphics[width=0.49\linewidth,trim=0 0 340 0,clip]{eval/baseline_selected_20261005_paper/stations_by_kg_macro.pdf}\hfill
+\includegraphics[width=0.49\linewidth,trim=0 0 340 0,clip]{eval/baseline_selected_20261005_paper/stations_by_igbp_macro.pdf}
+\figcap{Stations per K\"oppen climate zone (left) and land-cover class (right), by split}
+\msg{Mostly continental, temperate and arid; forest and grass--crop; almost no tropics or polar}
+\end{frame}
+
+\begin{frame}{Data\quad{\color{tumblue}What we have in total}}
+\centering\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}l l@{}}
+\toprule
+\textbf{Stations} & 990 in inventory; \textbf{886} with soil moisture (train 573 / val 89 / OOS 224) \\
+\textbf{Depths} & 0--10 cm: 885 \quad 10--30 cm: 682 \quad 30--100 cm: 551 stations \\
+\textbf{Period} & 2016--2025; out-of-time test from 2023-01-01 \\
+\textbf{Soil-moisture observations} & \textbf{5.14\,M} observed daily values (2.10\,M / 1.68\,M / 1.37\,M per depth) \\
+\textbf{Sentinel-2 L2A} & 272,281 scenes stored (998 sites) \\
+\textbf{Sentinel-1 RTC} & \textit{to be counted} \\
+\textbf{ERA5-Land} & 18 variables, 2.46\,M station-days (990 stations) \\
+\textbf{Static / other} & DEM, LULC, soil (OpenLandMap), SIF, TWSA \\
+\bottomrule
+\end{tabular}
+\msg{About 5.1 million daily soil-moisture observations at 886 stations, 0--100 cm}
+\end{frame}
