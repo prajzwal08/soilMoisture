@@ -37,6 +37,114 @@
 \titlepage
 \end{frame}
 
+%---------------- Motivation
+\begin{frame}{Motivation\quad Where does soil moisture information come from?}
+\scriptsize
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{0.14\textwidth} p{0.26\textwidth} p{0.16\textwidth} p{0.34\textwidth}@{}}
+\toprule
+Source & How SM is obtained & Depth & Main limitation \\
+\midrule
+\textbf{Microwave}\newline (SMAP, SMOS, ASCAT, S1)
+  & invert $\sigma^0$ or $T_B = f(\mathrm{SM}, \text{roughness}, \text{vegetation})$
+  & top $\sim$5\,cm; informs part of the root zone (Feldman et al., 2023)
+  & shallow; assumes vegetation and roughness; coarse (9--40\,km) except S1 \\
+\textbf{Optical / thermal}\newline (S2, Landsat LST)
+  & $\rho_\mathrm{SWIR},\ \mathrm{LST} = f(\mathrm{SM}, \text{texture}, \text{canopy})$ --- indirect
+  & skin / surface
+  & clouds; canopy hides the soil \\
+\textbf{Land-surface models}
+  & $d\theta/dt = P - ET - Q - D$, with parameters $p$
+  & full profile
+  & forcing errors, soil and vegetation parameters, process representation (Koster et al., 2009; Seneviratne et al., 2010) \\
+\textbf{Reanalysis}\newline (ERA5-Land)
+  & LSM driven by reanalysis meteorology
+  & full profile
+  & model assumptions dominate deep layers with few observational constraints (Li et al., 2021; Miguez-Macho and Fan, 2021) \\
+\textbf{In situ} (ISMN)
+  & direct probe measurement
+  & several depths
+  & point scale; sparse, uneven global coverage \\
+\textbf{Data-driven}\newline (ML / DL)
+  & $\mathrm{SM} = f_\theta(\text{inputs})$, learned from in-situ labels; no ad-hoc process assumptions
+  & any depth with labels
+  & needs enough, representative sites; generalisation?; hard to interpret? \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+\begin{frame}{Motivation\quad What does a satellite see of soil moisture?}
+\centering
+\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{textbook/sm_signals.pdf}\\[2pt]
+\footnotesize
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+\item Wetting darkens bare soil in every band, most in the SWIR (B11, B12)
+\item Vegetation hides the soil: NIR and SWIR respond to leaf water, not soil water
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+\item The signal is indirect and mixed with land cover, texture and canopy
+\item No single band or index maps to soil moisture $\Rightarrow$ learn the mapping from many modalities
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Motivation\quad Geospatial foundation models (GFMs)}
+\footnotesize
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.5\textwidth}
+\textbf{What they are}
+\begin{itemize}
+\item Large networks (usually Vision Transformers) pre-trained on huge \emph{unlabelled} Earth-observation archives
+\item Self-supervised: learn by reconstructing or translating between sensors, no soil-moisture labels needed
+\item Output: \emph{embeddings} --- compact vectors that summarise what a patch of land looks like
+\end{itemize}
+\textbf{Why for soil moisture}
+\begin{itemize}
+\item In-situ labels are scarce ($\sim$1000 stations); pre-training brings knowledge from billions of pixels
+\item One shared representation for S2, S1, DEM and land cover
+\end{itemize}
+\end{column}
+\begin{column}{0.46\textwidth}
+\textbf{TerraMind (used here)}
+\begin{itemize}
+\item Multi-modal, any-to-any GFM (IBM / ESA)
+\item ViT-Base: 12 layers, 768-dim, used \emph{frozen}
+\item Input tile 2.24\,km $\rightarrow$ $14\times14$ = 196 tokens, each a 160\,m patch
+\item Modalities used: S2 L2A, S1 RTC, DEM, LULC
+\item Layers L3, L6, L9, L12 extracted
+\end{itemize}
+\textbf{Open question}
+\begin{itemize}
+\item Do these general-purpose embeddings carry soil-moisture information --- or only describe the landscape?
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Motivation\quad TerraMind L12 tokens: what the model receives}
+\begin{columns}[T,onlytextwidth]
+\begin{column}{0.56\textwidth}
+\centering
+\includegraphics[width=\linewidth,height=0.80\textheight,keepaspectratio]{terramind_value/terramind_value.png}
+\end{column}
+\begin{column}{0.41\textwidth}
+\footnotesize
+\begin{itemize}
+\item (a) S2 RGB and its L12 tokens, four seasons; (b) S1 VV and tokens; (c) DEM, LULC and their tokens. Colours = first 3 principal components of the 768-dim tokens.
+\item Tokens follow fields, woodland and the river --- the landscape structure is preserved at 160\,m
+\item S2 tokens look almost the same in all four seasons: the embedding is dominated by \emph{what the land is}, less by \emph{how wet it is today}
+\item This is what RQ1 tests quantitatively
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
 \begin{frame}{Eight research questions}
 \footnotesize
 \begin{tabular}{@{}l l p{0.62\textwidth}@{}}
