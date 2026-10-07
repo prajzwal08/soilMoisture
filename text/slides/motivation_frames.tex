@@ -1,4 +1,4 @@
-% Motivation slides 1-3, shared by text/research_questions_slides.tex and text/slides/motivation_slides.tex
+% Motivation slides 1-4, shared by text/research_questions_slides.tex and text/slides/motivation_slides.tex
 \begin{frame}{Motivation\quad Different ways of obtaining soil moisture}
 \scriptsize
 \centering
@@ -67,34 +67,17 @@ Source & How SM is obtained & Depth & Main limitation \\
 \end{frame}
 
 \begin{frame}{Motivation\quad Geospatial foundation models (GFMs)}
-\footnotesize
-\begin{columns}[T,onlytextwidth]
-\begin{column}{0.5\textwidth}
-\textbf{What they are}
-\begin{itemize}
-\item Large networks (usually Vision Transformers) pre-trained on huge \emph{unlabelled} Earth-observation archives
-\item Self-supervised: learn by reconstructing or translating between sensors, no soil-moisture labels needed
-\item Output: \emph{embeddings} --- compact vectors that summarise what a patch of land looks like
-\end{itemize}
-\textbf{Why for soil moisture}
-\begin{itemize}
-\item In-situ labels are scarce ($\sim$1000 stations); pre-training brings knowledge from billions of pixels
-\item One shared representation for S2, S1, DEM and land cover
-\end{itemize}
-\end{column}
-\begin{column}{0.46\textwidth}
-\textbf{TerraMind (used here)}
-\begin{itemize}
-\item Multi-modal, any-to-any GFM (IBM / ESA)
-\item ViT-Base: 12 layers, 768-dim, used \emph{frozen}
-\item Input tile 2.24\,km $\rightarrow$ $14\times14$ = 196 tokens, each a 160\,m patch
-\item Modalities used: S2 L2A, S1 RTC, DEM, LULC
-\item Layers L3, L6, L9, L12 extracted
-\end{itemize}
-\textbf{Open question}
-\begin{itemize}
-\item Do these general-purpose embeddings carry soil-moisture information --- or only describe the landscape?
-\end{itemize}
-\end{column}
-\end{columns}
+\centering
+\includegraphics[width=\linewidth,height=0.70\textheight,keepaspectratio]{DOFA1-1.png}\\[-1pt]
+{\tiny DOFA: Xiong et al.\ (2024), Neural plasticity-inspired multimodal foundation model for Earth observation, arXiv:2403.15356}\\[6pt]
+\begin{beamercolorbox}[wd=0.9\linewidth,center,rounded=true]{block body}
+\small\textbf{Once pre-trained on multimodal, unlabelled data, its representation works for many downstream tasks}
+\end{beamercolorbox}
+\end{frame}
+
+\begin{frame}{Motivation\quad TerraMind embeddings for soil moisture}
+\centering
+\includegraphics[width=\linewidth,height=0.80\textheight,keepaspectratio]{gfm_embedding_schematic.pdf}\\[4pt]
+\footnotesize Frozen TerraMind ViT-B turns each 160\,m patch of S2, S1, DEM and LULC into a 768-d embedding;
+the same embedding can serve many tasks; in this case, \textbf{soil moisture}.
 \end{frame}
