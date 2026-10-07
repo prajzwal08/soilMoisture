@@ -213,17 +213,17 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
     """Every sample as a point, coloured by its local density (densest drawn on top).
 
     Density = Gaussian-smoothed 2-D histogram looked up at each point (a gridded KDE,
-    fast for ~10^5-10^6 points), scaled to the panel maximum and shown on a log scale.
-    Points are rasterised so the PDF stays small.
+    fast for ~10^5-10^6 points), shown as each point's density percentile within its panel
+    (spreads the colour ramp evenly over the samples). Points are rasterised (small PDF).
     """
-    from matplotlib.colors import ListedColormap, LogNorm
+    from matplotlib.colors import Normalize
     from scipy.ndimage import gaussian_filter
     splits = [s for s in HELD_OUT if s in preds]
     edges = np.linspace(*SM_LIM, nbin + 1)
-    cmap = ListedColormap(plt.get_cmap("Blues")(np.linspace(0.3, 1.0, 256)))
-    norm = LogNorm(vmin=1e-3, vmax=1.0)
+    cmap = "viridis"
+    norm = Normalize(vmin=0.0, vmax=100.0)
     fig, axes = plt.subplots(len(splits), len(SM_DEPTHS),
-                             figsize=(9.0, 3.0 * len(splits)),
+                             figsize=(9.6, 2.75 * len(splits) + 0.4),
                              constrained_layout=True, squeeze=False)
     sc = None
     for i, split in enumerate(splits):
@@ -241,7 +241,8 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
             z /= z.max()
             ix = np.clip(np.digitize(t, edges) - 1, 0, nbin - 1)
             iy = np.clip(np.digitize(p, edges) - 1, 0, nbin - 1)
-            d = np.clip(z[ix, iy], norm.vmin, None)
+            d = z[ix, iy]
+            d = 100.0 * (np.argsort(np.argsort(d)) + 0.5) / d.size   # density percentile
             o = np.argsort(d)
             sc = ax.scatter(t[o], p[o], c=d[o], s=0.6, cmap=cmap, norm=norm,
                             linewidths=0, rasterized=True, zorder=1)
@@ -260,7 +261,7 @@ def fig_pred_obs_density(preds: dict, out_dir: Path, nbin: int = 250, sigma: flo
                 ax.set_ylabel(f"{split.upper()}\npredicted SM (m$^3$/m$^3$)")
             if i == len(splits) - 1:
                 ax.set_xlabel("observed SM (m$^3$/m$^3$)")
-    fig.colorbar(sc, ax=axes[:, -1].tolist(), label="relative point density")
+    fig.colorbar(sc, ax=axes[:, -1].tolist(), label="point density (percentile)", shrink=0.9)
     save(fig, out_dir, "scatter_pred_obs_density")
 
 

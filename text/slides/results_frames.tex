@@ -3,7 +3,7 @@
 % Model: baseline_selected_20261005 (the selected §59 run); figures from figures/eval/baseline_selected_20261005_paper/,
 % numbers from eval_output/baseline_selected_20261005/per_station_oos.csv.
 % Order (user, 2026-10-07): ubRMSE by depth -> pred vs obs (density) -> ubRMSE by land cover ->
-% 3-depth sites that match -> 3-depth sites that do not -> TxSON (tile left, series right).
+% sites that match -> sites that do not -> TxSON (tile left, series right) -> input ablation (wide heatmap).
 % Match / mismatch = lowest / highest mean OOS ubRMSE among stations observed at all three depths.
 
 \begin{frame}{Results\quad{\color{tumblue}Per-station ubRMSE by depth}}
@@ -22,7 +22,7 @@
 
 \begin{frame}{Results\quad{\color{tumblue}Per-station ubRMSE by land cover}}
 \centering
-\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/box_ubrmse_by_igbp_macro.pdf}
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/slides/box_ubrmse_by_igbp_macro.pdf}
 \figcap{Rows: depths; groups: land-cover class; colours: OOS, OOT, OOST}
 \msg{Similar error across land cover; forest slightly highest, shrub--savanna lowest}
 \end{frame}
@@ -60,4 +60,11 @@
 \includegraphics[width=0.95\linewidth,keepaspectratio,trim=0 12 0 26,clip]{eval/baseline_selected_20261005_paper/tiles/txson_cr200-18_side.pdf}
 \figcap{(a) Sentinel-2 true colour with the six stations; (b--g) 0--10\,cm, predicted vs observed}
 \msg{Timing right at every station (r 0.69--0.85); offsets remain (bias $-$0.12 to +0.11)}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Input ablation: which inputs does the model use?}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/ablation/input_ablation_heatmap_horizontal.pdf}
+\figcap{One input shuffled at a time; 221 OOS stations; * = significant}
+\msg{Weather and the satellite tokens matter most (+30--39\,\%); soil and terrain gain weight with depth; bias barely moves}
 \end{frame}

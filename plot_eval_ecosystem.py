@@ -171,6 +171,7 @@ CLASS_ORDER = {
 }
 KG_GLOSS = {"A": "Tropical", "B": "Arid", "C": "Temperate", "D": "Continental", "E": "Polar"}
 MIN_SLOT = 3                # no box, dots or count for a (class, split, depth) slot below this
+FIG_SIZE = None             # --fig-size override for the box figure (slides)
 TOP_N_NETWORKS = 12         # inventory --by network: top-N by train count + "Other"
 
 
@@ -305,7 +306,7 @@ def fig_box_by_class(long: pd.DataFrame, by: str, metric: str, out_dir: Path,
 
     many = n_cls > 8                    # crowded: rotate the counts, widen the figure
     fig_w = max(8.0, 0.55 * n_cls * max(len(splits), 1)) if many else 8.0
-    fig, axes = plt.subplots(len(SM_DEPTHS), 1, figsize=(fig_w, 8.4),
+    fig, axes = plt.subplots(len(SM_DEPTHS), 1, figsize=FIG_SIZE or (fig_w, 8.4),
                              sharex=True, constrained_layout=True)
     rng   = np.random.default_rng(0)
     span  = 0.84
@@ -421,6 +422,8 @@ def main():
     p.add_argument("--metric",  default="ubRMSE",
                    choices=["ubRMSE", "RMSE", "MAE", "bias"])
     p.add_argument("--min-stations", type=int, default=5)
+    p.add_argument("--fig-size", type=float, nargs=2, default=None, metavar=("W", "H"),
+                   help="override the box figure size in inches (e.g. 14 7 for a 16:9 slide)")
     p.add_argument("--no-val", action="store_true",
                    help="leave val out of the inventory figure (held-out splits only, + train)")
     p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
@@ -430,6 +433,8 @@ def main():
         import plot_style_bw
         plot_style_bw.apply(globals(), args.style)
 
+    global FIG_SIZE
+    FIG_SIZE = tuple(args.fig_size) if args.fig_size else None
     if args.no_val:
         INVENTORY_SPLITS.remove("val")
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)

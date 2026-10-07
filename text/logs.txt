@@ -9036,3 +9036,12 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Seen: single-hue Blues + log norm gives little contrast (everything mid/dark blue); fix proposed, not run.
   Match slide: NGARI ALI02 (Tibet) replaced by TWENTE ITCSM-13 (user); 2 depths (0-10 r 0.88 ubRMSE 0.046
     bias +0.041; 10-30 r 0.81 ubRMSE 0.056 bias +0.019) -> title now "Sites where the time series match".
+  Density re-render (user: viridis, replace): fig_pred_obs_density colours each point by its density PERCENTILE
+    within the panel (viridis), tighter rows; job 27706636 COMPLETED, same filename (replaced).
+    Reading: OOT = tight ridge on 1:1; OOS/OOST ridge flatter than 1:1 (wet underpredicted, dry overpredicted);
+    30-100 cm new sites break into per-station clusters.
+  Land-cover slide made wide (user): plot_eval_ecosystem.py --fig-size W H; job 27707235 (slurm/slides_landcover_fig.sh)
+    COMPLETED -> figures/eval/baseline_selected_20261005_paper/slides/box_ubrmse_by_igbp_macro.{png,pdf} (14 x 7 in);
+    paper figure untouched.
+  Last results slide added (user): input ablation, wide heatmap ablation/input_ablation_heatmap_horizontal.pdf.
+  Decks: motivation_slides.pdf 21 pp, research_questions_slides.pdf 33 pp, no overfull boxes.
