@@ -9028,5 +9028,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   scatter_pred_obs_kde.{png,pdf}, tiles/txson_cr200-18_side.{png,pdf}; TxSON ubRMSE matches per_station_oos.csv.
   Seen: Hopewell is the opposite failure to Burts Miller -- snowmelt peaks timed right, but the model does not dry
   the soil enough in summer (deep pred ~0.2 vs obs ~0.1); Burts Miller deep is dried too much.
-  Open: CR200-15 label clipped at the map's left edge in the rendered side figure; margin fixed in code (left=0.045),
-  re-render not yet submitted.
+  CR200-15 label was clipped at the map edge; margin fixed (left=0.045), re-rendered by job 27705238 COMPLETED,
+  all labels inside; both decks recompiled.
