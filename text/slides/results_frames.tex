@@ -24,7 +24,7 @@
 \centering
 \includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/slides/box_ubrmse_by_igbp_macro.pdf}
 \figcap{Rows: depths; groups: land-cover class; colours: OOS, OOT, OOST}
-\msg{Similar error across land cover; forest slightly highest, shrub--savanna lowest}
+\msg{Similar error across land cover; forest slightly highest, shrub-savanna lowest}
 \end{frame}
 
 \begin{frame}{Results\quad{\color{tumblue}Sites where the time series match}}
@@ -41,7 +41,7 @@
 \msg{Dynamics right at every depth (r 0.57--0.88, ubRMSE 0.024--0.056); level off by up to 0.04}
 \end{frame}
 
-\begin{frame}{Results\quad{\color{tumblue}Sites where the depths do not match}}
+\begin{frame}{Results\quad{\color{tumblue}Sites where the time series have some issues}}
 \centering
 \begin{minipage}[t]{0.495\linewidth}\centering
 \includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/WORST_02_ISMN_SNOTEL_BurtsMillerRanch.png}\\[-1pt]
@@ -72,28 +72,27 @@
 \begin{frame}{Conclusions\quad{\color{tumblue}Answers to the research questions}}
 \small
 \textbf{RQ1}\; {\color{tumblue}Do frozen GFM embeddings add skill beyond a multimodal driver baseline?}\\
-\textbf{Ans.} GFM embeddings carry a site-specific signal, comparable to climate: swapping satellite tokens between
+Ans. \textbf{GFM embeddings carry a site-specific signal, comparable to climate.} Swapping satellite tokens between
 stations raises ubRMSE by 37--38\,\% at every depth (ERA5 from another station: +15--30\,\%); reordering S1 in time
 at the same station costs $\approx$0\,\%. Added skill still needs a drivers-only run.
 
-\vspace{5pt}
-\textbf{RQ2}\; {\color{tumblue}What does the model generalise to --- places or processes?}\\
-\textbf{Ans.} Transfer to new sites is the bottleneck, not new years, and it costs mostly level. All samples pooled:
-ubRMSE 0.084--0.107 at new sites vs 0.059--0.064 at known sites (2023--2025); per-station median 0.048--0.050 vs
-0.043--0.047. Dynamics transfer, station levels do not.
+\vspace{6pt}
+\textbf{RQ2}\; {\color{tumblue}What does the model generalise to: places or processes?}\\
+Ans. \textbf{New sites are slightly worse than seen stations.} Median per-station ubRMSE 0.048--0.050 at new sites
+vs 0.043--0.047 at seen stations.
 
-\vspace{5pt}
+\vspace{6pt}
 \textbf{RQ3}\; {\color{tumblue}How does skill vary across the landscape?}\\
-\textbf{Ans.} Timing is captured, level may not be. At TxSON, r is 0.69--0.85 and ubRMSE 0.032--0.063 at all six
+Ans. \textbf{Timing is captured, level may not be.} At TxSON, r is 0.69--0.85 and ubRMSE 0.032--0.063 at all six
 stations, while bias runs from $-$0.12 to +0.11 inside one 2.2\,km tile.
 
-\vspace{5pt}
+\vspace{6pt}
 \textbf{RQ4}\; {\color{tumblue}Which modalities matter, at which depth?}\\
-\textbf{Ans.} Depth changes what the model relies on: ERA5 dominates the surface; satellite matters equally at all
+Ans. \textbf{Depth changes what the model relies on.} ERA5 dominates the surface; satellite matters equally at all
 depths; soil, DEM and land cover gain weight at depth.
 \end{frame}
 
-% ---------------- not presented in the talk (backup)
+% ---------------- other analysis, not presented in the talk (backup)
 \begin{frame}
 \centering\vfill
 {\Large\bfseries\color{tumblue}What I could not present}\\[10pt]
@@ -101,14 +100,14 @@ depths; soil, DEM and land cover gain weight at depth.
 \vfill
 \end{frame}
 
-\begin{frame}{Not presented\quad{\color{tumblue}1. Effective resolution of the map (TxSON)}}
+\begin{frame}{Other analysis\quad{\color{tumblue}1. Effective resolution of the map (TxSON)}}
 \centering
 \includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{effres/effres_txson.pdf}
 \figcap{30 OOS TxSON tiles. (a) Spectrum of map anomalies; (b) variance kept after block averaging; (c) map variogram vs observed station pairs (numbers = pairs)}
-\msg{Map has structure down to $\sim$250\,m, but it is only correct at tile scale: effective resolution $\approx$2.2\,km (0--10\,cm)}
+\msg{Map has structure down to 250\,m}
 \end{frame}
 
-\begin{frame}{Not presented\quad{\color{tumblue}2. Where the station bias comes from}}
+\begin{frame}{Other analysis\quad{\color{tumblue}2. Where the station bias comes from}}
 \centering
 \includegraphics[width=\linewidth,height=0.70\textheight,keepaspectratio,trim=0 125 0 0,clip]{eval/baseline_selected_20261005_paper/bias_groups.pdf}
 \figcap{Median OOS bias by land cover, soil texture and climate; (g) bias variance explained vs random labels}

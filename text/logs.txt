@@ -9059,3 +9059,11 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Backup section 'What I could not present' (user): divider + 1. effective resolution (figures/effres/effres_txson.pdf,
     L_eff 0-10 ~2.2 km, structure to ~250 m) + 2. bias groups (bias_groups.pdf, note block trimmed; <=5 % explained,
     none above random). Decks 25 / 37 pp, no overfull.
+2026-10-07 (cont.) Deck edits (user): title slide (BC logo, Prajwal Khanal; supervisors prof.dr. Z. Su (Bob), dr. Y. Zeng
+  (Yijian) - Faculty ITC, University of Twente - and Joost Beckers, Planet Labs; date 8 October 2026), slide 19 title
+  'Sites where the time series have some issues', conclusions: main answers bold, RQ2 = median ubRMSE only ('slightly
+  worse than seen stations'), punctuation dashes removed (grass-crop, shrub-savanna, LST-vegetation, RQ2 em dash),
+  backup slides titled 'Other analysis', effres msg 'Map has structure down to 250 m'.
+  Flowchart: resolutions added to every input label in plot_architecture_s48.py (ERA5 9 km daily; SIF 5 km daily;
+  TWSA 55 km monthly; soil 30 m static; S2 10 m 5 d; S1 10 m 6-12 d; DEM 30 m static; LULC 10 m yearly; fine lane
+  20 m); render NOT yet submitted.
