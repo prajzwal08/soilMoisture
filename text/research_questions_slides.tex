@@ -37,27 +37,9 @@
 \titlepage
 \end{frame}
 
-%---------------- Motivation (slides 1-3 live in slides/motivation_frames.tex)
+%---------------- Motivation (slides 1-5 live in slides/motivation_frames.tex)
 \input{slides/motivation_frames}
 
-
-\begin{frame}{Motivation\quad TerraMind L12 tokens: what the model receives}
-\begin{columns}[T,onlytextwidth]
-\begin{column}{0.56\textwidth}
-\centering
-\includegraphics[width=\linewidth,height=0.80\textheight,keepaspectratio]{terramind_value/terramind_value.png}
-\end{column}
-\begin{column}{0.41\textwidth}
-\footnotesize
-\begin{itemize}
-\item (a) S2 RGB and its L12 tokens, four seasons; (b) S1 VV and tokens; (c) DEM, LULC and their tokens. Colours = first 3 principal components of the 768-dim tokens.
-\item Tokens follow fields, woodland and the river --- the landscape structure is preserved at 160\,m
-\item S2 tokens look almost the same in all four seasons: the embedding is dominated by \emph{what the land is}, less by \emph{how wet it is today}
-\item This is what RQ1 tests quantitatively
-\end{itemize}
-\end{column}
-\end{columns}
-\end{frame}
 
 \begin{frame}{Eight research questions}
 \footnotesize
