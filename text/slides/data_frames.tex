@@ -1,7 +1,7 @@
 % Data slides, shared by text/research_questions_slides.tex and text/slides/motivation_slides.tex.
 % Style as motivation slides 2-5: figure -> one-line caption (\figcap) -> one-line message in a rounded box (\msg).
 % Figures: figures/eval/baseline_selected_20261005_paper/ (data_overview 1116 x 864 bp; stations_by_* 685.2 x 267.6 bp).
-% Numbers: data_overview_points.csv (observed station-days), csvs/_s2_store_dates_post_backfill.json (S2 scenes),
+% Numbers: data_overview_points.csv (observed station-days), satellite_zarr/*/{s2,s1_asc,s1_desc}/dates/.zarray shapes (scene counts),
 % text/logs.txt splice dry run (ERA5 station-days).
 
 \begin{frame}{Data\quad{\color{tumblue}In-situ soil moisture: global coverage}}
@@ -26,7 +26,7 @@
 \msg{Mostly continental, temperate and arid; forest and grass--crop; almost no tropics or polar}
 \end{frame}
 
-\begin{frame}{Data\quad{\color{tumblue}What we have in total}}
+\begin{frame}{Data\quad{\color{tumblue}Data points in total}}
 \centering\small
 \renewcommand{\arraystretch}{1.3}
 \begin{tabular}{@{}l l@{}}
@@ -35,8 +35,8 @@
 \textbf{Depths} & 0--10 cm: 885 \quad 10--30 cm: 682 \quad 30--100 cm: 551 stations \\
 \textbf{Period} & 2016--2025; out-of-time test from 2023-01-01 \\
 \textbf{Soil-moisture observations} & \textbf{5.14\,M} observed daily values (2.10\,M / 1.68\,M / 1.37\,M per depth) \\
-\textbf{Sentinel-2 L2A} & 272,281 scenes stored (998 sites) \\
-\textbf{Sentinel-1 RTC} & \textit{to be counted} \\
+\textbf{Sentinel-2 L2A} & 272,281 scenes (994 sites); cloud $<$ 75\,\% per scene, cloudy tokens masked \\
+\textbf{Sentinel-1 RTC} & 496,835 scenes: 251,310 ascending + 245,525 descending \\
 \textbf{ERA5-Land} & 18 variables, 2.46\,M station-days (990 stations) \\
 \textbf{Static / other} & DEM, LULC, soil (OpenLandMap), SIF, TWSA \\
 \bottomrule
