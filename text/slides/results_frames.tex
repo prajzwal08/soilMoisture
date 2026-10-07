@@ -69,19 +69,26 @@
 \msg{ERA5 matters most at the surface (+30--39\,\% vs +14--15\,\% deep); satellite equally at all depths (+37--38\,\%); DEM, land cover and soil grow with depth}
 \end{frame}
 
-\begin{frame}{Conclusions}
-\begin{enumerate}\setlength{\itemsep}{6pt}
-\item \textbf{GFM embeddings carry a site-specific signal, comparable to climate.}
-  Swapping satellite tokens between stations raises ubRMSE by 37--38\,\% at every depth
-  (ERA5 from another station: +15--30\,\%); reordering S1 in time at the same station costs $\approx$0\,\%.
-  The embeddings describe the \emph{place}, not the day-to-day wetness.
-\item \textbf{Transfer to new sites is the bottleneck, not new years, and it costs mostly level.}
-  All samples pooled: ubRMSE 0.084--0.107 at new sites vs 0.059--0.064 at known sites (2023--2025).
-  Per station the gap is small (median 0.048--0.050 vs 0.043--0.047): dynamics transfer, station levels do not.
-\item \textbf{Timing is captured, level may not be.}
-  At TxSON, r is 0.69--0.85 and ubRMSE 0.032--0.063 at all six stations, while bias runs from $-$0.12 to +0.11 inside one 2.2\,km tile.
-\item \textbf{Depth changes what the model relies on.}
-  ERA5 dominates the surface; soil, DEM and land cover gain weight at depth.
-\item \textbf{Open:} reliance is not added skill. A drivers-only run is needed to show what the GFM adds.
-\end{enumerate}
+\begin{frame}{Conclusions\quad{\color{tumblue}Answers to the research questions}}
+\small
+\textbf{RQ1}\; {\color{tumblue}Do frozen GFM embeddings add skill beyond a multimodal driver baseline?}\\
+\textbf{Ans.} GFM embeddings carry a site-specific signal, comparable to climate: swapping satellite tokens between
+stations raises ubRMSE by 37--38\,\% at every depth (ERA5 from another station: +15--30\,\%); reordering S1 in time
+at the same station costs $\approx$0\,\%. Added skill still needs a drivers-only run.
+
+\vspace{5pt}
+\textbf{RQ2}\; {\color{tumblue}What does the model generalise to --- places or processes?}\\
+\textbf{Ans.} Transfer to new sites is the bottleneck, not new years, and it costs mostly level. All samples pooled:
+ubRMSE 0.084--0.107 at new sites vs 0.059--0.064 at known sites (2023--2025); per-station median 0.048--0.050 vs
+0.043--0.047. Dynamics transfer, station levels do not.
+
+\vspace{5pt}
+\textbf{RQ3}\; {\color{tumblue}How does skill vary across the landscape?}\\
+\textbf{Ans.} Timing is captured, level may not be. At TxSON, r is 0.69--0.85 and ubRMSE 0.032--0.063 at all six
+stations, while bias runs from $-$0.12 to +0.11 inside one 2.2\,km tile.
+
+\vspace{5pt}
+\textbf{RQ4}\; {\color{tumblue}Which modalities matter, at which depth?}\\
+\textbf{Ans.} Depth changes what the model relies on: ERA5 dominates the surface; satellite matters equally at all
+depths; soil, DEM and land cover gain weight at depth.
 \end{frame}

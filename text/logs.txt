@@ -9055,3 +9055,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     0.059-0.064 known; per-station median 0.048-0.050 vs 0.043-0.047 -> gap is mostly station level); #3 'level
     sometimes not, even within one tile'; #4 dry-down clause removed.
   Conclusion #3 (user): 'Timing is captured, level may not be'; TxSON r 0.69-0.85, ubRMSE 0.032-0.063, bias -0.12..+0.11.
+  Conclusions rewritten as RQ1-RQ4 answers (user: 'RQ1 ans, like that').
