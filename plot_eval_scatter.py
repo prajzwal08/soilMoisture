@@ -320,6 +320,40 @@ def fig_pred_obs_stations(preds: dict, out_dir: Path, nbin: int = 62):
     save(fig, out_dir, "scatter_pred_obs_stations")
 
 
+def fig_pred_obs_hist(preds: dict, out_dir: Path, width: float = 0.01):
+    """Distribution of observed vs predicted SM (all daily samples), rows = depths,
+    columns = splits: in situ as grey bars, prediction as semi-transparent blue bars on top.
+    Shows whether the model reproduces the range (wet / dry tails), not the day-by-day pairing.
+    """
+    splits = [s for s in HELD_OUT if s in preds]
+    edges = np.arange(SM_LIM[0], SM_LIM[1] + width / 2, width)
+    fig, axes = plt.subplots(len(SM_DEPTHS), len(splits),
+                             figsize=(3.0 * len(splits) + 0.6, 2.3 * len(SM_DEPTHS) + 0.5),
+                             sharex=True, sharey="row", constrained_layout=True, squeeze=False)
+    for j, split in enumerate(splits):
+        df = preds[split]
+        for i, depth in enumerate(SM_DEPTHS):
+            ax = axes[i][j]
+            g = df[df["depth"].astype(str) == depth]
+            if g.empty:
+                ax.set_axis_off()
+                continue
+            w = np.full(len(g), 1.0 / len(g))                     # relative frequency
+            ax.hist(g["obs"], bins=edges, weights=w, color="0.45", label="in situ", zorder=1)
+            ax.hist(g["pred"], bins=edges, weights=w, color="#3F51B5", alpha=0.55,
+                    label="predicted", zorder=2)
+            ax.set_xlim(SM_LIM)
+            if i == 0:
+                ax.set_title(split.upper())
+            if j == 0:
+                ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nrelative frequency")
+            if i == len(SM_DEPTHS) - 1:
+                ax.set_xlabel("soil moisture (m$^3$/m$^3$)")
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="outside upper center", ncol=2, frameon=False)
+    save(fig, out_dir, "hist_pred_obs")
+
+
 # ── 2. Station-mean predicted vs observed ─────────────────────────────────────
 
 def fig_station_mean(preds: dict, out_dir: Path):
@@ -596,6 +630,7 @@ def main():
     figs = {"scatter_pred_obs":         lambda: fig_pred_obs(preds, out_dir),
             "scatter_pred_obs_kde":     lambda: fig_pred_obs_kde(preds, out_dir),
             "scatter_pred_obs_density": lambda: fig_pred_obs_density(preds, out_dir),
+            "hist_pred_obs":            lambda: fig_pred_obs_hist(preds, out_dir),
             "scatter_pred_obs_stations": lambda: fig_pred_obs_stations(preds, out_dir),
             "scatter_station_mean":     lambda: fig_station_mean(preds, out_dir),
             "scatter_station_metrics":  lambda: fig_station_metrics(ps_all, out_dir),

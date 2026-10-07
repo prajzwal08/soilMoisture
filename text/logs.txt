@@ -9088,3 +9088,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Density panels: pooled metrics replaced by per-station medians (per_station_metrics, same as box plots), job 27713397:
     OOS ubRMSE 0.050/0.048/0.048 r 0.77/0.76/0.70; OOT 0.047/0.043/0.043 r 0.80/0.81/0.77; OOST 0.051/0.044/0.050
     r 0.77/0.78/0.74. Low pooled OOST r2 was station level offsets, not dynamics.
+  Histogram obs vs pred (user sample: SoMo.ml-style), new fig hist_pred_obs (rows depths, cols splits, 0.01 bins,
+    relative frequency), job 27713507. Reading: shapes match; prediction piles into the middle (0.15-0.28) and thins both
+    tails -- misses the observed spikes at ~0 (sensor zeros) and ~0.40 (saturation) and the 0-0.05 dry tail; OOT closest,
+    OOST most squashed. Not on a slide yet.

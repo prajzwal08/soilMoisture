@@ -16,5 +16,5 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 RUN=baseline_selected_20261005
 conda run -n terramind --no-capture-output python plot_eval_scatter.py \
     --in-dir eval_output/$RUN --out-dir figures/eval/${RUN}_paper --style paper \
-    --only scatter_pred_obs_density
+    --only hist_pred_obs
 echo "=== done $(date) ==="
