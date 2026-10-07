@@ -9056,3 +9056,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     sometimes not, even within one tile'; #4 dry-down clause removed.
   Conclusion #3 (user): 'Timing is captured, level may not be'; TxSON r 0.69-0.85, ubRMSE 0.032-0.063, bias -0.12..+0.11.
   Conclusions rewritten as RQ1-RQ4 answers (user: 'RQ1 ans, like that').
+  Backup section 'What I could not present' (user): divider + 1. effective resolution (figures/effres/effres_txson.pdf,
+    L_eff 0-10 ~2.2 km, structure to ~250 m) + 2. bias groups (bias_groups.pdf, note block trimmed; <=5 % explained,
+    none above random). Decks 25 / 37 pp, no overfull.

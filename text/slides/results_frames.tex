@@ -92,3 +92,25 @@ stations, while bias runs from $-$0.12 to +0.11 inside one 2.2\,km tile.
 \textbf{Ans.} Depth changes what the model relies on: ERA5 dominates the surface; satellite matters equally at all
 depths; soil, DEM and land cover gain weight at depth.
 \end{frame}
+
+% ---------------- not presented in the talk (backup)
+\begin{frame}
+\centering\vfill
+{\Large\bfseries\color{tumblue}What I could not present}\\[10pt]
+{\large 1.\ Effective resolution of the map\quad 2.\ Where the station bias comes from}
+\vfill
+\end{frame}
+
+\begin{frame}{Not presented\quad{\color{tumblue}1. Effective resolution of the map (TxSON)}}
+\centering
+\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{effres/effres_txson.pdf}
+\figcap{30 OOS TxSON tiles. (a) Spectrum of map anomalies; (b) variance kept after block averaging; (c) map variogram vs observed station pairs (numbers = pairs)}
+\msg{Map has structure down to $\sim$250\,m, but it is only correct at tile scale: effective resolution $\approx$2.2\,km (0--10\,cm)}
+\end{frame}
+
+\begin{frame}{Not presented\quad{\color{tumblue}2. Where the station bias comes from}}
+\centering
+\includegraphics[width=\linewidth,height=0.70\textheight,keepaspectratio,trim=0 125 0 0,clip]{eval/baseline_selected_20261005_paper/bias_groups.pdf}
+\figcap{Median OOS bias by land cover, soil texture and climate; (g) bias variance explained vs random labels}
+\msg{Bias is not explained by land cover, climate, soil texture or terrain ($\le$5\,\%, none above random)}
+\end{frame}
