@@ -17980,3 +17980,65 @@ LULC tokens. Findings to keep honest in the caption:
 
 Open: grey out S1 sink tokens if the black squares in (b) are sinks; agent review of terramind_value.png;
 vertical architecture variant.
+
+## §73 Post-hoc group-Shapley attribution (SHAPformer-style) on the §59 baseline (Session 49, 2026-10-07, PLANNED, not built)
+
+Goal: see how each input group drives each prediction, not just how much error rises when it is
+shuffled (§67). Method from SHAPformer (Nat. Commun. 2026, s41467-026-73243-5; code
+github.com/KIT-IAI/SHAPformer). User chose the POST-HOC route: inference only, frozen §59
+checkpoint `/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff/nolst_L3_wu200_20261005/best.pt`.
+
+### 73.1 How SHAPformer works (read from the repo)
+- `src/shap.py` `get_all_subset_masks()` enumerates all 2^K group coalitions; `explain_sample()`
+  runs one sample through the model under every mask in one batch.
+- phi_i = sum over S without i of w(S) * (f(S + i) - f(S)), w = 1 / C(K-1, |S|) / K.
+  Base value = f(empty). Efficiency: sum_i phi_i = f(all) - f(empty).
+- "Remove a group" = attention -inf on its tokens (`mask_day`) + embedding x 0 (`mask_feature`).
+  No background data, no sampling, so it is exact.
+- Validity comes from TRAINING: `training.ipynb` draws a random mask every step; paper: each group
+  masked with p = 0.5 independently. Cost about 1 % RMSE. Every coalition is then in-distribution.
+- Owen values: past load = 7 day-subgroups inside one group; gives finer detail without 2^K blow-up.
+- Their K = 13-14.
+
+### 73.2 Mapping to our model (§48 single transformer, NOT patchwise)
+| SHAPformer | ours |
+|---|---|
+| attention -inf on group tokens | `src_key_padding_mask` via `*_valid` / `doys=0` (model.py:753) |
+| embedding x 0 | zero content tensors (anchor and fine must be zeroed, not only padded) |
+| p=0.5 group mask in training | partial: ERA5 0.5, sat160 0.3, fine S2/S1 0.2 (0.1 each), statics 0, SIF/TWSA 0 |
+| 1 sample x 2^K masks | B samples x 64 coalitions, batch loaded once |
+| Owen split of past load | later option: ERA5 -> rain / radiation / temperature |
+
+Post-hoc = their method minus the training step: valid for 4/6 groups, OOD for statics and SIF/TWSA.
+Fully valid follow-up (NOT now): §59 + p=0.5 masking on all 6 groups, one 10-epoch run.
+
+### 73.3 Groups (K = 6, 64 coalitions)
+| # | group | absent recipe (mirrors training dropout) | seen absent in §59? |
+|---|---|---|---|
+| 1 | era5 | `era5=0`, `era5_doys=0` (dataset.py:1678-1680) | yes, 0.5 |
+| 2 | sat160 (S2 + S1 history + anchor) | zero s2_pyr/valid, s1_pyr/valid, anchor_l12; anchor_rel_pos=0, anchor_orbit=0, anchor_found=False (dataset.py:1615-1622) | yes, 0.3 |
+| 3 | fine_s2 (20 m) | `fine[:, FINE_S2]=0` (model.py:314-323) | yes, 0.1 |
+| 4 | fine_s1 (20 m) | `fine[:, FINE_S1]=0` | yes, 0.1 |
+| 5 | statics (DEM+LULC+soil) | dataset.py:1634-1642: dem_pyr/valid, fine[FINE_DEM]=0, lulc_pyr/valid, lulc=LULC_PAD, soil_patch/valid | NO, OOD |
+| 6 | sif_twsa | sif_valid=False, twsa_valid=False | NO, OOD |
+Masks applied on GPU after CudaPrefetcher, on cloned tensors.
+
+### 73.4 Build
+1. New `shap_groups.py`: GROUPS recipes (import FINE_S2/FINE_S1/FINE_DEM/LULC_PAD, no copies),
+   `apply_absent(batch, groups_off)`, `shapley_from_coalitions(f[64,B,3])`; assert efficiency (1e-5).
+2. `eval_predict.py --shap`: `run_split_shap()` next to `run_split()` (:93), same pixel (56,56), bf16;
+   writes `shap_<split>.parquet`: station_key, year, doy, label[3], pred_full[3], pred_empty[3],
+   phi_<group>_<depth> (18 cols), plus input summaries for dependence plots (ERA5 precip 1/7/30 d,
+   t2m; station-pixel VV, VH-VV, NDVI from `fine`; valid flags; days since last S1/S2).
+3. `slurm/eval_shap.sh` from eval_final.sh (terramind env, mail flags, `smoke` -> --max-stations 5).
+   Splits: oos `--station-flag ablation_oos` (50 stations) + oot. Out: `eval_output/nolst_L3_wu200_20261005_shap/`.
+4. `plot_shap.py`, paper style (palette H, Times bold, no titles; one sample + agent review first):
+   (a) mean |phi| bars per group, panel per depth, OOD groups hatched; (b) station-year obs/pred
+   with stacked phi underneath; (c) dependence: input summary vs group phi, colour = 2nd variable;
+   (d) waterfalls for 2-3 station-days (wet-up, drought).
+
+### 73.5 Verification
+- Smoke: efficiency assert passes; the all-on coalition reproduces eval_final `predictions_oos.parquet`
+  (bf16-close); fwd_s x 64 -> SBU estimate before the full run.
+- Sanity: ERA5 large at depth; rank order broadly agrees with §67 / `ablation_summary.csv`.
+- Every job (smoke, full, plots) needs explicit OK. Nothing on the login node.

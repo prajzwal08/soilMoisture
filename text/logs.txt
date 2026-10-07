@@ -9101,3 +9101,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     logs/lst_tmean_diff/train_nolst_L3_wu200_27575211.out -> figures/eval/baseline_selected_20261005_paper/loss_curves_baseline_selected_20261005.{png,pdf}.
     (a) train vs val Huber (epoch means; log has no batch lines), (b) val/train gap; epochs 1-11 (run went one past the cap), ep10 ringed as selected.
     Gap 0.9x ep1 -> 2.7x ep8 -> 2.9x ep10 -> 3.1x ep11; val SELECT ep10 0.04879, ep11 0.05109 (turns up). User confirmed baseline stays ep10 (ep8 was a mix-up).
+
+2026-10-07 (Session 49) — SHAP planning
+- User asked about explainable AI per SHAPformer (Nat. Commun. 2026, s41467-026-73243-5; github.com/KIT-IAI/SHAPformer).
+- Read the repo: exact group-Shapley over 2^K attention-masked coalitions; valid because training masks each group p=0.5.
+- Decision: POST-HOC route first on the §59 checkpoint (nolst_L3_wu200_20261005), K=6 groups
+  (era5, sat160, fine_s2, fine_s1, statics, sif_twsa), 64 coalitions; statics and SIF/TWSA are OOD (never dropped in §59).
+- Plan written to runbook §73. Nothing built, nothing submitted. Resume tomorrow.
