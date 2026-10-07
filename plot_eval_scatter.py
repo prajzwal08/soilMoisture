@@ -320,15 +320,17 @@ def fig_pred_obs_stations(preds: dict, out_dir: Path, nbin: int = 62):
     save(fig, out_dir, "scatter_pred_obs_stations")
 
 
-def fig_pred_obs_hist(preds: dict, out_dir: Path, width: float = 0.01):
+def fig_pred_obs_hist(preds: dict, out_dir: Path, width: float = 0.02, xmax: float = 0.5):
     """Distribution of observed vs predicted SM (all daily samples), rows = depths,
-    columns = splits: in situ as grey bars, prediction as semi-transparent blue bars on top.
-    Shows whether the model reproduces the range (wet / dry tails), not the day-by-day pairing.
+    columns = splits. In situ = filled light blue, prediction = dark-blue outline on top
+    (palette H, no transparency, so no blended third colour). Box: station count and the
+    5th-95th percentile range of each, which quantifies whether the model narrows the tails.
     """
     splits = [s for s in HELD_OUT if s in preds]
-    edges = np.arange(SM_LIM[0], SM_LIM[1] + width / 2, width)
+    edges = np.arange(0.0, xmax + width / 2, width)
+    c_obs, c_pred = "#6BAED6", "#08519C"
     fig, axes = plt.subplots(len(SM_DEPTHS), len(splits),
-                             figsize=(3.0 * len(splits) + 0.6, 2.3 * len(SM_DEPTHS) + 0.5),
+                             figsize=(3.0 * len(splits) + 0.6, 2.2 * len(SM_DEPTHS) + 0.5),
                              sharex=True, sharey="row", constrained_layout=True, squeeze=False)
     for j, split in enumerate(splits):
         df = preds[split]
@@ -338,18 +340,34 @@ def fig_pred_obs_hist(preds: dict, out_dir: Path, width: float = 0.01):
             if g.empty:
                 ax.set_axis_off()
                 continue
+            o = g["obs"].to_numpy(np.float64)
+            p = g["pred"].to_numpy(np.float64)
             w = np.full(len(g), 1.0 / len(g))                     # relative frequency
-            ax.hist(g["obs"], bins=edges, weights=w, color="0.45", label="in situ", zorder=1)
-            ax.hist(g["pred"], bins=edges, weights=w, color="#3F51B5", alpha=0.55,
+            ax.hist(o, bins=edges, weights=w, color=c_obs, ec="none", label="in situ", zorder=1)
+            ax.hist(p, bins=edges, weights=w, histtype="step", color=c_pred, lw=1.6,
                     label="predicted", zorder=2)
-            ax.set_xlim(SM_LIM)
+            po, pp = np.percentile(o, [5, 95]), np.percentile(p, [5, 95])
+            ax.text(0.97, 0.95,
+                    f"{g['station_key'].nunique()} stations\n"
+                    f"P5-P95 in situ {po[0]:.2f}-{po[1]:.2f}\n"
+                    f"P5-P95 predicted {pp[0]:.2f}-{pp[1]:.2f}",
+                    transform=ax.transAxes, va="top", ha="right", fontsize=_afs(6), zorder=4,
+                    bbox=dict(fc="white", ec="none", pad=1.5))
+            ax.set_xlim(0.0, xmax)
+            ax.set_ylim(bottom=0)
             if i == 0:
                 ax.set_title(split.upper())
-            if j == 0:
-                ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nrelative frequency")
+            ax.text(0.03, 0.95, DEPTH_LABELS[depth], transform=ax.transAxes, va="top",
+                    ha="left", fontsize=_afs(7), zorder=4)
+            if j == 0 and i == len(SM_DEPTHS) // 2:
+                ax.set_ylabel("relative frequency")
             if i == len(SM_DEPTHS) - 1:
                 ax.set_xlabel("soil moisture (m$^3$/m$^3$)")
+    for i in range(len(SM_DEPTHS)):                      # headroom for the box above the bars
+        lo, hi = axes[i][0].get_ylim()
+        axes[i][0].set_ylim(0, hi * 1.8)
     h, l = axes[0][0].get_legend_handles_labels()
+    h = [h[0], plt.Line2D([], [], color=c_pred, lw=1.6)]
     fig.legend(h, l, loc="outside upper center", ncol=2, frameon=False)
     save(fig, out_dir, "hist_pred_obs")
 

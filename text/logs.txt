@@ -9092,3 +9092,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     relative frequency), job 27713507. Reading: shapes match; prediction piles into the middle (0.15-0.28) and thins both
     tails -- misses the observed spikes at ~0 (sensor zeros) and ~0.40 (saturation) and the 0-0.05 dry tail; OOT closest,
     OOST most squashed. Not on a slide yet.
+  hist_pred_obs restyled to paper style (user: 'not publication quality', 'our colours'): in situ filled #6BAED6,
+    predicted #08519C step outline (no transparency), 0.02 bins, x 0-0.5, per-panel box (stations, P5-P95 in situ vs
+    predicted), depth label in-panel, one y-label; jobs 27713659/27713681/27713769. P5-P95: prediction narrower at every
+    split/depth, mostly a raised dry end (e.g. OOS 10-30 0.03 -> 0.06, OOST 10-30 0.04 -> 0.06).
