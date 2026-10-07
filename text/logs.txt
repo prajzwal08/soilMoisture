@@ -9051,3 +9051,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   Conclusions slide added (user wording for #1): GFM embeddings carry a site-specific, time-invariant signal,
     comparable to climate (sat swap +37-38 % all depths vs ERA5 other-station +15-30 %; S1 same-station time
     shuffle ~0 %); then transfer bottleneck, timing vs level, depth reliance, open: reliance != added skill.
+  Conclusions edits (user): #1 'time-invariant' removed; #2 transfer told in ubRMSE (pooled 0.084-0.107 new vs
+    0.059-0.064 known; per-station median 0.048-0.050 vs 0.043-0.047 -> gap is mostly station level); #3 'level
+    sometimes not, even within one tile'; #4 dry-down clause removed.

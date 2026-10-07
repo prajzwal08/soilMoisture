@@ -71,16 +71,17 @@
 
 \begin{frame}{Conclusions}
 \begin{enumerate}\setlength{\itemsep}{6pt}
-\item \textbf{GFM embeddings carry a site-specific, time-invariant signal, comparable to climate.}
+\item \textbf{GFM embeddings carry a site-specific signal, comparable to climate.}
   Swapping satellite tokens between stations raises ubRMSE by 37--38\,\% at every depth
   (ERA5 from another station: +15--30\,\%); reordering S1 in time at the same station costs $\approx$0\,\%.
   The embeddings describe the \emph{place}, not the day-to-day wetness.
-\item \textbf{Transfer to new sites is the bottleneck, not new years.}
-  Known sites, 2023--2025: r$^2$ 0.70--0.74; new sites: 0.29--0.46.
-\item \textbf{Timing is captured, level is not.}
+\item \textbf{Transfer to new sites is the bottleneck, not new years, and it costs mostly level.}
+  All samples pooled: ubRMSE 0.084--0.107 at new sites vs 0.059--0.064 at known sites (2023--2025).
+  Per station the gap is small (median 0.048--0.050 vs 0.043--0.047): dynamics transfer, station levels do not.
+\item \textbf{Timing is captured; level sometimes not, even within one tile.}
   TxSON: r 0.69--0.85 at all six stations, bias $-$0.12 to +0.11 within one 2.2\,km tile.
 \item \textbf{Depth changes what the model relies on.}
-  ERA5 dominates the surface; soil, DEM and land cover gain weight at depth, where summer dry-down is still wrong.
+  ERA5 dominates the surface; soil, DEM and land cover gain weight at depth.
 \item \textbf{Open:} reliance is not added skill. A drivers-only run is needed to show what the GFM adds.
 \end{enumerate}
 \end{frame}
