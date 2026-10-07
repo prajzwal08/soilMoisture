@@ -70,9 +70,7 @@ Source & How SM is obtained & Depth & Main limitation \\
 \centering
 \includegraphics[width=\linewidth,height=0.70\textheight,keepaspectratio]{DOFA1-1.png}\\[-1pt]
 {\tiny DOFA: Xiong et al.\ (2024), Neural plasticity-inspired multimodal foundation model for Earth observation, arXiv:2403.15356}\\[6pt]
-\begin{beamercolorbox}[wd=0.9\linewidth,center,rounded=true]{block body}
-\small\textbf{Once pre-trained on multimodal, unlabelled data, its representation works for many downstream tasks}
-\end{beamercolorbox}
+\fcolorbox{black!40}{black!4}{\parbox{0.9\linewidth}{\centering \small\textbf{Once pre-trained on multimodal, unlabelled data, its representation works for many downstream tasks}}}
 \end{frame}
 
 \begin{frame}{Motivation\quad TerraMind embeddings for soil moisture}
@@ -83,19 +81,15 @@ the same embedding can serve many tasks; in this case, \textbf{soil moisture}.
 \end{frame}
 
 \begin{frame}{Motivation\quad Example: TerraMind embeddings at one site (TxSON, 2019)}
-\begin{columns}[T,onlytextwidth]
-\begin{column}{0.56\textwidth}
+\begin{columns}[c,onlytextwidth]
+\begin{column}{0.50\textwidth}
 \centering
-\includegraphics[width=\linewidth,height=0.82\textheight,keepaspectratio]{terramind_value/terramind_value.png}
+\includegraphics[width=\linewidth,height=0.90\textheight,keepaspectratio]{terramind_value/terramind_value.png}
 \end{column}
-\begin{column}{0.41\textwidth}
+\begin{column}{0.48\textwidth}
 \footnotesize
-\begin{itemize}
-\item (a) S2 RGB in four seasons and its L12 tokens; (b) S1 VV and its tokens; (c) DEM, LULC and their tokens
-\item Each 160\,m patch $\rightarrow$ one 768-d vector; colours show its first 3 principal components (one basis per row, each panel centred on its own mean)
-\item Tokens follow fields, woodland and the river: the landscape structure is preserved at 160\,m
-\item The within-tile token \emph{pattern} is almost the same in all four seasons: it describes \emph{what the land is} more than \emph{how wet it is today}
-\end{itemize}
+S2, S1, DEM and LULC with their TerraMind L12 tokens.\\[10pt]
+\fcolorbox{black!40}{black!4}{\parbox{0.95\linewidth}{\footnotesize Each 160\,m patch $\rightarrow$ one 768-d vector; colours show its first 3 principal components (one basis per row, each panel centred on its own mean).}}
 \end{column}
 \end{columns}
 \end{frame}
