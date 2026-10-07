@@ -96,7 +96,7 @@ depths; soil, DEM and land cover gain weight at depth.
 \begin{frame}
 \centering\vfill
 {\Large\bfseries\color{tumblue}What I could not present}\\[10pt]
-{\large 1.\ Effective resolution of the map\quad 2.\ Where the station bias comes from\quad 3.\ Voids in the density plot}
+{\large 1.\ Effective resolution of the map\quad 2.\ Where the station bias comes from\quad 3.\ Voids in the density plot\quad 4.\ Distribution of soil moisture}
 \vfill
 \end{frame}
 
@@ -119,4 +119,11 @@ depths; soil, DEM and land cover gain weight at depth.
 \includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs_stations.pdf}
 \figcap{Same grid as the density plot; colour = number of distinct stations with samples in each cell}
 \msg{Voids are not empty: many stations pass through briefly, a few long-record stations make the dense blobs}
+\end{frame}
+
+\begin{frame}{Other analysis\quad{\color{tumblue}4. Distribution of soil moisture}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/hist_pred_obs.pdf}
+\figcap{All daily samples; filled = in situ, line = predicted; box: P5-P95 range of each}
+\msg{Distribution matches; the model narrows the dry end}
 \end{frame}

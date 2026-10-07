@@ -9096,3 +9096,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     predicted #08519C step outline (no transparency), 0.02 bins, x 0-0.5, per-panel box (stations, P5-P95 in situ vs
     predicted), depth label in-panel, one y-label; jobs 27713659/27713681/27713769. P5-P95: prediction narrower at every
     split/depth, mostly a raised dry end (e.g. OOS 10-30 0.03 -> 0.06, OOST 10-30 0.04 -> 0.06).
+  Backup slide 4 'Distribution of soil moisture' (hist_pred_obs) added (user: only backup).
