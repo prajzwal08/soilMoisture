@@ -52,7 +52,7 @@
 {\scriptsize\bfseries SNOTEL Hopewell, New Mexico}
 \end{minipage}
 \figcap{OOS stations observed at all three depths, highest ubRMSE; shaded = 2023--2025 (OOST)}
-\msg{Snowmelt peaks timed right; summer dry-down wrong: too dry deep at Burts Miller, too wet at Hopewell}
+\msg{Deep layer (30--100\,cm) wrong in summer: too dry at Burts Miller, too wet at Hopewell}
 \end{frame}
 
 \begin{frame}{Results\quad{\color{tumblue}TxSON: six stations inside one 2.2\,km tile}}
@@ -66,5 +66,5 @@
 \centering
 \includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/ablation/input_ablation_heatmap_horizontal.pdf}
 \figcap{One input shuffled at a time; 221 OOS stations; * = significant}
-\msg{Weather and the satellite tokens matter most (+30--39\,\%); soil and terrain gain weight with depth; bias barely moves}
+\msg{ERA5 matters most at the surface (+30--39\,\% vs +14--15\,\% deep); satellite equally at all depths (+37--38\,\%); DEM, land cover and soil grow with depth}
 \end{frame}

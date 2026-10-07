@@ -9045,3 +9045,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     paper figure untouched.
   Last results slide added (user): input ablation, wide heatmap ablation/input_ablation_heatmap_horizontal.pdf.
   Decks: motivation_slides.pdf 21 pp, research_questions_slides.pdf 33 pp, no overfull boxes.
+  Slide msgs (user): mismatch slide = deep layer only (30-100 cm wrong in summer: too dry Burts Miller, too wet
+    Hopewell); ablation = ERA5 surface-heavy (+30-39 % vs +14-15 % deep), satellite equal across depths (+37-38 %),
+    DEM / land cover / soil grow with depth.
