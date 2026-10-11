@@ -1,0 +1,287 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath}
+\usepackage{mathptmx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage[round,authoryear]{natbib}
+\usepackage[hidelinks]{hyperref}
+\captionsetup{font=small,labelfont=bf}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{0pt}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{\textbf{Wrapping up the soil-moisture foundation-model study}\\[3pt]
+\large What was done, where it sits in the literature, the paper's arguments,\\
+cheap additions, and the next paper}
+\author{Prajwal Khanal}
+\date{11 October 2026}
+
+\begin{document}
+\maketitle
+
+\section{What was done}
+
+\paragraph{Data.} 990 stations from ISMN \citep{dorigo2021ismn}, ICOS and AmeriFlux with at
+least three years of daily data, 2016--2025. Hourly in-situ soil moisture (SM) was QC-filtered
+(G/D* flags), averaged to daily values and binned to three depths: 0--10, 10--30 and 30--100\,cm
+(885, 682 and 551 stations; 5.14\,M station-days). Splits by station: 573 train, 89 validation,
+224 out-of-sample (OOS) stations. Splits by time: 2016--2022 train, 2023--2025 out-of-time
+(OOT). OOST is the joint case (unseen station, unseen years). Normalisation statistics were fit
+on training stations and years only.
+
+\paragraph{Inputs.} Per station, a 2.24\,km tile:
+\begin{itemize}
+\item frozen TerraMind \citep{jakubik2025terramind} layer-12 tokens (14$\times$14 at 160\,m) for
+  Sentinel-2 L2A (272\,k cloud-screened scenes), Sentinel-1 RTC (497\,k scenes), DEM and LULC;
+\item ERA5-Land, 18 variables, 365-day window;
+\item SIF (last 50 values), GRACE TWSA (12 months), gridded soil properties;
+\item a light 20\,m CNN path on the latest S2/S1 scene (added in \S48).
+\end{itemize}
+
+\paragraph{Model.} A single 3-layer transformer (26.7\,M trainable parameters) over 1{,}038
+tokens: three depth query tokens, static tokens, satellite history tokens and daily driver tokens.
+Huber loss at the station pixel; ERA5 day-dropout 0.15 and modality dropout (ERA5 0.5,
+satellite 0.3, fine path 0.2). Selected checkpoint: epoch 10, run
+\texttt{baseline\_selected\_20261005} (runbook \S59/\S66).
+
+\begin{table}[h]
+\centering\small
+\caption{Baseline skill, station-mean ubRMSE (m$^3$\,m$^{-3}$) and Pearson $R$ per depth.
+Source: \texttt{eval\_output/baseline\_selected\_20261005/metrics\_summary.csv}.}
+\begin{tabular}{l c ccc ccc}
+\toprule
+ & & \multicolumn{3}{c}{ubRMSE} & \multicolumn{3}{c}{$R$} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+Split & $n$ (0--10) & 0--10 & 10--30 & 30--100 & 0--10 & 10--30 & 30--100 \\
+\midrule
+Validation (new stations) & 89  & .0529 & .0476 & .0470 & .753 & .748 & .711 \\
+OOS (new stations)        & 221 & .0523 & .0483 & .0471 & .722 & .708 & .634 \\
+OOT (seen stations, 2023--25) & 362 & .0490 & .0433 & .0437 & .763 & .768 & .720 \\
+OOST (new stations, 2023--25) & 114 & .0535 & .0474 & .0495 & .733 & .741 & .688 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering\small
+\caption{Input reliance on 221 OOS stations: ubRMSE increase when one input group is swapped
+with another station's (cross) or with another date at the same station (within). Source:
+\texttt{\dots/baseline\_selected\_20261005\_ablation/ablation\_summary.csv}.}
+\begin{tabular}{l ccc}
+\toprule
+Input swapped & 0--10 & 10--30 & 30--100 \\
+\midrule
+All satellite tokens, cross & +36.8\,\% & +37.1\,\% & +38.4\,\% \\
+ERA5-Land, within station   & +39.0\,\% & +30.4\,\% & +13.5\,\% \\
+ERA5-Land, cross            & +30.3\,\% & +24.6\,\% & +15.1\,\% \\
+Soil properties, cross      & +7.6\,\%  & +17.6\,\% & +25.7\,\% \\
+DEM, cross                  & +12.6\,\% & +9.7\,\%  & +18.4\,\% \\
+LULC, cross                 & +6.1\,\%  & +6.6\,\%  & +12.7\,\% \\
+S1 history, cross           & +4.8\,\%  & +7.7\,\%  & +14.4\,\% \\
+S2 history, cross           & +4.9\,\%  & +6.8\,\%  & +8.7\,\% \\
+S1 history, within station  & 0.0\,\%   & +1.0\,\%  & 0.0\,\% \\
+SIF, cross                  & +1.3\,\%  & +1.6\,\%  & +1.8\,\% \\
+20\,m fine path, cross      & +0.5\,\%  & +1.3\,\%  & +0.1\,\% \\
+TWSA, cross                 & 0.0\,\%   & 0.0\,\%   & +0.1\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering\small
+\caption{Negative and null results already measured.}
+\begin{tabularx}{\linewidth}{@{}l Y@{}}
+\toprule
+Test & Result \\
+\midrule
+LST as auxiliary target (\S53/\S56) & Hurts SM: best val ubRMSE 0.0537 with LST vs 0.0487 without; $R$(0--10) .694 vs .761. \\
+20\,m fine path (\S56.2, \S67) & Unused for SM: val 0.0487 intact, 0.0489 zeroed, 0.0496 shuffled. \\
+Landsat LST (\S29) & Tile pattern is static (month-to-annual $r=+0.967$); pooled $r=+0.167$ but within-station $-0.077$ (Simpson's paradox). \\
+ECOSTRESS DTR (G0) & DTR is the daytime pattern ($r=+0.816$); day vs night $+0.059$. Thermal arm closed. \\
+Effective resolution (\S70) & $L_\mathrm{eff}=2240$\,m at 0--10\,cm; within-tile contrast $\sim$4$\times$ below observed. \\
+Patchwise model (\S35, \S56) & OOT beat validation (0.0434 vs 0.0507), best epoch 2: site memorisation. Tile-pair sign test 0.50. \\
+Depth, wd, regularisation (\S60--\S65) & 1/2/3/6 layers: 0.0510/0.0494/0.0488/0.0500; wd 0.3: 0.0493; static dropout 0.0513; spectral indices 0.0511. None beats the 3-layer baseline. \\
+TerraMind layer (\S27b) & kNN skill for station-mean SM: L12 9.8\,\%, L9 6.9\,\%, L6 3.6\,\%, L3 4.0\,\%; tabular covariates 23.4\,\%. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Literature and the gap}
+
+\paragraph{Geospatial foundation models (GFMs).} Prithvi-EO-2.0 \citep{szwarcman2024prithvi},
+SatMAE \citep{cong2022satmae}, Galileo \citep{tseng2025galileo}, Copernicus-FM
+\citep{wang2025copernicusfm}, DOFA \citep{xiong2024dofa}, AnySat \citep{astruc2024anysat},
+Presto \citep{tseng2023presto} and TerraMind \citep{jakubik2025terramind} are pretrained
+self-supervised encoders. AlphaEarth \citep{brown2025alphaearth} and TESSERA
+\citep{feng2025tessera} release precomputed embeddings. Benchmarks
+\citep{lacoste2023geobench,marsocci2024pangaea,wang2025copernicusfm} are dominated by
+classification and segmentation; PANGAEA finds GFMs do not consistently beat supervised UNets,
+and \citet{xu2025specialized} show tuned supervised baselines match specialised foundation models.
+\citet{rolf2024position} argue for EO-specific, spatially aware evaluation, and SatCLIP
+\citep{klemmer2025satclip} shows that location alone predicts many regression targets.
+
+\paragraph{GFM embeddings for continuous variables.} The closest SM study
+(\citealp{kontogiorgakis2026sm}, preprint; 113 European stations) finds Prithvi embeddings add nothing
+over hand-crafted S1/S2/ERA5 features ($R^2$ 0.515 vs 0.514). An IBM abstract fine-tuning Prithvi on
+TxSON \citep{chavda2024ibm} reports no fine-tuning numbers. AlphaEarth embeddings are highly stable
+between years ($r=0.963$; \citealp{rahman2026aef}, preprint), i.e.\ largely static. A buffered spatial
+validation halves the embedding gain \citep{ratsakatika2026buffer}, cross-country crop yield gives no
+FM advantage \citep{adjei2026yield}, and frozen encoders underperform for biomass while precomputed
+embeddings do better \citep{sialelli2026agb}. A 2026 review \citep{yu2026ecohydro} notes that
+pretraining corpora lack microwave and thermal data and that embeddings are mostly static while
+ecohydrology needs dynamics. \citet{fang2026alphaearth} (Section~3) is the clearest positive case.
+
+\paragraph{ML soil moisture from in-situ networks.} SoMo.ml \citep{o2021somo} trains an LSTM on
+ISMN to 50\,cm at 0.25$^\circ$; GLASS SM \citep{zhang2023glass} and GSSM1km \citep{han2023gssm}
+produce 1\,km surface products; \citet{zhang2023glass} is one of few to report random,
+site-independent and year-independent validation side by side. Deep-learning comparisons
+\citep{fang2017lstm,wang2024hess} use hand-crafted inputs. S1/SMAP downscaling
+\citep{das2019smap,bauer2019s1} is surface-only and degrades under dense vegetation.
+
+\paragraph{Validation.} Random CV overstates skill for spatial prediction
+\citep{ploton2020spatial,meyer2022maps}; the area of applicability (AOA) of
+\citet{meyer2021aoa} has been applied to in-situ SM upscaling \citep{yu2025aoa}.
+
+\paragraph{Gaps this study fills.}
+\begin{enumerate}[label=G\arabic*.]
+\item No test of a multimodal any-to-any GFM (TerraMind) for soil moisture; existing tests use
+  Prithvi only.
+\item No GFM soil-moisture study below the surface; we predict 10--30 and 30--100\,cm.
+\item Existing GFM soil-moisture studies use 40--113 stations in one region; we use $\sim$990
+  stations across climates.
+\item No study separates the embedding as a site descriptor from the embedding as a dynamic signal.
+\item New-station, new-year and joint generalisation are rarely reported together.
+\item Whether the embedding gain survives a station holdout is untested for soil moisture.
+\item No fusion of GFM embeddings with reanalysis, SIF and GRACE in one temporal model.
+\item GFM benchmarks lack a regression task on a dynamic variable at point sites.
+\item Frozen GFM, precomputed embeddings and raw features are not compared on the same SM task.
+\item No AOA or embedding-distance uncertainty for GFM-based SM at unseen stations.
+\end{enumerate}
+Gaps G1--G5 and G7 are covered by work already done. G6, G9 and G10 need the additions in
+Section~5. G8 is the next paper.
+
+\section{Fang et al.\ (2026) and what we take from it}
+
+\paragraph{What they do.} AlphaEarth annual 64-d embeddings at 10\,m are masked to corn or soybean
+(CDL) and averaged per county-year (6{,}350 records, 992 Corn Belt counties, 2017--2024). An
+RBF-SVR is the only model. Validation is leave-one-year-out plus a roll-forward forecast
+(train $\le t-1$). Corn: mean $R^2=0.825$, RMSE 14.8\,bu/ac; soybean $R^2=0.814$. Baselines:
+training-years county mean ($R^2\approx0.69$) and NDVI+PRISM+GDD (0.687 corn, 0.732 soy).
+Diagnostics: Moran's $I$ of relative errors 0.32--0.49 every year (spatially clustered residuals,
+read as missing slow drivers); PCA axes explain $<$3\,\% of error variance (variance $\neq$ task
+relevance); test-fold permutation importance on the 64 dimensions; a label-subsampling curve.
+
+\begin{table}[h]
+\centering\small
+\caption{Fang et al.\ (2026) vs this study.}
+\begin{tabularx}{\linewidth}{@{}l Y Y@{}}
+\toprule
+ & Fang et al.\ (2026) & This study \\
+\midrule
+Target & County yield, once per year & Daily SM at a point, 3 depths \\
+Embedding & AlphaEarth, annual, 64-d, precomputed & TerraMind L12 tokens per scene, frozen \\
+Other inputs & None & ERA5-Land, SIF, TWSA, soil \\
+Model & RBF-SVR & 3-layer transformer \\
+Spatial holdout & None (every county in every training fold) & 89 val + 224 OOS stations \\
+Temporal holdout & LOYO, roll-forward & OOT 2023--25, OOST \\
+Naive baseline & County mean, NDVI+weather & Not yet (Section~5, E1) \\
+Residual diagnostics & Moran's $I$, LISA & Not yet (E3) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{How it relates.} Both studies ask whether GFM embeddings are analysis-ready features.
+Their setting cannot separate site identity from signal: every county is in training, the county
+mean alone gives $R^2\approx0.69$, and an annual embedding has no within-season dynamics. Our
+result fills exactly that hole: under a station holdout the embeddings carry place, and the
+time-varying skill comes from the drivers (Table~2). We cite Fang et al.\ as the positive case and
+position our paper as the test it lacks.
+
+\paragraph{What we borrow.} (i) A per-station climatology baseline, the analogue of their county
+mean. (ii) Moran's $I$ / LISA on OOS station residuals. (iii) A label-subsampling curve. (iv)
+AlphaEarth embeddings as a drop-in static token, which also gives a GFM-vs-GFM comparison (G9).
+
+\section{Paper storyline and arguments}
+
+\paragraph{Working title.} \emph{Frozen foundation-model embeddings describe the site, weather
+drives the dynamics: daily root-zone soil moisture at 990 stations.}
+
+\paragraph{One-paragraph story.} Frozen TerraMind embeddings fused with reanalysis and
+gravimetric drivers predict daily soil moisture to 1\,m at unseen stations with ubRMSE
+0.047--0.052\,m$^3$\,m$^{-3}$, close to stations seen in training. Swap tests show the embeddings act
+as a static landscape descriptor that conditions the weather-to-soil-moisture response; they do not
+carry the temporal signal. Reliance shifts from weather to soil and terrain with depth. Finer
+resolution and thermal inputs do not help. This agrees with recent reports that GFM embeddings are
+static, and adds the first station-holdout, multi-depth evidence for soil moisture.
+
+\paragraph{Arguments, each with its number.}
+\begin{enumerate}[label=A\arabic*.]
+\item \textbf{Transfer to new sites is close to seen sites.} OOS ubRMSE .052/.048/.047 vs
+  validation .053/.048/.047 and OOT .049/.043/.044 (Table~1).
+\item \textbf{Embeddings carry place, not process.} Swapping all satellite tokens across stations
+  costs +37--38\,\%; swapping S1 history within a station costs 0--1\,\%. L12 tokens are nearly
+  static across seasons (\S72.2). Consistent with \citet{rahman2026aef,yu2026ecohydro}.
+\item \textbf{Dynamics come from the drivers.} ERA5 swap within station +39\,\% at 0--10\,cm,
+  falling to +13.5\,\% at 30--100\,cm.
+\item \textbf{Reliance inverts with depth.} Soil properties go from +7.6\,\% to +25.7\,\%,
+  DEM to +18.4\,\% at 30--100\,cm.
+\item \textbf{More resolution and thermal do not help.} Fine path 0.1--1.3\,\%; LST target
+  worsens SM by 10\,\%; effective resolution 2.2\,km, the tile size.
+\item \textbf{Validation design decides the verdict.} The patchwise model looked good until OOT
+  beat validation, a memorisation signature. We report new-station, new-year and joint splits
+  together \citep{ploton2020spatial,meyer2022maps}.
+\end{enumerate}
+
+\paragraph{Wording rule.} The swap tests measure \emph{reliance}, not \emph{added value}: a model
+trained without an input could compensate. Say ``the model relies on'' until the drivers-only run
+(E2) exists.
+
+\paragraph{Open bookkeeping.} OOS counts differ: 224 in the split, 222 evaluated, 221 at 0--10\,cm.
+The ablation file's reference ubRMSE (.0500/.0479/.0476) uses a different aggregation from Table~1,
+so quote only relative changes from it. Fix both before submission.
+
+\section{Cheap additions for this paper}
+Ranked by cost. Eval-only items reuse the existing predictions.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l Y l Y@{}}
+\toprule
+ & Addition & Cost & Why \\
+\midrule
+E1 & Naive baselines: station climatology (OOT only), persistence, ERA5-only gradient boosting & CPU, eval & Reviewers will ask; we have none. Mirrors Fang's county mean. \\
+E2 & Drivers-only model (no satellite tokens), 10 epochs & 1 training run & Turns ``reliance'' into ``added value''. The most important addition. \\
+E3 & Moran's $I$ / LISA on OOS residuals & CPU, eval & Shows whether errors cluster in space (missing slow drivers). \\
+E4 & AOA: embedding distance to training stations vs OOS error & CPU, eval & Uncertainty for new sites (G10). \\
+E5 & Group Shapley (\S73, already planned) & GPU, eval & Clean attribution per input group. \\
+E6 & Label-subsampling: train on 25\,\% and 50\,\% of stations & 2 runs & How much data the embeddings save. Optional. \\
+E7 & AlphaEarth annual embedding as a static token & GEE pull + 1 run & GFM-vs-GFM (G9). Optional. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Minimum for submission: E1, E2, E3. E4--E7 strengthen it but are not required.
+
+\section{The next paper}
+\begin{enumerate}[label=N\arabic*.]
+\item \textbf{A soil-moisture benchmark for GFMs.} ISMN stations, fixed new-station / new-year /
+  joint splits, three depths. Encoders: TerraMind, Prithvi, AlphaEarth, TESSERA, Galileo, raw
+  bands. This fills G8 and reuses the pipeline that already exists.
+\item \textbf{Is ``static'' a pretraining limit?} Fine-tune the encoder, or use time-resolved
+  embeddings (Presto/Galileo-style pixel time series), and test whether the within-station swap
+  effect rises above zero.
+\item \textbf{Wall-to-wall maps with uncertainty.} The Overijssel run (\S68) with TWENTE validation
+  and an AOA mask.
+\item \textbf{Management signals.} Irrigation at Mead (\S69): the irrigation signal appears only
+  in dry years, and S2 does not see it.
+\end{enumerate}
+
+\bibliographystyle{plainnat}
+\bibliography{paper_wrapup}
+
+\end{document}

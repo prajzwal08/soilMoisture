@@ -9108,3 +9108,15 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 - Decision: POST-HOC route first on the §59 checkpoint (nolst_L3_wu200_20261005), K=6 groups
   (era5, sat160, fine_s2, fine_s1, statics, sif_twsa), 64 coalitions; statics and SIF/TWSA are OOD (never dropped in §59).
 - Plan written to runbook §73. Nothing built, nothing submitted. Resume tomorrow.
+
+2026-10-11  Paper wrap-up PDF
+- text/paper_wrapup.{tex,bib,pdf} (7 p, Times/mathptmx): what was done (Table 1 metrics, Table 2
+  OOS swap ablation, Table 3 negative results), literature + 10 gaps (G1-G10), Fang et al. 2026
+  (AlphaEarth crop yield, WACVW) summary + comparison, arguments A1-A6, cheap additions E1-E7
+  (minimum E1 naive baselines, E2 drivers-only run, E3 Moran's I), next-paper ideas N1-N4.
+- Fang 2026: AEF 64-d annual, county mean, RBF-SVR, LOYO; corn R2 .825; NO spatial holdout,
+  county-mean baseline already R2 .69 -> our station holdout + swap tests fill that hole.
+- Key literature: Kontogiorgakis 2026 (Prithvi SM, no gain .515 vs .514), Ratsakatika 2026
+  (buffer halves embedding gain), Rahman 2026 (AEF inter-annual r .963 = static).
+- Compile job 27890300 (slurm/compile_wrapup.sh), OK.
+- Open: OOS count 224/222/221; ablation reference ubRMSE uses another aggregation.
