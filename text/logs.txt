@@ -9208,3 +9208,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     ep015 SELECT 0.051768 | 0-10 0.0557 10-30 0.0529 30-100 0.0539 | r0-10 0.761 | gap 3.12x
     ep016 SELECT 0.051002 | 0-10 0.0557 10-30 0.0520 30-100 0.0525 | r0-10 0.758 | gap 3.32x
     Epoch for gate/SHAP: USER to choose (§73.9).
+  §64 LOSS FIGURE (user asked): job 27973342, plot_loss_curves.py --style paper --panels abc on log 27964186 -> figures/eval/nolst_L3_wu200_sd05_20261012_paper/
+  §64 loss figure fixed (labels inward/below, wspace): jobs 27973342/27973530/+1 -> figures/eval/nolst_L3_wu200_sd05_20261012_paper/loss_curves_*.png|pdf. User CHOSE EPOCH 12 (SELECT 0.0505, gap 2.77x; = best.pt). User: run the whole figure pipeline incl. ablation on it, then SHAP.

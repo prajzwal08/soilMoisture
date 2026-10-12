@@ -236,18 +236,24 @@ def main():
     if paper:   # same ring as panel (a), so the selected epoch reads across both
         ax2.plot(ep[best_i], ratio[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=4)
     # Annotating all 22 would be unreadable; label the ends and the best epoch.
+    # End labels anchored inward so they never clip at the axis edges (review 2026-10-12).
     for i in {0, best_i, len(ep) - 1}:
+        ha = "left" if i == 0 else ("right" if i == len(ep) - 1 else "center")
         ax2.annotate(f"{ratio[i]:.1f}x", (ep[i], ratio[i]), textcoords="offset points",
-                     xytext=(0, 10 if paper else 8), ha="center", fontsize=ANN, color=MUTED)
+                     xytext=({"left": 6, "right": -4, "center": 0}[ha], -14 if i == 0 else (10 if paper else 8)),
+                     ha=ha, fontsize=ANN, color=MUTED)
 
     # ── (c) validation ubRMSE, the selection metric ───────────────────
     if ax3 is not None:
         ax3.plot(ep, sel, "-s", color=C_VAL, lw=1.8, ms=4.5, mec="white", mew=0.8, zorder=3)
         ax3.plot(ep[best_i], sel[best_i], "o", ms=10, mfc="none", mec=C_VAL, mew=1.4, zorder=4)
+        # Label below the ring, inside extra bottom headroom, clear of the curve and the ticks.
         ax3.annotate(f"{sel[best_i]:.4f} (epoch {ep[best_i]})", (ep[best_i], sel[best_i]),
-                     textcoords="offset points", xytext=(0, -18),
-                     ha="right" if ep[best_i] > 0.5 * ep[-1] else "left",
+                     textcoords="offset points", xytext=(0, -17),
+                     ha="center",
                      fontsize=ANN, color=MUTED)
+        _lo, _hi = min(sel), max(sel)
+        ax3.set_ylim(_lo - 0.22 * (_hi - _lo), _hi + 0.05 * (_hi - _lo))
         ax3.set_xlabel("Epoch")
         ax3.set_ylabel("Validation ubRMSE (m$^3$ m$^{-3}$)")
         title(ax3, "(c) Validation ubRMSE (depth mean)")
@@ -261,7 +267,7 @@ def main():
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
 
-    fig.subplots_adjust(wspace=0.32)
+    fig.subplots_adjust(wspace=0.42 if ax3 is not None else 0.32)
 
     outdir = Path(args.outdir)
     outdir.mkdir(exist_ok=True)
