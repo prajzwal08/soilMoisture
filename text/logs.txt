@@ -9120,3 +9120,14 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   (buffer halves embedding gain), Rahman 2026 (AEF inter-annual r .963 = static).
 - Compile job 27890300 (slurm/compile_wrapup.sh), OK.
 - Open: OOS count 224/222/221; ablation reference ubRMSE uses another aggregation.
+
+2026-10-12 — §73 SHAP design (theory session, nothing built or submitted)
+- Decision: statics (DEM, LULC, soil) + SIF/TWSA are FIXED CONTEXT, not players. K=4 players
+  (ERA5, sat160, fine S2, fine S1), 16 coalitions, all in-distribution under §59 training dropout.
+  Reason: with statics as players, half of every group's marginal terms use OOD coalitions, so
+  the contamination is not limited to the statics bar.
+- Sparse obs: a missing scene is already valid=False, so removing sat = "no scene acquired" (in
+  distribution). Check: phi_sat must be exactly 0 on station-days with no valid scene in the window.
+- Option raised: split sat160 by sensor (S2 160 / S1 160; anchor goes with its sensor, re-picked
+  when the sensor is removed) -> K=5, 32 coalitions. Not decided.
+- Figure mock-ups (synthetic data) A-J: https://claude.ai/artifact/F7hwYUKM13tD6jkGb5mHdH
