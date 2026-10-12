@@ -18117,3 +18117,12 @@ Run nolst_L3_wu200_sd05_20261012 (slurm/train_s64.sh), user settings:
   default. The paper must state the rule used (lowest val ubRMSE, tempered by the gap).
 - Dropout: ERA5 window 0.5, satellite 160 m 0.3, DEM/LULC/soil 0.5 each (independent, trunk + fine
   tied), SIF/TWSA 0, fine one-of 0.2; wd 0.05; 3 layers; warmup 200; lr as §59.
+
+### 73.10 2026-10-12: order after the retrain (user)
+1. Run 27964186 ends -> per-epoch table (val ubRMSE per depth, SELECT, gap, LR changes) next to §59 ->
+   USER picks the epoch.
+2. Standard eval on that epoch (eval_final.sh: OOS / OOT / OOST + TxSON readout) -> gate vs
+   baseline_selected_20261005 -> user go / no-go.
+3. On a go the retrain BECOMES the paper model: recreate ALL paper figures (baseline_selected style,
+   paper palette) AND the §67 input ablation on it, so figures, ablation and SHAP describe ONE model.
+4. Only then SHAP: smoke (1 station) -> full OOS -> OOT. Every job needs an explicit OK.
