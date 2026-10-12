@@ -9151,3 +9151,12 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   RESTORE 27958731 DONE (1m47s): verify 993/993 PASS, 0 rsync failures.
   §73.7 natural-absence probe SUBMITTED (user OK "right after restore"): job 27959735, slurm/probe_natural_absence.sh (rome, 5k train samples)
   §64 SMOKE SUBMITTED (user OK, K=5 SHAP-ready retrain): job 27962120, slurm/train_s64_smoke.sh, branch feat/s73-shapready 8105f20
+  §64 SMOKE 27962120 PASS (5m51s, 20 stations, 3 epochs): CONFIG era5 0.5 coarse 0.3 static 0.5 wd 0.05 3L;
+    stats shas == §59 (era5 b2b54b7b, driver b7bd19b3, fine 39efcb53); epoch_001..003.pt saved;
+    [static-dropout check] dem .53 lulc .48 soil .44 untied 0; SELECT .0426/.0434/.0437 (smoke, mechanics only);
+    only warnings = DDP "grad strides" UserWarning (known, harmless).
+    [§73 natural absence q] (200 samples): era5 0.000, sat 0.014, s2 0.041, s1 0.027, fine_s2 0.035,
+    fine_s1 0.020, sif 0.385, twsa 0.020. Rule p_sat = (0.5-0.014)/(1-0.014) = 0.49 -> 0.5. Probe 27959735 (5k) pending.
+  §73 SHAP code written (2482c38, not run): shap_groups.py (K=5 recipes = training dropout copies, W, self-test),
+    eval_predict.py --shap/--shap-chunk (+ refuses checkpoints that never withheld a player),
+    verify_shap_groups.py (recipe == forced dropout, all-on == plain, efficiency, phi_sat dummy), slurm/eval_shap.sh.
