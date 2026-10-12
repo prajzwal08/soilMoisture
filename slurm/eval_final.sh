@@ -26,8 +26,8 @@ export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ulimit -n 65536
 unset S48_CACHE_ROOT          # eval must read the all-years GPFS cache, never a /dev/shm training copy
-RUN=nolst_L3_wu200_20261005
-CKPT=/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff/${RUN}/best.pt
+RUN="${RUN:-nolst_L3_wu200_20261005}"     # §73: override with RUN=/CKPT= env
+CKPT="${CKPT:-/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff/${RUN}/best.pt}"
 RUN_PY="conda run -n terramind --no-capture-output python"
 MODE="${1:-full}"
 if [[ "${MODE}" == smoke ]]; then
@@ -41,7 +41,7 @@ echo "Run ${RUN}  ckpt ${CKPT}  out ${OUT}"
 
 echo ""; echo "───────── 1. splits OOS / OOT / OOST ─────────"
 $RUN_PY eval_predict.py --run-name "${RUN}" --ckpt "${CKPT}" --batch-size 128 --num-workers 8 \
-    --splits oos oot oost ${LIMIT} --out-dir "${OUT}"
+    --splits ${EVAL_SPLITS:-oos oot oost} ${LIMIT} --out-dir "${OUT}"
 
 echo ""; echo "───────── 2. TxSON network readout ─────────"
 $RUN_PY eval_predict.py --run-name "${RUN}" --ckpt "${CKPT}" --batch-size 128 --num-workers 8 \

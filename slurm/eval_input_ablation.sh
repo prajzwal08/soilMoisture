@@ -22,8 +22,8 @@ cd /gpfs/work3/0/prjs1968/soilMoisture
 export PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True EVAL_CLIP=0,1
 ulimit -n 65536
 unset S48_CACHE_ROOT           # all-years GPFS cache, never a /dev/shm training copy
-RUN=baseline_selected_20261005
-CKPT=/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff/nolst_L3_wu200_20261005/best.pt
+RUN="${RUN:-baseline_selected_20261005}"     # §73: override with RUN=/CKPT= env
+CKPT="${CKPT:-/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff/nolst_L3_wu200_20261005/best.pt}"
 RUN_PY="conda run -n terramind --no-capture-output python"
 MODE="${1:-full}"
 if [[ "${MODE}" == smoke ]]; then

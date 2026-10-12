@@ -15,12 +15,13 @@
 set -eo pipefail
 exec 2>&1
 cd /gpfs/work3/0/prjs1968/soilMoisture
-RUN=baseline_selected_20261005
+RUN="${RUN:-baseline_selected_20261005}"     # §73: override with RUN= env
 PY="conda run -n terramind --no-capture-output python"
 $PY plot_eval_scatter.py --in-dir eval_output/$RUN --out-dir figures/eval/${RUN}_paper \
     --style paper --only scatter_pred_obs_kde
 $PY plot_tile_paper.py --tile-station ISMN_TxSON_CR200-18 \
     --stations ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25 ISMN_TxSON_CR1000-2 \
                ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6 \
-    --name txson_cr200-18_side --layout side
+    --name txson_cr200-18_side --layout side \
+    --pred-dir eval_output/$RUN/allday --metrics-dir eval_output/$RUN --out-dir figures/eval/${RUN}_paper/tiles
 echo "=== done $(date) ==="

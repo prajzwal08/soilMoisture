@@ -14,7 +14,7 @@
 set -eo pipefail
 exec 2>&1
 cd /gpfs/work3/0/prjs1968/soilMoisture
-RUN=baseline_selected_20261005
+RUN="${RUN:-baseline_selected_20261005}"     # §73: override with RUN= env
 conda run -n terramind --no-capture-output python plot_eval_ecosystem.py \
     --in-dir eval_output/$RUN --out-dir figures/eval/${RUN}_paper/slides \
     --by igbp_macro --style paper --no-val --fig-size 14 7
