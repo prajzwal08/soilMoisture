@@ -9188,3 +9188,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   run tags for §60-§65 pushed; §68 NL scripts committed.
 - §64 smoke 27962120 PASS. FULL RUN 27964186 PENDING (max 20, ES 4, lr pat 2; manual epoch choice).
 - NEXT: epoch table -> user picks -> eval + gate vs §59 -> recreate all figures + ablation -> SHAP.
+  §64 FULL 27964186 STARTED 2026-10-12 21:17:27 on gcn103
