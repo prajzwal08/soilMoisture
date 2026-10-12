@@ -1,5 +1,4 @@
-$PY plot_tile_paper.py --tile-station ISMN_FMI_SOD101 --stations ISMN_FMI_SOD101 ISMN_FMI_SOD102 ISMN_FMI_SOD103 \
-    ISMN_FMI_SOD071 ISMN_FMI_SOD072 ISMN_FMI_SOD073 --name fmi_sodankyla $DIRS#!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=s73_paper_figs
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -21,14 +20,13 @@ RUN="${RUN:?set RUN}"
 PY="conda run -n terramind --no-capture-output python"
 E=eval_output/$RUN; F=figures/eval/${RUN}_paper
 DIRS="--pred-dir $E/allday --metrics-dir $E --out-dir $F/tiles"
+TXSON="ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25 ISMN_TxSON_CR1000-2 ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6"
 echo "=== s73_paper_figs  run $RUN  job $SLURM_JOB_ID  $(date) ==="
 # tiles (27641852/59/60/63, 27642010/405)
 $PY plot_tile_paper.py --tile-station ISMN_FMI_SOD101 --stations ISMN_FMI_SOD101 ISMN_FMI_SOD102 ISMN_FMI_SOD103 \
     ISMN_FMI_SOD071 ISMN_FMI_SOD072 ISMN_FMI_SOD073 --name fmi_sodankyla $DIRS
-$PY plot_tile_paper.py --tile-station ISMN_TxSON_CR200-18 --stations ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25 \
-    ISMN_TxSON_CR1000-2 ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6 --name txson_cr200-18 $DIRS
-$PY plot_tile_paper.py --tile-station ISMN_TxSON_CR200-18 --stations ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25 \
-    ISMN_TxSON_CR1000-2 ISMN_TxSON_CR200-24 ISMN_TxSON_CR200-15 ISMN_TxSON_CR200-6 --name txson_cr200-18_unbiased --unbiased $DIRS
+$PY plot_tile_paper.py --tile-station ISMN_TxSON_CR200-18 --stations $TXSON --name txson_cr200-18 $DIRS
+$PY plot_tile_paper.py --tile-station ISMN_TxSON_CR200-18 --stations $TXSON --name txson_cr200-18_unbiased --unbiased $DIRS
 $PY plot_tile_paper.py --tile-station ISMN_FMI_SOD011 --stations ISMN_FMI_SOD011 ISMN_FMI_SOD012 ISMN_FMI_SOD013 --name fmi_sod011 $DIRS
 $PY plot_tile_paper.py --tile-station ISMN_SOILSCAPE_Lucky-Hills-1503 --stations ISMN_SOILSCAPE_Lucky-Hills-1503 \
     ISMN_SOILSCAPE_Lucky-Hills-1506 AmeriFlux_US-Whs --name luckyhills $DIRS
