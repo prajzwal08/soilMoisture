@@ -9176,3 +9176,15 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §64 FULL SUBMITTED (user OK): job 27964186, slurm/train_s64.sh, run nolst_L3_wu200_sd05_20261012 (max 20, ES 4, lr pat 2), branch feat/s73-shapready c7c7aea
   §73.10 (user): after run 27964186 -> epoch table -> user picks epoch -> eval + gate -> on go: recreate ALL
     paper figures + §67 ablation on the new model -> then SHAP (smoke, OOS, OOT). Each job needs OK.
+
+=== 2026-10-12 session summary ===
+- §73 SHAP designed: SHAPformer-style exact group Shapley; theory note + figures:
+  https://claude.ai/artifact/XnGSbTu4Tq1bbi3wg9So7g ; figure mock-ups https://claude.ai/artifact/F7hwYUKM13tD6jkGb5mHdH
+- Players K=5 (ERA5, sat160, DEM, LULC, soil) chosen from the §67 ablation; SIF/TWSA/fine = fixed context.
+- §59 cannot be explained post-hoc (statics never withheld) -> SHAP-ready retrain = §64 (static dropout 0.5),
+  sat p kept 0.3 (§73.8 reasons). Probe 27959735: natural sat absence 1.3 %, all early 2016.
+- Scratch store purge damage (34 stations) restored (27958731, 993/993 PASS).
+- Code: branch feat/s73-shapready (pushed), SHAP code 2482c38 + review fixes 70e5c32 (two agent reviews);
+  run tags for §60-§65 pushed; §68 NL scripts committed.
+- §64 smoke 27962120 PASS. FULL RUN 27964186 PENDING (max 20, ES 4, lr pat 2; manual epoch choice).
+- NEXT: epoch table -> user picks -> eval + gate vs §59 -> recreate all figures + ablation -> SHAP.
