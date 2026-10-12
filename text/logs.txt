@@ -9213,3 +9213,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §73.10 PIPELINE SUBMITTED (user: run the whole figure run until ablation) on epoch_012.pt, RUN=nolst_L3_wu200_sd05_20261012:
     eval_final(val oos oot oost + TxSON) 27973917 -> eval_figures paper 27973918 -> eval_allday 27973919 -> s73_paper_figs 27973957;
     input ablation 27973958 -> ablation horizontal plot 27973960. Outputs eval_output/nolst_L3_wu200_sd05_20261012{,_ablation}, figures/eval/nolst_L3_wu200_sd05_20261012_paper/
+  §73.11 noted in runbook: future eval saving (one all-day pass, metrics on observed subset); not used now.

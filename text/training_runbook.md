@@ -18126,3 +18126,14 @@ Run nolst_L3_wu200_sd05_20261012 (slurm/train_s64.sh), user settings:
 3. On a go the retrain BECOMES the paper model: recreate ALL paper figures (baseline_selected style,
    paper palette) AND the §67 input ablation on it, so figures, ablation and SHAP describe ONE model.
 4. Only then SHAP: smoke (1 station) -> full OOS -> OOT. Every job needs an explicit OK.
+
+### 73.11 2026-10-12: eval-pipeline saving for FUTURE runs (noted, not used now)
+- Idea (user): run ONE --keep-unobserved ("all-day") prediction pass and compute OOS/OOT/OOST metrics
+  on its observed subset (obs not NaN), instead of eval_final + eval_allday predicting the same days
+  twice. Saves ~35 GPU-min (~110 SBU) per model.
+- Not used for nolst_L3_wu200_sd05_20261012: kept the §59 pipeline unchanged so the gate comparison is
+  like-for-like; all-day lacks the val split and the TxSON pixel readout; and the all-day files are
+  deliberately marked "never point a metric at such a file".
+- To adopt later: eval_metrics.py / eval_figures.sh read allday/ and filter obs.notna() first (plus the
+  §51.2 post-cut rule for OOT/OOST), with a small separate val + TxSON job; verify the metrics match
+  eval_final's on one model before switching.
