@@ -9214,3 +9214,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     eval_final(val oos oot oost + TxSON) 27973917 -> eval_figures paper 27973918 -> eval_allday 27973919 -> s73_paper_figs 27973957;
     input ablation 27973958 -> ablation horizontal plot 27973960. Outputs eval_output/nolst_L3_wu200_sd05_20261012{,_ablation}, figures/eval/nolst_L3_wu200_sd05_20261012_paper/
   §73.11 noted in runbook: future eval saving (one all-day pass, metrics on observed subset); not used now.
+  STATE AT LOGOFF 2026-10-12 ~22:05: eval_final 27973917 + input_ablation 27973958 RUNNING (epoch 12, sha f28d5b29,
+    both started cleanly: VAL / OOS passes). Queued (afterok): eval_figures 27973918 -> eval_allday 27973919 ->
+    s73_paper_figs 27973957; ablation plot 27973960. Expected done overnight.
+  NEXT SESSION: check chain outcome -> gate §64 ep12 (0.0505) vs §59 (0.0488) -> review figures + ablation plot
+    -> SHAP (smoke, OOS, OOT), each job needs OK.
