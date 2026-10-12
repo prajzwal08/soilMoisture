@@ -18072,3 +18072,18 @@ Built (branch feat/s73-shapready): dataset.py `select_anchor(orbits=)`, `coarse_
 `fine_group_dropout`, `_last_drops`; train.py flags + `[§73 shap-ready check]` (withheld fraction per
 player, violations must be 0); slurm/train_s73{_smoke,}.sh, run nolst_L3_wu200_shapready_20261012.
 Defaults reproduce §59/§64 exactly (no new random draws unless a §73 flag is on).
+
+### 73.7 2026-10-12: players cut to K = 5 from the §67 ablation; p rule of thumb; store restore
+- User: choose players by the existing §67 ablation (221 OOS, cross-station swap, Δ ubRMSE 0-10/10-30/30-100):
+  sat160 +37/+37/+38 %, ERA5 +30/+25/+15, soil +8/+18/+26, DEM +13/+10/+18, LULC +6/+7/+13 ->
+  PLAYERS (K = 5, 32 coalitions, full OOS ~460 SBU): ERA5, satellite 160 m (S2+S1 history + anchor),
+  DEM, LULC, soil. SIF +1.3-1.8, fine +0.5/+1.3/+0.1, TWSA ~0 -> FIXED CONTEXT (always on).
+- Retrain = §64 as built (slurm/train_s64.sh): ERA5 0.5, sat 0.3 ("all" mode), static 0.5, sif/twsa 0.
+  The 73.6 flags (per_sensor, fine_group_dropout) stay in the code, default off, unused.
+- p rule of thumb: natural whole-group absence q counts as dropout. effective = 1-(1-q)(1-p);
+  target 0.5 (uniform coalitions) -> p = (0.5-q)/(1-q), clipped to [0.3, 0.5]. Floor 0.3 because
+  natural gaps are not random (clouds, winter, latitude): the model must see a player absent in
+  every context. Rule gives sat ~0.5; §64 uses 0.3 (accuracy compromise; coalitions 1.9-4.4 %).
+  Decide after q is measured: train.py now prints "[§73 natural absence q]" at startup (200 samples).
+- Smoke 27956836 FAILED in the store pre-flight (not our code): scratch purge, 34/993 stations,
+  1,250 META-ONLY arrays + 82 data-loss chunks. restore_zarr.sh job 27958731 (rsync merge, no delete).

@@ -2089,6 +2089,42 @@ def main():
         if _bad:
             raise RuntimeError(f"§73 dropout check failed: {_bad[:5]}")
 
+    # §73 natural-absence probe (rank 0, before the workers fork): q = fraction of train samples
+    # where a player's WHOLE group is already missing in the data, counted only over samples the
+    # training dropout left alone. Rule of thumb (runbook §73.7): p = (0.5 - q) / (1 - q),
+    # clipped to [0.3, 0.5]. Whole-group absence only; fewer tokens is not absence.
+    if is_main:
+        _q_players = ("era5", "sat", "s2", "s1", "fine_s2", "fine_s1", "sif", "twsa")
+        _qn, _qabs, _qkept = 200, dict.fromkeys(_q_players, 0), dict.fromkeys(_q_players, 0)
+        for _i in random.sample(range(len(train_dataset)), min(_qn, len(train_dataset))):
+            _s = train_dataset[_i]
+            _d = train_dataset._last_drops
+            _s2_none = not bool(_s["s2_valid"].any())
+            _s1_none = not bool(_s["s1_valid"].any())
+            _absent = {
+                "era5":    not bool((_s["era5_doys"] > 0).any()),
+                "sat":     _s2_none and _s1_none and not bool(_s["anchor_found"]),
+                "s2":      _s2_none,
+                "s1":      _s1_none,
+                "fine_s2": not bool(_s["fine"][10].any()),     # fine s2_valid channel
+                "fine_s1": not bool(_s["fine"][14].any()),     # fine s1_valid channel
+                "sif":     not bool(_s["sif_valid"].any()),
+                "twsa":    not bool(_s["twsa_valid"].any()),
+            }
+            _dropped = {
+                "era5": _d.get("era5", False), "sat": _d.get("s2", False) or _d.get("s1", False),
+                "s2": _d.get("s2", False), "s1": _d.get("s1", False),
+                "fine_s2": _d.get("fine", False), "fine_s1": _d.get("fine", False),
+                "sif": _d.get("sif", False), "twsa": _d.get("twsa", False),
+            }
+            for _g in _q_players:
+                if not _dropped[_g]:
+                    _qkept[_g] += 1
+                    _qabs[_g] += int(_absent[_g])
+        print("  [§73 natural absence q] " + "  ".join(
+            f"{g}={_qabs[g] / _qkept[g]:.3f}(n={_qkept[g]})" if _qkept[g] else f"{g}=n/a"
+            for g in _q_players) + "  (statics: present by construction)")
+
     # Freeze all Python objects before DataLoader forks workers.
     # Prevents GC from scanning/dirtying CoW-shared cache pages in worker processes,
     # which would cause the kernel to give each worker a private page copy → RSS blowup.

@@ -9141,3 +9141,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 - Costs: SHAP full OOS ~7,300 SBU, smoke ~40. Random-shift (centre bias) deferred to the map work.
 - NOTHING submitted. Next: train_s73_smoke.sh (needs OK).
   §73 SMOKE SUBMITTED (user OK): job 27956836, slurm/train_s73_smoke.sh, log logs/lst_tmean_diff/smoke_s73_shapready_27956836.out
+  §73 smoke 27956836 FAILED in store pre-flight (01:03): scratch purge damaged 34/993 stations
+    (1,250 META-ONLY arrays, 82 DATA-LOSS chunks). Backup /projects/prjs1968/zarr_tokens intact (read-only).
+  Pushed to GitHub: feat/lst-level-dT, feat/s73-shapready (new), tags run/ for §60 8070f4d, §61 becbc0a,
+    §62 b53c087, §63 d62b5fb, §65 2d51bc4 (+ run/s48_full, run/s48_nolst first time on remote). §68/§69 scripts 723a83f.
+  User: players by the §67 ablation -> K = 5 (ERA5, sat160, DEM, LULC, soil); SIF/TWSA/fine fixed context;
+    retrain = §64 as built. p rule of thumb (runbook §73.7); natural-absence probe added to train.py startup.
+  RESTORE SUBMITTED (user OK): job 27958731, slurm/restore_zarr.sh (staging, rsync merge from /projects).
