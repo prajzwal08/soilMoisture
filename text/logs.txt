@@ -9150,3 +9150,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   RESTORE SUBMITTED (user OK): job 27958731, slurm/restore_zarr.sh (staging, rsync merge from /projects).
   RESTORE 27958731 DONE (1m47s): verify 993/993 PASS, 0 rsync failures.
   §73.7 natural-absence probe SUBMITTED (user OK "right after restore"): job 27959735, slurm/probe_natural_absence.sh (rome, 5k train samples)
+  §64 SMOKE SUBMITTED (user OK, K=5 SHAP-ready retrain): job 27962120, slurm/train_s64_smoke.sh, branch feat/s73-shapready 8105f20
