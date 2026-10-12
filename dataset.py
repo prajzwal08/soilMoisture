@@ -53,13 +53,20 @@ from torch.utils.data import Dataset
 
 from splits_config import TRAIN_YEARS, category_of, station_dir_name
 
-ZARR_ROOT  = Path("/gpfs/scratch1/shared/pkhanal/zarr")
+# §68: ZARR_ROOT / RAW_ZARR_ROOT env overrides point the loader at the Netherlands-grid stores
+# (scratch nl/zarr, nl/satellite_zarr). Unset = the training stores, unchanged.
+ZARR_ROOT  = Path(os.environ.get("ZARR_ROOT", "/gpfs/scratch1/shared/pkhanal/zarr"))
 CACHE_ROOT_GPFS = Path("/gpfs/scratch1/shared/pkhanal/s48cache")
 # Training reads a /dev/shm copy staged by stage_shm.py (train+val stations, scenes <= 2022):
 # GPFS small random reads capped the loader at ~40 samples/s per node (2026-09-29).
 CACHE_ROOT = Path(os.environ.get("S48_CACHE_ROOT", str(CACHE_ROOT_GPFS)))
-RAW_ROOT   = Path("/gpfs/scratch1/shared/pkhanal/satellite_zarr")
+RAW_ROOT   = Path(os.environ.get("RAW_ZARR_ROOT", "/gpfs/scratch1/shared/pkhanal/satellite_zarr"))
 LST_ROOT   = Path("/gpfs/work3/0/prjs1968/data")
+# §68 isolation: a non-training token store with the TRAINING cache root would let
+# prepare_s48_cache.py write NL caches into the training cache, and the loader pair a store
+# with another store's cache. Overrides go together or not at all.
+if "ZARR_ROOT" in os.environ and "S48_CACHE_ROOT" not in os.environ:
+    raise RuntimeError("ZARR_ROOT is set but S48_CACHE_ROOT is not — set both (§68.3 isolation).")
 FINE_STATS_PATH = Path(__file__).resolve().parent / "csvs" / "fine_stats.json"
 
 # torch.from_numpy on a read-only memmap triggers a non-writable warning; every such tensor
@@ -1117,6 +1124,12 @@ class SoilMoistureDataset(Dataset):
                            station's ERA5 record. Off by default; the count is printed.
         require_lst      : fail construction if no admitted station has an lst22 bundle —
                            a thermal head with nothing to supervise it is a silent no-op.
+        predict_all_days : §68 inference only. Samples = EVERY calendar day of `years` inside
+                           the station's ERA5 record (the same day-granular admission as the
+                           label path), for years inside its S2 record (the same year rule).
+                           Labels are optional: no label block, a QC-less block or min_obs do
+                           not reject anything; `label` is the observed (qc==0) value where the
+                           store has one for that day, else NaN. Off (default) = unchanged.
     """
 
     def __init__(
@@ -1136,8 +1149,12 @@ class SoilMoistureDataset(Dataset):
         sif_twsa_dropout: float      = 0.5,
         coarse_dropout:  float       = 0.0,
         static_dropout:  float       = 0.0,
+        predict_all_days: bool       = False,
     ):
         self.training = training
+        self.predict_all_days = bool(predict_all_days)
+        if self.predict_all_days and training:
+            raise ValueError("predict_all_days is inference-only (no labels); pass training=False")
         # §53: whole-ERA5 modality dropout (training only): with this probability per sample the
         # ENTIRE 365-day window is marked missing, like SIF/TWSA's 0.5, so the model cannot
         # always lean on the weather. The dT target reads raw t2m from the cache, unaffected.
@@ -1225,6 +1242,7 @@ class SoilMoistureDataset(Dataset):
         n_no_lulc_pyr  = 0
         admitted_dirs: set = set()
         rejected_dirs: set = set()
+        pad_labels_ignored = Counter()    # §68 predict_all_days: label blocks dropped, not stations
 
         for _, r in splits.iterrows():
             if max_stations is not None and len(admitted_dirs) >= max_stations:
@@ -1314,10 +1332,19 @@ class SoilMoistureDataset(Dataset):
                 try:
                     lc = _load_zarr_labels(zg, strict=True)
                 except ValueError:
-                    skips["labels_length_mismatch (sm/dates/qc)"] += 1
-                    self._zarr_groups[sat_dir] = None
-                    rejected_dirs.add(sat_dir)
-                    continue
+                    if self.predict_all_days:
+                        # §68: labels are optional here — keep the station, drop its labels.
+                        pad_labels_ignored["labels_length_mismatch"] += 1
+                        lc = None
+                    else:
+                        skips["labels_length_mismatch (sm/dates/qc)"] += 1
+                        self._zarr_groups[sat_dir] = None
+                        rejected_dirs.add(sat_dir)
+                        continue
+                if lc is not None and self.predict_all_days and (
+                        lc[3] is None or bool(np.all(lc[3] == QC_NO_SOURCE))):
+                    pad_labels_ignored["labels_qc_absent_or_no_source"] += 1
+                    lc = None
                 if lc is not None:
                     # QC fail-closed (§35.24 audit item 4): no QC source means climatology
                     # could be labelled as observation, so the station is refused.
@@ -1353,6 +1380,52 @@ class SoilMoistureDataset(Dataset):
                 rejected_dirs.add(sat_dir)
                 continue
             s2_years = (int(_s2_di[0]) // 10000, int(_s2_di[-1]) // 10000)
+
+            if self.predict_all_days:
+                # §68: every calendar day, same year rule (ERA5 + S2 record) and the same
+                # day-granular ERA5 admission as the label path below; labels optional.
+                lc = self._label_cache.get(sat_dir)
+                lab_idx = ({_date_to_int(t): i for i, t in enumerate(lc[2])}
+                           if lc is not None else {})
+                era5_day_set = set(int(d) for d in era5_date_ints)
+                n_year_ok = 0
+                for year in self.years:
+                    if not (era5_start_year <= year <= era5_end_year):
+                        sample_skips["year_outside_era5_record"] += 1
+                        continue
+                    if not (s2_years[0] <= year <= s2_years[1]):
+                        sample_skips["year_outside_s2_record"] += 1
+                        continue
+                    for day in pd.date_range(f"{year}-01-01", f"{year}-12-31", freq="D"):
+                        target_int = _date_to_int(day)
+                        if not (era5_first_int <= target_int <= era5_last_int):
+                            sample_skips["era5_target_day_outside_record"] += 1
+                            era5_reject_by_station[dir_name] += 1
+                            continue
+                        if target_int not in era5_day_set:
+                            sample_skips["pad_target_day_has_no_era5_row (kept)"] += 1
+                        doy = day.day_of_year
+                        ws_int, _ = _window_ints(year, int(doy))
+                        if ws_int < era5_first_int:
+                            sample_skips["era5_window_not_fully_covered"] += 1
+                            if era5_require_full_window:
+                                era5_reject_by_station[dir_name] += 1
+                                continue
+                        self.samples.append({
+                            "sat_dir"    : sat_dir,
+                            "year"       : year,
+                            "doy"        : doy,
+                            "time_idx"   : lab_idx.get(target_int, -1),   # -1 = no label row
+                            "date_int"   : target_int,
+                            "station_key": dir_name,
+                        })
+                        n_year_ok += 1
+                if n_year_ok > 0:
+                    admitted_dirs.add(sat_dir)
+                else:
+                    skips["no_sample_survived_year_filters"] += 1
+                    rejected_dirs.add(sat_dir)
+                continue
 
             if sat_dir not in self._label_cache:
                 skips["no_sm_labels"] += 1
@@ -1436,6 +1509,10 @@ class SoilMoistureDataset(Dataset):
             for reason, n in sample_skips.most_common():
                 print(f"    {n:6d}  {reason}")
 
+        if self.predict_all_days:
+            print(f"  predict_all_days: {len(self.samples)} every-day samples; label blocks "
+                  f"ignored (station kept): {dict(pad_labels_ignored) or 'none'}")
+
         n_era5_rej = sum(era5_reject_by_station.values())
         if n_era5_rej:
             worst = sorted(era5_reject_by_station.items(), key=lambda kv: -kv[1])[:20]
@@ -1465,6 +1542,7 @@ class SoilMoistureDataset(Dataset):
     # batch's reads. Every cache __getitem__ touches is built in __init__ and only read, so
     # samples are independent. 1 = the old sequential behaviour. Set after construction.
     io_threads: int = 1
+    predict_all_days: bool = False     # §68; class default for objects built via __new__
 
     def __getitems__(self, indices):
         if self.io_threads <= 1 or len(indices) <= 1:
@@ -1612,8 +1690,12 @@ class SoilMoistureDataset(Dataset):
             twsa_valid[:] = False
 
         # ── ISMN labels — observed values only (qc==0) ───────────────
-        sm_np, depths, _, qc_np = self._label_cache[sat_dir]
+        # §68 predict_all_days: a station may have no label block and a day no label row
+        # (time_idx -1); the label then stays all-NaN. The label path never reaches either.
         label = torch.full((len(SM_DEPTHS),), float("nan"), dtype=torch.float32)
+        lc = (self._label_cache.get(sat_dir) if self.predict_all_days
+              else self._label_cache[sat_dir])
+        sm_np, depths, _, qc_np = lc if lc is not None and s["time_idx"] >= 0 else (None, (), None, None)
         for i, depth_str in enumerate(SM_DEPTHS):
             if depth_str in depths:
                 d_idx = depths.index(depth_str)

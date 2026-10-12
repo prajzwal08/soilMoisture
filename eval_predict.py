@@ -55,6 +55,9 @@ EVAL_SPLITS = {
     # still carried into the output as `tile_split` / `station_split`.
     "network": dict(split_filter=["train", "val", "oos"],
                     years=list(TRAIN_YEARS)),
+    # §68: the Netherlands grid tiles (make_nl_splits.py, split == "nl_grid", no labels).
+    # Only reachable with --splits nl_grid; use with --splits-csv and --predict-all-days.
+    "nl_grid": dict(split_filter=["nl_grid"], years=list(TRAIN_YEARS) + list(OOT_YEARS)),
 }
 
 # Station counts measured by the §22.2 zarr probe.  This is a DATED REFERENCE, not an
@@ -282,13 +285,14 @@ def to_long_frame_pixels(res: dict, pmap: PixelMap) -> pd.DataFrame:
 
 
 def to_long_frame(res: dict, split_name: str, train_split_map: dict,
-                  keep_unobserved: bool = False) -> pd.DataFrame:
+                  keep_unobserved: bool = False, keep_all: bool = False) -> pd.DataFrame:
     """Wide (N, n_depths) arrays -> long format, one row per (sample, depth).
 
     Rows where the observation is NaN (depth absent at that station) are dropped.
     keep_unobserved (time-series plots only, user 2026-10-05): keep EVERY day of a depth the
     station observes at least once, obs NaN where unobserved -- so the model output can be
     drawn through observation gaps. Never point a metric at such a file.
+    keep_all (§68 --predict-all-days): keep EVERY row at EVERY depth, labelled or not.
     """
     n_samples, n_depths = res["preds"].shape
     frames = []
@@ -297,6 +301,8 @@ def to_long_frame(res: dict, split_name: str, train_split_map: dict,
         keep = ~np.isnan(obs)
         if keep_unobserved and keep.any():
             keep = np.isin(res["keys"], np.unique(res["keys"][keep]))
+        if keep_all:
+            keep = np.ones(n_samples, dtype=bool)
         if not keep.any():
             continue
         frames.append(pd.DataFrame({
@@ -379,7 +385,29 @@ def main():
                         "column, e.g. ablation_oos (50 stratified OOS stations). The "
                         "ablation is a PAIRED comparison against the same stations in "
                         "the baseline parquet, so a subset costs power, not validity.")
+    # §68 Netherlands grid. All three default to the old behaviour.
+    p.add_argument("--splits-csv", default=os.environ.get("SOIL_STATION_CSV", str(SPLITS_CSV)),
+                   help="station_splits.csv to read (default: env SOIL_STATION_CSV, else "
+                        "csvs/station_splits.csv)")
+    p.add_argument("--years", default=None,
+                   help="override every split's years, e.g. 2016-2025 or 2018,2019")
+    p.add_argument("--predict-all-days", action="store_true",
+                   help="every calendar day of --years inside each station's ERA5/S2 record, "
+                        "labels optional (dataset predict_all_days); every row kept, obs NaN "
+                        "where none; one parquet per station under <out-dir>/tiles/. Inference "
+                        "only -- metrics must not read it")
     args = p.parse_args()
+    if args.predict_all_days and (args.pixel_csv or args.keep_unobserved
+                                  or any(a != "none" for a in args.ablate)):
+        raise SystemExit("--predict-all-days excludes --pixel-csv, --keep-unobserved, --ablate")
+    years_override = None
+    if args.years:
+        if "-" in args.years:
+            lo, hi = (int(x) for x in args.years.split("-"))
+            years_override = list(range(lo, hi + 1))
+        else:
+            years_override = [int(x) for x in args.years.split(",")]
+    splits_csv = Path(args.splits_csv)
     if args.station_flag and (args.csv_start_idx is not None
                               or args.csv_end_idx is not None):
         raise SystemExit("--station-flag and --csv-start/end-idx are mutually exclusive")
@@ -433,7 +461,7 @@ def main():
     model = model.to(device)
 
 
-    splits_df = pd.read_csv(SPLITS_CSV)
+    splits_df = pd.read_csv(splits_csv)
     train_split_map = dict(zip(splits_df.apply(_make_key, axis=1), splits_df["split"]))
 
     # Splits may be produced by separate jobs (OOT needs ~156 GB of L12 in RAM,
@@ -461,9 +489,19 @@ def main():
         "max_stations":    args.max_stations,
         "splits":          dict(prior_splits),   # keep the other job's entries
     }
+    if args.predict_all_days or years_override or splits_csv != SPLITS_CSV:
+        manifest.update({"splits_csv": str(splits_csv),
+                         "predict_all_days": bool(args.predict_all_days),
+                         "era5_stats": str(ERA5_STATS),
+                         "driver_stats": str(ERA5_STATS.with_name("driver_stats.json")),
+                         "env": {k: os.environ.get(k) for k in
+                                 ("ZARR_ROOT", "RAW_ZARR_ROOT", "S48_CACHE_ROOT",
+                                  "SOIL_STATION_CSV")}})
 
     for split_name in args.splits:
-        scfg = EVAL_SPLITS[split_name]
+        scfg = dict(EVAL_SPLITS[split_name])
+        if years_override:
+            scfg["years"] = years_override
         print(f"\n{'='*66}")
         print(f"Split: {split_name.upper()}  filter={scfg['split_filter']}  "
               f"years={scfg['years'][0]}-{scfg['years'][-1]}")
@@ -478,11 +516,12 @@ def main():
         # Chunking: slice the split-filtered rows and hand the dataset a
         # temporary CSV holding only this chunk's stations, so it preloads
         # only their L12 tokens.
-        active_csv = str(SPLITS_CSV)
+        active_csv = str(splits_csv)
         sdf = splits_df
         # §51.2: a station enters OOT/OOST only with >= MIN_POST_CUT_DAYS post-cut label days;
         # otherwise its *_stn metric is a seasonal fragment weighted like three full years.
-        if split_name in ("oot", "oost"):
+        # A metric rule: --predict-all-days writes no metric input, so it does not apply (§68).
+        if split_name in ("oot", "oost") and not args.predict_all_days:
             in_split = sdf["split"].isin(scfg["split_filter"])
             short = in_split & (sdf["oot_effective_days"].fillna(0) < MIN_POST_CUT_DAYS)
             sdf = sdf[~short]
@@ -533,6 +572,7 @@ def main():
             split_filter    = scfg["split_filter"],
             training        = False,
             max_stations    = args.max_stations,
+            **({"predict_all_days": True} if args.predict_all_days else {}),
         )
         init_s = time.time() - t_init
         n_stations = len({s["station_key"] for s in ds.samples})
@@ -582,7 +622,8 @@ def main():
             else:
                 res = run_split(model, loader, device)
                 df  = to_long_frame(res, split_name, train_split_map,
-                                    keep_unobserved=args.keep_unobserved)
+                                    keep_unobserved=args.keep_unobserved,
+                                    keep_all=args.predict_all_days)
                 key_col = "station_key"
             mins = (time.time() - t0) / 60
     
@@ -596,7 +637,18 @@ def main():
     
             suffix   = f"_{tag}" if tag else ""
             out_path = out_dir / f"predictions_{split_name}{suffix}.parquet"
-            df.to_parquet(out_path, index=False, compression="snappy")
+            if args.predict_all_days:
+                # §68: one parquet per station/tile (date, depth, pred, obs), sorted; the
+                # assembler globs tiles/. Unclipped -- the clip to [0,1] is assemble_nl_sm.py's.
+                tile_dir = out_dir / "tiles"
+                tile_dir.mkdir(parents=True, exist_ok=True)
+                for key, g in df.groupby("station_key", observed=True):
+                    g = g.sort_values(["date", "depth"])
+                    g.to_parquet(tile_dir / f"{key}.parquet", index=False, compression="snappy")
+                out_path = tile_dir
+                print(f"  per-tile parquets: {df['station_key'].nunique()} -> {tile_dir}")
+            else:
+                df.to_parquet(out_path, index=False, compression="snappy")
     
             print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
                   f"{mins:.1f} min")
