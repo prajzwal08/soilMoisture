@@ -133,6 +133,89 @@ def run_split(model, loader, device) -> dict:
     )
 
 
+@torch.no_grad()
+def run_split_shap(model, loader, device, chunk: int = 4) -> dict:
+    """§73 exact group-Shapley: every batch is run under all 2^K coalitions of shap_groups.PLAYERS.
+
+    The batch is loaded once; `chunk` coalitions are stacked along the batch axis per forward.
+    Returns run_split's fields (preds = f(all)) plus f_none (N, D), phi (K, N, D) and per-sample
+    satellite observation state. Asserts efficiency per batch.
+    """
+    from shap_groups import PLAYERS, apply_absent, shapley_weight_matrix
+    srow, scol = SoilMoistureModel.STATION_ROW, SoilMoistureModel.STATION_COL
+    K = len(PLAYERS)
+    n_coal, full = 2 ** K, 2 ** K - 1
+    W = shapley_weight_matrix(K).to(device)                                   # (K, 2^K) fp64
+    preds, f_nones, phis, targets, keys, years, doys = [], [], [], [], [], [], []
+    obs_state = {k: [] for k in ("days_since_s2", "days_since_s1", "n_s2_30d", "n_s1_30d",
+                                 "anchor_age", "anchor_found")}
+    fwd_events, max_eff_err = [], 0.0
+
+    t0, n_batches = time.time(), len(loader)
+    for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        B = batch["era5"].shape[0]
+        f = torch.empty(n_coal, B, len(SM_DEPTHS), device=device, dtype=torch.float64)
+        for c0 in range(0, n_coal, chunk):
+            masks = list(range(c0, min(c0 + chunk, n_coal)))
+            parts = [apply_absent(batch, m) for m in masks]
+            stacked = {k: (torch.cat([p[k] for p in parts], 0)
+                           if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == B else v)
+                       for k, v in batch.items()}
+            ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+            ev0.record()
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                mu = model(stacked)["sm"][:, :, srow, scol]                     # (len(masks)*B, D)
+            ev1.record()
+            fwd_events.append((ev0, ev1))
+            f[masks[0]:masks[-1] + 1] = mu.double().view(len(masks), B, -1)
+        phi = torch.einsum("km,mbd->kbd", W, f)                               # (K, B, D)
+        eff = (phi.sum(0) - (f[full] - f[0])).abs().max().item()
+        max_eff_err = max(max_eff_err, eff)
+        if eff > 1e-5:
+            raise RuntimeError(f"§73 efficiency violated in batch {i}: {eff:.2e}")
+
+        preds.append(f[full].float().cpu().numpy())
+        f_nones.append(f[0].float().cpu().numpy())
+        phis.append(phi.float().cpu().numpy())
+        targets.append(batch["label"].float().cpu().numpy())
+        keys.extend(batch["station_key"])
+        years.append(np.asarray(batch["year"].cpu() if torch.is_tensor(batch["year"])
+                                else batch["year"], dtype=np.int32))
+        doys.append(np.asarray(batch["doy"].cpu() if torch.is_tensor(batch["doy"])
+                               else batch["doy"], dtype=np.int32))
+        # Satellite observation state (rel_pos 364 = day D), for reading phi_sat by staleness.
+        for s in ("s2", "s1"):
+            v, rp = batch[f"{s}_valid"].bool(), batch[f"{s}_rel_pos"].long()
+            last = torch.where(v, rp, torch.full_like(rp, -1)).max(1).values
+            obs_state[f"days_since_{s}"].append(
+                torch.where(last >= 0, 364 - last, torch.full_like(last, -1)).cpu().numpy())
+            obs_state[f"n_{s}_30d"].append((v & (rp >= 334)).sum(1).cpu().numpy())
+        obs_state["anchor_found"].append(batch["anchor_found"].bool().cpu().numpy())
+        obs_state["anchor_age"].append(
+            torch.where(batch["anchor_found"].bool(), 364 - batch["anchor_rel_pos"].long(),
+                        torch.full_like(batch["anchor_rel_pos"].long(), -1)).cpu().numpy())
+
+        if i % 50 == 0:
+            rate = (i + 1) / (time.time() - t0)
+            eta  = (n_batches - i - 1) / max(rate, 1e-9) / 60
+            print(f"    shap batch {i+1}/{n_batches}  {rate:.2f} b/s  ETA {eta:.1f} min  "
+                  f"max efficiency err {max_eff_err:.1e}", flush=True)
+
+    return dict(
+        preds   = np.concatenate(preds,   axis=0),            # (N, D) = f(all)
+        f_none  = np.concatenate(f_nones, axis=0),            # (N, D) = base value
+        phi     = np.concatenate(phis,    axis=1),            # (K, N, D)
+        players = PLAYERS,
+        targets = np.concatenate(targets, axis=0),
+        keys    = np.asarray(keys),
+        years   = np.concatenate(years,   axis=0),
+        doys    = np.concatenate(doys,    axis=0),
+        obs_state = {k: np.concatenate(v) for k, v in obs_state.items()},
+        fwd_s   = _forward_seconds(fwd_events),
+        max_eff_err = max_eff_err,
+    )
+
+
 def _forward_seconds(events) -> float:
     """Sum of CUDA-event times around every model(batch) call, in seconds."""
     torch.cuda.synchronize()
@@ -284,8 +367,18 @@ def to_long_frame_pixels(res: dict, pmap: PixelMap) -> pd.DataFrame:
                "year", "doy", "date", "depth", "pred"]]
 
 
+def shap_extra_columns(res: dict) -> dict:
+    """§73: per-(sample, depth) Shapley columns for to_long_frame(extra=...)."""
+    extra = {"f_none": res["f_none"]}
+    for k, p in enumerate(res["players"]):
+        extra[f"phi_{p}"] = res["phi"][k]                     # (N, D)
+    extra.update(res["obs_state"])                            # (N,) per-sample, broadcast to depths
+    return extra
+
+
 def to_long_frame(res: dict, split_name: str, train_split_map: dict,
-                  keep_unobserved: bool = False, keep_all: bool = False) -> pd.DataFrame:
+                  keep_unobserved: bool = False, keep_all: bool = False,
+                  extra: dict | None = None) -> pd.DataFrame:
     """Wide (N, n_depths) arrays -> long format, one row per (sample, depth).
 
     Rows where the observation is NaN (depth absent at that station) are dropped.
@@ -312,6 +405,8 @@ def to_long_frame(res: dict, split_name: str, train_split_map: dict,
             "depth":       depth,
             "pred":        res["preds"][keep, d].astype(np.float32),
             "obs":         obs[keep].astype(np.float32),
+            **{name: (arr[keep, d] if arr.ndim == 2 else arr[keep])
+               for name, arr in (extra or {}).items()},
         }))
 
     if not frames:
@@ -327,7 +422,7 @@ def to_long_frame(res: dict, split_name: str, train_split_map: dict,
     df["station_key"] = df["station_key"].astype("string")
 
     return df[["station_key", "year", "doy", "date", "depth",
-               "pred", "obs", "eval_split", "train_split"]]
+               "pred", "obs", "eval_split", "train_split"] + list(extra or {})]
 
 
 def main():
@@ -396,10 +491,21 @@ def main():
                         "labels optional (dataset predict_all_days); every row kept, obs NaN "
                         "where none; one parquet per station under <out-dir>/tiles/. Inference "
                         "only -- metrics must not read it")
+    # §73 exact group-Shapley (shap_groups.py). Valid only on a checkpoint trained with every
+    # player's dropout on (§64: era5 0.5, coarse 0.3, static 0.5) -- checked below from cfg.
+    p.add_argument("--shap", action="store_true",
+                   help="§73: run every batch under all 2^K coalitions of shap_groups.PLAYERS and "
+                        "write shap_<split>.parquet (pred, obs, f_none, phi_<player> per depth, "
+                        "satellite observation state). Costs 2^K forwards per sample")
+    p.add_argument("--shap-chunk", type=int, default=4,
+                   help="§73: coalitions stacked per forward (batch x chunk rows); lower if OOM")
     args = p.parse_args()
     if args.predict_all_days and (args.pixel_csv or args.keep_unobserved
                                   or any(a != "none" for a in args.ablate)):
         raise SystemExit("--predict-all-days excludes --pixel-csv, --keep-unobserved, --ablate")
+    if args.shap and (args.pixel_csv or args.predict_all_days
+                      or any(a != "none" for a in args.ablate)):
+        raise SystemExit("--shap excludes --pixel-csv, --predict-all-days, --ablate")
     years_override = None
     if args.years:
         if "-" in args.years:
@@ -451,6 +557,18 @@ def main():
     # Loaded onto the CPU first and moved after the CUDA check below.
     ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
     model, cfg, epoch = load_checkpoint(ckpt_path, torch.device("cpu"))
+    if args.shap:
+        # §73: a coalition is only meaningful if training withheld each player (runbook §73.7).
+        _need = {"era5_dropout": "era5", "coarse_dropout": "sat", "static_dropout": "dem/lulc/soil"}
+        _missing = [f"{k}={cfg.get(k, 0.0)} ({p})" for k, p in _need.items()
+                    if not float(cfg.get(k, 0.0) or 0.0) > 0]
+        if _missing:
+            raise SystemExit(f"--shap on {args.run_name}: training never withheld "
+                             f"{', '.join(_missing)}; those coalitions are out of distribution")
+        if cfg.get("coarse_dropout_mode", "all") != "all":
+            raise SystemExit("--shap: sat player assumes coarse_dropout_mode 'all' (S2+S1+anchor together)")
+        print(f"§73 SHAP validity: era5 {cfg['era5_dropout']}, coarse {cfg['coarse_dropout']}, "
+              f"static {cfg['static_dropout']} -> all players seen absent in training")
 
 
 
@@ -619,6 +737,14 @@ def main():
                 res = run_split_pixels(model, loader, device, pmap)
                 df  = to_long_frame_pixels(res, pmap)
                 key_col = "station"
+            elif args.shap:
+                res = run_split_shap(model, loader, device, chunk=args.shap_chunk)
+                df  = to_long_frame(res, split_name, train_split_map,
+                                    keep_unobserved=args.keep_unobserved,
+                                    extra=shap_extra_columns(res))
+                key_col = "station_key"
+                print(f"  §73 SHAP: players {list(res['players'])}, {2 ** len(res['players'])} "
+                      f"coalitions, max efficiency error {res['max_eff_err']:.2e}")
             else:
                 res = run_split(model, loader, device)
                 df  = to_long_frame(res, split_name, train_split_map,
@@ -636,7 +762,7 @@ def main():
                 print(f"  WARNING -- {n_nan_pred} NaN predictions")
     
             suffix   = f"_{tag}" if tag else ""
-            out_path = out_dir / f"predictions_{split_name}{suffix}.parquet"
+            out_path = out_dir / f"{'shap' if args.shap else 'predictions'}_{split_name}{suffix}.parquet"
             if args.predict_all_days:
                 # §68: one parquet per station/tile (date, depth, pred, obs), sorted; the
                 # assembler globs tiles/. Unclipped -- the clip to [0,1] is assemble_nl_sm.py's.
