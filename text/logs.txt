@@ -9140,3 +9140,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 - Gate: retrain -> eval -> compare with baseline_selected_20261005 -> user go/no-go -> SHAP.
 - Costs: SHAP full OOS ~7,300 SBU, smoke ~40. Random-shift (centre bias) deferred to the map work.
 - NOTHING submitted. Next: train_s73_smoke.sh (needs OK).
+  §73 SMOKE SUBMITTED (user OK): job 27956836, slurm/train_s73_smoke.sh, log logs/lst_tmean_diff/smoke_s73_shapready_27956836.out
