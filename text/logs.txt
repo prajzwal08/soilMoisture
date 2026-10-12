@@ -9160,3 +9160,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §73 SHAP code written (2482c38, not run): shap_groups.py (K=5 recipes = training dropout copies, W, self-test),
     eval_predict.py --shap/--shap-chunk (+ refuses checkpoints that never withheld a player),
     verify_shap_groups.py (recipe == forced dropout, all-on == plain, efficiency, phi_sat dummy), slurm/eval_shap.sh.
+  §73.7 PROBE 27959735 DONE (44m36s; 5,000 train samples, 568 stations, no dropout). Natural whole-group absence q:
+    era5 0.000 | sat 0.0134 | s2 0.0212 | s1 0.0252 | fine_s2 0.0212 | fine_s1 0.0252 | sif 0.331 | twsa 0.189
+    Rule p (clip [0.3,0.5]): era5 .50, sat .49, sif .30, twsa .38. -> satellite p = 0.5 by the rule (§64 has 0.3).
+    sat absence is NOT clouds: 66/67 absent samples are in 2016 (Jan .095, Feb .043, Mar .022, Apr+ ~0) = the
+    record start (no scene yet in the 365-d window). Mid-year q_sat = 0. So phi_sat = 0 test days = early 2016 only.
+    Lesson: probe design was slow (full 573-station init ~25 min + serial reads); next time subset stations + workers.
