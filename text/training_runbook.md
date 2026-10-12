@@ -18105,3 +18105,15 @@ Defaults reproduce §59/§64 exactly (no new random draws unless a §73 flag is 
   eval --shap: first-batch all-on == plain-forward check, --shap-chunk must be 4/8/16/32 (keeps
   S and S+{sat} in one forward, so the phi_sat dummy is exact), n_*_30d = D-29..D, reshape not view;
   eval_shap.sh full = OOS only, oot = separate job; verifier checks both directions + early-2016 samples.
+
+### 73.9 2026-10-12: training protocol for the SHAP-ready retrain (to be REPORTED IN THE PAPER)
+Run nolst_L3_wu200_sd05_20261012 (slurm/train_s64.sh), user settings:
+- max 20 epochs; early stopping after 4 epochs without val improvement; ReduceLROnPlateau patience 2
+  (§59 used lr_patience 3 and was stopped by hand after ep 11).
+- every epoch saved (epochs/epoch_NNN.pt). Selection metric logged each epoch: val SELECT = mean
+  ubRMSE over the 3 depths on the 89 validation stations; generalisation gap = val/train ratio.
+- CHECKPOINT CHOICE IS MANUAL (user): after the run, the per-epoch table (val SELECT, gap) is shown
+  and the user picks the epoch used for the gate eval and SHAP. best.pt (lowest SELECT) is only a
+  default. The paper must state the rule used (lowest val ubRMSE, tempered by the gap).
+- Dropout: ERA5 window 0.5, satellite 160 m 0.3, DEM/LULC/soil 0.5 each (independent, trunk + fine
+  tied), SIF/TWSA 0, fine one-of 0.2; wd 0.05; 3 layers; warmup 200; lr as §59.

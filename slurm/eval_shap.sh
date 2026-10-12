@@ -26,7 +26,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ulimit -n 65536
 unset S48_CACHE_ROOT          # eval reads the all-years GPFS cache, never a /dev/shm training copy
 MODE="${1:-smoke}"
-RUN="${2:-nolst_L3_wu200_sd05_20261005}"
+RUN="${2:-nolst_L3_wu200_sd05_20261012}"
 CKPT=/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/lst_tmean_diff/${RUN}/best.pt
 RUN_PY="conda run -n terramind --no-capture-output python"
 echo "=== eval_shap ${MODE}  run ${RUN}  job ${SLURM_JOB_ID}  $(date)  on $(hostname) ==="

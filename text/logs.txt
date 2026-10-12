@@ -9170,3 +9170,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     coverage already ample (rarest coalition 1.9% ~ 200k examples over 10 epochs); 0.5 risks the gate on the most
     important input; 0.3 keeps the retrain ONE change away from §59. Review fixes applied (RNG restore, probe flag,
     chunk guard, plain-forward check, 30-day window, OOS/OOT split).
+  §73.9 (user): retrain protocol max 20 epochs, early-stop patience 4, lr patience 2, every epoch saved;
+    epoch for gate/SHAP chosen MANUALLY from per-epoch val ubRMSE + gap table; report all in the paper.
+    Run renamed nolst_L3_wu200_sd05_20261012 (eval_shap.sh default updated).
