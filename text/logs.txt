@@ -9131,3 +9131,12 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
 - Option raised: split sat160 by sensor (S2 160 / S1 160; anchor goes with its sensor, re-picked
   when the sensor is removed) -> K=5, 32 coalitions. Not decided.
 - Figure mock-ups (synthetic data) A-J: https://claude.ai/artifact/F7hwYUKM13tD6jkGb5mHdH
+
+2026-10-12 — §73 AMENDED (supersedes the K=4 entry above): retrain first, K = 9, gate before SHAP
+- User: SHAP for ALL inputs incl. DEM, LULC, soil, SIF, TWSA; S2/S1 160 m separate; fine 20 m merged.
+- §59 cannot be explained post-hoc for those (never withheld; fine one-of never drops both).
+- Built on branch feat/s73-shapready: per-sensor coarse dropout (anchor re-pick), whole-fine dropout,
+  startup check; slurm/train_s73{_smoke,}.sh. Committed §68 NL changes first (5d558a7).
+- Gate: retrain -> eval -> compare with baseline_selected_20261005 -> user go/no-go -> SHAP.
+- Costs: SHAP full OOS ~7,300 SBU, smoke ~40. Random-shift (centre bias) deferred to the map work.
+- NOTHING submitted. Next: train_s73_smoke.sh (needs OK).

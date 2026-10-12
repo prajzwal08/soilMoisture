@@ -420,6 +420,8 @@ CONFIG = {
     "sif_twsa_dropout": 0.5,    # §53: P(whole SIF / whole TWSA window dropped) per training sample (was hard-coded)
     "coarse_dropout"  : 0.0,    # §53: P(all 160 m satellite tokens withheld: anchor + S2/S1 history) per training sample
     "static_dropout"  : 0.0,    # §60: P(DEM | LULC | soil withheld, each independently, trunk + fine tied) per training sample
+    "coarse_dropout_mode": "all",  # §73: "all" = §53 (S2+S1+anchor together) | "per_sensor" (S2, S1 independent, anchor re-picked)
+    "fine_group_dropout": 0.0,  # §73: P(fine S2 AND fine S1 zeroed together) per training sample
 
     # Loss
     "loss_fn"   : "huber",
@@ -1778,6 +1780,13 @@ def main():
     parser.add_argument("--static-dropout", type=float, default=None,
                         help="§60: per-sample P of withholding DEM, LULC and soil, each independently, "
                              "in the trunk AND the fine path (tied per group), in training (default 0)")
+    parser.add_argument("--coarse-dropout-mode", choices=["all", "per_sensor"], default=None,
+                        help="§73: 'all' (default) withholds S2+S1+anchor together with p = "
+                             "--coarse-dropout; 'per_sensor' withholds S2 and S1 independently, "
+                             "each with that p, and re-picks the anchor from the kept sensor")
+    parser.add_argument("--fine-group-dropout", type=float, default=None,
+                        help="§73: per-sample P of zeroing fine S2 AND fine S1 together in training "
+                             "(default 0; the one-of --modality-dropout still applies)")
     parser.add_argument("--lambda-frac", type=float, default=None,
                         help="§53: auto lambda targets g_lst = frac x g_sm at the shared map "
                              "(default 0.3)")
@@ -1856,6 +1865,8 @@ def main():
     if args.sif_twsa_dropout is not None: CONFIG["sif_twsa_dropout"] = args.sif_twsa_dropout
     if args.coarse_dropout   is not None: CONFIG["coarse_dropout"]   = args.coarse_dropout
     if args.static_dropout   is not None: CONFIG["static_dropout"]   = args.static_dropout
+    if args.coarse_dropout_mode is not None: CONFIG["coarse_dropout_mode"] = args.coarse_dropout_mode
+    if args.fine_group_dropout  is not None: CONFIG["fine_group_dropout"]  = args.fine_group_dropout
     if args.lambda_frac      is not None: CONFIG["lambda_frac"]      = args.lambda_frac
     if CONFIG["lst_target"] == "dT_pixel":
         CONFIG["lst_units"] = "K"                # the target is in K; no sigma_ST anywhere
@@ -1960,7 +1971,9 @@ def main():
                                          era5_dropout=CONFIG["era5_dropout"],
                                          sif_twsa_dropout=CONFIG["sif_twsa_dropout"],
                                          coarse_dropout=CONFIG["coarse_dropout"],
-                                         static_dropout=CONFIG.get("static_dropout", 0.0))
+                                         static_dropout=CONFIG.get("static_dropout", 0.0),
+                                         coarse_dropout_mode=CONFIG.get("coarse_dropout_mode", "all"),
+                                         fine_group_dropout=CONFIG.get("fine_group_dropout", 0.0))
     # §52 level target scale, from the TRAINING samples only. Computed for every run so the
     # pattern-only and control runs report the same val level metrics.
     CONFIG["dT_mu"], CONFIG["dT_sd"], _n_dT = train_dataset.lst_dT_stats()
@@ -2049,6 +2062,32 @@ def main():
         print(f"  [static-dropout check] p={CONFIG['static_dropout']}  withheld over {_n} train "
               f"samples: " + "  ".join(f"{g}={c / _n:.2f}" for g, c in _drop.items()) +
               f"  untied fine/trunk={_untied} (must be 0)")
+
+    # §73 one-off check (rank 0, before the workers fork): withheld fraction of every Shapley
+    # player, and that each withheld player really is absent in the sample (anchor re-pick incl.).
+    if is_main and (CONFIG.get("coarse_dropout_mode", "all") == "per_sensor"
+                    or CONFIG.get("fine_group_dropout", 0.0) > 0):
+        _players = ("era5", "s2", "s1", "fine", "dem", "lulc", "soil", "sif", "twsa")
+        _n, _cnt, _both, _bad = 200, dict.fromkeys(_players, 0), 0, []
+        for _i in random.sample(range(len(train_dataset)), min(_n, len(train_dataset))):
+            _s = train_dataset[_i]
+            _d = train_dataset._last_drops
+            for _g in _players:
+                _cnt[_g] += int(bool(_d.get(_g, False)))
+            _both += int(bool(_d.get("s2")) and bool(_d.get("s1")))
+            _found, _orb = bool(_s["anchor_found"]), int(_s["anchor_orbit"])
+            if _d.get("s2") and (bool(_s["s2_valid"].any()) or (_found and _orb == 0)):
+                _bad.append((_i, "s2 withheld but S2 history/anchor present"))
+            if _d.get("s1") and (bool(_s["s1_valid"].any()) or (_found and _orb in (1, 2))):
+                _bad.append((_i, "s1 withheld but S1 history/anchor present"))
+            if _d.get("fine") and bool(_s["fine"][0:17].any()):
+                _bad.append((_i, "fine withheld but fine S2/S1 channels nonzero"))
+        _m = min(_n, len(train_dataset))
+        print(f"  [§73 shap-ready check] withheld over {_m} train samples: "
+              + "  ".join(f"{g}={c / _m:.2f}" for g, c in _cnt.items())
+              + f"  s2&s1={_both / _m:.2f}  violations={len(_bad)} (must be 0)")
+        if _bad:
+            raise RuntimeError(f"§73 dropout check failed: {_bad[:5]}")
 
     # Freeze all Python objects before DataLoader forks workers.
     # Prevents GC from scanning/dirtying CoW-shared cache pages in worker processes,
@@ -2176,7 +2215,7 @@ def main():
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "fine_inputs", "skip_zero_init", "modality_dropout", "lambda_lst", "sigma_st",
                  "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
-                 "lst_target", "era5_dropout", "sif_twsa_dropout", "coarse_dropout", "static_dropout", "lambda_frac", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
+                 "lst_target", "era5_dropout", "sif_twsa_dropout", "coarse_dropout", "static_dropout", "coarse_dropout_mode", "fine_group_dropout", "lambda_frac", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
                  "select_metric", "input_grad_diag", "save_every_epoch", "git_sha",

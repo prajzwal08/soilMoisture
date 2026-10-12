@@ -156,6 +156,8 @@ MAX_DEAD_SOIL_CHANNELS = 2
 
 # ── Fine imagery (§48.3, §48.9 item 1) — must match model.py's FINE_* layout ────
 FINE_CH        = 19          # S2 10 bands + valid + age | S1 VV VH valid age orbit | DEM valid
+FINE_S2        = slice(0, 12)    # 10 bands | s2_valid | s2_age — model.py FINE_S2
+FINE_S1        = slice(12, 17)   # VV | VH | s1_valid | s1_age | orbit — model.py FINE_S1
 FINE_DEM       = slice(17, 19)   # DEM | dem_valid — build_fine writes fine[17:19]; model.py FINE_DEM
 LULC_PAD       = 10          # model.py LULC_PAD; TerraMind index 0 (nodata) and >9 map here
 LST_N          = 22
@@ -581,15 +583,17 @@ def load_history(cache: dict, orbits, year: int, doy: int, max_acq: int):
     return pyr, doys, doys > 0, rel_pos, orbit
 
 
-def select_anchor(cache: dict, year: int, doy: int):
+def select_anchor(cache: dict, year: int, doy: int, orbits=HIST_ORBITS):
     """The anchor: most recent FULLY CLEAR acquisition (all 196 tokens valid) on or before D,
     across S2 and both S1 orbits; else the most recent usable one. Fail closed — an S2 date with
     no cloud mask is not a candidate (the frozen U-Net arm counted it as fully clear).
+    `orbits` restricts the candidates (§73 per-sensor dropout: the anchor is re-picked from the
+    sensor that was kept).
 
     Returns (l12 (196,768) fp16, rel_pos, orbit_id, found bool).
     """
     start_int, end_int = _window_ints(year, doy)
-    cands = _candidates(cache, HIST_ORBITS, start_int, end_int)
+    cands = _candidates(cache, orbits, start_int, end_int)
     if not cands:
         return torch.zeros(196, 768, dtype=torch.float16), 0, 0, False
     clear = [c for c in cands if c[3] == N_TOKENS]
@@ -1150,6 +1154,8 @@ class SoilMoistureDataset(Dataset):
         coarse_dropout:  float       = 0.0,
         static_dropout:  float       = 0.0,
         predict_all_days: bool       = False,
+        coarse_dropout_mode: str     = "all",
+        fine_group_dropout: float    = 0.0,
     ):
         self.training = training
         self.predict_all_days = bool(predict_all_days)
@@ -1172,6 +1178,19 @@ class SoilMoistureDataset(Dataset):
         # and the SAME group in the fine path (DEM channels, LULC map), so the station fingerprint
         # cannot route through the other path.
         self.static_dropout = float(static_dropout)
+        # §73 SHAP-ready training: every Shapley player must be seen absent in training.
+        # coarse_dropout_mode "per_sensor": S2 and S1 160 m history are each withheld
+        # independently with p = coarse_dropout, and the anchor is re-picked from the sensor that
+        # was kept (both withheld = no anchor, as in "all"). "all" (default) = §53 behaviour.
+        # fine_group_dropout: P(zero BOTH fine S2 and fine S1) per sample; model.py's one-of
+        # modality dropout never removes both, so a merged "fine 20 m" player needs this.
+        if coarse_dropout_mode not in ("all", "per_sensor"):
+            raise ValueError(f"coarse_dropout_mode must be 'all' or 'per_sensor', got {coarse_dropout_mode!r}")
+        self.coarse_dropout_mode = coarse_dropout_mode
+        self.fine_group_dropout = float(fine_group_dropout)
+        # Which players the last __getitem__ withheld (training dropout only). Read by train.py's
+        # startup check in the main process, before the workers fork; never used for training.
+        self._last_drops = {}
         # §47: no silent 2016-2023 fallback. A caller that forgets `years` used to get a
         # window straddling the OOT cut, which is exactly how a temporal holdout leaks.
         self.years    = list(years) if years else list(TRAIN_YEARS)
@@ -1543,6 +1562,8 @@ class SoilMoistureDataset(Dataset):
     # samples are independent. 1 = the old sequential behaviour. Set after construction.
     io_threads: int = 1
     predict_all_days: bool = False     # §68; class default for objects built via __new__
+    coarse_dropout_mode: str = "all"   # §73; same
+    fine_group_dropout: float = 0.0    # §73; same
 
     def __getitems__(self, indices):
         if self.io_threads <= 1 or len(indices) <= 1:
@@ -1612,7 +1633,23 @@ class SoilMoistureDataset(Dataset):
         s1_pyr, s1_doys, s1_valid, s1_rel_pos, s1_orbit = load_history(
             cache, ("s1_asc", "s1_desc"), year, doy, MAX_S1)
         anchor_l12, anchor_rp, anchor_orbit, anchor_found = select_anchor(cache, year, doy)
-        if self.training and self.coarse_dropout > 0.0 and random.random() < self.coarse_dropout:
+        drops = {}
+        if self.training and self.coarse_dropout > 0.0 and self.coarse_dropout_mode == "per_sensor":
+            # §73: S2 and S1 withheld independently; FRESH zero arrays, never in-place.
+            drops["s2"] = random.random() < self.coarse_dropout
+            drops["s1"] = random.random() < self.coarse_dropout
+            if drops["s2"]:
+                s2_pyr, s2_valid = _zeros_like(s2_pyr), _zeros_like(s2_valid)
+            if drops["s1"]:
+                s1_pyr, s1_valid = _zeros_like(s1_pyr), _zeros_like(s1_valid)
+            if drops["s2"] and drops["s1"]:
+                anchor_l12, anchor_rp, anchor_orbit, anchor_found = _zeros_like(anchor_l12), 0, 0, False
+            elif drops["s2"] or drops["s1"]:
+                # Re-pick from the kept sensor; none in the window = select_anchor's not-found return.
+                kept = ("s1_asc", "s1_desc") if drops["s2"] else ("s2",)
+                anchor_l12, anchor_rp, anchor_orbit, anchor_found = select_anchor(
+                    cache, year, doy, orbits=kept)
+        elif self.training and self.coarse_dropout > 0.0 and random.random() < self.coarse_dropout:
             # FRESH zero arrays, never in-place: these may be views into the shared /dev/shm cache.
             # The anchor content must be zeroed, not only key-padded: a padded query token still
             # carries its own input through the residual into the bottleneck.
@@ -1620,12 +1657,21 @@ class SoilMoistureDataset(Dataset):
             anchor_l12, anchor_rp, anchor_orbit, anchor_found = _zeros_like(anchor_l12), 0, 0, False
             s2_pyr, s2_valid = _zeros_like(s2_pyr), _zeros_like(s2_valid)
             s1_pyr, s1_valid = _zeros_like(s1_pyr), _zeros_like(s1_valid)
+            drops["s2"] = drops["s1"] = True
 
         _static    = self._static_cache[sat_dir]
         soil_patch = _static["soil"]
 
         # ── Fine path: most recent raw imagery on or before day D ─────────
         fine, lulc, _ = build_fine(self._raw.get(sat_dir), cache, year, doy, self._fine_stats)
+        # §73 whole-fine dropout: S2 AND S1 in the fine path together (DEM and LULC stay; they
+        # belong to the static players). Same zeros as model.py's one-of modality dropout.
+        if self.training and self.fine_group_dropout > 0.0:
+            drops["fine"] = random.random() < self.fine_group_dropout
+            if drops["fine"]:
+                fine = fine.clone()
+                fine[FINE_S2] = 0
+                fine[FINE_S1] = 0
 
         # §60 static dropout: FRESH tensors, never in-place on the cached statics.
         dem_pyr, lulc_pyr = _static["dem_pyr"], _static["lulc_pyr"]
@@ -1640,6 +1686,7 @@ class SoilMoistureDataset(Dataset):
                 lulc = torch.full_like(lulc, LULC_PAD)
             if random.random() < self.static_dropout:
                 soil_patch, soil_valid = _zeros_like(soil_patch), False
+        drops.update(dem=not dem_valid, lulc=not lulc_valid, soil=not soil_valid)
 
         # ── Thermal target: the Landsat scene on day D itself, or all-NaN ──
         lst_obs = torch.full((LST_N, LST_N), float("nan"), dtype=torch.float32)
@@ -1678,16 +1725,20 @@ class SoilMoistureDataset(Dataset):
             if self.era5_dropout > 0.0 and random.random() < self.era5_dropout:
                 era5.zero_()
                 era5_doys.zero_()                  # doy 0 = key padding: every row hidden
+                drops["era5"] = True
 
         sif_vals, sif_doys, sif_rel_pos, sif_valid = load_sif_rolling(
             self._sif_cache.get(sat_dir), year, doy)
         if self.training and random.random() < self.sif_twsa_dropout:
             sif_valid[:] = False
+            drops["sif"] = True
 
         twsa_vals, twsa_doys, twsa_rel_pos, twsa_valid = load_twsa_rolling(
             self._twsa_cache.get(sat_dir), year, doy)
         if self.training and random.random() < self.sif_twsa_dropout:
             twsa_valid[:] = False
+            drops["twsa"] = True
+        self._last_drops = drops
 
         # ── ISMN labels — observed values only (qc==0) ───────────────
         # §68 predict_all_days: a station may have no label block and a day no label row

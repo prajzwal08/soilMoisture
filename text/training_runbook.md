@@ -18042,3 +18042,33 @@ Masks applied on GPU after CudaPrefetcher, on cloned tensors.
   (bf16-close); fwd_s x 64 -> SBU estimate before the full run.
 - Sanity: ERA5 large at depth; rank order broadly agrees with §67 / `ablation_summary.csv`.
 - Every job (smoke, full, plots) needs explicit OK. Nothing on the login node.
+
+### 73.6 AMENDED 2026-10-12 (Session 50): SHAP-ready retrain first, K = 9, gate before any SHAP
+Supersedes 73.2-73.4 (post-hoc on §59, K = 6). Reasons: §59 never withheld statics / SIF / TWSA,
+drops the 160 m satellite only as one block, and model.py `_drop_modality` drops fine S2 OR S1,
+never both, so those coalitions are out of distribution in every existing checkpoint (§60 incl.).
+The SHAPformer repo is not a package (notebooks + src/shap.py tied to their forward signature);
+only its subset enumeration + Shapley weights are reused, credited. Their explanations run on the
+test split (a held-out time period = our OOT); ours: OOS first (same 221 stations as §67), OOT second.
+
+Players (K = 9, 512 coalitions, phi per depth), with the training dropout that makes each valid:
+| player | absent = | train p |
+|---|---|---|
+| ERA5 | era5 = 0, era5_doys = 0 | 0.5 (as §59) |
+| S2 160 m | s2 history zeroed, anchor re-picked from S1 | 0.3 independent (`--coarse-dropout-mode per_sensor`) |
+| S1 160 m | s1 history zeroed, anchor re-picked from S2 | 0.3 independent |
+| fine 20 m (S2+S1 merged) | fine[FINE_S2] = fine[FINE_S1] = 0 | 0.1 (`--fine-group-dropout`) + one-of 0.2 kept |
+| DEM / LULC / soil | as §60 (trunk + fine tied) | 0.5 each (`--static-dropout`) |
+| SIF / TWSA | *_valid = False | 0.5 each (`--sif-twsa-dropout`) |
+Fine merged: §67 shows +0.5 / +1.3 / +0.1 % ubRMSE when swapped; it stays in the model for the
+later 20 m maps. Random-shift augmentation (centre-pixel bias, §69.3) DEFERRED to the map work.
+
+Order (user, 2026-10-12): retrain -> standard eval -> compare with baseline_selected_20261005 ->
+user go/no-go -> only then build and run SHAP. Pre-registered pass: SELECT <= 0.0498 at ep10 and no
+split/depth ubRMSE > ~2 % worse. Cost (measured 0.74 ms/sample/forward, 192 SBU/GPU-h): SHAP smoke
+1 station ~40 SBU; full OOS ~7,300 SBU.
+
+Built (branch feat/s73-shapready): dataset.py `select_anchor(orbits=)`, `coarse_dropout_mode`,
+`fine_group_dropout`, `_last_drops`; train.py flags + `[§73 shap-ready check]` (withheld fraction per
+player, violations must be 0); slurm/train_s73{_smoke,}.sh, run nolst_L3_wu200_shapready_20261012.
+Defaults reproduce §59/§64 exactly (no new random draws unless a §73 flag is on).
