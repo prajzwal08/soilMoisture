@@ -9148,3 +9148,5 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   User: players by the §67 ablation -> K = 5 (ERA5, sat160, DEM, LULC, soil); SIF/TWSA/fine fixed context;
     retrain = §64 as built. p rule of thumb (runbook §73.7); natural-absence probe added to train.py startup.
   RESTORE SUBMITTED (user OK): job 27958731, slurm/restore_zarr.sh (staging, rsync merge from /projects).
+  RESTORE 27958731 DONE (1m47s): verify 993/993 PASS, 0 rsync failures.
+  §73.7 natural-absence probe SUBMITTED (user OK "right after restore"): job 27959735, slurm/probe_natural_absence.sh (rome, 5k train samples)
