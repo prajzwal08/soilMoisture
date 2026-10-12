@@ -19,6 +19,8 @@ Usage:
 
 import argparse
 import logging
+import os
+import sys
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -28,8 +30,34 @@ import zarr
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 
-ZARR_ROOT       = Path("/gpfs/scratch1/shared/pkhanal/zarr")
-SAT_ZARR_ROOT   = Path("/gpfs/work3/0/prjs1968/satellite_zarr")
+# §68: ZARR_ROOT / RAW_ZARR_ROOT point this at the Netherlands-grid stores. Unset = unchanged.
+ZARR_ROOT       = Path(os.getenv("ZARR_ROOT", "/gpfs/scratch1/shared/pkhanal/zarr"))
+SAT_ZARR_ROOT   = Path(os.getenv("RAW_ZARR_ROOT", "/gpfs/work3/0/prjs1968/satellite_zarr"))
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
 CATEGORIES      = ("sm_only", "sm_and_flux", "flux_only")
 FILLABLE_THRESH = 0.01   # ≥1% nodata pixels in a 16×16 patch → masked
 TOKEN_SIZE      = 16
@@ -135,7 +163,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true",
                         help="Write masks to token zarr (default: dry-run)")
+    parser.add_argument("--stations", type=str, default=None,
+                        help="§68: comma-separated station dir names (default: every .complete store)")
     args = parser.parse_args()
+
+    _assert_not_training(ZARR_ROOT)
+    wanted = ({s.strip() for s in args.stations.split(",") if s.strip()}
+              if args.stations else None)
 
     jobs: list[tuple] = []
     for cat in CATEGORIES:
@@ -143,6 +177,8 @@ def main():
         if not cat_root.exists():
             continue
         for station_dir in sorted(cat_root.iterdir()):
+            if wanted is not None and station_dir.name not in wanted:
+                continue
             if (station_dir / ".complete").exists():
                 jobs.append((cat, station_dir.name, args.execute))
 

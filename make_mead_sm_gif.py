@@ -120,7 +120,43 @@ def main():
             title.set_text(f"{dd:%Y-%m-%d}" + (f"   [{', '.join(tags)}]" if tags else ""))
             return [im, title]
 
-    out = FIG_DIR / (f"mead_sm_rootzone_Ne1_{y}.gif" if a.rootzone else f"mead_sm_maps_{y}.gif")
+    if a.patchwise:
+        plt.close(fig)
+        z = np.load(PRED / "pw_maps_Ne1_2017-2024.npz")
+        dp = pd.DatetimeIndex(z["dates"].astype("datetime64[D]"))
+        ip = np.where(dp.year == y)[0]
+        assert dp[ip].equals(days), "patchwise and 20 m map dates differ"
+        pw = z["maps"][ip].reshape(len(ip), 14, 14, 3).transpose(0, 3, 1, 2)   # (days, 3, 14, 14)
+        pw = np.concatenate([pw, ((pw * W[:, None, None]).sum(1) / W.sum())[:, None]], 1)
+        fig, ax = plt.subplots(1, 4, figsize=(13, 4.0))
+        ims = []
+        for c, lab in enumerate([f"{d} cm" for d in DEPTHS] + ["root zone 0-100 cm"]):
+            x = ax[c]
+            ims.append(x.imshow(pw[0, c], vmin=VMIN, vmax=VMAX, cmap="YlGnBu", interpolation="nearest"))
+            for st, (pr, pc, _) in pix[TILES["Ne1"]].items():          # 20 m px -> 160 m token coords
+                x.plot(pc / 8 - 0.5, pr / 8 - 0.5, "o" if st.endswith("Ne1") else "^", ms=7,
+                       mfc="white", mec="black", mew=1.0, label=f"{st[-3:]} tower")
+            x.add_patch(plt.Rectangle((5.5, 11.5), 1, 1, fill=False, ec="black", lw=1.5,
+                                      label="south plots (12,6)"))
+            x.set_xticks([])
+            x.set_yticks([])
+            x.text(0.02, 0.98, f"patchwise, {lab}", transform=x.transAxes, va="top",
+                   fontsize="small", bbox=dict(facecolor="white", edgecolor="none", alpha=1.0, pad=1.0))
+        ax[0].legend(loc="upper left", bbox_to_anchor=(0, -0.02), ncol=3, frameon=False)
+        fig.subplots_adjust(left=0.01, right=0.91, top=0.86, bottom=0.10, wspace=0.04)
+        fig.colorbar(ims[0], cax=fig.add_axes([0.925, 0.15, 0.012, 0.66]), label="SM (m$^3$ m$^{-3}$)")
+        title = fig.text(0.46, 0.94, "", ha="center", va="center", fontsize="large", fontweight="bold")
+
+        def frame(t):
+            dd = days[t]
+            for c in range(4):
+                ims[c].set_data(pw[t, c])
+            tags = [s for s in ("S2", "S1") if dd in acq[s]] + (["Ne2 irrigation"] if dd in irr_days else [])
+            title.set_text(f"{dd:%Y-%m-%d}" + (f"   [{', '.join(tags)}]" if tags else ""))
+            return ims + [title]
+
+    out = FIG_DIR / (f"mead_sm_patchwise_Ne1_{y}.gif" if a.patchwise else
+                     f"mead_sm_rootzone_Ne1_{y}.gif" if a.rootzone else f"mead_sm_maps_{y}.gif")
     FuncAnimation(fig, frame, frames=len(days), blit=False).save(
         out, writer=PillowWriter(fps=a.fps), dpi=90)
     print(f"figure: {out}  ({out.stat().st_size / 1e6:.1f} MB, {len(days)} frames at {a.fps} fps)")

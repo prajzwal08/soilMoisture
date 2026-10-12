@@ -49,6 +49,7 @@ Usage
     python download_era5_radiation.py --stations A,B,C    # smoke
     python download_era5_radiation.py                     # full 993
     sbatch jobs/era5_radiation.sh
+    python download_era5_radiation.py --data-root /gpfs/scratch1/shared/pkhanal/nl/era5pix   # §68 pixels
 
 Resume is automatic: a station-year whose `rad_{year}.nc` exists is skipped, and
 writes are tmp->rename so a partial file never satisfies the skip test.  A
@@ -453,12 +454,30 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stations", type=str, default=None,
                     help="comma-separated folder names, for a smoke run")
+    ap.add_argument("--stations-file", type=Path, default=None,
+                    help="file with one folder name per line (alternative to --stations)")
+    ap.add_argument("--data-root", type=Path, default=None,
+                    help="redirect everything to a new root (§68): reads "
+                         "{root}/station_splits.csv, writes {root}/{cat}/{folder}/ERA5Land/"
+                         "rad_*.nc, logs + pinned-pixel json under {root}/logs/. "
+                         "Default: training data/ + csvs/, unchanged.")
     ap.add_argument("--limit", type=int, default=None,
                     help="cap the number of stations processed")
     ap.add_argument("--workers", type=int, default=N_WORKERS,
                     help=f"concurrent GEE calls (default {N_WORKERS}; raised "
                          f"values risk 429)")
     args = ap.parse_args()
+
+    # §68: a new root moves the station CSV, the outputs AND every file this script writes
+    # (the CSV log and the buffer-pixel json default to the repo csvs/, which must not see
+    # NL rows).  Unset -> the module defaults above, unchanged.
+    if args.data_root is not None:
+        global DATA_ROOT, STATION_CSV, LOG_DIR, LOG_FILE, PIXEL_JSON
+        DATA_ROOT   = args.data_root
+        STATION_CSV = DATA_ROOT / "station_splits.csv"
+        LOG_DIR     = DATA_ROOT / "logs"
+        LOG_FILE    = LOG_DIR / "era5_radiation_log.csv"
+        PIXEL_JSON  = LOG_DIR / "era5_buffer_pixels.json"
 
     setup_logging()
     log = logging.getLogger(__name__)
@@ -469,8 +488,12 @@ def main() -> int:
     df = load_stations()
     log.info(f"Stations in {STATION_CSV.name}: {len(df)}")
 
-    if args.stations:
+    wanted = None
+    if args.stations_file:
+        wanted = {l.strip() for l in args.stations_file.read_text().splitlines() if l.strip()}
+    elif args.stations:
         wanted = {s.strip() for s in args.stations.split(",") if s.strip()}
+    if wanted is not None:
         df = df[df["folder"].isin(wanted)]
         missing = wanted - set(df["folder"])
         if missing:

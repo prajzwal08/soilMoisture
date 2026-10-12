@@ -23,6 +23,7 @@ can be loaded in either conda env without missing-module errors.
 
 from __future__ import annotations
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,12 +36,40 @@ import zarr
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 
-ZARR_ROOT     = Path("/gpfs/scratch1/shared/pkhanal/zarr")
-SAT_ZARR_ROOT = Path("/projects/prjs1968/satellite_zarr")
-SCRATCH_ROOT  = Path("/gpfs/scratch1/shared/pkhanal/data")
+# §68: ZARR_ROOT / RAW_ZARR_ROOT / SOIL_DATA_ROOT (per-station ERA5Land/SIF/TWSA/soil nc) /
+# SOIL_STATION_CSV point this at the Netherlands-grid roots. Unset = the training paths, unchanged.
+ZARR_ROOT     = Path(os.getenv("ZARR_ROOT", "/gpfs/scratch1/shared/pkhanal/zarr"))
+SAT_ZARR_ROOT = Path(os.getenv("RAW_ZARR_ROOT", "/projects/prjs1968/satellite_zarr"))
+SCRATCH_ROOT  = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/scratch1/shared/pkhanal/data"))
 DATA_ROOT     = Path("/projects/prjs1968/data")
 LEVEL1_DIR    = Path("/projects/prjs1968/level1_organised")
-SPLITS_CSV    = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
+SPLITS_CSV    = Path(os.getenv("SOIL_STATION_CSV",
+                               "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv"))
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
 
 COMPRESSOR = numcodecs.Blosc(cname="zstd", clevel=3, shuffle=numcodecs.Blosc.SHUFFLE)
 T_TOKENS   = 32
@@ -304,6 +333,35 @@ def _write_sif(root, sif_dir):
     root.array("sif/doys",      doys,      overwrite=True)
 
 
+def _write_twsa(root, twsa_dir):
+    # §68: same arrays as create_token_zarr.write_twsa. cm-fill never wrote TWSA (the Group B/C
+    # stores have none); only called under --with-twsa so the default path is unchanged.
+    ds = _merge_nc(twsa_dir, "twsa")
+    if ds is None: return
+    with ds:
+        lwe   = ds["lwe"].values.astype(np.float32)
+        unc   = (ds["lwe_uncertainty"].values.astype(np.float32)
+                 if "lwe_uncertainty" in ds else np.zeros_like(lwe))
+        times = pd.to_datetime(ds["time"].values)
+    date_ints = np.array([_date_to_int(t) for t in times], dtype=np.int32)
+    doys      = np.array([t.timetuple().tm_yday for t in times], dtype=np.int32)
+    root.array("twsa/lwe",             lwe,       compressor=COMPRESSOR, overwrite=True)
+    root.array("twsa/lwe_uncertainty", unc,       compressor=COMPRESSOR, overwrite=True)
+    root.array("twsa/date_ints",       date_ints, overwrite=True)
+    root.array("twsa/doys",            doys,      overwrite=True)
+
+
+def _missing_drivers(cat, dir_name) -> list[str]:
+    """§68 --require-drivers: the per-station nc that cm-fill reads. Labels are NOT required."""
+    d = SCRATCH_ROOT / cat / dir_name
+    need = {"ERA5Land/meteo_*.nc": d / "ERA5Land", "ERA5Land/rad_*.nc": d / "ERA5Land",
+            "TWSA/twsa_*.nc": d / "TWSA", "SIF/sif_*.nc": d / "SIF"}
+    miss = [k for k, p in need.items() if not (p.exists() and any(p.glob(k.split("/")[1])))]
+    if not (d / "soil" / "soil_patch.tif").exists():
+        miss.append("soil/soil_patch.tif")
+    return miss
+
+
 def _write_labels(root, dir_name, category, start_date, end_date):
     import xarray as xr
     nc = LEVEL1_DIR / category / f"{dir_name}.nc"
@@ -372,7 +430,7 @@ def _write_flux_labels(root, station_dir, category=None, dir_name=None):
     root.array("labels/dates_flux", dates, overwrite=True)
 
 
-def _fill_tabular(token_root, cat, dir_name, start_date, end_date):
+def _fill_tabular(token_root, cat, dir_name, start_date, end_date, with_twsa=False):
     era5_dir  = SCRATCH_ROOT / cat / dir_name / "ERA5Land"
     sif_dir   = SCRATCH_ROOT / cat / dir_name / "SIF"
     soil_path = SCRATCH_ROOT / cat / dir_name / "soil" / "soil_patch.tif"
@@ -381,6 +439,9 @@ def _fill_tabular(token_root, cat, dir_name, start_date, end_date):
         _write_era5(token_root, era5_dir)
     if "sif/values" not in token_root and sif_dir.exists():
         _write_sif(token_root, sif_dir)
+    twsa_dir = SCRATCH_ROOT / cat / dir_name / "TWSA"
+    if with_twsa and "twsa/lwe" not in token_root and twsa_dir.exists():
+        _write_twsa(token_root, twsa_dir)
     if "soil" not in token_root and soil_path.exists():
         with rasterio.open(soil_path) as src:
             patch  = src.read().astype(np.float32)
@@ -430,13 +491,20 @@ def process_terramind(dir_name, cat, encoder, batch_size, device) -> str:
 
 
 def process_cm_fill(dir_name, cat, start_date, end_date,
-                    sensei, batch_size, device) -> str:
+                    sensei, batch_size, device,
+                    with_twsa=False, require_drivers=False) -> str:
     """Phase 2: cloud masks + tabular fill + .complete."""
     sat_path  = SAT_ZARR_ROOT / f"{dir_name}.zarr"
     token_dir = ZARR_ROOT / cat / dir_name
     sentinel  = token_dir / ".complete"
     if not sat_path.exists():
         return f"MISS   {dir_name}"
+    if require_drivers:
+        # §68: _fill_tabular skips absent nc silently and .complete would then freeze a store
+        # with no drivers (cm-fill never revisits a .complete store). Refuse instead.
+        miss = _missing_drivers(cat, dir_name)
+        if miss:
+            return f"NODRV  {dir_name}: {', '.join(miss)}"
     try:
         t0 = time.perf_counter()
         sat_zarr = zarr.open_group(str(sat_path), mode="r")
@@ -446,7 +514,7 @@ def process_cm_fill(dir_name, cat, start_date, end_date,
         n_cm = 0
         if not _has_cm(token_dir):
             n_cm = _run_cloud_masks(sensei, sat_zarr, token_root, batch_size, device)
-        _fill_tabular(token_root, cat, dir_name, start_date, end_date)
+        _fill_tabular(token_root, cat, dir_name, start_date, end_date, with_twsa=with_twsa)
         zarr.consolidate_metadata(store)
         sentinel.touch()
         elapsed = time.perf_counter() - t0
@@ -469,7 +537,17 @@ def main():
     parser.add_argument("--station",    type=str, default=None)
     parser.add_argument("--device",     type=str, default="cuda")
     parser.add_argument("--execute",    action="store_true")
+    parser.add_argument("--stations",   type=str, default=None,
+                        help="§68: comma-separated dir names; like --station, bypasses the "
+                             "Group B/C selection (cm-fill still requires all s2 layers)")
+    parser.add_argument("--with-twsa",  action="store_true",
+                        help="§68: cm-fill also writes twsa/* from {SOIL_DATA_ROOT}/{cat}/{dir}/TWSA")
+    parser.add_argument("--require-drivers", action="store_true",
+                        help="§68: cm-fill refuses (no .complete) a station missing any "
+                             "ERA5Land meteo/rad, TWSA, SIF or soil input")
     args = parser.parse_args()
+
+    _assert_not_training(ZARR_ROOT)
 
     import torch
     df = pd.read_csv(SPLITS_CSV)
@@ -490,6 +568,16 @@ def main():
 
     if args.station:
         df = df[df["dir_name"] == args.station]
+    elif args.stations:
+        wanted = {s.strip() for s in args.stations.split(",") if s.strip()}
+        df = df[df["dir_name"].isin(wanted)]
+        if args.mode == "cm-fill" and len(df):
+            # never stamp .complete on a store whose terramind phase did not finish
+            ok = df.apply(lambda r: _has_all_layers(ZARR_ROOT / r["cat"] / r["dir_name"], "s2"),
+                          axis=1).astype(bool)
+            for r in df[~ok].itertuples(index=False):
+                print(f"  NOTOK  {r.dir_name}: s2 tokens incomplete, cm-fill skipped")
+            df = df[ok]
     else:
         end = args.end if args.end is not None else len(df)
         df  = df.iloc[args.start:end]
@@ -538,6 +626,7 @@ def main():
             result = process_cm_fill(
                 r.dir_name, r.cat, str(r.start_date), str(r.end_date),
                 sensei, args.batch_size, device,
+                with_twsa=args.with_twsa, require_drivers=args.require_drivers,
             )
             print(f"[{i+1:4d}/{len(stations)}] {result}", flush=True)
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -38,9 +39,42 @@ import rasterio
 from tqdm import tqdm
 
 # ── paths ─────────────────────────────────────────────────────────────────────
-SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
-DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
+# §68: SOIL_SCRATCH_DIR (S2 TIFs to delete) / SOIL_DATA_ROOT (CloudMask TIFs) env defaults.
+# Under either, the default manifest moves to {SOIL_DATA_ROOT}/logs so the training manifest
+# text/cloudy_tile_manifest.csv is never overwritten. Unset = unchanged.
+SCRATCH_DIR = Path(os.getenv("SOIL_SCRATCH_DIR", "/gpfs/scratch1/shared/pkhanal/satellite"))
+DATA_DIR    = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data"))
 SPLITS      = ("sm_only", "sm_and_flux", "flux_only")
+DEFAULT_MANIFEST = (DATA_DIR / "logs" / "cloudy_tile_manifest.csv"
+                    if (os.getenv("SOIL_SCRATCH_DIR") or os.getenv("SOIL_DATA_ROOT"))
+                    else Path("text/cloudy_tile_manifest.csv"))
+
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
+
 
 # ── patch validity ────────────────────────────────────────────────────────────
 PATCH_SIZE        = 16
@@ -315,11 +349,16 @@ def main():
     mode.add_argument("--delete",  action="store_true",
                       help="Delete tiles listed in manifest (run after --analyze)")
     parser.add_argument("--manifest", type=Path,
-                        default=Path("text/cloudy_tile_manifest.csv"),
-                        help="Path to rejection manifest CSV")
+                        default=DEFAULT_MANIFEST,
+                        help="Path to rejection manifest CSV (default %(default)s)")
     parser.add_argument("--also-cloudmask", action="store_true",
                         help="(--delete only) also remove CloudMask TIFs from project storage")
     args = parser.parse_args()
+
+    if bool(os.getenv("SOIL_SCRATCH_DIR")) != bool(os.getenv("SOIL_DATA_ROOT")):
+        # §68: one override alone pairs NL masks with training TIF paths (or the reverse)
+        sys.exit("set SOIL_SCRATCH_DIR and SOIL_DATA_ROOT together, or neither (§68.3)")
+    _assert_not_training(args.manifest, DATA_DIR)   # manifest + delete log; --also-cloudmask deletes under DATA_DIR
 
     if args.delete:
         run_delete(args.manifest, args.also_cloudmask)

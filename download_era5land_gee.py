@@ -717,11 +717,17 @@ def main():
 
     # Patch globals so all helpers (_station_dir, LOG_DIR, LOG_FILE) see the new root
     if args.data_root is not None:
-        global DATA_ROOT, LOG_DIR, LOG_FILE
-        DATA_ROOT = args.data_root
-        LOG_DIR   = DATA_ROOT / "logs"
+        global DATA_ROOT, STATION_CSV, LOG_DIR, LOG_FILE, TWSA_LOG_FILE
+        DATA_ROOT     = args.data_root
+        STATION_CSV   = DATA_ROOT / "station_splits.csv"   # was bound at import to the training CSV (§68.3 trap)
+        LOG_DIR       = DATA_ROOT / "logs"
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        LOG_FILE  = LOG_DIR / "era5land_gee_download.log"
+        # The CSV checkpoint logs, same basenames as the defaults. LOG_FILE used to point at the
+        # text log `era5land_gee_download.log` (CSV rows interleaved with log lines, so the
+        # `strategy` column era5_pixel_fanout.py asserts on was unparseable), and TWSA_LOG_FILE
+        # was never moved, so TWSA rows for a new root landed in the training data/logs/.
+        LOG_FILE      = LOG_DIR / "era5land_gee_log.csv"
+        TWSA_LOG_FILE = LOG_DIR / "twsa_gee_log.csv"
 
     setup_logging()
     log = logging.getLogger(__name__)

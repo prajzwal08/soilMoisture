@@ -29,6 +29,8 @@ Usage:
 """
 
 import argparse
+import os
+import sys
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -39,10 +41,40 @@ import xarray as xr
 import zarr
 import numcodecs
 
-DATA_ROOT  = Path("/gpfs/work3/0/prjs1968/data")
-ZARR_ROOT  = Path("/gpfs/scratch1/shared/pkhanal/zarr")   # SSD scratch — matches dataset.py ZARR_ROOT_FAST
+# §68: SOIL_DATA_ROOT / ZARR_ROOT / SOIL_STATION_CSV env overrides; unset = unchanged.
+# NOTE: convert_station opens the store mode="w" (wipes it) and reads per-date .pt token
+# bundles ({data_root}/{cat}/{dir}/S2L2A/*_L12_*.pt). The §68 grid has none (its tokens come
+# from retokenize_satellite_zarr.py), so every NL tile returns MISS here.
+DATA_ROOT  = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data"))
+ZARR_ROOT  = Path(os.getenv("ZARR_ROOT", "/gpfs/scratch1/shared/pkhanal/zarr"))   # SSD scratch — matches dataset.py ZARR_ROOT_FAST
 LEVEL1_DIR = Path("/projects/prjs1968/level1_organised")   # authoritative SM labels
-SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
+SPLITS_CSV = Path(os.getenv("SOIL_STATION_CSV",
+                            "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv"))
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
 
 # NOTE (§43.12): this list stays at 19 ON PURPOSE.  It mirrors the columns that
 # exist in the source `meteo_*.nc`, and this writer produces `era5/values`.  The
@@ -358,6 +390,8 @@ def main():
     parser.add_argument("--data-root", type=Path, default=DATA_ROOT,
                         help="Root of token/feature data (default: %(default)s)")
     args = parser.parse_args()
+
+    _assert_not_training(ZARR_ROOT)
 
     data_root = args.data_root
     station_filter = set(args.stations.split(",")) if args.stations else None

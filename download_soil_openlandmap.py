@@ -287,9 +287,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.data_root is not None:
-        global DATA_ROOT, LOG_DIR
-        DATA_ROOT = args.data_root
-        LOG_DIR   = DATA_ROOT / "logs"
+        global DATA_ROOT, STATION_CSV, LOG_DIR
+        DATA_ROOT   = args.data_root
+        STATION_CSV = DATA_ROOT / "station_splits.csv"   # was bound at import to the training CSV (§68.3 trap)
+        LOG_DIR     = DATA_ROOT / "logs"
         LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     setup_logging()

@@ -76,8 +76,37 @@ _GDAL_ENV = {
 }
 
 # ── constants ─────────────────────────────────────────────────────────────────
-SCRATCH_DIR = Path("/gpfs/scratch1/shared/pkhanal/satellite")
-DATA_DIR    = Path("/gpfs/work3/0/prjs1968/data")
+# §68: SOIL_SCRATCH_DIR (raw TIFs) / SOIL_DATA_ROOT (CloudMask output root) env defaults;
+# --scratch-dir / --data-dir still win. Unset = unchanged.
+SCRATCH_DIR = Path(os.getenv("SOIL_SCRATCH_DIR", "/gpfs/scratch1/shared/pkhanal/satellite"))
+DATA_DIR    = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data"))
+
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
+
 
 # Our S2L2A tiles have 12 bands: B01–B09, B11, B12 (B10 absent in L2A).
 # Indices into SENTINEL2_DESCRIPTORS (0-based) for those 12 bands:
@@ -250,6 +279,7 @@ def main():
                         help="Threads for async tile prefetch (default 3; "
                              "set to cpus-per-task minus 1)")
     args = parser.parse_args()
+    _assert_not_training(args.data_dir)       # CloudMask/ + logs/ are written under it
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info("Device     : %s", device)

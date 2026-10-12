@@ -23,6 +23,7 @@ Usage:  sbatch slurm/prepare_s48_cache.sh [--limit 8] [--force]
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from collections import Counter
@@ -37,8 +38,41 @@ sys.path.insert(0, str(REPO))
 from splits_config import ALL_CATEGORIES, category_of, station_dir_name  # noqa: E402
 from dataset import CACHE_ROOT, ZARR_ROOT, _open_zarr, build_station_cache  # noqa: E402
 
-SPLITS_CSV = REPO / "csvs" / "station_splits.csv"
+# §68: SOIL_STATION_CSV picks the station list; ZARR_ROOT / S48_CACHE_ROOT are read by dataset.py
+# (which refuses ZARR_ROOT without S48_CACHE_ROOT). Under SOIL_STATION_CSV / ZARR_ROOT the index goes beside the
+# cache, never over csvs/s48_cache_index*.csv. Unset = unchanged.
+SPLITS_CSV = Path(os.getenv("SOIL_STATION_CSV", str(REPO / "csvs" / "station_splits.csv")))
 OUT_INDEX  = REPO / "csvs" / "s48_cache_index.csv"
+_NL_ENV    = any(os.getenv(k) for k in ("SOIL_STATION_CSV", "ZARR_ROOT"))
+if _NL_ENV:
+    OUT_INDEX = CACHE_ROOT / "s48_cache_index.csv"
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
+
+_assert_not_training(CACHE_ROOT, OUT_INDEX)
 
 
 def one_station(task: dict) -> dict:
@@ -104,8 +138,11 @@ def main() -> int:
             print(f"  {col:<24s} False at {int((idx[col] == False).sum())} stations")  # noqa: E712
     # A --stations run must not overwrite the all-station index with a subset.
     out = OUT_INDEX if not args.stations else OUT_INDEX.with_name("s48_cache_index.partial.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
     idx.to_csv(out, index=False)
     print(f"wrote {out}")
+    if _NL_ENV and not idx["status"].str.startswith(("OK", "SKIP")).all():
+        return 1    # §68: a failed station stops the afterok chain; training default unchanged
     return 0
 
 

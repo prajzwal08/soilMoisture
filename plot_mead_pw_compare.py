@@ -7,7 +7,7 @@
 #   mead_pw_vs_20m    rows depth, cols Ne1 / Ne2 / south: x = 20 m model, y = patchwise, 1:1 line,
 #                     r and mean (patchwise - 20 m)
 #   mead_models_vs_obs rows depth, cols Ne1 / Ne2: x = observed, y = model, both models,
-#                     RMSE / bias / r each (observed days only; frozen soil, ts <= 0, excluded)
+#                     RMSE / ubRMSE / bias / r each (observed days only; frozen soil, ts <= 0, excluded)
 #
 # Usage:
 #   python plot_mead_pw_compare.py
@@ -83,7 +83,8 @@ def main():
                 x, y = o.align(src[key][dep], join="inner")
                 a.plot(x, y, mk, ms=2, color=col, alpha=0.4, label=lab)
                 e = y - x
-                txt.append(f"{lab}: RMSE {np.sqrt((e ** 2).mean()):.3f}, bias {e.mean():+.3f}, r {x.corr(y):.2f}")
+                txt.append(f"{lab}: RMSE {np.sqrt((e ** 2).mean()):.3f}, ubRMSE {e.std(ddof=0):.3f}, "
+                           f"bias {e.mean():+.3f}, r {x.corr(y):.2f}")
                 print(f"  {key} {dep:>6} {lab:>10}: n {len(x)}  {txt[-1].split(': ')[1]}")
                 lo, hi = min(lo, y.min()), max(hi, y.max())
             a.plot([lo, hi], [lo, hi], "-", color="black", lw=0.7)

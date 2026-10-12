@@ -63,10 +63,37 @@ import xarray as xr
 import zarr
 
 REPO_ROOT   = Path("/gpfs/work3/0/prjs1968/soilMoisture")
-DATA_ROOT   = Path("/gpfs/work3/0/prjs1968/data")
-ZARR_ROOT   = Path("/projects/prjs1968/zarr_tokens")
-STATION_CSV = REPO_ROOT / "csvs" / "station_splits.csv"
+# §68: SOIL_DATA_ROOT (rad_*.nc) / ZARR_ROOT / SOIL_STATION_CSV env overrides; unset = unchanged.
+DATA_ROOT   = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data"))
+ZARR_ROOT_TRAINING = Path("/projects/prjs1968/zarr_tokens")
+ZARR_ROOT   = Path(os.getenv("ZARR_ROOT", str(ZARR_ROOT_TRAINING)))
+STATION_CSV = Path(os.getenv("SOIL_STATION_CSV", str(REPO_ROOT / "csvs" / "station_splits.csv")))
 REPORT_CSV  = REPO_ROOT / "csvs" / "era5_splice_report.csv"
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
 
 # The 19 columns as `create_token_zarr.py:47` wrote them.
 OLD_VARS = [
@@ -219,7 +246,17 @@ def main() -> int:
     ap.add_argument("--max-gap-days", type=int, default=0,
                     help="tolerated days with no radiation (default 0 = refuse any)")
     ap.add_argument("--zarr-root", type=Path, default=ZARR_ROOT)
+    ap.add_argument("--report", type=Path, default=None,
+                    help="report CSV (default csvs/era5_splice_report.csv; when SOIL_STATION_CSV "
+                         "or ZARR_ROOT is set, {zarr_root}/../era5_splice_report_"
+                         "{name}.csv so the training report is never overwritten)")
     args = ap.parse_args()
+
+    nl_env = bool(os.getenv("SOIL_STATION_CSV") or os.getenv("ZARR_ROOT"))
+    report_csv = args.report or (
+        args.zarr_root.parent / f"era5_splice_report_{args.zarr_root.name}.csv"
+        if nl_env else REPORT_CSV)
+    _assert_not_training(args.zarr_root, report_csv)
 
     rows = station_rows()
     if args.stations:
@@ -234,8 +271,8 @@ def main() -> int:
         results = pool.map(process, tasks)
 
     rep = pd.DataFrame(results)
-    REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    rep.to_csv(REPORT_CSV, index=False)
+    report_csv.parent.mkdir(parents=True, exist_ok=True)
+    rep.to_csv(report_csv, index=False)
 
     print("\nstatus counts:")
     for k, v in rep["status"].value_counts().items():
@@ -253,7 +290,7 @@ def main() -> int:
         print(f"\nerrors: {len(bad)}")
         print(bad[["folder", "msg"]].head(10).to_string(index=False))
 
-    print(f"\nreport -> {REPORT_CSV}")
+    print(f"\nreport -> {report_csv}")
     return 0 if len(bad) == 0 else 2
 
 
