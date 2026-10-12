@@ -14,7 +14,8 @@
 #   sbatch slurm/eval_shap.sh verify [RUN]   verify_shap_groups.py: recipes == training dropout,
 #                                            all-on == plain forward, efficiency, phi_sat dummy
 #   sbatch slurm/eval_shap.sh smoke  [RUN]   1 OOS station  -> eval_output/<RUN>_shap_smoke (~5 SBU)
-#   sbatch slurm/eval_shap.sh full   [RUN]   OOS (221), then OOT -> eval_output/<RUN>_shap (~460 SBU OOS)
+#   sbatch slurm/eval_shap.sh full   [RUN]   OOS (221) -> eval_output/<RUN>_shap (~460 SBU, ~3 h)
+#   sbatch slurm/eval_shap.sh oot    [RUN]   OOT, separate job (~156 GB preload) -> same folder
 # RUN defaults to the §64 SHAP-ready retrain. eval_predict.py refuses a checkpoint whose training
 # never withheld a player. Every submit needs the user's OK; full only after the §73 gate (go).
 set -eo pipefail
@@ -37,10 +38,10 @@ case "${MODE}" in
     OUT=eval_output/${RUN}_shap_smoke; rm -rf "${OUT}"
     $RUN_PY eval_predict.py --run-name "${RUN}" --ckpt "${CKPT}" --batch-size 64 --num-workers 8 \
         --splits oos --max-stations 1 --shap --shap-chunk 4 --out-dir "${OUT}" ;;
-  full)
-    OUT=eval_output/${RUN}_shap
+  full|oot)
+    OUT=eval_output/${RUN}_shap; SPL=oos; [[ "${MODE}" == oot ]] && SPL=oot
     $RUN_PY eval_predict.py --run-name "${RUN}" --ckpt "${CKPT}" --batch-size 64 --num-workers 8 \
-        --splits oos oot --shap --shap-chunk 4 --out-dir "${OUT}" ;;
-  *) echo "unknown mode ${MODE} (verify | smoke | full)"; exit 2 ;;
+        --splits ${SPL} --shap --shap-chunk 4 --out-dir "${OUT}" ;;
+  *) echo "unknown mode ${MODE} (verify | smoke | full | oot)"; exit 2 ;;
 esac
 echo "=== done $(date) ==="

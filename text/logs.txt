@@ -9166,3 +9166,7 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     sat absence is NOT clouds: 66/67 absent samples are in 2016 (Jan .095, Feb .043, Mar .022, Apr+ ~0) = the
     record start (no scene yet in the 365-d window). Mid-year q_sat = 0. So phi_sat = 0 test days = early 2016 only.
     Lesson: probe design was slow (full 573-station init ~25 min + serial reads); next time subset stations + workers.
+  §73.8 DECISION (user): satellite p stays 0.3 (rule would give 0.5). Reasons in runbook §73.8:
+    coverage already ample (rarest coalition 1.9% ~ 200k examples over 10 epochs); 0.5 risks the gate on the most
+    important input; 0.3 keeps the retrain ONE change away from §59. Review fixes applied (RNG restore, probe flag,
+    chunk guard, plain-forward check, 30-day window, OOS/OOT split).

@@ -18087,3 +18087,21 @@ Defaults reproduce §59/§64 exactly (no new random draws unless a §73 flag is 
   Decide after q is measured: train.py now prints "[§73 natural absence q]" at startup (200 samples).
 - Smoke 27956836 FAILED in the store pre-flight (not our code): scratch purge, 34/993 stations,
   1,250 META-ONLY arrays + 82 data-loss chunks. restore_zarr.sh job 27958731 (rsync merge, no delete).
+
+### 73.8 2026-10-12: satellite dropout p = 0.3 KEPT (user decision) — the reason
+- Probe 27959735 (5,000 train samples, no dropout): natural whole-group absence q_sat = 0.013, and 66/67
+  of those are early 2016 (record start: no scene yet in the 365-d window). The rule of thumb
+  p = (0.5-q)/(1-q) would give 0.49 -> 0.5.
+- KEPT 0.3 because: (1) validity only needs every coalition seen often enough, not equally often:
+  rarest coalition = 0.5^4 x 0.3 = 1.9 % of samples x ~1.1 M samples/epoch x 10 epochs ~ 200,000
+  examples; (2) the satellite is the most important input (§67 +37 % ubRMSE), so hiding it half the
+  time is the change most likely to fail the gate (§61, which bundled coarse 0.5, was worse, 0.0511);
+  (3) with 0.3 the retrain differs from §59 in ONE thing only (static dropout 0.5), so a score change
+  is attributable. Paper wording: "each group was withheld during training (ERA5 0.5, satellite 0.3,
+  statics 0.5); every coalition appeared in >= 1.9 % of training samples".
+- Switch to 0.5 only if a reviewer asks for uniform coverage or phi for sat-off coalitions looks odd.
+- Code review (2 agents) fixes: startup checks now save/restore the python/numpy/torch RNG (so the
+  checks never change init/seeds vs §59); natural-absence probe behind --absence-probe (default off);
+  eval --shap: first-batch all-on == plain-forward check, --shap-chunk must be 4/8/16/32 (keeps
+  S and S+{sat} in one forward, so the phi_sat dummy is exact), n_*_30d = D-29..D, reshape not view;
+  eval_shap.sh full = OOS only, oot = separate job; verifier checks both directions + early-2016 samples.

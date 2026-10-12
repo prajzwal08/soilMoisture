@@ -167,8 +167,18 @@ def run_split_shap(model, loader, device, chunk: int = 4) -> dict:
                 mu = model(stacked)["sm"][:, :, srow, scol]                     # (len(masks)*B, D)
             ev1.record()
             fwd_events.append((ev0, ev1))
-            f[masks[0]:masks[-1] + 1] = mu.double().view(len(masks), B, -1)
+            f[masks[0]:masks[-1] + 1] = mu.double().reshape(len(masks), B, -1)
         phi = torch.einsum("km,mbd->kbd", W, f)                               # (K, B, D)
+        if i == 0:
+            # Plumbing check (review 2026-10-12): the all-on coalition, computed inside a stacked
+            # forward, must reproduce the plain forward (bf16 noise only; batch composition differs).
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                plain = model(batch)["sm"][:, :, srow, scol].double()
+            d_plain = (f[full] - plain).abs().max().item()
+            print(f"    §73 all-on vs plain forward: max |diff| {d_plain:.2e}", flush=True)
+            if d_plain > 5e-3:
+                raise RuntimeError(f"§73 all-on coalition != plain forward ({d_plain:.2e})")
+        # Efficiency holds algebraically once W is right (~1e-15 in fp64): this checks W, not the model.
         eff = (phi.sum(0) - (f[full] - f[0])).abs().max().item()
         max_eff_err = max(max_eff_err, eff)
         if eff > 1e-5:
@@ -189,7 +199,7 @@ def run_split_shap(model, loader, device, chunk: int = 4) -> dict:
             last = torch.where(v, rp, torch.full_like(rp, -1)).max(1).values
             obs_state[f"days_since_{s}"].append(
                 torch.where(last >= 0, 364 - last, torch.full_like(last, -1)).cpu().numpy())
-            obs_state[f"n_{s}_30d"].append((v & (rp >= 334)).sum(1).cpu().numpy())
+            obs_state[f"n_{s}_30d"].append((v & (rp >= 335)).sum(1).cpu().numpy())   # D-29 .. D
         obs_state["anchor_found"].append(batch["anchor_found"].bool().cpu().numpy())
         obs_state["anchor_age"].append(
             torch.where(batch["anchor_found"].bool(), 364 - batch["anchor_rel_pos"].long(),
@@ -506,6 +516,10 @@ def main():
     if args.shap and (args.pixel_csv or args.predict_all_days
                       or any(a != "none" for a in args.ablate)):
         raise SystemExit("--shap excludes --pixel-csv, --predict-all-days, --ablate")
+    if args.shap and args.shap_chunk not in (4, 8, 16, 32):
+        # S and S+{sat} are masks m and m|2: with a power-of-2 chunk >= 4 they share one forward, so
+        # identical inputs give identical outputs and phi_sat is exactly 0 for an empty window.
+        raise SystemExit("--shap-chunk must be 4, 8, 16 or 32")
     years_override = None
     if args.years:
         if "-" in args.years:

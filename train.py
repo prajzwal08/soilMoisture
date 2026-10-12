@@ -422,6 +422,7 @@ CONFIG = {
     "static_dropout"  : 0.0,    # §60: P(DEM | LULC | soil withheld, each independently, trunk + fine tied) per training sample
     "coarse_dropout_mode": "all",  # §73: "all" = §53 (S2+S1+anchor together) | "per_sensor" (S2, S1 independent, anchor re-picked)
     "fine_group_dropout": 0.0,  # §73: P(fine S2 AND fine S1 zeroed together) per training sample
+    "absence_probe"   : False,  # §73.7: print natural whole-group absence q at startup (200 samples, rank 0)
 
     # Loss
     "loss_fn"   : "huber",
@@ -1787,6 +1788,8 @@ def main():
     parser.add_argument("--fine-group-dropout", type=float, default=None,
                         help="§73: per-sample P of zeroing fine S2 AND fine S1 together in training "
                              "(default 0; the one-of --modality-dropout still applies)")
+    parser.add_argument("--absence-probe", action="store_true",
+                        help="§73.7: print the natural whole-group absence q per player at startup (200 train samples)")
     parser.add_argument("--lambda-frac", type=float, default=None,
                         help="§53: auto lambda targets g_lst = frac x g_sm at the shared map "
                              "(default 0.3)")
@@ -1867,6 +1870,7 @@ def main():
     if args.static_dropout   is not None: CONFIG["static_dropout"]   = args.static_dropout
     if args.coarse_dropout_mode is not None: CONFIG["coarse_dropout_mode"] = args.coarse_dropout_mode
     if args.fine_group_dropout  is not None: CONFIG["fine_group_dropout"]  = args.fine_group_dropout
+    if args.absence_probe: CONFIG["absence_probe"] = True
     if args.lambda_frac      is not None: CONFIG["lambda_frac"]      = args.lambda_frac
     if CONFIG["lst_target"] == "dT_pixel":
         CONFIG["lst_units"] = "K"                # the target is in K; no sigma_ST anywhere
@@ -2047,6 +2051,11 @@ def main():
                 raise RuntimeError(f"§51.1: {_name} dropped stations the split assigns: {_sk}. "
                                    f"Fix the data or demote them in station_splits.csv; do not train around it.")
 
+    # §73 review: the startup checks below load training samples, which draws from the python,
+    # numpy and torch RNGs on rank 0. Save and restore them so the checks never change model
+    # initialisation or loader seeds (runs stay comparable with §59, which had no checks).
+    _rng_state = (random.getstate(), np.random.get_state(), torch.get_rng_state())
+
     # §60 one-off check (rank 0, before the workers fork): drop rates per static group, and the
     # trunk/fine tie — fine DEM zeroed and LULC all-PAD exactly where the trunk group is withheld.
     if is_main and CONFIG.get("static_dropout", 0.0) > 0:
@@ -2093,7 +2102,7 @@ def main():
     # where a player's WHOLE group is already missing in the data, counted only over samples the
     # training dropout left alone. Rule of thumb (runbook §73.7): p = (0.5 - q) / (1 - q),
     # clipped to [0.3, 0.5]. Whole-group absence only; fewer tokens is not absence.
-    if is_main:
+    if is_main and CONFIG.get("absence_probe", False):
         _q_players = ("era5", "sat", "s2", "s1", "fine_s2", "fine_s1", "sif", "twsa")
         _qn, _qabs, _qkept = 200, dict.fromkeys(_q_players, 0), dict.fromkeys(_q_players, 0)
         for _i in random.sample(range(len(train_dataset)), min(_qn, len(train_dataset))):
@@ -2124,6 +2133,8 @@ def main():
         print("  [§73 natural absence q] " + "  ".join(
             f"{g}={_qabs[g] / _qkept[g]:.3f}(n={_qkept[g]})" if _qkept[g] else f"{g}=n/a"
             for g in _q_players) + "  (statics: present by construction)")
+
+    random.setstate(_rng_state[0]); np.random.set_state(_rng_state[1]); torch.set_rng_state(_rng_state[2])
 
     # Freeze all Python objects before DataLoader forks workers.
     # Prevents GC from scanning/dirtying CoW-shared cache pages in worker processes,

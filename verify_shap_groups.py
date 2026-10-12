@@ -39,7 +39,7 @@ FORCE = {"era5": dict(era5_dropout=1.0), "sat": dict(coarse_dropout=1.0),
 
 def build(split, n, **dropout):
     kw = dict(splits_csv=CONFIG["splits_csv"], era5_stats_path=str(ERA5_STATS), years=list(TRAIN_YEARS),
-              category_filter=list(SM_CATEGORIES), split_filter=[split], max_stations=2,
+              category_filter=list(SM_CATEGORIES), split_filter=[split], max_stations=4,
               sif_twsa_dropout=0.0, **dropout)
     ds = SoilMoistureDataset(training=bool(dropout), **kw)
     return ds
@@ -57,7 +57,10 @@ def main():
 
     # 2. recipe vs forced training dropout, matched by sample identity (station, year, doy)
     base = build("oos", args.n)
-    idx = list(range(min(args.n, len(base))))
+    # Early-2016 samples first: the probe found natural satellite absence (empty 365-d window) only
+    # there, so they give the phi_sat dummy test (4.) something to test.
+    early = [i for i, s in enumerate(base.samples) if s["year"] == 2016 and s["doy"] <= 20][:16]
+    idx = early + [i for i in range(len(base)) if i not in set(early)][:max(0, args.n - len(early))]
     ident = lambda s: (s["station_key"], s["year"], s["doy"])
     one = lambda item: {k: (torch.as_tensor(v).unsqueeze(0) if isinstance(v, (np.ndarray, torch.Tensor,
                         bool, int, float, np.generic)) else [v]) for k, v in item.items()}
@@ -78,6 +81,14 @@ def main():
                     g, r = g[17:19], r[17:19]
                 if not torch.equal(g.to(r.dtype), r):
                     bad.append((i, k))
+            # Other direction (review 2026-10-12): every key the forced dropout changed must be one
+            # the recipe owns (ERA5 keys differ anyway: training=True applies the 15 % day mask).
+            allowed = set(sum((KEYS[q] for q in PLAYERS if FORCE[q] == FORCE[player]), ())) | {"era5", "era5_doys"}
+            for k, v in ref.items():
+                if k in allowed or not isinstance(v, (np.ndarray, torch.Tensor)):
+                    continue
+                if not torch.equal(torch.as_tensor(v), torch.as_tensor(base[i][k])):
+                    bad.append((i, f"forced dropout also changed {k}"))
         res = "FAIL " + str(bad[:4]) if bad or n_cmp == 0 else "PASS"
         print(f"2. recipe == forced dropout [{player}] on {n_cmp} samples: {res}")
         ok &= (not bad) and n_cmp > 0
@@ -100,7 +111,7 @@ def main():
             parts = [apply_absent(batch, m) for m in masks]
             st = {k: (torch.cat([q[k] for q in parts], 0) if torch.is_tensor(v) and v.dim() > 0
                       and v.shape[0] == B else v) for k, v in batch.items()}
-            f[c0:c0 + 4] = model(st)["sm"][:, :, sr, sc].double().view(4, B, -1)
+            f[c0:c0 + 4] = model(st)["sm"][:, :, sr, sc].double().reshape(4, B, -1)
     d_full = (f[full] - plain).abs().max().item()
     print(f"3. all-on coalition vs plain forward: max |diff| {d_full:.2e} "
           f"({'PASS' if d_full < 5e-3 else 'FAIL'})  [bf16, different batch composition]")
