@@ -9302,3 +9302,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Optional confirmation test (NOT built): replace each station's S1 by its own long-term mean S1 (keeps identity, removes dynamics).
   User: move to SHAP.
   §73/§74 SHAP on §74 ep9 (best.pt) — USER OK model + verify + smoke: verify 27997985 -> smoke 27997986 (afterok). K=5 (era5, sat, dem, lulc, soil); S1/S2 cannot be split (trained with whole-block sat dropout).
+  SHAP verify 27997985 FAILED (smoke 27997986 auto-cancelled). Only check 2 failed, and only on lst_obs/lst_dT/lst_t2m:
+    these are all-NaN off Landsat overpass days and torch.equal says NaN != NaN -> FALSE FAIL; the model never reads lst_*.
+    Passed: self-test; all-on vs plain forward 8.0e-5 (bf16); efficiency 1.7e-16; phi_sat dummy 2.5e-18.
+    mean |phi| 0-10 cm on the verify batch: era5 .018, sat .101, dem .022, lulc .004, soil .029.
+    Fix: NaN-aware compare in verify_shap_groups.py. Rerun verify+smoke needs user OK.
