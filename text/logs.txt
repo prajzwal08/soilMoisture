@@ -9287,3 +9287,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     shallow water table / wet meadow); the model is too dry at ALL depths there (bias -0.13/-0.20/-0.29) -> site-level miss.
   §74 raincloud rerun SUBMITTED (user OK): 27995453 (review fixes b19c1e2)
   §74 raincloud rerun 27995453 DONE: review fixes visible (NSE box stops at -1, OOS 30-100 median ▼ at floor, ↓n readable; ubRMSE axis to 0.21, ideal line visible).
+  §74 ABLATION 27992275 + plot 27992276 DONE (ep9). d_ubRMSE % cross-station, 0-10/10-30/30-100, §59 | §64 | §74:
+    sat   37/37/38 | 73/77/94 | 59/71/86      S2  5/7/9 | 21/24/35 | 13/20/24     S1 5/8/14 | 12/20/42 | 8/16/36
+    ERA5  30/25/15 | 28/21/13 | 29/20/13      DEM 13/10/18 | 1/2/4 | 3/4/11        LULC 6/7/13 | 0/0/1 | 1/2/5
+    soil  8/18/26 | 0/0/1 | 1/2/7             SIF/TWSA/fine ~0-2 in all three
+    -> equal p=0.3 brought statics PARTLY back (mostly at 30-100: DEM 11%, soil 7%, LULC 5%; all CIs exclude 0,
+       83-95% of stations worse without DEM at 30-100) but still well below §59; sat still ~2x §59.
+       Supports the dropout-p explanation: importance moves with p, roughly monotonically (0 -> 0.3 -> 0.5).
