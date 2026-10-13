@@ -123,9 +123,11 @@ def fig_group(df, ps, col, name, xlabel, out, min_stations=5):
     for d in DEPTHS:
         g = m[m["depth"] == d]
         for grp, h in g.groupby(col):
-            r = dict(depth=d, group=grp, n_stations=h["station_key"].nunique(), n_rows=len(h))
+            # mean |phi| per station first, then over stations: same basis as fig_A
+            st = h.groupby("station_key")[phi_cols()].agg(lambda x: np.abs(x).mean())
+            r = dict(depth=d, group=grp, n_stations=len(st), n_rows=len(h))
             for p in PLAYERS:
-                r[f"mean_abs_{p}"] = np.abs(h[f"phi_{p}"]).mean()
+                r[f"mean_abs_{p}"] = st[f"phi_{p}"].mean()
             rows.append(r)
     t = pd.DataFrame(rows)
     tot = t[[f"mean_abs_{p}" for p in PLAYERS]].sum(1)
@@ -141,7 +143,7 @@ def fig_group(df, ps, col, name, xlabel, out, min_stations=5):
     for ax, d in zip(axes, DEPTHS):
         for k, grp in enumerate(groups):
             r = t[(t.depth == d) & (t.group == grp)]
-            if not len(r):
+            if not len(r) or int(r["n_stations"].iloc[0]) < min_stations:   # per-depth threshold
                 continue
             r = r.iloc[0]; acc = 0.0
             for p in PLAYERS:
