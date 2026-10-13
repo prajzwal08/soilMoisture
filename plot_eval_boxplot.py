@@ -216,7 +216,7 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
 IDEAL  = {"R2_pearson": 1.0, "R": 1.0, "NSE": 1.0, "NSE_anom": 1.0,
           "ubRMSE": 0.0, "RMSE": 0.0, "MAE": 0.0, "bias": 0.0}
 YFLOOR = {"NSE": -1.0, "NSE_anom": -1.0}          # axis floor; values below are counted
-YLIM   = {"R2_pearson": (0.0, 1.0), "R": (-0.2, 1.0),
+YLIM   = {"R2_pearson": (-0.02, 1.0), "R": (-0.2, 1.0),       # -0.02: dots at 0 stay off the axis line
           "NSE": (-1.0, 1.0), "NSE_anom": (-1.0, 1.0)}
 
 
@@ -232,12 +232,12 @@ def fig_raincloud_by_depth(long: pd.DataFrame, metric: str, out_dir: Path, split
 
     if metric in YLIM:
         y0, y1 = YLIM[metric]
-    else:                                           # error metrics: 0 .. 99.5th pct
+    else:                                           # error metrics: just below 0 .. max (no station hidden)
         v_all = long.loc[long["split"].isin(splits) & long["depth"].isin(depths), "value"]
         v_all = v_all.to_numpy(dtype=float)
         v_all = v_all[np.isfinite(v_all)]
-        y0 = min(0.0, float(np.percentile(v_all, 0.5)))
-        y1 = float(np.quantile(v_all, 0.995)) * 1.05
+        y1 = float(v_all.max()) * 1.05
+        y0 = min(-0.02 * y1, float(v_all.min()))   # below 0, so the ideal line at 0 is visible
     pad_lo = 0.06 * (y1 - y0) if floor is not None else 0.0   # room for the ↓n marker
 
     for k, split in enumerate(splits):
@@ -253,9 +253,11 @@ def fig_raincloud_by_depth(long: pd.DataFrame, metric: str, out_dir: Path, split
             shown = v[v >= floor] if floor is not None else v
             n_below = len(v) - len(shown)
 
-            # half violin on the left (density of the stations that are on the axis)
+            # half violin on the left: density of the stations ON the axis, its width scaled by
+            # their share, so a cell with many stations below the floor looks visibly thinner
             if len(shown) >= 3 and np.ptp(shown) > 0:
-                vp = ax.violinplot([shown], positions=[x], widths=width * 0.9,
+                vp = ax.violinplot([shown], positions=[x],
+                                   widths=width * 0.9 * len(shown) / len(v),
                                    showmeans=False, showmedians=False, showextrema=False)
                 for body in vp["bodies"]:
                     verts = body.get_paths()[0].vertices
@@ -274,11 +276,22 @@ def fig_raincloud_by_depth(long: pd.DataFrame, metric: str, out_dir: Path, split
             for patch in bp["boxes"]:
                 patch.set_facecolor("white")
                 patch.set_edgecolor("k")
+            if floor is not None:
+                # stop box and whiskers AT the floor instead of running into the ↓n row
+                for patch in bp["boxes"]:
+                    verts = patch.get_path().vertices
+                    verts[:, 1] = np.maximum(verts[:, 1], floor)
+                for w in bp["whiskers"]:
+                    w.set_ydata(np.maximum(np.asarray(w.get_ydata(), dtype=float), floor))
+                if np.median(v) < floor:                   # median off-axis: mark it at the floor
+                    for m in bp["medians"]:
+                        m.set_visible(False)
+                    ax.plot([x], [floor], marker="v", ms=4, color="k", zorder=5, clip_on=False)
             # dots on the right
             xs = x + width * 0.10 + rng.uniform(0, width * 0.28, len(shown))
             ax.scatter(xs, shown, s=5, alpha=0.5, c=col, edgecolors="none", zorder=3)
-            if n_below:
-                ax.annotate(f"↓{n_below}", xy=(x, y0 - pad_lo * 0.5),
+            if n_below:                                    # in the dot column, clear of the box
+                ax.annotate(f"↓{n_below}", xy=(x + width * 0.24, y0 - pad_lo * 0.5),
                             ha="center", va="center", fontsize=med_fs * 0.85,
                             color="black", annotation_clip=False)
             ax.annotate(f"{np.median(v):.2f}" if metric in YLIM else f"{np.median(v):.3f}",
