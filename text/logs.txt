@@ -9278,3 +9278,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     surface-like swings into a near-flat deep series, PLUS large offsets (bias up to +-0.29). Correction to my earlier
     "offset only" explanation: at these stations the dynamics are wrong too. 2 of the 7 have <150 days at 30-100.
   §74 SUBMITTED (user OK): 27994933 plot_deep_outliers_ts.sh = TS of 8 worst OOS 30-100 NSE_anom stations + raincloud samples (r2, ubRMSE, NSE, NSE_anom).
+  §74 job 27994933 DONE: raincloud samples (r2, ubRMSE, NSE, NSE_anom; OOS/OOT/OOST) in figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper/raincloud_sample/
+    + TS of 8 deep-outlier stations in .../timeseries_deep_outliers/named/oos/. Agent figure review running.
+    Raincloud read: r2 and NSE_anom bunch at 0.5-0.7 at 0-10/10-30 (all splits); 30-100 OOS is the only spread-out cell
+    (r2 median 0.43, NSE_anom 0.18, 24 stations below -1). ubRMSE bunches at 0.04-0.05 everywhere with a high tail.
+    TS read: HolmeLacy 30-100 obs 0.01-0.09 all year at a UK crop site (implausibly dry; 10-30 obs has level steps 2019/2021)
+    -> likely SENSOR problem, model 0.15-0.40 is plausible. BurtsMillerRanch 30-100 obs pinned at ~0.41 all year (saturated,
+    shallow water table / wet meadow); the model is too dry at ALL depths there (bias -0.13/-0.20/-0.29) -> site-level miss.
