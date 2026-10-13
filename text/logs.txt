@@ -9219,3 +9219,15 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     s73_paper_figs 27973957; ablation plot 27973960. Expected done overnight.
   NEXT SESSION: check chain outcome -> gate §64 ep12 (0.0505) vs §59 (0.0488) -> review figures + ablation plot
     -> SHAP (smoke, OOS, OOT), each job needs OK.
+
+2026-10-13 — §73.10 chain outcome (§64 epoch 12, nolst_L3_wu200_sd05_20261012)
+  ALL 6 JOBS COMPLETED: eval_final 27973917 (43m), eval_figures 27973918, eval_allday 27973919, s73_paper_figs 27973957,
+    input_ablation 27973958 (1h28m), plot_ablation 27973960.
+  eval_final "SANITY FAIL" = pred range check in[0,0.6] only (min -0.023, OOT max 0.982); all finite. §59 eval 27621948
+    failed the same check (-0.025..1.017) -> known too-tight range, not a new defect.
+  ubRMSE_stn §59 -> §64 ep12:  val 0.0529/0.0476/0.0470 -> 0.0533/0.0496/0.0498 (worse, esp. deep)
+    OOS 0.0523/0.0483/0.0471 -> 0.0529/0.0488/0.0463 (~tie)   OOT 0.0490/0.0433/0.0437 -> 0.0480/0.0426/0.0433 (better)
+    OOST 0.0535/0.0474/0.0495 -> 0.0523/0.0466/0.0461 (better, 30-100 -0.0034)
+  Ablation (OOS, cross-station, d_ubRMSE 0-10/10-30/30-100): sat +73/+77/+94%, ERA5 +28/+21/+13%, S2 +21/+24/+35%,
+    S1 +12/+20/+42%, DEM +1.2/+1.5/+3.5%, LULC +0.3/+0.4/+0.7%, soil ~0 -> statics now READ (DEM/LULC CIs exclude 0), soil still ignored.
+  NEXT: user gate decision §64 ep12 vs §59 -> review figures -> SHAP (each job needs OK).
