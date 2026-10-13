@@ -9285,3 +9285,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     TS read: HolmeLacy 30-100 obs 0.01-0.09 all year at a UK crop site (implausibly dry; 10-30 obs has level steps 2019/2021)
     -> likely SENSOR problem, model 0.15-0.40 is plausible. BurtsMillerRanch 30-100 obs pinned at ~0.41 all year (saturated,
     shallow water table / wet meadow); the model is too dry at ALL depths there (bias -0.13/-0.20/-0.29) -> site-level miss.
+  §74 raincloud rerun SUBMITTED (user OK): 27995453 (review fixes b19c1e2)
