@@ -9313,3 +9313,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   SHAP FULL OOS SUBMITTED (user OK; OOT later, after seeing OOS): 28004736 -> eval_output/nolst_L3_wu200_sd03_rng2_20261013_shap/
   plot_shap.py built (A-I + K ecosystem / L climate; J impossible for §74), agent-reviewed + fixed; slurm/plot_shap.sh, awaiting SHAP full + user OK.
   plot_shap SUBMITTED (user OK): 28009980 afterok SHAP full 28004736
+  plot_shap 2nd review (K/L + fixes): no crash risk; fixed K/L to station-mean basis and per-depth min-station filter (0b7c36e).
+    (review agent ran a no-op python3 -c 1 on the login node by accident; nothing else.)
+  STATE AT LOGOFF 2026-10-13 ~16:00: SHAP full OOS 28004736 RUNNING (~75 %, ETA ~16:10) -> plot_shap 28009980 (afterok)
+    -> figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper/shap_oos/ (A-I, K ecosystem, L climate; J impossible) + tables.
+  NEXT SESSION: check 28004736 / 28009980 -> show SHAP figures -> user picks figures -> OOT SHAP (needs OK).
+    Open: S1 long-term-mean ablation test (site fingerprint), flag suspect deep sensors (HolmeLacy), raincloud for paper,
+    relabel "S1 160 m (same station, other time)", regenerate §59/§64 ablation plots with S2/S1 columns (optional).
