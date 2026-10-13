@@ -9264,3 +9264,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
   §74 USER CHOSE EPOCH 9 (SELECT 0.0510). SUBMITTED (user OK) on epochs/epoch_009.pt, RUN=nolst_L3_wu200_sd03_rng2_20261013:
     eval_final (val oos oot oost + TxSON) 27992274; input_ablation 27992275 -> ablation horizontal plot 27992276 (afterok).
     Outputs eval_output/nolst_L3_wu200_sd03_rng2_20261013{,_ablation}, figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper/ablation/
+  §74 eval_figures SUBMITTED (user OK): 27993817 (paper style, OUT figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper) -> writes metrics_summary.csv. eval_final 27992274 DONE 32m: preds in [0,0.6] for val/oos/oost (no negatives), OOT -0.020..0.893.
