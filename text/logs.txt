@@ -9247,3 +9247,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     range line each epoch, finite: out_of_range 0.0000% / 0.0001% / 0.0042%, pen 0 / 9e-9 / 7.5e-7; SELECT 0.0426/0.0431 (20 stn);
     no NaN except train_lst=nan (lambda_lst 0, same as §64 smoke); epoch_001-003.pt written.
     Cosmetic: the smoke's trailing grep read its own log (fixed in script). Full run train_s74.sh awaits user OK.
+  §74 FULL SUBMITTED (user OK, smoke passed): 27991473 slurm/train_s74.sh run nolst_L3_wu200_sd03_rng2_20261013 (branch feat/sm-range-penalty 1beded2)
