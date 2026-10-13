@@ -52,7 +52,11 @@ SPLIT_LABELS = {"oos": "OOS (novel stations, 2016-2022)",
 METRIC_LABELS = {"ubRMSE": "per-station ubRMSE (m$^3$/m$^3$)",
                  "RMSE":   "per-station RMSE (m$^3$/m$^3$)",
                  "MAE":    "per-station MAE (m$^3$/m$^3$)",
-                 "bias":   "per-station bias (m$^3$/m$^3$)"}
+                 "bias":   "per-station bias (m$^3$/m$^3$)",
+                 "R2_pearson": "per-station r$^2$",
+                 "R":      "per-station r",
+                 "NSE":    "per-station NSE",
+                 "NSE_anom": "per-station NSE (offset removed)"}
 
 
 def save(fig, out_dir: Path, name: str):
@@ -203,6 +207,115 @@ def fig_box_by_depth(long: pd.DataFrame, metric: str, out_dir: Path,
     save(fig, out_dir, f"box_{metric.lower()}_by_depth")
 
 
+# ── raincloud (§74, 2026-10-13) ─────────────────────────────────────────────────
+# A box hides WHERE the stations sit (bunched near the ideal with a tail, or evenly
+# spread). Raincloud = half-violin (density) left of centre + narrow box + one dot per
+# station right of centre, with a dashed line at the metric's ideal value. Skill scores
+# that run to -inf (NSE) get a fixed axis floor; stations below it are counted ("↓n")
+# at the bottom edge instead of squashing the plot.
+IDEAL  = {"R2_pearson": 1.0, "R": 1.0, "NSE": 1.0, "NSE_anom": 1.0,
+          "ubRMSE": 0.0, "RMSE": 0.0, "MAE": 0.0, "bias": 0.0}
+YFLOOR = {"NSE": -1.0, "NSE_anom": -1.0}          # axis floor; values below are counted
+YLIM   = {"R2_pearson": (0.0, 1.0), "R": (-0.2, 1.0),
+          "NSE": (-1.0, 1.0), "NSE_anom": (-1.0, 1.0)}
+
+
+def fig_raincloud_by_depth(long: pd.DataFrame, metric: str, out_dir: Path, splits: list):
+    splits = [s for s in splits if s in long["split"].unique()]
+    depths = [d for d in SM_DEPTHS if d in long["depth"].unique()]
+    fig, ax = plt.subplots(figsize=(7.2, 3.6), constrained_layout=True)
+    rng   = np.random.default_rng(0)
+    span  = 0.88
+    width = span / max(len(splits), 1)
+    floor = YFLOOR.get(metric)
+    med_fs = max(5.5 * FS * CS, 10.0) if PAPER else 5.5 * FS * CS
+
+    if metric in YLIM:
+        y0, y1 = YLIM[metric]
+    else:                                           # error metrics: 0 .. 99.5th pct
+        v_all = long.loc[long["split"].isin(splits) & long["depth"].isin(depths), "value"]
+        v_all = v_all.to_numpy(dtype=float)
+        v_all = v_all[np.isfinite(v_all)]
+        y0 = min(0.0, float(np.percentile(v_all, 0.5)))
+        y1 = float(np.quantile(v_all, 0.995)) * 1.05
+    pad_lo = 0.06 * (y1 - y0) if floor is not None else 0.0   # room for the ↓n marker
+
+    for k, split in enumerate(splits):
+        offset = (k - (len(splits) - 1) / 2) * width
+        col = SPLIT_COLORS[split]
+        for i, depth in enumerate(depths):
+            v = long[(long["split"] == split) & (long["depth"] == depth)]["value"]
+            v = v.to_numpy(dtype=float)
+            v = v[np.isfinite(v)]
+            if not len(v):
+                continue
+            x = i + offset
+            shown = v[v >= floor] if floor is not None else v
+            n_below = len(v) - len(shown)
+
+            # half violin on the left (density of the stations that are on the axis)
+            if len(shown) >= 3 and np.ptp(shown) > 0:
+                vp = ax.violinplot([shown], positions=[x], widths=width * 0.9,
+                                   showmeans=False, showmedians=False, showextrema=False)
+                for body in vp["bodies"]:
+                    verts = body.get_paths()[0].vertices
+                    verts[:, 0] = np.minimum(verts[:, 0], x)
+                    body.set_facecolor(col)
+                    body.set_edgecolor("k")
+                    body.set_linewidth(0.4)
+                    body.set_alpha(0.45 if not PAPER else 0.6)
+                    body.set_zorder(2)
+            # narrow box at the centre, from ALL stations (quantiles are not clipped)
+            bp = ax.boxplot([v], positions=[x], widths=width * 0.12, showfliers=False,
+                            patch_artist=True, zorder=4,
+                            medianprops=dict(color="k", lw=1.2),
+                            boxprops=dict(lw=0.6), whiskerprops=dict(lw=0.6),
+                            capprops=dict(lw=0))
+            for patch in bp["boxes"]:
+                patch.set_facecolor("white")
+                patch.set_edgecolor("k")
+            # dots on the right
+            xs = x + width * 0.10 + rng.uniform(0, width * 0.28, len(shown))
+            ax.scatter(xs, shown, s=5, alpha=0.5, c=col, edgecolors="none", zorder=3)
+            if n_below:
+                ax.annotate(f"↓{n_below}", xy=(x, y0 - pad_lo * 0.5),
+                            ha="center", va="center", fontsize=med_fs * 0.85,
+                            color="black", annotation_clip=False)
+            ax.annotate(f"{np.median(v):.2f}" if metric in YLIM else f"{np.median(v):.3f}",
+                        xy=(x, 1.0), xycoords=("data", "axes fraction"),
+                        xytext=(0, 3), textcoords="offset points", ha="center",
+                        va="bottom", fontsize=med_fs, color="black",
+                        annotation_clip=False)
+            ax.annotate(f"{len(v)}", xy=(x, 0), xycoords=("data", "axes fraction"),
+                        xytext=(0, -14 * CS), textcoords="offset points", ha="center",
+                        va="top", fontsize=med_fs, color="black", annotation_clip=False)
+
+    for i in range(len(depths) - 1):
+        ax.axvline(i + 0.5, color="grey", lw=0.5, ls=":", zorder=1)
+    ax.axhline(IDEAL.get(metric, 0.0), color="k", lw=0.8, ls="--", zorder=1.5)
+    if floor is not None:
+        ax.axhline(floor, color="grey", lw=0.6, zorder=1.5)
+    ax.set_xticks(range(len(depths)))
+    ax.set_xticklabels([DEPTH_LABELS[d] for d in depths])
+    for tick, d in zip(ax.get_xticklabels(), depths):
+        tick.set_color(DEPTH_COLORS[d])
+    ax.set_xlim(-0.55, len(depths) - 0.45)
+    ax.set_ylim(y0 - pad_lo, y1 + 0.03 * (y1 - y0))
+    ax.set_ylabel(METRIC_LABELS.get(metric, metric))
+    ax.grid(axis="y", lw=0.4, alpha=0.35)
+    ax.set_axisbelow(True)
+    handles = [Patch(fc=SPLIT_COLORS[s], ec="k", lw=0.5, alpha=0.6,
+                     label=SPLIT_LABELS.get(s, s.upper())) for s in splits]
+    leg_fs = 6 * FS
+    pad = (3 + 1.25 * med_fs + 3) / leg_fs
+    ax.legend(handles=handles, fontsize=leg_fs, frameon=False, loc="lower center",
+              bbox_to_anchor=(0.5, 1.0), borderaxespad=pad, ncol=min(len(splits), 3))
+    if not PAPER:
+        ax.set_title(f"Per-station {metric} by depth (density | box | one dot = one station)",
+                     fontsize=9 * FS)
+    save(fig, out_dir, f"raincloud_{metric.lower()}_by_depth")
+
+
 def print_table(long: pd.DataFrame, metric: str, splits: list):
     print(f"\n{metric}: median [IQR] across stations")
     print(f"{'split':6s} {'depth':8s} {'n':>5s} {'median':>8s} {'q1':>8s} "
@@ -225,7 +338,9 @@ def main():
     p.add_argument("--splits",  nargs="+", default=["oos", "oot", "oost"],
                    help="splits to plot, in order (add 'val' for the internal split)")
     p.add_argument("--metric",  default="ubRMSE",
-                   choices=["ubRMSE", "RMSE", "MAE", "bias"])
+                   choices=["ubRMSE", "RMSE", "MAE", "bias", "R2_pearson", "R", "NSE", "NSE_anom"])
+    p.add_argument("--kind", choices=["box", "raincloud"], default="box",
+                   help="raincloud (§74) = half violin + narrow box + station dots, ideal line")
     p.add_argument("--no-points", action="store_true",
                    help="boxes only, no per-station dots")
     p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
@@ -240,10 +355,13 @@ def main():
     print(f"Loaded {len(long)} station-depth cells from "
           f"{long['split'].nunique()} splits")
 
-    fig_box_by_depth(long, args.metric, out_dir, args.splits,
-                     show_points=not args.no_points)
+    if args.kind == "raincloud":
+        fig_raincloud_by_depth(long, args.metric, out_dir, args.splits)
+    else:
+        fig_box_by_depth(long, args.metric, out_dir, args.splits,
+                         show_points=not args.no_points)
     print_table(long, args.metric, args.splits)
-    long.to_csv(out_dir / f"box_{args.metric.lower()}_by_depth.csv", index=False)
+    long.to_csv(out_dir / f"{args.kind}_{args.metric.lower()}_by_depth.csv", index=False)
     print(f"\nFigure + backing data in {out_dir}/")
 
 
