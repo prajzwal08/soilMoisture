@@ -9307,3 +9307,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Passed: self-test; all-on vs plain forward 8.0e-5 (bf16); efficiency 1.7e-16; phi_sat dummy 2.5e-18.
     mean |phi| 0-10 cm on the verify batch: era5 .018, sat .101, dem .022, lulc .004, soil .029.
     Fix: NaN-aware compare in verify_shap_groups.py. Rerun verify+smoke needs user OK.
+  SHAP rerun (user OK): verify 28003716 -> smoke 28003717 (afterok), code ad7709f
