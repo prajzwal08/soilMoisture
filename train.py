@@ -1089,9 +1089,11 @@ class WarmupPlateauLR:
 def sm_range_penalty(pred, lo=0.0, hi=0.9):
     """Linear hinge outside [lo, hi], averaged over EVERY element of the SM map (§74).
 
-    Returns (penalty, n_out, n_all). Linear, not squared, so a -0.02 violation pulls with the
-    same per-pixel force as Huber's linear tail rather than vanishing as 4e-4. Zero (and zero
-    gradient) wherever the map is in range, so it only acts on out-of-range pixels.
+    Returns (penalty, n_out, n_all). Linear, not squared, so a small violation is not squashed
+    to ~4e-4. Zero (and zero gradient) wherever the map is in range. Scale: the total push is
+    ~lambda * f (f = out-of-range fraction of the map) against Huber's mean |r| ~0.04 at the
+    station pixel, so lambda ~2 gives about half Huber's pull at f ~1 %; try 5 only if the
+    logged fraction does not fall.
     """
     if isinstance(pred, dict):
         pred = pred["sm"]
@@ -1226,7 +1228,9 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
 
         # §74 range penalty. Measured every batch (it is cheap) so the out-of-range fraction is
         # logged under lambda=0 too; it only enters the gradient when lambda_range > 0.
-        l_rng, n_out, n_all = sm_range_penalty(out, *sm_range)
+        # Off: no_grad, so the (B,3,112,112) hinge is not kept alive through backward.
+        with torch.set_grad_enabled(lambda_range > 0):
+            l_rng, n_out, n_all = sm_range_penalty(out, *sm_range)
         rng_sum += l_rng.detach()
         rng_out += n_out
         rng_all += n_all
@@ -3044,6 +3048,11 @@ def main():
                 # effective step is grad_clip/||g||, not the lr logged above.
                 for _k, _v in train_stats.items():
                     log_dict[f"opt/{_k}"] = _v
+                # opt/range_* above are raw cross-rank sums; these two are the readable means.
+                log_dict["train/range_frac"] = (train_stats.get("range_out", 0.0)
+                                                / max(train_stats.get("range_all", 0.0), 1.0))
+                log_dict["train/range_pen"]  = (train_stats.get("range_sum", 0.0)
+                                                / max(train_stats.get("range_batches", 0.0), 1.0))
                 log_dict["train/lst_loss"] = _tr_lst
                 log_dict["val/lst_loss"]   = val_diag.get("lst_loss", float("nan"))
                 log_dict["val/lst_cells"]  = val_diag.get("lst_cells", 0.0)
