@@ -9234,3 +9234,10 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     LULC 6-13% -> <1%, soil 8-26% -> ~0) and sat DOUBLED (37% -> 73-94%; S1 deep 14% -> 42%). Static dropout 0.5 (vs sat 0.3)
     moved the site-level information (texture, wetness level) from the static inputs into the satellite history.
   NEXT: user gate decision §64 ep12 vs §59 -> review figures -> SHAP (each job needs OK).
+  §74 SM RANGE PENALTY BUILT (branch feat/sm-range-penalty, 92af70c + review fixes 28d704a), NOT RUN:
+    user chose option 2 (soft boundary penalty). --lambda-range (default 0 = off, pre-§74 runs unchanged),
+    --sm-range-lo 0.0, --sm-range-hi 0.9 (global porosity ceiling; no porosity channel; FI-Sii peat obs ~0.85).
+    Linear hinge, mean over whole (B,3,112,112) SM map; out-of-range fraction printed every epoch + W&B train/range_frac.
+    Agent review: no blocking bug; recommended lambda ~2 (push ~lambda*f vs Huber mean|r| ~0.04). Needs smoke OK.
+  Dropout-p discussion: ablation importance depends on the dropout p (redundant site-level info goes to the
+    less-dropped group). Proposal (not approved): equal p=0.3 sat+static + lambda_range 2, one 10-epoch run.
