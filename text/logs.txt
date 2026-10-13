@@ -9277,3 +9277,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     observed 30-100 SD only 0.005-0.020 (nearly flat) while model ubRMSE is 3.7-5.6x that SD, r 0.12-0.65 -> the model puts
     surface-like swings into a near-flat deep series, PLUS large offsets (bias up to +-0.29). Correction to my earlier
     "offset only" explanation: at these stations the dynamics are wrong too. 2 of the 7 have <150 days at 30-100.
+  §74 SUBMITTED (user OK): 27994933 plot_deep_outliers_ts.sh = TS of 8 worst OOS 30-100 NSE_anom stations + raincloud samples (r2, ubRMSE, NSE, NSE_anom).
