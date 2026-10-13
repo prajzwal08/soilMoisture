@@ -9295,3 +9295,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
        83-95% of stations worse without DEM at 30-100) but still well below §59; sat still ~2x §59.
        Supports the dropout-p explanation: importance moves with p, roughly monotonically (0 -> 0.3 -> 0.5).
   §74 horizontal ablation plot with S2/S1 columns SUBMITTED (user OK): 27997592
+  §74 S1-at-depth interpretation (discussed with user, keep for paper): C-band senses ~1-5 cm, so S1 cannot see 30-100 cm.
+    S1 time-swap at 30-100 = +1.1% (ns) vs cross-station +36% -> S1 acts as a SITE FINGERPRINT (backscatter level/amplitude,
+    roughness, veg structure), not as a sensor of current deep SM. Deep SM is site-controlled (ERA5 importance falls with depth),
+    so a wrong fingerprint hurts deep most; bias change ns -> the error is the seasonal-cycle SHAPE/amplitude.
+    Optional confirmation test (NOT built): replace each station's S1 by its own long-term mean S1 (keeps identity, removes dynamics).
+  User: move to SHAP.
