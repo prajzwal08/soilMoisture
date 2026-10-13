@@ -9248,3 +9248,16 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     no NaN except train_lst=nan (lambda_lst 0, same as §64 smoke); epoch_001-003.pt written.
     Cosmetic: the smoke's trailing grep read its own log (fixed in script). Full run train_s74.sh awaits user OK.
   §74 FULL SUBMITTED (user OK, smoke passed): 27991473 slurm/train_s74.sh run nolst_L3_wu200_sd03_rng2_20261013 (branch feat/sm-range-penalty 1beded2)
+  §74 FULL 27991473 COMPLETED (19m19s), 10 epochs, LR 2e-4 throughout, best SELECT 0.0510 ep9 (§59 0.0488 ep10, §64 0.0505 ep12).
+    ep  SELECT   | ubRMSE 0-10 10-30 30-100 | r0-10 | gap   | out-of-range
+    001 0.063157 | 0.0690 0.0646 0.0660 | 0.568 | 0.96x | 0.0014%
+    002 0.057344 | 0.0637 0.0592 0.0577 | 0.669 | 1.34x | 0.0041%
+    003 0.053918 | 0.0600 0.0546 0.0555 | 0.703 | 1.52x | 0.0055%
+    004 0.053510 | 0.0590 0.0560 0.0536 | 0.719 | 1.86x | 0.0067%
+    005 0.052995 | 0.0578 0.0544 0.0548 | 0.737 | 1.97x | 0.0079%
+    006 0.052167 | 0.0565 0.0544 0.0538 | 0.737 | 2.14x | 0.0075%
+    007 0.052142 | 0.0564 0.0537 0.0538 | 0.742 | 2.27x | 0.0068%
+    008 0.051677 | 0.0565 0.0531 0.0536 | 0.741 | 2.33x | 0.0078%
+    009 0.050992 | 0.0553 0.0522 0.0543 | 0.746 | 2.45x | 0.0080%
+    010 0.051195 | 0.0562 0.0528 0.0527 | 0.748 | 2.60x | 0.0084%
+    Range penalty ~3e-7: out-of-range stays <0.01% of map elements -> lambda 2 is effectively inactive. Epoch: USER to choose.
