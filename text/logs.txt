@@ -9294,3 +9294,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     -> equal p=0.3 brought statics PARTLY back (mostly at 30-100: DEM 11%, soil 7%, LULC 5%; all CIs exclude 0,
        83-95% of stations worse without DEM at 30-100) but still well below §59; sat still ~2x §59.
        Supports the dropout-p explanation: importance moves with p, roughly monotonically (0 -> 0.3 -> 0.5).
+  §74 horizontal ablation plot with S2/S1 columns SUBMITTED (user OK): 27997592
