@@ -27,5 +27,5 @@ bash slurm/train.sh --run-name nolst_L3_wu200_sd03_rng2_smoke_20261013 \
     --static-dropout 0.3 --weight-decay 0.05 \
     --lambda-range 2 --sm-range-lo 0.0 --sm-range-hi 0.9 \
     --max-stations 20 --max-epochs 3 --max-val-batches 50
-echo "=== range lines ==="; grep -E "^ +range " logs/lst_tmean_diff/smoke_nolst_L3_wu200_sd03_rng2_${SLURM_JOB_ID}.out || true
+echo "(range lines: grep \"^ +range \" in this log)"
 echo "=== epoch files ==="; ls -la $CK/nolst_L3_wu200_sd03_rng2_smoke_20261013/epochs/
