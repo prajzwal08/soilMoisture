@@ -9261,3 +9261,6 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     009 0.050992 | 0.0553 0.0522 0.0543 | 0.746 | 2.45x | 0.0080%
     010 0.051195 | 0.0562 0.0528 0.0527 | 0.748 | 2.60x | 0.0084%
     Range penalty ~3e-7: out-of-range stays <0.01% of map elements -> lambda 2 is effectively inactive. Epoch: USER to choose.
+  §74 USER CHOSE EPOCH 9 (SELECT 0.0510). SUBMITTED (user OK) on epochs/epoch_009.pt, RUN=nolst_L3_wu200_sd03_rng2_20261013:
+    eval_final (val oos oot oost + TxSON) 27992274; input_ablation 27992275 -> ablation horizontal plot 27992276 (afterok).
+    Outputs eval_output/nolst_L3_wu200_sd03_rng2_20261013{,_ablation}, figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper/ablation/
