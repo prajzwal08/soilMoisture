@@ -9229,5 +9229,8 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     OOS 0.0523/0.0483/0.0471 -> 0.0529/0.0488/0.0463 (~tie)   OOT 0.0490/0.0433/0.0437 -> 0.0480/0.0426/0.0433 (better)
     OOST 0.0535/0.0474/0.0495 -> 0.0523/0.0466/0.0461 (better, 30-100 -0.0034)
   Ablation (OOS, cross-station, d_ubRMSE 0-10/10-30/30-100): sat +73/+77/+94%, ERA5 +28/+21/+13%, S2 +21/+24/+35%,
-    S1 +12/+20/+42%, DEM +1.2/+1.5/+3.5%, LULC +0.3/+0.4/+0.7%, soil ~0 -> statics now READ (DEM/LULC CIs exclude 0), soil still ignored.
+    S1 +12/+20/+42%, DEM +1/+2/+4%, LULC ~0-1%, soil ~0.
+  CORRECTION (same day): vs §59 ablation (baseline_selected_20261005_ablation) statics COLLAPSED (DEM 13-18% -> 1-4%,
+    LULC 6-13% -> <1%, soil 8-26% -> ~0) and sat DOUBLED (37% -> 73-94%; S1 deep 14% -> 42%). Static dropout 0.5 (vs sat 0.3)
+    moved the site-level information (texture, wetness level) from the static inputs into the satellite history.
   NEXT: user gate decision §64 ep12 vs §59 -> review figures -> SHAP (each job needs OK).
