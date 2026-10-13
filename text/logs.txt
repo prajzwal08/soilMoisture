@@ -9286,3 +9286,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     -> likely SENSOR problem, model 0.15-0.40 is plausible. BurtsMillerRanch 30-100 obs pinned at ~0.41 all year (saturated,
     shallow water table / wet meadow); the model is too dry at ALL depths there (bias -0.13/-0.20/-0.29) -> site-level miss.
   §74 raincloud rerun SUBMITTED (user OK): 27995453 (review fixes b19c1e2)
+  §74 raincloud rerun 27995453 DONE: review fixes visible (NSE box stops at -1, OOS 30-100 median ▼ at floor, ↓n readable; ubRMSE axis to 0.21, ideal line visible).
