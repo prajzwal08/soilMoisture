@@ -9241,3 +9241,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     Agent review: no blocking bug; recommended lambda ~2 (push ~lambda*f vs Huber mean|r| ~0.04). Needs smoke OK.
   Dropout-p discussion: ablation importance depends on the dropout p (redundant site-level info goes to the
     less-dropped group). Proposal (not approved): equal p=0.3 sat+static + lambda_range 2, one 10-epoch run.
+  §74 SMOKE SUBMITTED (user OK): 27990835 slurm/train_s74_smoke.sh (branch feat/sm-range-penalty e1deae6)
