@@ -37,6 +37,16 @@ FORCE = {"era5": dict(era5_dropout=1.0), "sat": dict(coarse_dropout=1.0),
          "soil": dict(static_dropout=1.0)}
 
 
+def _same(a, b):
+    """torch.equal, but NaN == NaN: lst_obs/lst_dT/lst_t2m are all-NaN off Landsat overpass days,
+    and plain torch.equal called identical tensors different (verify 27997985 false FAIL)."""
+    if a.shape != b.shape or a.dtype != b.dtype:
+        return False
+    if a.is_floating_point():
+        return bool(((a == b) | (torch.isnan(a) & torch.isnan(b))).all())
+    return torch.equal(a, b)
+
+
 def build(split, n, **dropout):
     kw = dict(splits_csv=CONFIG["splits_csv"], era5_stats_path=str(ERA5_STATS), years=list(TRAIN_YEARS),
               category_filter=list(SM_CATEGORIES), split_filter=[split], max_stations=4,
@@ -79,7 +89,7 @@ def main():
                 g, r = got[k][0], torch.as_tensor(ref[k])
                 if k == "fine":   # only the DEM channels belong to the dem player; the rest is context
                     g, r = g[17:19], r[17:19]
-                if not torch.equal(g.to(r.dtype), r):
+                if not _same(g.to(r.dtype), r):
                     bad.append((i, k))
             # Other direction (review 2026-10-12): every key the forced dropout changed must be one
             # the recipe owns (ERA5 keys differ anyway: training=True applies the 15 % day mask).
@@ -87,7 +97,7 @@ def main():
             for k, v in ref.items():
                 if k in allowed or not isinstance(v, (np.ndarray, torch.Tensor)):
                     continue
-                if not torch.equal(torch.as_tensor(v), torch.as_tensor(base[i][k])):
+                if not _same(torch.as_tensor(v), torch.as_tensor(base[i][k])):
                     bad.append((i, f"forced dropout also changed {k}"))
         res = "FAIL " + str(bad[:4]) if bad or n_cmp == 0 else "PASS"
         print(f"2. recipe == forced dropout [{player}] on {n_cmp} samples: {res}")
