@@ -9265,3 +9265,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     eval_final (val oos oot oost + TxSON) 27992274; input_ablation 27992275 -> ablation horizontal plot 27992276 (afterok).
     Outputs eval_output/nolst_L3_wu200_sd03_rng2_20261013{,_ablation}, figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper/ablation/
   §74 eval_figures SUBMITTED (user OK): 27993817 (paper style, OUT figures/eval/nolst_L3_wu200_sd03_rng2_20261013_paper) -> writes metrics_summary.csv. eval_final 27992274 DONE 32m: preds in [0,0.6] for val/oos/oost (no negatives), OOT -0.020..0.893.
+  §74 eval_figures 27993817 DONE. ubRMSE_stn (r) 0-10/10-30/30-100, §59 | §64 ep12 | §74 ep9:
+    val  0.0529/0.0476/0.0470 | 0.0533/0.0496/0.0498 | 0.0525/0.0499/0.0514 (r 30-100 .711/.665/.630)
+    OOS  0.0523/0.0483/0.0471 | 0.0529/0.0488/0.0463 | 0.0501/0.0479/0.0472 (r 0-10 .722/.725/.720; 30-100 .634/.633/.598)
+    OOT  0.0490/0.0433/0.0437 | 0.0480/0.0426/0.0433 | 0.0482/0.0438/0.0440
+    OOST 0.0535/0.0474/0.0495 | 0.0523/0.0466/0.0461 | 0.0497/0.0465/0.0471
+    -> §74 best at 0-10 on OOS/OOST; worst r at 30-100 everywhere. Ablation 27992275 still running.
