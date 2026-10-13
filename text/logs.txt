@@ -9271,3 +9271,9 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     OOT  0.0490/0.0433/0.0437 | 0.0480/0.0426/0.0433 | 0.0482/0.0438/0.0440
     OOST 0.0535/0.0474/0.0495 | 0.0523/0.0466/0.0461 | 0.0497/0.0465/0.0471
     -> §74 best at 0-10 on OOS/OOST; worst r at 30-100 everywhere. Ablation 27992275 still running.
+  §74 OOS 30-100 NSE check (per_station_oos.csv, 119 stations): mean NSE -22.7, median -1.46; 90/119 NSE<0.
+    Worst 4 (BurtsMillerRanch -638, HiltsCreek -366, RockwoodGS -359, HolmeLacy -312) = 62% of the NSE sum; drop worst 6 -> mean -6.7.
+    NSE_anom: mean -1.48, median 0.18; drop worst 6 -> mean -0.23. Worst 7 = 6 SNOTEL + COSMOS-UK HolmeLacy, NSE_anom -12..-30:
+    observed 30-100 SD only 0.005-0.020 (nearly flat) while model ubRMSE is 3.7-5.6x that SD, r 0.12-0.65 -> the model puts
+    surface-like swings into a near-flat deep series, PLUS large offsets (bias up to +-0.29). Correction to my earlier
+    "offset only" explanation: at these stations the dynamics are wrong too. 2 of the 7 have <150 days at 30-100.
