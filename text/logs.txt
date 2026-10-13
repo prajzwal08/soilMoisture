@@ -9301,3 +9301,4 @@ SESSION 48 -- 2026-10-06 -- §69 Mead irrigation test (Brocca 2024-style), steps
     so a wrong fingerprint hurts deep most; bias change ns -> the error is the seasonal-cycle SHAPE/amplitude.
     Optional confirmation test (NOT built): replace each station's S1 by its own long-term mean S1 (keeps identity, removes dynamics).
   User: move to SHAP.
+  §73/§74 SHAP on §74 ep9 (best.pt) — USER OK model + verify + smoke: verify 27997985 -> smoke 27997986 (afterok). K=5 (era5, sat, dem, lulc, soil); S1/S2 cannot be split (trained with whole-block sat dropout).
