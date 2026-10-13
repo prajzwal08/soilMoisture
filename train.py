@@ -430,6 +430,15 @@ CONFIG = {
                                 # m3/m3, so 0.05 is ~ one volumetric-percent-times-five —
                                 # the knee sits just above the sensor noise floor
 
+    # Range penalty on the SM map (§74): lambda * mean over the whole (B,3,112,112) map of the
+    # linear hinge relu(lo - sm) + relu(sm - hi). The SM head is linear and the Huber term sees
+    # only the station pixel, so nothing else stops -0.02 at dry sites or >hi anywhere in a map.
+    # 0.0 = off = every run before §74 (bit-identical). hi is a global porosity ceiling, not a
+    # per-pixel one: no porosity channel exists, and peat (ICOS_FI-Sii) observes ~0.85.
+    "lambda_range": 0.0,
+    "sm_range_lo" : 0.0,
+    "sm_range_hi" : 0.9,
+
     "per_depth_loss" : True,    # equal-weight Huber per depth (default since 2026-08-02;
                                 # pooled let the obs-rich 0-10 layer dominate the gradient —
                                 # 30-100 barely moved across epochs 1-2 of baseline_huber_notv)
@@ -1077,6 +1086,20 @@ class WarmupPlateauLR:
         self.sync_base_from_optimizer()
 
 
+def sm_range_penalty(pred, lo=0.0, hi=0.9):
+    """Linear hinge outside [lo, hi], averaged over EVERY element of the SM map (§74).
+
+    Returns (penalty, n_out, n_all). Linear, not squared, so a -0.02 violation pulls with the
+    same per-pixel force as Huber's linear tail rather than vanishing as 4e-4. Zero (and zero
+    gradient) wherever the map is in range, so it only acts on out-of-range pixels.
+    """
+    if isinstance(pred, dict):
+        pred = pred["sm"]
+    p = pred.float()
+    v = F.relu(lo - p) + F.relu(p - hi)
+    return v.mean(), (v > 0).sum().detach(), v.numel()
+
+
 def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      per_depth=False, max_batches=None,
                      debug_nan=False, skip_batches=0, mid_ckpt_every=500,
@@ -1084,7 +1107,8 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
                      global_step=0, warmup=None, is_main=True, log_every=1,
                      ddp_active=False, preempt_check_every=25, use_wandb=False,
                      lam=None, sigma_st=1.0, lst_delta=1.0, lst_level_weight=0.0,
-                     dT_sd=1.0, lvl_delta=1.0, lst_target="pattern"):
+                     dT_sd=1.0, lvl_delta=1.0, lst_target="pattern",
+                     lambda_range=0.0, sm_range=(0.0, 0.9)):
     """Train one epoch.  If skip_batches > 0, fast-forwards past already-done
     batches (data loads but no GPU compute) then resumes training from that
     point.  Calls mid_ckpt_fn(batches_done) every mid_ckpt_every batches so
@@ -1107,6 +1131,9 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
     lst_cells    = torch.zeros((), device=device)
     lvl_sum      = torch.zeros((), device=device)   # Σ (L_level x n), §52
     lvl_n        = torch.zeros((), device=device)
+    rng_sum      = torch.zeros((), device=device)   # Σ per-batch range penalty (§74)
+    rng_out      = torch.zeros((), device=device)   # Σ out-of-range SM map elements
+    rng_all      = torch.zeros((), device=device)   # Σ SM map elements
     # clip_grad_norm_ RETURNS the pre-clip total norm and it was being thrown away. It is
     # the first number you want when a run diverges or flatlines: a norm two orders of
     # magnitude above grad_clip every step means the reported lr is fiction (every update is
@@ -1196,6 +1223,15 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
             # and a parameter with no gradient on one step is a hard error there. Zero weight,
             # so the control's gradient is exactly the SM gradient.
             total = loss + 0.0 * out["lst"].float().sum()
+
+        # §74 range penalty. Measured every batch (it is cheap) so the out-of-range fraction is
+        # logged under lambda=0 too; it only enters the gradient when lambda_range > 0.
+        l_rng, n_out, n_all = sm_range_penalty(out, *sm_range)
+        rng_sum += l_rng.detach()
+        rng_out += n_out
+        rng_all += n_all
+        if lambda_range > 0:
+            total = total + lambda_range * l_rng
 
         # Warmup is applied per OPTIMIZER STEP, immediately before the step, and is
         # driven by the global counter so a requeue resumes mid-ramp instead of
@@ -1311,6 +1347,10 @@ def train_one_epoch(model, loader, optimizer, device, grad_clip,
         "lst_cells"     : lst_cells.item(),
         "lst_level_sum" : lvl_sum.item(),
         "lst_level_n"   : lvl_n.item(),
+        "range_sum"     : rng_sum.item(),          # Σ per-batch penalty; /n_batches = mean
+        "range_out"     : rng_out.item(),
+        "range_all"     : rng_all.item(),
+        "range_batches" : float(n_batches),
     }
     if lam is not None:
         stats["lambda_lst"]       = lam.value
@@ -1818,6 +1858,15 @@ def main():
     parser.add_argument("--huber-delta", type=float, default=None,
                         help="Huber knee in m3/m3 (default 0.05, unchanged) — the point "
                              "where the loss turns linear, i.e. what counts as an outlier")
+    parser.add_argument("--lambda-range", type=float, default=None,
+                        help="§74 weight of the SM range penalty (default 0.0 = off, every "
+                             "earlier run). Linear hinge outside [--sm-range-lo, --sm-range-hi], "
+                             "mean over the whole SM map")
+    parser.add_argument("--sm-range-lo", type=float, default=None,
+                        help="§74 lower SM bound in m3/m3 (default 0.0)")
+    parser.add_argument("--sm-range-hi", type=float, default=None,
+                        help="§74 upper SM bound in m3/m3 (default 0.9, a global porosity "
+                             "ceiling; peat observes ~0.85)")
     parser.add_argument("--log-every", type=int, default=None,
                         help="Batches between per-batch log lines, rank 0 only (default 50)")
     parser.add_argument("--select-metric", choices=["ubrmse", "huber_pooled"], default=None,
@@ -1926,6 +1975,9 @@ def main():
     if args.warmup_steps        is not None: CONFIG["warmup_steps"]        = args.warmup_steps
     if args.save_every_epoch: CONFIG["save_every_epoch"] = True
     if args.huber_delta         is not None: CONFIG["huber_delta"]         = args.huber_delta
+    if args.lambda_range        is not None: CONFIG["lambda_range"]        = args.lambda_range
+    if args.sm_range_lo         is not None: CONFIG["sm_range_lo"]         = args.sm_range_lo
+    if args.sm_range_hi         is not None: CONFIG["sm_range_hi"]         = args.sm_range_hi
     if args.log_every           is not None: CONFIG["log_every"]           = args.log_every
     if args.select_metric       is not None: CONFIG["select_metric"]       = args.select_metric
     if args.no_input_grad_diag:              CONFIG["input_grad_diag"]     = False
@@ -2261,7 +2313,7 @@ def main():
         # log should be readable on its own — otherwise which flags a run actually used
         # can only be recovered by torch.load-ing a 600 MB checkpoint.
         _echo = ["run_name", "fine_skips", "fine_inputs", "skip_zero_init", "modality_dropout", "lambda_lst", "sigma_st",
-                 "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lst_delta",
+                 "per_depth_loss", "lr", "warmup_steps", "huber_delta", "lambda_range", "sm_range_lo", "sm_range_hi", "lst_delta",
                  "lst_target", "era5_dropout", "sif_twsa_dropout", "coarse_dropout", "static_dropout", "coarse_dropout_mode", "fine_group_dropout", "lambda_frac", "lst_level_weight", "lst_units", "dT_mu", "dT_sd", "lst_pat_delta", "lst_lvl_delta", "dT_bias_init",
                  "batch_size", "weight_decay", "drop_path_rate",
                  "n_layers", "early_stop_patience", "lr_patience",
@@ -2597,6 +2649,8 @@ def main():
                     dT_sd          = CONFIG["lst_lvl_scale"],
                     lvl_delta      = CONFIG["lst_lvl_delta"],
                     lst_target     = CONFIG["lst_target"],
+                    lambda_range   = CONFIG["lambda_range"],
+                    sm_range       = (CONFIG["sm_range_lo"], CONFIG["sm_range_hi"]),
                 )
             except _Preempted:
                 # Every rank arrives here on the same batch (the all_reduce(MAX) in
@@ -2708,6 +2762,13 @@ def main():
             dist.all_reduce(_lst_t, op=dist.ReduceOp.SUM)
             (train_stats["lst_sum"], train_stats["lst_cells"],
              train_stats["lst_level_sum"], train_stats["lst_level_n"]) = _lst_t.tolist()
+            _rng_t = torch.tensor([train_stats.get("range_sum", 0.0),
+                                   train_stats.get("range_out", 0.0),
+                                   train_stats.get("range_all", 0.0),
+                                   train_stats.get("range_batches", 0.0)], device=device)
+            dist.all_reduce(_rng_t, op=dist.ReduceOp.SUM)
+            (train_stats["range_sum"], train_stats["range_out"],
+             train_stats["range_all"], train_stats["range_batches"]) = _rng_t.tolist()
             if is_main:
                 train_loss = t_loss.item()
                 train_tv   = t_tv.item()
@@ -2836,6 +2897,11 @@ def main():
                   f"  raw g_sm/g_lst={train_stats.get('lambda_raw_ratio', float('nan')):.4e}"
                   f"  push lst/sm={train_stats.get('lambda_lst', 0.0) / train_stats['lambda_raw_ratio'] if train_stats.get('lambda_raw_ratio', 0.0) and math.isfinite(train_stats['lambda_raw_ratio']) else float('nan'):.2f}"
                   f"   <-- NOT in the selection scalar")
+            _rb = train_stats.get("range_batches", 0.0)
+            print(f"  {'range':>8s}  train_pen={train_stats.get('range_sum', 0.0) / _rb if _rb else float('nan'):.3e}"
+                  f"  out_of_range={train_stats.get('range_out', 0.0) / max(train_stats.get('range_all', 0.0), 1.0):.4%}"
+                  f"  of SM map elements outside [{CONFIG['sm_range_lo']}, {CONFIG['sm_range_hi']}]"
+                  f"  lambda_range={CONFIG['lambda_range']}   <-- NOT in the selection scalar")
             _lp = val_diag.get("lst_pattern")
             if _lp:
                 # Spatial pattern only (both maps centred per scene). skill = 1 - err^2/obs^2:
