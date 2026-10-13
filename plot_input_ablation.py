@@ -41,11 +41,14 @@ PASSES = [
 
 
 # Publication (horizontal) variant: inputs along x, layers along y, ubRMSE + |bias| only.
-# The single-sensor 160 m passes and the 20 m imagery are left out (they stay in the full figure).
+# The 20 m imagery is left out (it stays in the full figure). §74 (user, 2026-10-13): the
+# single-sensor S2 / S1 passes are shown next to "All satellite".
 PASSES_H = [
     ("era5_cross_station",  "ERA5\n(other\nstation)"),
     ("era5_within_station", "ERA5\n(same station,\nother time)"),
     ("sat_cross_station",   "All\nsatellite"),
+    ("s2_cross_station",    "S2\n160 m"),
+    ("s1_cross_station",    "S1\n160 m"),
     ("s1_within_station",   "S1 160 m\n(same station,\nother time)"),
     ("dem_cross_station",   "DEM"),
     ("lulc_cross_station",  "Land\ncover"),
