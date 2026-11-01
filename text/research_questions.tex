@@ -1,0 +1,232 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath}
+\usepackage{mathptmx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\captionsetup{font=small,labelfont=bf}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{0pt}
+\newcommand{\key}[1]{\par\smallskip\fcolorbox{black!40}{black!4}{\parbox{0.96\linewidth}{\textbf{In one sentence:} #1}}\par\smallskip}
+\newcommand{\rqhead}[2]{\subsection*{#1\quad #2}}
+
+\title{\textbf{Research questions from the current analysis}\\[3pt]
+\large Multimodal drivers + TerraMind embeddings for daily soil moisture}
+\author{Prajwal Khanal}
+\date{7 October 2026}
+
+\begin{document}
+\maketitle
+
+\section*{0.\quad Overview}
+
+Eight research questions follow from the results we already have. For each one: the question,
+the evidence in hand, and what is still missing. Section~2 then works through RQ1 in depth,
+using only the results that exist today.
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+Block & RQs & Role in the thesis / paper \\
+\midrule
+Core        & RQ1--RQ3 & Does it work, what does it generalise to, where does it fail \\
+Mechanism   & RQ4--RQ5 & Which inputs matter at which depth; is the fine path real \\
+Negative    & RQ6      & LST as an auxiliary signal --- a clean negative result \\
+Outlook     & RQ7--RQ8 & Management signals (irrigation); transfer to an unseen region \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{1.\quad The eight research questions}
+
+\rqhead{RQ1}{Do frozen geospatial-foundation-model embeddings add skill beyond a multimodal driver baseline?}
+\textit{Does fusing TerraMind tokens (S2, S1, DEM, LULC) with ERA5-Land, SIF, TWSA and soil
+data improve daily soil moisture at 0--10, 10--30 and 30--100\,cm over a drivers-only model?}
+\begin{itemize}
+\item \textbf{Have:} modality-shuffle ablation of the \S59 model on 221 OOS stations (Section~2);
+      TerraMind-value figure.
+\item \textbf{Missing:} a drivers-only model trained to 10 epochs; a raw-imagery control; the
+      within-station S2 shuffle; the UMAP of the embeddings (deferred).
+\end{itemize}
+
+\rqhead{RQ2}{What does the model generalise to --- places or processes?}
+\textit{How does skill degrade from random validation to out-of-time (2023--2025) to out-of-sample
+stations, and does the model memorise site fingerprints instead of learning soil-moisture dynamics?}
+\begin{itemize}
+\item \textbf{Have:} splits \S47 (train 573 / val 89 / OOS 224, OOT 2023--2025). Patchwise
+      \texttt{pw\_stage2a\_L3}: OOT 0.0434 beat val 0.0507 at 0--10\,cm (verdict: memorisation).
+      Step-0 offsets probe: pair sign 0.50 (no-go); site-fingerprint verdict confirmed by rerun 27572594.
+\item \textbf{Missing:} one table with val / OOT / OOS for the selected model, per depth.
+\item Probably the strongest and most honest finding of the thesis.
+\end{itemize}
+
+\rqhead{RQ3}{How does skill vary across the landscape?}
+\textit{How does prediction error vary with land cover, climate/aridity, elevation, terrain and
+soil texture, and with depth?}
+\begin{itemize}
+\item \textbf{Have:} per-station metrics; LULC, elevation band, soil, HAND for every station.
+      HAND is stable under DEM noise, TWI is not (dTWI goes negative under 0.2\,m noise) --- use HAND.
+\item \textbf{Missing:} the join of per-station metrics to the landscape descriptors and the stratified plots.
+      Note the elevation sentinels (18 REMEDHUS = $-99.9$, Baytik = 0.0) must be flagged first.
+\end{itemize}
+
+\rqhead{RQ4}{Which modalities matter, at which depth?}
+\textit{What is the relative contribution of S2, S1, DEM/LULC, ERA5, SIF, TWSA and soil to
+surface versus root-zone soil moisture?}
+\begin{itemize}
+\item \textbf{Have:} the ablation table (Section~2): ERA5 dynamics dominate the surface and fade
+      with depth; soil properties grow with depth (+7.6\,\% $\rightarrow$ +25.7\,\%); TWSA $\approx$ 0;
+      SIF $\approx$ 1.5\,\%. \S58 180-day ERA5 window run.
+\item \textbf{Hypothesis:} optical/SAR drive the surface, TWSA and ERA5 memory drive the deep layer
+      --- the TWSA part is \emph{not} supported so far.
+\end{itemize}
+
+\rqhead{RQ5}{Does the fine-resolution path carry real sub-kilometre information?}
+\textit{Does the predicted spatial pattern reflect within-tile soil-moisture heterogeneity, or does it flatten?}
+\begin{itemize}
+\item \textbf{Have:} \S53 fine ablation --- soil moisture ignores the 20\,m path (LST reads it);
+      fine-path shuffle costs only +0.1 to +1.3\,\% ubRMSE; the \S48 map flattens after epoch 8;
+      TxSON effective-resolution test (\S70); Overijssel grid run (\S68, paused).
+\item A publishable negative result if framed well.
+\end{itemize}
+
+\rqhead{RQ6}{Is land-surface temperature a useful auxiliary signal for soil moisture?}
+\textit{Does adding LST as input or as auxiliary supervision help soil-moisture prediction?}
+\begin{itemize}
+\item \textbf{Have (all negative):} the within-tile Landsat LST pattern is static (+0.967 across
+      months); the pooled correlation is Simpson's paradox (+0.167 pooled, $-$0.077 within station);
+      ECOSTRESS DTR is the daytime pattern ($r=+0.816$), so G0 fails; in training LST hurts SM
+      (best val 0.0537 with LST vs 0.0487 without).
+\item Ready to write as a short paper or section.
+\end{itemize}
+
+\rqhead{RQ7}{Can the model detect management signals?}
+\textit{Can a GFM-based model detect anthropogenic soil-moisture signals such as irrigation that the
+weather drivers do not explain?}
+\begin{itemize}
+\item \textbf{Have:} Mead Ne1/Ne2/Ne3 daily SM (\S69); irrigation shows only in the dry year (2022).
+\item \textbf{Missing:} the irrigation log covers 2014--2021 only; prediction-minus-observation analysis.
+\end{itemize}
+
+\rqhead{RQ8}{Does the representation transfer to an unseen region?}
+\textit{Do predictions hold at full grid scale in a region never seen in training?}
+\begin{itemize}
+\item \textbf{Have:} the Overijssel run (\S68: cloud mask done 688/688; prep, tokenise, predict pending);
+      the 8 TWENTE stations, all OOS (end 2020, so no OOT).
+\end{itemize}
+
+\section*{2.\quad RQ1 in depth: what can we answer \emph{today}?}
+
+\key{With current results we cannot claim that the GFM adds skill, but we can say what the model
+uses it for: a static landscape descriptor that conditions the weather response, not a dynamic
+observation of soil moisture.}
+
+\subsection*{2.1\quad The evidence: the modality-shuffle ablation}
+
+Model: \S59 (3 layers, no LST, warmup 200). Data: OOS split, paired per-station comparison
+(\texttt{eval\_output/baseline\_selected\_20261005\_ablation}). Baseline ubRMSE is 0.0500 / 0.0479 /
+0.0476\,m$^3$m$^{-3}$ and $r$ is 0.766 / 0.761 / 0.702 at 0--10 / 10--30 / 30--100\,cm
+($n$ = 221 / 144 / 119 stations).
+
+\emph{Cross-station} swaps another station's input in (destroys site identity);
+\emph{within-station} shuffles the dates of the same station (keeps identity, destroys timing).
+
+\begin{table}[h]
+\centering\small
+\caption{Change in ubRMSE (\%) when one input is shuffled, with the ablated $r$ in brackets
+and the share of stations made worse. Baseline $r$: 0.766 / 0.761 / 0.702.}
+\begin{tabular}{@{}l rr rr rr@{}}
+\toprule
+ & \multicolumn{2}{c}{0--10 cm} & \multicolumn{2}{c}{10--30 cm} & \multicolumn{2}{c}{30--100 cm} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(l){6-7}
+Shuffled input & $\Delta$ubRMSE ($r$) & worse & $\Delta$ubRMSE ($r$) & worse & $\Delta$ubRMSE ($r$) & worse \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Satellite / GFM tokens}} \\
+All satellite, cross   & +36.8 (0.52) & 97\% & +37.1 (0.52) & 96\% & +38.4 (0.44) & 92\% \\
+S2, cross              & +4.9 (0.74)  & 84\% & +6.8 (0.72)  & 87\% & +8.7 (0.63)  & 85\% \\
+S1, cross              & +4.8 (0.73)  & 82\% & +7.7 (0.70)  & 84\% & +14.4 (0.58) & 86\% \\
+S1, within             & 0.0 (0.75)   & 49\% & +1.0 (0.73)  & 59\% & 0.0 (0.64)   & 49\% \\
+DEM, cross             & +12.6 (0.71) & 90\% & +9.7 (0.68)  & 86\% & +18.4 (0.59) & 96\% \\
+LULC, cross            & +6.1 (0.73)  & 82\% & +6.6 (0.70)  & 82\% & +12.7 (0.62) & 87\% \\
+Fine 20 m path, cross  & +0.5 (0.75)  & 56\% & +1.3 (0.74)  & 65\% & +0.1 (0.68)  & 52\% \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Drivers and tabular}} \\
+ERA5, cross            & +30.3 (0.50) & 95\% & +24.6 (0.54) & 91\% & +15.1 (0.50) & 86\% \\
+ERA5, within           & +39.0 (0.35) & 88\% & +30.4 (0.37) & 81\% & +13.5 (0.34) & 73\% \\
+Soil, cross            & +7.6 (0.72)  & 87\% & +17.6 (0.63) & 92\% & +25.7 (0.55) & 94\% \\
+SIF, cross             & +1.3 (0.75)  & 63\% & +1.6 (0.73)  & 62\% & +1.8 (0.67)  & 71\% \\
+TWSA, cross            & 0.0 (0.77)   & 50\% & 0.0 (0.76)   & 53\% & +0.1 (0.71)  & 58\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{2.2\quad What we can claim now}
+
+\begin{enumerate}
+\item \textbf{The model relies on the GFM tokens as much as on the weather.} Swapping all satellite
+      tokens between stations raises ubRMSE by about 37\,\% at every depth, makes 92--97\,\% of
+      stations worse, and drops $r$ from about 0.77 to about 0.52 --- the same order as shuffling ERA5.
+\item \textbf{The tokens act as a static landscape descriptor, not a dynamic observation.}
+      Shuffling S1 dates \emph{within} a station costs nothing (0 to +1\,\%, about half the stations
+      worse --- i.e.\ noise). The day-to-day signal comes from ERA5: its within-station shuffle is the
+      single largest loss at the surface (+39\,\%) and fades with depth, as physics expects.
+\item \textbf{The tokens shape the response, not just the mean.} ubRMSE removes the bias, so a
+      37\,\% loss means the tokens set the amplitude and shape of each site's response to the weather.
+      Framing: \emph{GFM embeddings condition the weather$\rightarrow$soil-moisture transfer on the landscape.}
+\item \textbf{The depth pattern is inverted relative to a moisture signal.} If the tokens carried
+      SAR/optical moisture information their effect would peak at the surface. Instead S1 reliance grows
+      from +4.8\,\% (0--10\,cm) to +14.4\,\% (30--100\,cm), the same direction as the static soil
+      properties --- again consistent with site description.
+\item \textbf{The satellite modalities are partly redundant.} The individual S2 + S1 + DEM + LULC
+      effects sum to about 28\,\% at 0--10\,cm, less than the 37\,\% for shuffling them together: they encode
+      overlapping site information.
+\item \textbf{The fine 20\,m path and TWSA are unused} ($\le$1.3\,\% and $\approx$0\,\%).
+\end{enumerate}
+
+\subsection*{2.3\quad What we cannot claim yet}
+
+\begin{itemize}
+\item \textbf{Added skill.} A shuffle measures \emph{reliance} of a trained model, not \emph{added value}:
+      a drivers-only model might learn the same site information from soil and coordinates.
+      In the text, write ``reliance'' or ``use'', never ``added value''.
+\item \textbf{GFM versus raw imagery.} Nothing yet separates TerraMind from the pixels it was given.
+\item \textbf{S2 dynamics.} Only the cross-station S2 shuffle exists; the within-station S2 shuffle has not been run.
+\end{itemize}
+
+\subsection*{2.4\quad How to answer RQ1 fully (later)}
+
+All runs at 10 epochs, compared at epoch 10, OOS and OOT splits. Every job needs an explicit OK.
+\begin{enumerate}
+\item \textbf{Within-station S2 and all-satellite shuffle} on the \S59 checkpoint --- eval only, cheap.
+\item \textbf{Run A --- drivers + soil only, no satellite tokens.} The core counterfactual.
+      Needs a new \texttt{--drop-modalities} flag in \texttt{train.py}.
+\item \textbf{Run B --- Run A + static site descriptors} (LULC class, elevation, HAND, soil).
+      Tests whether TerraMind is an expensive station identifier.
+\item \textbf{Optional:} raw S2 bands/indices + S1 VV/VH at the station pixel in place of the tokens
+      (foundation model vs imagery).
+\end{enumerate}
+Metrics per depth: ubRMSE, $r$, and anomaly-$r$ (seasonal climatology removed --- the metric that shows
+dynamics); paired per-station deltas with bootstrap CIs (reuse the ablation-summary machinery);
+stratified by land cover and aridity (feeds RQ3).
+
+\begin{table}[h]
+\centering\small
+\caption{How to read the retrained controls.}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Outcome & Interpretation \\
+\midrule
+Full $>$ B $>$ A, gain in anomaly-$r$ & GFM adds \emph{dynamic} skill \\
+Full $\approx$ B $>$ A               & GFM adds only static site information (what Section~2.2 predicts) \\
+Full $\approx$ A                     & No added skill --- still a publishable answer \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\end{document}

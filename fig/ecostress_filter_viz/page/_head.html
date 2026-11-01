@@ -1,0 +1,335 @@
+<title>ECOSTRESS Filter Descent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  color-scheme: light;
+  --ground:#f4f6f9; --panel:#ffffff; --panel-2:#eaeef5; --line:#d6dde8;
+  --ink:#131820; --ink-2:#4a5468; --ink-3:#7b869b;
+  --day:#d9622b; --night:#2f6fd0; --drop:#8a94a6; --keep:#12876a;
+  --alert:#c0392f; --derived:#5b4bc4;
+  --day-soft:#f7ddd0; --night-soft:#d6e3f7;
+  --shadow:0 1px 2px rgba(19,24,32,.06), 0 8px 24px rgba(19,24,32,.05);
+  --mono:"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --disp:"Archivo", "Helvetica Neue", Arial, sans-serif;
+  --prose:"Newsreader", Georgia, "Times New Roman", serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --ground:#0d1218; --panel:#151c25; --panel-2:#1c2632; --line:#27323f;
+    --ink:#e9eef5; --ink-2:#a4b1c3; --ink-3:#6f7d92;
+    --day:#f07a42; --night:#5a95e8; --drop:#7c8799; --keep:#26a884;
+    --alert:#e35c50; --derived:#8b7ce8;
+    --day-soft:#3a2418; --night-soft:#16273f;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --ground:#0d1218; --panel:#151c25; --panel-2:#1c2632; --line:#27323f;
+  --ink:#e9eef5; --ink-2:#a4b1c3; --ink-3:#6f7d92;
+  --day:#f07a42; --night:#5a95e8; --drop:#7c8799; --keep:#26a884;
+  --alert:#e35c50; --derived:#8b7ce8;
+  --day-soft:#3a2418; --night-soft:#16273f;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--prose); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1240px; margin:0 auto; padding:40px 24px 80px}
+h1,h2,h3,.ui{font-family:var(--disp)}
+h1{font-size:clamp(28px,4vw,44px); line-height:1.08; margin:0 0 12px;
+   font-weight:700; letter-spacing:-.02em; text-wrap:balance}
+h2{font-size:22px; font-weight:600; margin:0 0 6px; letter-spacing:-.01em; text-wrap:balance}
+h3{font-size:14px; font-weight:600; margin:0 0 8px; letter-spacing:.06em;
+   text-transform:uppercase; color:var(--ink-3)}
+p{margin:0 0 14px; max-width:68ch}
+code,.mono{font-family:var(--mono); font-size:.86em}
+a{color:var(--day)}
+.num{font-family:var(--disp); font-variant-numeric:tabular-nums; font-weight:700}
+.eyebrow{font-family:var(--disp); font-size:12px; font-weight:600; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 14px}
+.lede{font-size:19px; line-height:1.55; color:var(--ink-2); max-width:70ch}
+.lede strong{color:var(--ink); font-weight:500}
+
+header{border-bottom:1px solid var(--line); padding-bottom:28px; margin-bottom:32px}
+
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:6px;
+  padding:22px; box-shadow:var(--shadow)}
+section{margin:44px 0 0}
+.sec-head{margin-bottom:18px}
+
+/* ---- station switcher ---- */
+.stations{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px}
+.stn{
+  font-family:var(--disp); font-size:13px; font-weight:600; cursor:pointer;
+  background:var(--panel); color:var(--ink-2); border:1px solid var(--line);
+  border-radius:5px; padding:9px 14px; display:flex; gap:10px; align-items:baseline;
+  transition:border-color .12s, color .12s, background .12s;
+}
+.stn:hover{border-color:var(--ink-3); color:var(--ink)}
+.stn[aria-pressed="true"]{background:var(--ink); color:var(--ground); border-color:var(--ink)}
+.stn .wp{font-variant-numeric:tabular-nums; opacity:.65; font-weight:500}
+.stn:focus-visible{outline:2px solid var(--day); outline-offset:2px}
+
+.meta{font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:10px}
+
+/* ---- the rail ---- */
+.descent{display:grid; grid-template-columns:minmax(300px,360px) 1fr; gap:30px; align-items:start}
+@media (max-width:900px){.descent{grid-template-columns:1fr}}
+.rail{position:sticky; top:16px; display:flex; flex-direction:column; gap:3px}
+@media (max-width:900px){.rail{position:static}}
+.stage{
+  position:relative; text-align:left; width:100%; cursor:pointer;
+  background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--line);
+  border-radius:4px; padding:8px 10px 8px 12px; overflow:hidden;
+  transition:border-color .12s, background .12s;
+}
+.stage:hover{border-color:var(--ink-3)}
+.stage[aria-pressed="true"]{border-color:var(--ink); background:var(--panel-2)}
+.stage:focus-visible{outline:2px solid var(--day); outline-offset:2px}
+.stage .bar{position:absolute; inset:0 auto 0 0; background:var(--night-soft); z-index:0}
+.stage.fork .bar{background:var(--day-soft)}
+.stage .row{position:relative; z-index:1; display:flex; gap:9px; align-items:baseline}
+.stage .n{font-family:var(--mono); font-size:11px; color:var(--ink-3); min-width:16px}
+.stage .nm{font-family:var(--disp); font-size:13px; font-weight:600; flex:1; color:var(--ink)}
+.stage .ct{font-family:var(--disp); font-size:12.5px; font-variant-numeric:tabular-nums;
+  font-weight:700; color:var(--ink)}
+.stage .ct.drop{color:var(--alert)}
+.stage.passive{border-left-style:dashed; opacity:.72}
+.stage.fork{border-left-color:var(--day)}
+.stage.join{border-left-color:var(--keep)}
+.railnote{font-size:12px; color:var(--ink-3); font-family:var(--disp); margin:10px 2px 0;
+  line-height:1.45}
+
+.detail{background:var(--panel-2); border:1px solid var(--line); border-radius:5px;
+  padding:14px; margin-bottom:18px}
+.detail .gate{font-family:var(--mono); font-size:12.5px; color:var(--ink);
+  word-break:break-word; display:block; margin:6px 0}
+.detail .note{font-size:14px; color:var(--ink-2); font-style:italic}
+.detail .loc{font-family:var(--mono); font-size:11px; color:var(--ink-3)}
+
+/* ---- chart ---- */
+.controls{display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+  margin:0 0 12px; font-family:var(--disp); font-size:13px}
+.seg{display:inline-flex; border:1px solid var(--line); border-radius:5px; overflow:hidden}
+.seg button{font-family:var(--disp); font-size:12.5px; font-weight:600; cursor:pointer;
+  background:var(--panel); color:var(--ink-2); border:0; padding:7px 12px;
+  border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--ink); color:var(--ground)}
+.seg button:focus-visible{outline:2px solid var(--day); outline-offset:-2px}
+label.chk{display:inline-flex; gap:6px; align-items:center; color:var(--ink-2); cursor:pointer}
+
+.plotwrap{position:relative; background:var(--panel); border:1px solid var(--line);
+  border-radius:6px; padding:10px}
+canvas{display:block; width:100%; height:440px; touch-action:none}
+.tip{position:absolute; pointer-events:none; opacity:0; transition:opacity .09s;
+  background:var(--ink); color:var(--ground); border-radius:5px; padding:9px 11px;
+  font-family:var(--mono); font-size:11.5px; line-height:1.55; max-width:330px; z-index:9;
+  box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.tip b{font-weight:500; color:var(--ground)}
+.tip .k{opacity:.62}
+.legend{display:flex; flex-wrap:wrap; gap:16px; margin-top:12px;
+  font-family:var(--disp); font-size:12.5px; color:var(--ink-2)}
+.legend i{width:10px; height:10px; border-radius:50%; display:inline-block;
+  margin-right:6px; vertical-align:-1px}
+.legend .hollow{background:transparent; border:1.5px solid var(--ink-3)}
+
+/* ---- funnel numbers ---- */
+.forkgrid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+@media (max-width:620px){.forkgrid{grid-template-columns:1fr}}
+.lane{border:1px solid var(--line); border-radius:5px; padding:14px; background:var(--panel)}
+.lane.day{border-top:3px solid var(--day)}
+.lane.night{border-top:3px solid var(--night)}
+.lane h4{font-family:var(--disp); font-size:12px; letter-spacing:.09em; text-transform:uppercase;
+  margin:0 0 10px; color:var(--ink-3)}
+.step{display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  padding:5px 0; border-bottom:1px dotted var(--line); font-family:var(--disp); font-size:13px}
+.step:last-child{border-bottom:0}
+.step .lbl{color:var(--ink-2)}
+.step .v{font-variant-numeric:tabular-nums; font-weight:700}
+.step .d{color:var(--alert); font-size:11.5px; font-variant-numeric:tabular-nums}
+
+.ordering{display:flex; flex-direction:column; gap:9px; margin-top:6px}
+.ord{display:grid; grid-template-columns:140px 1fr auto; gap:12px; align-items:center;
+  font-family:var(--disp); font-size:13px}
+.ord .lbl{color:var(--ink-2); text-align:right}
+.ord .track{background:var(--panel-2); border-radius:3px; height:22px; position:relative;
+  border:1px solid var(--line)}
+.ord .fill{position:absolute; inset:0 auto 0 0; border-radius:2px 0 0 2px}
+.ord .tag{position:absolute; left:0; top:100%; font-size:11px; color:var(--alert);
+  font-weight:600; white-space:nowrap; margin-top:1px}
+.ord .v{font-variant-numeric:tabular-nums; font-weight:700; min-width:58px; text-align:right}
+.ord.spaced{margin-bottom:12px}
+
+.callout{border-left:3px solid var(--alert); background:var(--panel); padding:14px 16px;
+  border-radius:0 5px 5px 0; margin:18px 0; box-shadow:var(--shadow)}
+.callout.derived{border-left-color:var(--derived)}
+.callout p{margin:0; font-size:15px; color:var(--ink-2)}
+.callout p + p{margin-top:8px}
+.callout strong{color:var(--ink); font-weight:500}
+
+.coin{display:flex; height:30px; border-radius:4px; overflow:hidden; border:1px solid var(--line);
+  margin:10px 0 6px}
+.coin span{display:block}
+.coinkey{display:flex; flex-wrap:wrap; gap:16px; font-family:var(--disp); font-size:12.5px;
+  color:var(--ink-2)}
+
+table{border-collapse:collapse; width:100%; font-family:var(--mono); font-size:12px}
+.tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:5px; background:var(--panel)}
+th,td{text-align:right; padding:7px 10px; border-bottom:1px solid var(--line); white-space:nowrap}
+th{font-family:var(--disp); font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--ink-3); position:sticky; top:0; background:var(--panel)}
+td:first-child,th:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+details{margin-top:14px}
+summary{cursor:pointer; font-family:var(--disp); font-size:13px; font-weight:600;
+  color:var(--ink-2); padding:6px 0}
+summary:focus-visible{outline:2px solid var(--day); outline-offset:2px}
+
+footer{margin-top:56px; padding-top:22px; border-top:1px solid var(--line);
+  font-family:var(--disp); font-size:12.5px; color:var(--ink-3); line-height:1.7}
+
+@media (prefers-reduced-motion:reduce){*{transition:none !important; animation:none !important}}
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">census_ecostress.py &middot; runbook §36.22</p>
+  <h1>Thirteen filters stand between a satellite pass and a usable day/night pair</h1>
+  <p class="lede">The ECOSTRESS census turned <strong>218,385</strong> CMR granule hits into
+  <strong>3,101</strong> quality pairs across 158 stations. This page follows every single
+  overpass at four contrasting stations through each filter, so you can see which one killed it
+  &mdash; and why the largest loss of all is the one the census never writes down.</p>
+</header>
+
+<div class="stations" id="stations" role="group" aria-label="Choose a station"></div>
+<p class="meta" id="stnmeta"></p>
+
+<section>
+  <div class="sec-head">
+    <h2>The descent</h2>
+    <p>Bar width is the share of CMR hits still alive at that stage. Select any stage to read its
+    rule and the constant that sets it &mdash; all parsed live out of the census source, never
+    retyped.</p>
+  </div>
+
+  <div class="descent">
+    <div>
+      <div class="rail" id="rail"></div>
+      <p class="railnote">Dashed = recorded but non&#8209;blocking.
+      Orange = the fork, where day and night separate.
+      Green = the join, where they must meet again.</p>
+    </div>
+
+    <div>
+      <div class="detail" id="detail"></div>
+
+      <h3>Where each lane loses granules</h3>
+      <div class="forkgrid" id="lanes"></div>
+
+      <div class="callout" id="forkcallout">
+        <p><strong>The chain forks at stage 5 and rejoins at stage 12.</strong>
+        <code>pair_station</code> is handed the phase&#8209;filtered set and never reads
+        <code>passed_qc</code> &mdash; <code>quality</code> is attached afterwards, at
+        <code>census_ecostress.py:649</code>, as a label on an already&#8209;formed pair.
+        So the QC&#8209;passed count and the pair count sit on different branches, and
+        subtracting one from the other means nothing.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>Every overpass in the record</h2>
+    <p>One dot per deduplicated overpass. Hover any of them for the granule and its exact
+    measurements. Switch the vertical axis to walk the conversion the census actually performs:
+    UTC off the filename, then true solar time, then solar elevation &mdash; the only quantity
+    <code>census_ecostress.py:241</code> classifies on.</p>
+  </div>
+
+  <div class="controls">
+    <div class="seg" role="group" aria-label="Vertical axis">
+      <button data-y="elev" aria-pressed="true">solar elevation</button>
+      <button data-y="tst" aria-pressed="false">true solar time</button>
+      <button data-y="utc" aria-pressed="false">UTC hour</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="showCross" checked> show crossover</label>
+    <label class="chk"><input type="checkbox" id="showFail" checked> show QC failures</label>
+  </div>
+
+  <div class="plotwrap">
+    <canvas id="plot" role="img" aria-label="Scatter of every ECOSTRESS overpass over time"></canvas>
+    <div class="tip" id="tip"></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--day)"></i>day</span>
+    <span><i style="background:var(--night)"></i>night</span>
+    <span><i style="background:var(--drop)"></i>crossover &mdash; discarded, never read</span>
+    <span><i class="hollow"></i>hollow = failed the clear-fraction floor</span>
+  </div>
+  <p class="meta" id="axisnote"></p>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>Why so few pairs</h2>
+    <p>A pair needs a day pass and a night pass over the same station in one nocturnal period.
+    The ISS overpass local time precesses through all 24 hours in roughly 60 days, so most solar
+    dates catch a station in only one half of that cycle.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Solar dates carrying an in-window overpass</h3>
+    <div class="coin" id="coin"></div>
+    <div class="coinkey" id="coinkey"></div>
+
+    <h3 style="margin-top:26px">What each stage actually costs</h3>
+    <div class="ordering" id="ordering"></div>
+  </div>
+
+  <div class="callout derived" id="derivedcallout"></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>The granules</h2>
+    <p>Every row the census wrote for this station, sortable by column. This is the same data the
+    chart draws.</p>
+  </div>
+  <details>
+    <summary id="tabsum">Show the table</summary>
+    <div class="tablewrap" style="max-height:460px; overflow-y:auto; margin-top:10px">
+      <table id="tab"><thead><tr>
+        <th data-k="utc">UTC</th><th data-k="local_h">local</th>
+        <th data-k="tst">TST</th><th data-k="solar_elev">elev</th>
+        <th data-k="phase">phase</th><th data-k="clear_frac">clear</th>
+        <th data-k="frac_cloud">cloud</th><th data-k="passed_qc">passed</th>
+        <th data-k="granule_ur">granule</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </details>
+</section>
+
+<footer>
+  Built from <span class="mono">csvs/ecostress_census_{granules,pairs,log}.csv</span> &mdash;
+  the merged output of array job 26742514, 164 of 918 stations attempted.
+  Every funnel on this page is reconciled against the census&rsquo;s own log row before it is drawn.
+  Constants are AST&#8209;parsed from <span class="mono">census_ecostress.py</span>.
+  Figures and vector PDFs: <span class="mono">fig/ecostress_filter_viz/</span>.
+</footer>
+
+</div>
+
+<script>
+const DATA =

@@ -41,7 +41,7 @@ EXPECTED = {
     "anchor_rel_pos" : (),
     "anchor_orbit"   : (),
     "soil_patch"    : (21, 74, 74),
-    "era5"          : (365, 19),
+    "era5"          : (365, 18),
     "era5_doys"     : (365,),
     "sif"           : (MAX_SIF,  1),
     "sif_doys"      : (MAX_SIF,),

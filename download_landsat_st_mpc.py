@@ -58,7 +58,9 @@ READOUTS   = REPO / "csvs" / "txson_readouts.csv"
 LOG_FILE   = REPO / "csvs" / "landsat_st_download_log.csv"
 LOG_DIR    = REPO / "logs"
 
-OUT_ROOT   = Path("/gpfs/scratch1/shared/pkhanal/lst/landsat_st/txson")
+OUT_ROOT   = Path("/gpfs/work3/0/prjs1968/data/landsat_st")
+CLUSTERS   = REPO / "csvs" / "gra_thermal_clusters.csv"
+MEMBERS    = REPO / "csvs" / "gra_thermal_members.csv"
 
 MPC_URL    = "https://planetarycomputer.microsoft.com/api/stac/v1"
 COLLECTION = "landsat-c2-l2"
@@ -75,7 +77,7 @@ QA_SCALE            = 0.01
 QA_FILL             = -9999
 
 GLOBAL_START = "2016-01-01"
-GLOBAL_END   = "2022-11-07"
+GLOBAL_END   = "2025-12-31"
 MAX_CLOUD    = 80            # scene-level; deliberately loose (see §29.5 tier 1)
 PLATFORMS    = ("landsat-8", "landsat-9")
 TIER         = "T1"
@@ -146,6 +148,77 @@ def tile_grid(tile: str, readouts: Path = READOUTS) -> dict:
         "res_m": LS_RES_M,
         "grid_offset": LS_GRID_OFFSET,
         "tile": tile,
+    }
+
+
+def cluster_grid(cluster_id: str,
+                 clusters: Path = CLUSTERS,
+                 members: Path = MEMBERS) -> dict:
+    """The representative station's 2.24 km window, snapped onto the Landsat 30 m grid.
+
+    Same construction as tile_grid -- the centre station sits at pixel (112,112) of a
+    224 px @ 10 m station-centred grid -- but the geometry comes from the cluster table
+    rather than csvs/txson_readouts.csv, so it works outside TxSON.
+
+    `tile` is set to the cluster id, which makes the output subdirectory and the
+    checkpoint's `extent` key per-cluster with no other change.
+    """
+    from pyproj import Transformer
+
+    M = pd.read_csv(members)
+    sub = M[(M.cluster_id == cluster_id) & (M.is_rep == 1)]
+    if sub.empty:
+        raise SystemExit(f"no representative row for cluster {cluster_id!r} in {members}")
+    row = sub.iloc[0]
+    epsg = int(row.epsg)
+    fwd = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+    cx, cy = fwd.transform(float(row.longitude), float(row.latitude))
+    half = TILE_PX * TILE_RES_M / 2
+    west, south = snap(cx - half), snap(cy - half)
+    east, north = snap(cx + half, up=True), snap(cy + half, up=True)
+    return {
+        "epsg": epsg,
+        "bounds": (west, south, east, north),
+        "nx": int(round((east - west) / LS_RES_M)),
+        "ny": int(round((north - south) / LS_RES_M)),
+        "res_m": LS_RES_M,
+        "grid_offset": LS_GRID_OFFSET,
+        "tile": cluster_id,
+    }
+
+
+def station_grid(station_id: str, splits: Path = REPO / "csvs" / "station_splits.csv") -> dict:
+    """The 2.24 km window of ONE station, snapped onto the Landsat 30 m grid.
+
+    Same construction as tile_grid/cluster_grid.  Used to pull ST for every station in
+    the archive as a second training target, not just the colocated clusters.
+
+    pandas, never awk: 6 AmeriFlux rows carry quoted commas in station_name.
+    """
+    from pyproj import Transformer
+
+    df = pd.read_csv(splits)
+    sub = df[df.station_id == station_id]
+    if sub.empty:
+        raise SystemExit(f"station {station_id!r} not in {splits}")
+    row = sub.iloc[0]
+    lat, lon = float(row.latitude), float(row.longitude)
+    # UTM zone from the station's own longitude, matching download_s2_mpc.py's grid
+    zone = int((lon + 180) // 6) + 1
+    epsg = (32600 if lat >= 0 else 32700) + zone
+    fwd = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+    cx, cy = fwd.transform(lon, lat)
+    half = TILE_PX * TILE_RES_M / 2
+    west, south = snap(cx - half), snap(cy - half)
+    east, north = snap(cx + half, up=True), snap(cy + half, up=True)
+    return {
+        "epsg": epsg,
+        "bounds": (west, south, east, north),
+        "nx": int(round((east - west) / LS_RES_M)),
+        "ny": int(round((north - south) / LS_RES_M)),
+        "res_m": LS_RES_M,
+        "grid_offset": LS_GRID_OFFSET,
+        "tile": station_id,
     }
 
 
@@ -374,8 +447,13 @@ def download_scene(item, grid: dict, out_dir: Path, overwrite: bool = False) -> 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--extent", choices=["tile", "aoi"], default="aoi",
-                    help="tile = one 2.24 km window (fast); aoi = whole TxSON domain")
+    ap.add_argument("--extent", choices=["tile", "aoi", "cluster", "station"], default="aoi",
+                    help="tile = one 2.24 km window (fast); aoi = whole TxSON domain; "
+                         "cluster = the 2.24 km window of a gra_thermal cluster's rep")
+    ap.add_argument("--cluster", default="",
+                    help="cluster_id from csvs/gra_thermal_clusters.csv, with --extent cluster")
+    ap.add_argument("--station", default="",
+                    help="station_id from csvs/station_splits.csv, with --extent station")
     ap.add_argument("--tile", default="ISMN_TxSON_CR200-18")
     ap.add_argument("--start", default=GLOBAL_START)
     ap.add_argument("--end", default=GLOBAL_END)
@@ -395,8 +473,20 @@ def main():
     if args.smoke:
         args.extent, args.limit = "tile", 1
 
-    grid = tile_grid(args.tile) if args.extent == "tile" else aoi_grid()
-    sub  = args.tile if args.extent == "tile" else "aoi"
+    if args.extent == "station":
+        if not args.station:
+            raise SystemExit("--extent station requires --station <station_id>")
+        grid = station_grid(args.station)
+        sub = args.station
+    elif args.extent == "cluster":
+        if not args.cluster:
+            raise SystemExit("--extent cluster requires --cluster <cluster_id>")
+        grid = cluster_grid(args.cluster)
+        sub = args.cluster
+    elif args.extent == "tile":
+        grid, sub = tile_grid(args.tile), args.tile
+    else:
+        grid, sub = aoi_grid(), "aoi"
     out_dir = args.out_root / sub
     bbox = bbox_wgs84(grid)
 

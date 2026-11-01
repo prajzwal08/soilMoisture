@@ -1,0 +1,432 @@
+<title>S1 Decoder Aux</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  color-scheme: light;
+  --ground:#f4f6f9; --panel:#ffffff; --panel-2:#eaeef5; --line:#d6dde8;
+  --ink:#131820; --ink-2:#4a5468; --ink-3:#7b869b;
+  --s1:#d9622b; --thermal:#2f6fd0; --keep:#12876a; --alert:#c0392f; --derived:#5b4bc4;
+  --void:#f0d9cf;
+  --shadow:0 1px 2px rgba(19,24,32,.06), 0 8px 24px rgba(19,24,32,.05);
+  --mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
+  --disp:"Archivo", "Helvetica Neue", Arial, sans-serif;
+  --prose:"Newsreader", Georgia, serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --ground:#0d1218; --panel:#151c25; --panel-2:#1c2632; --line:#27323f;
+    --ink:#e9eef5; --ink-2:#a4b1c3; --ink-3:#6f7d92;
+    --s1:#f07a42; --thermal:#5a95e8; --keep:#26a884; --alert:#e35c50; --derived:#8b7ce8;
+    --void:#3a2418;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --ground:#0d1218; --panel:#151c25; --panel-2:#1c2632; --line:#27323f;
+  --ink:#e9eef5; --ink-2:#a4b1c3; --ink-3:#6f7d92;
+  --s1:#f07a42; --thermal:#5a95e8; --keep:#26a884; --alert:#e35c50; --derived:#8b7ce8;
+  --void:#3a2418;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+body{margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--prose); font-size:17px; line-height:1.62; -webkit-font-smoothing:antialiased}
+.wrap{max-width:860px; margin:0 auto; padding:44px 24px 90px}
+h1,h2,h3,h4,.ui{font-family:var(--disp)}
+h1{font-size:clamp(30px,4.6vw,46px); line-height:1.06; margin:0 0 14px; font-weight:700;
+   letter-spacing:-.022em; text-wrap:balance}
+h2{font-size:25px; font-weight:700; margin:52px 0 4px; letter-spacing:-.012em; text-wrap:balance}
+h3{font-size:18px; font-weight:600; margin:30px 0 6px; letter-spacing:-.005em}
+h4{font-size:12px; font-weight:600; margin:0 0 8px; letter-spacing:.1em;
+   text-transform:uppercase; color:var(--ink-3)}
+p{margin:0 0 15px}
+code,.mono{font-family:var(--mono); font-size:.85em; background:var(--panel-2);
+  padding:1px 5px; border-radius:3px}
+pre{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--ink-3);
+  border-radius:0 5px 5px 0; padding:14px 16px; overflow-x:auto; margin:16px 0}
+pre code{background:none; padding:0; font-size:12.5px; line-height:1.62}
+.eyebrow{font-family:var(--disp); font-size:12px; font-weight:600; letter-spacing:.15em;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 16px}
+.lede{font-size:20px; line-height:1.5; color:var(--ink-2)}
+.lede strong{color:var(--ink); font-weight:500}
+header{border-bottom:1px solid var(--line); padding-bottom:30px}
+
+.status{display:flex; flex-wrap:wrap; gap:8px; margin:20px 0 0}
+.pill{font-family:var(--disp); font-size:11.5px; font-weight:600; letter-spacing:.05em;
+  text-transform:uppercase; padding:5px 11px; border-radius:99px; border:1px solid var(--line);
+  color:var(--ink-2); background:var(--panel)}
+.pill.warn{border-color:var(--alert); color:var(--alert)}
+.pill.ok{border-color:var(--keep); color:var(--keep)}
+
+figure{margin:26px 0; padding:0}
+figure svg{display:block; width:100%; max-width:100%; height:auto; color:var(--ink-2)}
+figcaption{font-size:14.5px; color:var(--ink-3); margin-top:12px; line-height:1.55;
+  border-top:1px solid var(--line); padding-top:10px}
+figcaption b{color:var(--ink-2); font-weight:500}
+
+.chain{counter-reset:step; list-style:none; padding:0; margin:22px 0}
+.chain li{counter-increment:step; position:relative; padding:0 0 22px 46px; margin:0}
+.chain li::before{content:counter(step); position:absolute; left:0; top:1px;
+  font-family:var(--disp); font-size:12px; font-weight:700; color:var(--ground);
+  background:var(--ink); width:26px; height:26px; border-radius:50%;
+  display:grid; place-items:center}
+.chain li::after{content:""; position:absolute; left:13px; top:30px; bottom:2px; width:1px;
+  background:var(--line)}
+.chain li:last-child::after{display:none}
+.chain h4{margin-bottom:4px; color:var(--ink); font-size:15px; letter-spacing:0;
+  text-transform:none; font-weight:600}
+.chain p{margin:0 0 6px; font-size:16px; color:var(--ink-2)}
+.chain .ref{font-family:var(--mono); font-size:11px; color:var(--ink-3)}
+
+table{border-collapse:collapse; width:100%; margin:18px 0; font-size:14.5px}
+.tw{overflow-x:auto}
+th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line);
+  vertical-align:top}
+th{font-family:var(--disp); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--ink-3); white-space:nowrap}
+td.n{font-family:var(--mono); font-size:12.5px; white-space:nowrap}
+td.y{color:var(--keep); font-weight:500} td.x{color:var(--ink-3)}
+tbody tr.hero td{background:var(--panel); font-weight:500}
+
+.callout{border-left:3px solid var(--s1); background:var(--panel); padding:16px 18px;
+  border-radius:0 5px 5px 0; margin:22px 0; box-shadow:var(--shadow); font-size:16px}
+.callout.risk{border-left-color:var(--alert)}
+.callout.stale{border-left-color:var(--derived)}
+.callout p{margin:0; color:var(--ink-2)}
+.callout p+p{margin-top:9px}
+.callout strong{color:var(--ink); font-weight:500}
+.callout h4{color:var(--ink-3)}
+
+blockquote{margin:20px 0; padding:2px 0 2px 20px; border-left:3px solid var(--keep);
+  font-size:18px; color:var(--ink); font-style:italic}
+blockquote p{margin:0}
+
+footer{margin-top:60px; padding-top:24px; border-top:1px solid var(--line);
+  font-family:var(--disp); font-size:13px; color:var(--ink-3); line-height:1.75}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">runbook §33 · §34 · branch feat/s1-decoder-aux</p>
+  <h1>Giving the decoder something to measure between 160 m and 20 m</h1>
+  <p class="lede">The soil-moisture decoder upsamples 14×14 tokens to 112×112 and has
+  <strong>no measurement at any scale in between</strong>. It fills the gap with confident
+  invention. <strong>S1 Decoder Aux</strong> feeds it Sentinel-1 backscatter, decomposed so that
+  each decoder stage receives a real observation at its own grid.</p>
+  <div class="status">
+    <span class="pill warn">Designed · nothing built</span>
+    <span class="pill">Gate 1 unrun</span>
+    <span class="pill ok">Branch open, main frozen</span>
+  </div>
+</header>
+
+<h2>The problem, in the order it was found</h2>
+
+<ol class="chain">
+  <li>
+    <h4>The collapse is in the decoder, not the encoder</h4>
+    <p>Spatial variance survives attention almost intact, then dies on the way up.
+    <span class="ref">§16.1</span></p>
+  </li>
+  <li>
+    <h4>Because TerraMind is a ViT, every skip is the same size</h4>
+    <p>It patches once and never downsamples, so <code>L3</code>, <code>L6</code>,
+    <code>L9</code> and <code>L12</code> are <em>all</em> 14×14. The decoder's "skip
+    connections" are four views of one grid, interpolated up. Between 160 m and 20 m it holds
+    no measurement at all. <span class="ref">§33.2 · model.py:257-264, :530</span></p>
+  </li>
+  <li>
+    <h4>Something fills the vacuum, and it is not data</h4>
+    <p>Confident structure up to 0.19 m³/m³ — strongest at the <em>flattest</em> site, which is
+    where real sub-tile variation should be weakest. <span class="ref">§23</span></p>
+  </li>
+  <li>
+    <h4>Terrain was tried as the carrier, and failed</h4>
+    <p>HAND is reproducible (r ≥ 0.96 under 1 m of DEM noise) and irrelevant: r = −0.102 on
+    level, and <strong>+0.088 on dynamics — wrong-signed</strong>, p = 0.0099, n = 877. TWI was
+    disqualified earlier on stability. Stable ≠ useful.
+    <span class="ref">§32.9.4 · §32.10 · §32.11</span></p>
+  </li>
+  <li>
+    <h4>Daytime thermal was tried, and failed</h4>
+    <p>Landsat LST does not track soil moisture within a station (r = −0.077), because the
+    daytime field is <strong>0.967-coherent across seasons</strong> — a static landscape
+    property wearing a temperature's clothes. <span class="ref">§29.13 · §29.15</span></p>
+  </li>
+  <li>
+    <h4>But the signal being chased is real</h4>
+    <blockquote><p>Stations ~400 m apart differ by a median 0.047 m³/m³, with the same sign on
+    95.8% of days.</p></blockquote>
+    <p class="ref">§32.10.2</p>
+  </li>
+  <li>
+    <h4>And the patchwise rebuild memorised its training stations</h4>
+    <p><code>pw_stage2a_L3</code> tracks shape but misses level — Pearson r² 0.45–0.64 while NSE
+    is negative everywhere. The structural reading: the SM label is <strong>one pixel out of
+    112×112</strong>, so nothing teaches the decoder spatial pattern at all.
+    <span class="ref">§35.33.6</span></p>
+  </li>
+</ol>
+
+<div class="callout stale">
+  <h4>Two corrections to carry forward</h4>
+  <p><strong>The famous 0.0065 is obsolete.</strong> §16.1's decoder <code>rel_spatial_std</code>
+  collapse to 0.0065 is still quoted in places, but §23 re-measured it at <strong>0.09–0.52</strong>,
+  with structure <em>anti</em>-correlated with the landscape. The decoder-side diagnosis survives;
+  that particular number does not.</p>
+  <p><strong>Memorisation may not be a supervision problem at all.</strong> §35.33.6 diagnoses it
+  as station identity entering through the <em>statics</em>, and queues a statics ablation to test
+  that. The ablation is eval-only and far cheaper than building an auxiliary arm. Run it first, or
+  write down why not.</p>
+</div>
+
+<h2>Why Sentinel-1 is the only candidate left</h2>
+
+<p>The requirement is narrow: something that varies <em>in space</em> at sub-tile scale and
+<em>in time</em> with the weather, and that exists everywhere. Almost nothing does both.</p>
+
+<div class="tw"><table>
+  <thead><tr><th>source</th><th>varies in space</th><th>varies in time</th></tr></thead>
+  <tbody>
+    <tr><td>ERA5 / SIF / TWSA</td><td class="x">no — 9 km</td><td class="y">yes</td></tr>
+    <tr><td>DEM / soil / texture</td><td class="y">yes</td><td class="x">no</td></tr>
+    <tr><td>LST (daytime)</td><td class="y">yes</td><td class="x">no — 0.967 month to month</td></tr>
+    <tr><td>Sentinel-2</td><td class="y">yes</td><td class="x">clouds, and it sees the canopy</td></tr>
+    <tr class="hero"><td>Sentinel-1 σ⁰</td><td class="y">yes</td><td class="y">yes</td></tr>
+  </tbody>
+</table></div>
+
+<p>It is also the only time-varying channel with real sub-token structure already measured in the
+fine stack — S1 VV sub-token variance fraction <strong>0.76</strong> — and it is present:
+993 stations ascending, 910 descending, median 440 passes combined, only 9 stations below 50.
+<span class="ref">§30.3a · §33.3</span></p>
+
+<h2>What the decoder actually receives</h2>
+
+<figure>
+<svg viewBox="0 0 860 400" role="img" aria-label="Today every decoder skip comes from the same 14 by 14 token grid, leaving 160 m to 20 m unmeasured; with S1 Decoder Aux each stage additionally receives seven Sentinel-1 channels at its own native grid.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <polygon points="0,0 10,5 0,10" fill="currentColor"/>
+    </marker>
+    <marker id="aro" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <polygon points="0,0 10,5 0,10" fill="#d9622b"/>
+    </marker>
+  </defs>
+
+  <text x="10" y="18" font-size="12" font-weight="700" fill="currentColor" font-family="Archivo,sans-serif">TODAY</text>
+  <text x="470" y="18" font-size="12" font-weight="700" fill="#d9622b" font-family="Archivo,sans-serif">WITH S1 DECODER AUX</text>
+
+  <!-- ---------- LEFT ---------- -->
+  <rect x="10" y="34" width="86" height="34" rx="3" fill="none" stroke="currentColor"/>
+  <text x="53" y="49" font-size="11" text-anchor="middle" fill="currentColor">TerraMind</text>
+  <text x="53" y="62" font-size="10" text-anchor="middle" fill="currentColor" opacity=".7">L3 L6 L9 L12</text>
+  <text x="53" y="84" font-size="10.5" text-anchor="middle" fill="currentColor" opacity=".8">all 14×14</text>
+
+  <!-- vacuum band -->
+  <rect x="120" y="96" width="300" height="196" fill="#d9622b" opacity=".10"/>
+  <text x="270" y="116" font-size="11" text-anchor="middle" fill="#c0392f" font-weight="700" font-family="Archivo,sans-serif">no measurement anywhere in this band</text>
+
+  <g font-size="11" fill="currentColor" font-family="Archivo,sans-serif">
+    <rect x="150" y="128" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="215" y="145" text-anchor="middle">bottleneck 14×14</text>
+    <rect x="150" y="170" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="215" y="187" text-anchor="middle">up1 28×28</text>
+    <rect x="150" y="212" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="215" y="229" text-anchor="middle">up2 56×56</text>
+    <rect x="150" y="254" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="215" y="271" text-anchor="middle">up3 112×112</text>
+  </g>
+  <g font-size="10" fill="currentColor" opacity=".75" font-family="Archivo,sans-serif">
+    <text x="292" y="145">160 m</text><text x="292" y="187">80 m</text>
+    <text x="292" y="229">40 m</text><text x="292" y="271">20 m</text>
+  </g>
+
+  <!-- interpolated skips -->
+  <g stroke="currentColor" stroke-dasharray="4 3" fill="none" marker-end="url(#ar)" opacity=".65">
+    <path d="M53 90 L53 141 L146 141"/>
+    <path d="M53 90 L53 183 L146 183"/>
+    <path d="M53 90 L53 225 L146 225"/>
+    <path d="M53 90 L53 267 L146 267"/>
+  </g>
+  <text x="58" y="312" font-size="10.5" fill="currentColor" opacity=".8" font-family="Archivo,sans-serif">dashed = interpolated</text>
+  <text x="58" y="326" font-size="10.5" fill="currentColor" opacity=".8" font-family="Archivo,sans-serif">from the same 14×14</text>
+
+  <rect x="150" y="300" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+  <text x="215" y="317" font-size="11" text-anchor="middle" fill="currentColor" font-family="Archivo,sans-serif">SM 112×112</text>
+
+  <line x1="435" y1="30" x2="435" y2="380" stroke="currentColor" opacity=".25"/>
+
+  <!-- ---------- RIGHT ---------- -->
+  <rect x="470" y="34" width="86" height="34" rx="3" fill="none" stroke="currentColor"/>
+  <text x="513" y="49" font-size="11" text-anchor="middle" fill="currentColor">TerraMind</text>
+  <text x="513" y="62" font-size="10" text-anchor="middle" fill="currentColor" opacity=".7">L3 L6 L9 L12</text>
+
+  <g font-size="11" fill="currentColor" font-family="Archivo,sans-serif">
+    <rect x="600" y="128" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="665" y="145" text-anchor="middle">bottleneck 14×14</text>
+    <rect x="600" y="170" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="665" y="187" text-anchor="middle">up1 28×28</text>
+    <rect x="600" y="212" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="665" y="229" text-anchor="middle">up2 56×56</text>
+    <rect x="600" y="254" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+    <text x="665" y="271" text-anchor="middle">up3 112×112</text>
+  </g>
+
+  <g stroke="currentColor" stroke-dasharray="4 3" fill="none" marker-end="url(#ar)" opacity=".5">
+    <path d="M513 90 L513 141 L596 141"/>
+    <path d="M513 90 L513 183 L596 183"/>
+    <path d="M513 90 L513 225 L596 225"/>
+    <path d="M513 90 L513 267 L596 267"/>
+  </g>
+
+  <!-- S1 feed -->
+  <rect x="770" y="118" width="80" height="166" rx="3" fill="#d9622b" opacity=".12"/>
+  <text x="810" y="136" font-size="10.5" text-anchor="middle" fill="#d9622b" font-weight="700" font-family="Archivo,sans-serif">S1</text>
+  <text x="810" y="150" font-size="9.5" text-anchor="middle" fill="#d9622b" font-family="Archivo,sans-serif">7 channels</text>
+  <text x="810" y="163" font-size="9.5" text-anchor="middle" fill="#d9622b" font-family="Archivo,sans-serif">per stage,</text>
+  <text x="810" y="176" font-size="9.5" text-anchor="middle" fill="#d9622b" font-family="Archivo,sans-serif">at that</text>
+  <text x="810" y="189" font-size="9.5" text-anchor="middle" fill="#d9622b" font-family="Archivo,sans-serif">stage's grid</text>
+  <g stroke="#d9622b" fill="none" marker-end="url(#aro)" stroke-width="1.4">
+    <path d="M770 205 L752 141 L734 141"/>
+    <path d="M770 212 L752 187 L734 187"/>
+    <path d="M770 226 L752 229 L734 229"/>
+    <path d="M770 240 L752 271 L734 271"/>
+  </g>
+  <text x="810" y="262" font-size="9.5" text-anchor="middle" fill="#d9622b" font-family="Archivo,sans-serif">14² 28²</text>
+  <text x="810" y="274" font-size="9.5" text-anchor="middle" fill="#d9622b" font-family="Archivo,sans-serif">56² 112²</text>
+
+  <rect x="600" y="300" width="130" height="26" rx="3" fill="none" stroke="currentColor"/>
+  <text x="665" y="317" font-size="11" text-anchor="middle" fill="currentColor" font-family="Archivo,sans-serif">SM 112×112</text>
+  <rect x="600" y="336" width="130" height="26" rx="3" fill="none" stroke="#2f6fd0" stroke-dasharray="4 3"/>
+  <text x="665" y="353" font-size="10.5" text-anchor="middle" fill="#2f6fd0" font-family="Archivo,sans-serif">thermal head (aux)</text>
+  <line x1="665" y1="284" x2="665" y2="296" stroke="currentColor" marker-end="url(#ar)"/>
+  <path d="M735 271 L760 271 L760 349 L734 349" stroke="#2f6fd0" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" opacity=".8"/>
+  <text x="590" y="380" font-size="10" fill="#2f6fd0" text-anchor="end" font-family="Archivo,sans-serif">deleted at inference</text>
+</svg>
+<figcaption><b>The one change that matters.</b> Every decoder stage today is fed from the same
+14×14 token grid, interpolated to fit — so the 160 m → 20 m band contains no observation. S1
+Decoder Aux attaches seven channels to each stage at that stage's own resolution. The
+<code>up4</code> stage is removed entirely, and the thermal head branches off <code>up3</code>
+as auxiliary supervision that does not exist at inference.</figcaption>
+</figure>
+
+<h2>The decomposition, and why not raw σ⁰</h2>
+
+<p>Backscatter is a sum of three things the network cannot separate on its own — permanent
+texture, how wet the whole tile is, and how wet <em>this spot</em> is relative to its own norm.
+Feeding raw σ⁰ asks the decoder to learn that separation from one pixel of supervision. Feeding
+the decomposition hands it over.</p>
+
+<pre><code>sigma0(p,k)  =   c_k       +   (r_p - mu)   +   d(p,k)
+                 permanent     how wet the      how wet THIS spot is
+                 texture       whole tile is    versus its own norm
+
+P        = 10^(sigma_dB/10)                       LINEAR power, never dB
+T_l(p,k) = 10*log10( mean of P over the f x f block ),   f = 224/l
+d(p,k)   = T_l(p,k) - r_p - c_k + mu</code></pre>
+
+<p>That is the double-centring projection <code>D = (I − 11'/n) T (I − 11'/l²)</code>, computed
+per station × relative-orbit group × polarisation. It gives <code>Σ_k d = 0 ∀p</code> and
+<code>Σ_p d = 0 ∀k</code>, and an <strong>exact</strong> variance split
+<code>Var(T) = Var(r) + Var(c) + Var(d)</code> — verified numerically to 2×10⁻⁷ dB².
+Full derivation and worked examples in <code>text/s1processing.md</code>.</p>
+
+<h3>Seven channels per stage, not three</h3>
+
+<div class="tw"><table>
+  <thead><tr><th>channel</th><th>shape</th><th>what it is</th></tr></thead>
+  <tbody>
+    <tr><td class="n">c_VV</td><td class="n">ℓ×ℓ</td><td>permanent texture, from the archive</td></tr>
+    <tr><td class="n">d_VV</td><td class="n">ℓ×ℓ</td><td>this spot vs its own norm, most recent pass</td></tr>
+    <tr><td class="n">d_CR</td><td class="n">ℓ×ℓ</td><td><code>d_VH − d_VV</code> exactly — free, by linearity of centring</td></tr>
+    <tr><td class="n">w_VV</td><td class="n">scalar</td><td>catchment wetness state, broadcast</td></tr>
+    <tr><td class="n">w_CR</td><td class="n">scalar</td><td>cross-ratio wetness, broadcast</td></tr>
+    <tr><td class="n">age</td><td class="n">scalar</td><td>days since that pass</td></tr>
+    <tr><td class="n">valid</td><td class="n">scalar</td><td>0 ⇒ the four above are 0; <code>c_VV</code> stays</td></tr>
+  </tbody>
+</table></div>
+
+<p><code>w</code> has to be fed back explicitly because double-centring <em>deletes</em> it from
+<code>d</code> by construction — and it is what lets a convolution express <em>response ×
+wetness</em> rather than a flat offset. Broadcasting a scalar costs nothing, and a conv that sees
+<code>d</code> and <code>age</code> in the same tensor can discount stale <code>d</code>
+<em>locally</em>, which it cannot do from a global vector.</p>
+
+<h2>What was deliberately left out</h2>
+
+<div class="tw"><table>
+  <thead><tr><th>dropped</th><th>why</th></tr></thead>
+  <tbody>
+    <tr><td class="n">β, the <code>d_VV − β·d_CR</code> coefficient</td>
+        <td>≈ 993 × 4 numbers fitted offline — the same class of object the water-balance design
+        was rejected for. Feed both terms and let one shared trained weight do the combining.
+        β survives as the diagnostic that <em>earned</em> the design, not as code.</td></tr>
+    <tr><td class="n">the <code>up4</code> stage</td>
+        <td>The most expensive conv in the decoder and the only stage with no measured input.
+        Output is 112×112 @ 20 m, not 224×224 @ 10 m — 20 m is where S1 actually resolves.
+        Claiming 10 m would be claiming the grid rather than the resolution.</td></tr>
+    <tr><td class="n"><code>c_VH</code> as an input</td>
+        <td>Still computed — <code>d_VH</code> needs it — but a static land-cover map, redundant
+        with LULC and <code>c_VV</code>. Judgement call, cheap to revisit.</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout">
+  <h4>The safety property that makes this reviewable</h4>
+  <p>Every new input slice is <strong>zero-initialised</strong> — <code>conv.block[0].weight[:,
+  -7:] = 0</code> — so at initialisation the forward pass is <em>bit-identical</em> to
+  <code>best.pt</code> and §26's provenance gate applies unchanged. The same trick makes the
+  ablation trivial: zero the slice at test time and you have removed exactly this stage and
+  nothing else.</p>
+  <p>Note the width. §33.6 said <code>[:, -3:]</code>; the amendment widened it to seven. Getting
+  that slice width wrong silently breaks the provenance gate rather than failing loudly.</p>
+</div>
+
+<h2>The thermal head, and why S1 and LST never touch</h2>
+
+<p>S1 is <strong>input only</strong>. Thermal is <strong>target only</strong>. Nothing appears on
+both sides, so no leakage discipline is needed anywhere in the design.</p>
+
+<pre><code>head_sm    -> (B, n_depths, 112, 112) @ 20 m      the product
+head_therm -> (B, 2, 112, 112)  day / night       auxiliary, deleted at inference
+                avg_pool2d(7,7) -> 16x16 @ EXACTLY 140 m
+                ECOSTRESS 70 m  -> 2x2 average   -> 140 m      exact on both sides</code></pre>
+
+<p>Two channels rather than one DTR channel, so unpaired passes still supervise. ISMN supervises
+the <em>level</em>, at one pixel, absolute; thermal supervises the <em>pattern</em>, dense and
+zero-sum. They do not compete for the same degree of freedom. The 7×7 pooling is exact —
+112 = 7 × 16, no crop — which is what fixed the ragged 28→22 adaptive pooling in the original
+§33.7 spec.</p>
+
+<h2>Open risks, stated before building</h2>
+
+<div class="callout risk">
+  <p><strong>Gate 1 is unrun, and it is still the only thing that can kill the design.</strong>
+  Everything above is wiring for a hypothesis that has not been validated. Nothing should be
+  built until it passes.</p>
+  <p><strong><code>w_CR</code> rests on an argument, not a number.</strong> The §33.5 "season%"
+  column was misread as a vegetation fraction; it is a variance partition and sums to 100. So
+  canopy contamination of <code>w</code> is <em>plausible but unmeasured</em> — unlike
+  <code>d</code>, where 16–34% is measured directly against <code>d_CR</code>.</p>
+  <p><strong><code>c_k</code> temporal look-ahead is unresolved.</strong> The archive reference
+  is built from all passes in the group, including ones after the prediction date.</p>
+  <p><strong>Order of work is contested.</strong> The statics ablation tests the cheaper
+  explanation for the same failure and has not been run.</p>
+</div>
+
+<footer>
+  Sources: <span class="mono">text/training_runbook.md</span> §16.1, §23, §29, §32, §33, §34,
+  §35.33 · <span class="mono">text/s1processing.md</span> (derivation, worked examples) ·
+  <span class="mono">text/patchwise_math.md</span>.<br>
+  Branch <span class="mono">feat/s1-decoder-aux</span>, 43 commits ahead of a frozen
+  <span class="mono">main</span>; rollback tag <span class="mono">pre-s1-decoder-aux</span>.
+  No S1 decoder code exists yet.
+</footer>
+</div>

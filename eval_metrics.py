@@ -22,6 +22,8 @@ Usage:
 """
 import argparse
 import json
+import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -34,13 +36,30 @@ SM_DEPTHS  = ["0-10", "10-30", "30-100"]
 MIN_N        = 5    # matches evaluate_splits.py:86
 MIN_N_UBRMSE = 2    # anomalies need at least two points
 
+# §66: EVAL_CLIP="0,1" clips predictions to the physical range before any metric or figure.
+# The model head is linear and unbounded; reported in the methods. Unset = raw predictions.
+def clip_pred(df: pd.DataFrame) -> pd.DataFrame:
+    rng = os.environ.get("EVAL_CLIP")
+    if rng and "pred" in df:
+        lo, hi = (float(x) for x in rng.split(","))
+        n = int(((df["pred"] < lo) | (df["pred"] > hi)).sum())
+        df["pred"] = df["pred"].clip(lo, hi)
+        print(f"  [EVAL_CLIP] {n:,} of {len(df):,} predictions clipped to [{lo}, {hi}]")
+    return df
+
+
 META_COLS = [
     "station_key", "latitude", "longitude", "IGBP", "igbp_macro",
-    "koppen_geiger", "kg_macro", "elevation_band", "n_years",
+    "koppen_geiger", "kg_macro", "elevation_band", "network", "n_years",
     "start_date", "end_date", "split",
 ]
 
-# §21.8 -- val ubRMSE at epoch 16.  The §22.6 gate reproduces these.
+# §21.8 -- val ubRMSE at epoch 16 OF cls_depth_star_reg.  The §22.6 gate reproduces
+# these, and ONLY for that run: the gate answers "does this metric code agree with
+# train.py:compute_metrics", and it can only answer it against the run the reference
+# was measured on.  Any other run has different val ubRMSE by construction, so
+# checking it here would report a model difference as a code failure.
+VAL_REFERENCE_RUN = "cls_depth_star_reg"
 VAL_REFERENCE = {"0-10": 0.0539, "10-30": 0.0500, "30-100": 0.0552}
 
 
@@ -180,13 +199,38 @@ def summarise(ps: pd.DataFrame, df: pd.DataFrame, split_name: str) -> list:
     return rows
 
 
-def check_val_gate(summary: pd.DataFrame) -> bool:
-    """§22.6 hard gate: reproduce val ubRMSE 0.0539 / 0.0500 / 0.0552."""
+def check_val_gate(summary: pd.DataFrame, run_name: str | None = None) -> bool | None:
+    """§22.6 hard gate: reproduce val ubRMSE 0.0539 / 0.0500 / 0.0552.
+
+    Returns True/False when the gate applied, None when it did not.  It applies only
+    to VAL_REFERENCE_RUN -- see the comment on that constant.  For any other run the
+    val numbers are printed as this run's own reference instead, because a "FAIL"
+    against another model's ubRMSE says nothing about the metric code and reads as a
+    real failure to anyone skimming the log.
+    """
     val = summary[summary["split"] == "val"]
     if val.empty:
         print("\n[GATE] val split not present -- run "
               "`eval_predict.py --splits val` before trusting held-out numbers.")
         return False
+
+    # An UNKNOWN run is treated like a different run, not like the reference run. The
+    # manifest is written by eval_predict.py only after its last split, so running this
+    # against a partially-finished eval_output/ leaves run_name None -- and defaulting to
+    # "apply" there printed a full GATE FAILED against another model's ubRMSE, which is
+    # exactly the false alarm this branch exists to prevent.
+    if run_name != VAL_REFERENCE_RUN:
+        print("\n" + "=" * 66)
+        print(f"§22.6 gate NOT APPLICABLE -- reference is {VAL_REFERENCE_RUN}, "
+              f"this is {run_name}")
+        print("=" * 66)
+        for _, r in val.iterrows():
+            got = r.get("ubRMSE_pool", np.nan)
+            print(f"  {r['depth']:>7s}  val ubRMSE (pool) {got:.4f}"
+                  f"   <-- this run's reference, for the next comparison")
+        print("  Cross-check these against the run's own training log "
+              "(`SELECT val_ubrmse_depth_mean=`) before reading any held-out number.")
+        return None
 
     print("\n" + "=" * 66)
     print("§22.6 HARD GATE -- reproduce train.py val ubRMSE (epoch 16)")
@@ -255,6 +299,12 @@ def main():
     groups: dict[str, list[Path]] = {}
     for path in sorted(in_dir.glob("predictions_*.parquet")):
         stem = path.stem.replace("predictions_", "")
+        # Not a held-out split: the §26 pixel readout (scored by combine_network.py) and
+        # ablation arms (predictions_oos_era5_cross_station_s0 ...), which would otherwise
+        # prefix-match "oos" and be merged into the unablated rows.
+        if stem.startswith("network") or re.search(r"_(cross|within)_station_s\d+$", stem):
+            print(f"  skipping {path.name} (not a held-out split file)")
+            continue
         # match the longest known split name that prefixes the stem, so
         # "oost_c1" resolves to oost and not oos
         split = next((s for s in sorted(known, key=len, reverse=True)
@@ -274,8 +324,8 @@ def main():
     for split_name in sorted(groups, key=lambda s: {"val": 0, "oos": 1,
                                                     "oot": 2, "oost": 3}.get(s, 9)):
         chunk_paths = groups[split_name]
-        df = pd.concat([pd.read_parquet(p_) for p_ in chunk_paths],
-                       ignore_index=True)
+        df = clip_pred(pd.concat([pd.read_parquet(p_) for p_ in chunk_paths],
+                       ignore_index=True))
         # a station must not appear in two chunks, or its metrics double-count
         df = df.drop_duplicates(subset=["station_key", "year", "doy", "depth"])
         print(f"\n{'='*66}")
@@ -299,6 +349,13 @@ def main():
 
         rows = summarise(ps, df, split_name)
         all_summary.extend(rows)
+        # §47.8 item 4: OOT/OOST per calendar year, so a 2025 collapse cannot hide in the mean.
+        if split_name in ("oot", "oost"):
+            for yr in sorted(df["year"].unique()):
+                dfy = df[df["year"] == yr]
+                psy = per_station_metrics(dfy)
+                if not psy.empty:
+                    all_summary.extend(summarise(psy, dfy, f"{split_name}_{int(yr)}"))
         for r in rows:
             print(f"    {r['depth']:>7s}  "
                   f"ubRMSE {r['ubRMSE_stn']:.4f}/{r.get('ubRMSE_pool', np.nan):.4f} "
@@ -310,7 +367,8 @@ def main():
     order = {"val": 0, "oos": 1, "oot": 2, "oost": 3}
     summary = summary.sort_values(
         ["split", "depth"],
-        key=lambda s: s.map(order) if s.name == "split" else s.map(
+        key=lambda s: s.map(lambda x: order.get(x, order.get(str(x).split("_")[0], 9) + 0.5))
+        if s.name == "split" else s.map(
             {d: i for i, d in enumerate(SM_DEPTHS)})
     ).reset_index(drop=True)
 
@@ -318,12 +376,29 @@ def main():
     summary.to_csv(summary_path, index=False)
     print(f"\nSummary → {summary_path}")
 
-    gate_ok = check_val_gate(summary)
+    # Which run produced these predictions.  eval_predict.py writes it into the
+    # manifest alongside the parquets, so the gate does not have to be told twice.
+    run_name = None
+    manifest_path = in_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            run_name = json.loads(manifest_path.read_text()).get("run_name")
+        except json.JSONDecodeError:
+            print(f"  WARNING -- unreadable {manifest_path}; gate cannot tell which "
+                  f"run these predictions came from")
+    else:
+        print(f"  WARNING -- no {manifest_path}; gate cannot tell which run these "
+              f"predictions came from")
+
+    gate_ok = check_val_gate(summary, run_name)
     check_sanity(summary)
 
     with open(out_dir / "gate.json", "w") as f:
-        json.dump({"val_gate_passed": bool(gate_ok),
-                   "reference": VAL_REFERENCE}, f, indent=2)
+        json.dump({"run_name":         run_name,
+                   "val_gate_applied": gate_ok is not None,
+                   "val_gate_passed":  bool(gate_ok) if gate_ok is not None else None,
+                   "reference_run":    VAL_REFERENCE_RUN,
+                   "reference":        VAL_REFERENCE}, f, indent=2)
 
 
 if __name__ == "__main__":

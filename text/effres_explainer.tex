@@ -1,0 +1,367 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath}
+\usepackage{mathptmx}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\captionsetup{font=small,labelfont=bf}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{0pt}
+\graphicspath{{../figures/effres/}{../figures/effres/explainer/}}
+\newcommand{\key}[1]{\par\smallskip\fcolorbox{black!40}{black!4}{\parbox{0.96\linewidth}{\textbf{In one sentence:} #1}}\par\smallskip}
+
+\title{\textbf{How sharp is our soil-moisture map, really?}\\[3pt]
+\large A plain-language guide to the effective-resolution test (runbook \S70)}
+\author{Prajwal Khanal}
+\date{6 October 2026}
+
+\begin{document}
+\maketitle
+
+\section*{0.\quad The question in one paragraph}
+
+Our model draws a soil-moisture map on a grid of 20\,m $\times$ 20\,m pixels. That does
+\emph{not} mean the map really knows what happens every 20\,m. A photo can have millions of
+pixels and still be blurry. The \textbf{effective resolution} is the size of the smallest
+detail that is (1) actually present in the map and (2) actually correct. This document
+explains how we measured both, and what we found.
+
+\key{The map has 20\,m pixels, but we want to know the size of the smallest detail that is real.}
+
+\section{What the model produces}
+
+\begin{itemize}
+\item The world is cut into square \textbf{tiles} of 2.24\,km $\times$ 2.24\,km.
+\item For each tile and each day, the model outputs a map of $112 \times 112$ pixels
+      (112 $\times$ 20\,m = 2.24\,km). It does this for three depths: 0--10, 10--30 and 30--100\,cm.
+\item Inside the model, each tile is first described by a coarser grid of
+      $14 \times 14$ \textbf{tokens}. Each token covers 160\,m $\times$ 160\,m. These tokens carry
+      most of the satellite information. A separate ``fine path'' also feeds 20\,m satellite pixels
+      into the last stage.
+\item We test on \textbf{TxSON}, a dense sensor network in Texas: 40 soil-moisture stations, many of them
+      only a few hundred metres apart. 30 of the tiles were never used for training
+      (``held-out''). All numbers below come from those 30.
+\end{itemize}
+
+\section{Removing the pattern that never changes}
+
+Figure~\ref{fig:tile} shows one real tile. Panel (a) is the \emph{average} map over all days. It has
+a clear pattern, but earlier work (\S56) showed that this pattern is almost the same every day:
+the model paints it regardless of weather. A fixed pattern tells us nothing about whether the
+model follows real wetting and drying.
+
+So, for every pixel, we subtract that pixel's own long-term average. What is left is the
+\textbf{anomaly}: ``today this spot is wetter (blue) or drier (red) than it usually is''
+(panel c). \emph{Every measurement in this document is made on anomaly maps.}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig1_tile.pdf}
+\caption{One held-out tile (TxSON CR200-18, 0--10\,cm). (a) The average map over all days, which is the
+fixed pattern. (b) The map on one day (the day with the most spatial contrast). (c) That day minus
+the average: the anomaly. Orange dots are the real sensor stations inside this tile.}
+\label{fig:tile}
+\end{figure}
+
+\key{We throw away the part of the map that never changes and study only the day-to-day changes.}
+
+\section{Three ways to ask ``how fine is the detail?''}
+
+All three tools below measure the same property from different angles.
+
+\subsection*{3.1\quad The variogram: ``how different are two points that are $h$ metres apart?''}
+
+Take many pairs of points at the same distance $h$ (say 100\,m). For each pair, measure how much
+their values differ, then average. Repeat for $h$ = 20\,m, 40\,m, \ldots, 1.6\,km. The resulting curve is
+the \textbf{variogram}. We divide it by the total variance, so 0 means ``identical'' and about 1 means
+``completely unrelated''.
+
+Figure~\ref{fig:toy} shows two made-up maps to build intuition:
+\begin{itemize}
+\item \textbf{Smooth field (a):} neighbours look alike. The curve starts at 0 and rises slowly. It reaches its
+      plateau only at several hundred metres. The distance where it flattens is called the
+      \textbf{range}: beyond it, points are as different as two random points.
+\item \textbf{Rough field (b):} even neighbouring pixels differ, so the curve \emph{jumps up immediately}.
+      The jump at very short distance is called the \textbf{nugget}. It means there is detail finer than we can see,
+      or simply noise.
+\end{itemize}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig2_toy_variogram.pdf}
+\caption{Toy example, not model output. (a) A smooth field with blobs a few hundred metres wide.
+(b) The same field with 20\,m-scale noise added. (c) Their variograms: the smooth field rises
+gradually and has no nugget; the rough field jumps up at the first lag.}
+\label{fig:toy}
+\end{figure}
+
+\key{Where the variogram flattens (the range) is the size of the blobs in the map.}
+
+\subsection*{3.2\quad The spectrum: ``how much of the map is made of waves of each size?''}
+
+Any map can be written as a sum of waves of different lengths: long gentle waves (2\,km) plus shorter ripples
+(40\,m). The \textbf{spectrum} measures how strong each wave length is. A smooth map is strong in long waves and
+has almost nothing in short ones. The spectrum and the variogram carry the same information; one
+speaks in wave lengths, the other in distances.
+
+\subsection*{3.3\quad The blur test: ``what do I lose if I blur the map?''}
+
+Average the map over blocks of $b \times b$ metres and measure how much of its variation survives.
+If blurring at 80\,m keeps 100\,\%, the map had no detail at 80\,m. The block size where the
+variation starts to disappear is where the detail lives.
+
+\section{Why 160\,m and 320\,m are marked on the figure}
+
+The model's tokens form a 160\,m grid. Figure~\ref{fig:nyq} shows what such a grid can and cannot hold.
+
+\begin{itemize}
+\item To draw a wave you need at least one wet cell and one dry cell, so at least \textbf{two cells per wave}.
+      With 160\,m cells, the shortest wave the grid can hold is $2 \times 160 = $ \textbf{320\,m} (panel a).
+      This limit is called the \textbf{Nyquist} limit.
+\item A wave shorter than that, for example 100\,m (panel b), falls \emph{inside} the cells. Each cell
+      only keeps its average, which is close to zero, so the wave is lost.
+\end{itemize}
+
+So if the map's detail comes from the tokens, we \emph{expect} it to stop at around 320\,m wave length (160\,m in
+distance). If the 20\,m fine path added real detail, we would see power at shorter waves too.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\linewidth]{fig3_nyquist.pdf}
+\caption{Toy example. (a) A 320\,m wave on a 160\,m grid: the cell averages (blue) still go up and down,
+so the grid can carry this wave. (b) A 100\,m wave: the cell averages are almost flat, so the grid cannot carry it.}
+\label{fig:nyq}
+\end{figure}
+
+\key{A 160\,m grid can only draw waves 320\,m long or longer; that is why those two lines are on the plots.}
+
+\section{The result figure, panel by panel}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{effres_txson.pdf}
+\caption{Result over the 30 held-out TxSON tiles. Colours are depths (dark blue 0--10\,cm, light blue
+10--30\,cm, orange 30--100\,cm). Dashed line: token cell, 160\,m. Dotted line: token Nyquist, 320\,m.
+(a) Spectrum of the anomaly maps. (b) Variation retained after blurring. (c) Variogram: lines are the
+model map; squares are real station pairs at 0--10\,cm, with the number of pairs written above.}
+\label{fig:res}
+\end{figure}
+
+\paragraph{Panel (a), spectrum.} Read from left (long waves) to right (short waves). The curve is high
+and slowly falling down to about 320\,m (dotted line), then it \textbf{drops about 100 times} by 160\,m (dashed line).
+Below that there is almost nothing.
+\emph{Meaning:} the map's day-to-day pattern is made of blobs about 300\,m and larger, which is what the
+160\,m token grid can draw. The 20\,m fine path adds almost nothing.
+
+\paragraph{Panel (b), blur test.} Blurring the map into 40\,m blocks keeps 97\,\% of its variation; 80\,m
+keeps 88\,\%, 160\,m 64\,\%, 280\,m 37\,\% and 560\,m 16\,\%.
+\emph{Meaning:} there is almost no detail at 20--80\,m; the detail lives between about 160 and 500\,m.
+
+\paragraph{Panel (c), variogram.}
+\begin{itemize}
+\item \textbf{Lines (model):} start near 0 (neighbouring pixels are near-copies), rise until about 250\,m,
+      then go flat. So the \textbf{range of the map is about 250\,m}.
+\item \textbf{Height of the flat part:} 0.05 at 0--10\,cm. Within a tile, all points move almost together:
+      only about 5\,\% of their daily change differs from point to point.
+\item \textbf{Squares (real stations):} 0.16--0.22 at distances below 3\,km and about 0.28 at 6--50\,km.
+      Real points disagree about \textbf{4 times more} than the model's points do. Part of the real
+      difference is sensor noise, so 4$\times$ is an upper limit on the gap.
+\end{itemize}
+
+A note on the dotted 320\,m line: it is exact only in panel (a), where the axis is a wave length.
+In panels (b) and (c) the axis is a block size or a distance, so the matching marker there is the
+dashed 160\,m line.
+
+\key{The map contains detail down to about 250\,m, and it is much smoother than the real ground.}
+
+\section{Present is not the same as correct}
+
+The figure shows what detail the map \emph{has}. It cannot show whether that detail is \emph{right}.
+Three extra tests, compared against the real stations, answer that.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{@{}l X X@{}}
+\toprule
+\textbf{Test} & \textbf{What we did} & \textbf{What happened} \\
+\midrule
+C: blur the output &
+Blur the predicted map around each station, from 20\,m up to the whole tile (2.24\,km), and recompute the error
+against the station. &
+The error \textbf{never gets worse}, even with the whole tile blurred to one value (0.0452 $\to$ 0.0443\,m$^3$/m$^3$).
+The fine detail adds no accuracy. \\
+\addlinespace
+Control &
+Run the same test on a made-up ``perfect'' map that truly has 160\,m detail. &
+The test answers 280\,m. So the test \emph{can} detect fine resolution when it exists. \\
+\addlinespace
+B: blur the input &
+Blur the satellite inputs before they enter the model (40\,m to 2.24\,km) and predict again. &
+The map \textbf{changes a lot} (30\,\% of its spatial variation already at 40\,m, 58\,\% at 160\,m), but the station
+error \textbf{does not change}. The fine inputs reshape the picture without making it more accurate. \\
+\addlinespace
+A: station pairs &
+For pairs of stations, compare the predicted difference with the observed difference. &
+Long-term differences: correlation about 0. Day-to-day differences: a weak but real signal at 500--1000\,m
+(correlation 0.08, 95\,\% range 0.02--0.11). \\
+\bottomrule
+\end{tabularx}
+\caption{The correctness tests (0--10\,cm only; deeper layers have too few station pairs).}
+\end{table}
+
+\key{Blurring the map to the whole tile does not hurt it, so the detail inside a tile is not skill.}
+
+\section{Conclusion}
+
+\begin{enumerate}
+\item The map \textbf{contains} detail down to about \textbf{250\,m}. That is set by the model's 160\,m token grid,
+      not by the 20\,m output pixels.
+\item The detail is \textbf{not correct}. Removing it entirely does not make the predictions worse. The
+      \textbf{effective resolution is about one tile, 2\,km}, at 0--10\,cm.
+\item Within a tile the model draws \textbf{texture}: the inputs move it around, but it does not follow the real
+      differences between nearby points. It is also about 4 times smoother than the real ground.
+\end{enumerate}
+
+\clearpage
+\section{How every number is computed}
+
+This section lists the exact recipe behind each curve and test. Code: \texttt{effres\_maps.py} (GPU, makes the
+maps), \texttt{effres\_analysis.py} (Tests 0, A, B, C, control, spectrum, blur test) and \texttt{plot\_effres.py}
+(model variogram, figure). ``Held-out'' always means the 30 TxSON tiles and stations the model never trained on.
+
+\subsection*{8.1\quad Common first step: the anomaly maps}
+\begin{enumerate}
+\item Run the trained model once on every day of every tile: about 2{,}500 days $\times$ 3 depths $\times$ $112 \times 112$ pixels per tile.
+\item For each pixel, take its average over all days (the fixed pattern, Figure~\ref{fig:tile}a).
+\item Anomaly = map of the day $-$ that average, pixel by pixel (Figure~\ref{fig:tile}c).
+\end{enumerate}
+
+\subsection*{8.2\quad Anomaly power (Figure~\ref{fig:res}a, the spectrum)}
+For each tile and depth:
+\begin{enumerate}
+\item \textbf{Remove the tile-wide shift of each day.} Subtract each day's spatial mean from its anomaly map.
+      On a wet day the whole tile is, say, $+0.1$; that uniform part is dropped, so only the differences
+      \emph{within} the tile remain.
+\item \textbf{Split the map into waves.} A 2-D Fourier transform (FFT) rewrites the $112 \times 112$ map as a sum of
+      2-D sine waves. Each wave has a direction, a strength and a frequency $k$: the number of full waves that fit
+      across the tile ($k = 1 \ldots 56$).
+\item \textbf{Power = strength squared}, for every wave. A large value means the map contains a lot of that wave.
+\item \textbf{Average over days.}
+\item \textbf{Pool all directions.} A 300\,m blob is the same size whether it runs north--south or east--west, so all
+      waves with the same $k$ are averaged together whatever their direction (they lie on a ring of radius $k$ in
+      the Fourier plane). This leaves one number per $k$; hence the name \emph{radially averaged} spectrum.
+\item \textbf{Convert $k$ to a wave length:} wave length $= 2240\,\mathrm{m} / k$. So $k=1$ is 2240\,m (one wave across the tile),
+      $k=7$ is 320\,m (the shortest wave a 160\,m token grid can carry), $k=14$ is 160\,m, and $k=56$ is 40\,m (the shortest
+      wave a 20\,m pixel grid can carry).
+\item \textbf{Combine tiles:} the median over the 30 held-out tiles at each $k$. This is the plotted curve.
+\end{enumerate}
+\textbf{Why ``a.u.'' (arbitrary units)?} The FFT is not normalised, so the absolute numbers depend on the map size.
+Only the \emph{shape} and the \emph{ratios} matter. Summed over all $k$, the power is proportional to the spatial
+variance of the anomaly map, so the curve says how that variance is shared out among wave sizes.
+
+\subsection*{8.3\quad Variance retained (Figure~\ref{fig:res}b, the blur test)}
+For each tile, depth and block size $b$ (40, 80, 160, 280, 560, 1120\,m):
+\begin{enumerate}
+\item Cut each day's anomaly map into $b \times b$ blocks (for 160\,m: $14 \times 14$ blocks of $8 \times 8$ pixels) and
+      replace each block by its mean.
+\item Measure the spatial variance of the blurred map (variance across blocks) and of the original map
+      (variance across pixels). A variance across space ignores the tile-wide shift automatically.
+\item Average each variance over all days, then take the ratio: blurred $\div$ original.
+\item Median over the 30 tiles. 1.0 means blurring lost nothing; 0.0 means everything was smaller than the block.
+\end{enumerate}
+
+\subsection*{8.4\quad Model variogram (Figure~\ref{fig:res}c, lines)}
+For each tile and depth:
+\begin{enumerate}
+\item Pick 40{,}000 random pairs of pixels in the tile. For each pair, note its distance $h$ (in metres).
+\item For that pair, take the two anomaly time series $a_t$ and $b_t$ and compute
+      \begin{itemize}
+      \item the \textbf{semivariance} $g = \frac{1}{2} \cdot \mathrm{mean}_t\,(a_t - b_t)^2$, which measures how differently the two points behave over time;
+      \item the \textbf{variance} $v = \frac{1}{2}\,(\mathrm{var}_t\,a + \mathrm{var}_t\,b)$, which measures how much each point changes over time on its own.
+      \end{itemize}
+      A tile-wide shift on one day moves $a_t$ and $b_t$ equally, so it cancels in $a_t - b_t$.
+\item Group the pairs into 14 distance bins (logarithmic, 20\,m to 1.6\,km). Average $g$ and $v$ in each bin.
+\item Average $g$ and $v$ over the 30 tiles, then plot $g \div v$ against distance.
+      0 means the two points move identically; 1 means as different as two unrelated points.
+\end{enumerate}
+
+\subsection*{8.5\quad Observed variogram (Figure~\ref{fig:res}c, squares; ``Test 0'')}
+\begin{enumerate}
+\item Take every pair of the 40 TxSON stations, using the days on which both measured (at least 60 days in common).
+\item Anomaly of each station = its value $-$ its own mean over those common days. This matches the model's per-pixel average in 8.1.
+\item Compute $g$ and $v$ exactly as in 8.4. The distance comes from the stations' latitude and longitude.
+\item Group the pairs into distance bins (0--250\,m, 250--500\,m, 0.5--1\,km, 1--1.6\,km, 1.6--3\,km, 3--6\,km, 6--12\,km,
+      12--25\,km, 25--50\,km). Plot (mean $g$) $\div$ (mean $v$). The number above each square is the number of station pairs.
+\end{enumerate}
+Same formula as the model, so the two can be compared directly. Two cautions: a sensor measures a point, not a 20\,m
+pixel, and sensor noise adds to $g$. So the observed values are an upper limit for the real spatial variation.
+
+\subsection*{8.6\quad Test C: does blurring the output hurt accuracy?}
+\begin{enumerate}
+\item Use each held-out tile whose own station sits at the centre pixel. That gives 30 tiles.
+\item For each block size $b$ (20\,m $\ldots$ 2.24\,km), average the predicted map over a $b \times b$ window around the
+      station on every day. This gives one predicted time series per $b$.
+\item Error = \textbf{ubRMSE} against the station: the root-mean-square difference after removing each series' own mean.
+\item $\Delta$ = ubRMSE at $b$ $-$ ubRMSE at 20\,m, per tile, then averaged over tiles.
+\item 95\,\% interval: resample the 30 tiles with replacement 1{,}000 times (a bootstrap). A block is
+      ``significantly worse'' if the whole interval is above 0.
+\item $L_C$ = the largest block that is not significantly worse. Result: 2240\,m, because no block was worse.
+\end{enumerate}
+
+\subsection*{8.7\quad Control: can Test C detect real fine detail?}
+\begin{enumerate}
+\item Make 30 synthetic tiles of 300 days each. The ``true'' field is random noise smoothed to blobs of about 160\,m (Gaussian, $\sigma = 160$\,m).
+\item ``Perfect model'' = the true field plus a little 20\,m noise. ``Station'' = the true field at the centre pixel plus a little sensor noise.
+\item Run exactly the Test C recipe. Result: blocks up to 280\,m are fine, 560\,m and larger are significantly worse, so $L_C = 280$\,m.
+      The test works; the real model simply has no fine skill to find.
+\end{enumerate}
+
+\subsection*{8.8\quad Test B: does the model use fine inputs?}
+\begin{enumerate}
+\item For each block size $b$, blur the tile's \emph{inputs} before they enter the model:
+      the 20\,m satellite channels (S2, S1, DEM) are block-averaged using valid pixels only; land cover takes the most common class in each block;
+      the soil map is block-averaged; and the $14 \times 14$ tokens are block-averaged once $b$ exceeds 160\,m.
+\item Run the model again on every day (one full GPU pass per $b$).
+\item Map change $S$ = RMS(new map $-$ original map) $\div$ spatial SD of the original map, per day, then the median.
+      $S = 0$: blurring the inputs changed nothing. $S \approx 1$: the change is as large as the map's whole spatial pattern.
+\item Also recompute the station ubRMSE at the centre pixel with the blurred inputs.
+\item $L_B$ = the largest $b$ with $S < 0.1$. There is none: $S$ is already 0.29 at 40\,m. Yet the ubRMSE stays at 0.044--0.045 for every $b$.
+\end{enumerate}
+
+\subsection*{8.9\quad Test A: are predicted differences between stations right?}
+\begin{enumerate}
+\item For a pair of held-out stations A and B: predicted difference $d^{\mathrm{pred}}_t = $ pred$_A - $ pred$_B$, and
+      observed difference $d^{\mathrm{obs}}_t = $ obs$_A - $ obs$_B$, over their common days.
+      \emph{Within-tile pairs} use the station pixels of one map (same model run).
+      \emph{Cross-tile pairs} use the centre pixel of each station's own tile.
+\item \textbf{Level skill:} the long-term mean of $d^{\mathrm{pred}}$ versus that of $d^{\mathrm{obs}}$, correlated across all pairs in a distance bin.
+      This asks: is the wetter station predicted wetter?
+\item \textbf{Dynamic skill:} the correlation over time between $d^{\mathrm{pred}}_t$ and $d^{\mathrm{obs}}_t$ for each pair, then the median over pairs in the bin.
+      This asks: when A gets wetter than B, does the model see it?
+\item 95\,\% intervals: a bootstrap that resamples whole tiles (or stations, for cross-tile pairs), so that pairs sharing a tile are not counted as independent.
+\item $L_A$ = the shortest distance bin where either interval is entirely above 0. Result: 765\,m (the 0.5--1\,km bin, dynamic $r = 0.08$).
+\end{enumerate}
+
+\subsection*{8.10\quad The verdict}
+Effective resolution $L_{\mathrm{eff}} = $ the largest of $L_A$, $L_B$ and $L_C$, which is the most demanding answer. At 0--10\,cm: $\max(765, \text{none}, 2240) = $ \textbf{2240\,m}.
+
+\section*{Glossary}
+\begin{description}[leftmargin=2.6cm,style=nextline]
+\item[Anomaly] A pixel's value today minus its own long-term average.
+\item[Effective resolution] The size of the smallest detail that is both present and correct.
+\item[Nugget] The jump of a variogram at very short distance: detail finer than the grid, or noise.
+\item[Nyquist limit] The shortest wave a grid can carry: two grid cells.
+\item[Range] The distance where a variogram flattens; roughly the size of the blobs in the map.
+\item[Spectrum] How strong each wave length is in a map.
+\item[Token] One 160\,m $\times$ 160\,m cell of the model's internal $14 \times 14$ description of a tile.
+\item[ubRMSE] The typical prediction error after removing the constant offset between model and station.
+\item[Variogram] Half the average squared difference between two points, as a function of their distance.
+\end{description}
+
+\end{document}

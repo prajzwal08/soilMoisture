@@ -21,6 +21,8 @@ Usage:
 
 import csv
 import json
+
+from download_s2_mpc import write_metadata
 import logging
 import os
 os.environ.pop("PROJ_DATA", None)   # prevent stale conda PROJ_DATA from conflicting with ~/.local pyproj
@@ -68,13 +70,15 @@ def _remap_lulc(arr: np.ndarray) -> np.ndarray:
 # CONFIGURATION
 # ============================================================
 
-DATA_ROOT    = Path("/gpfs/work3/0/prjs1968/data")
+DATA_ROOT    = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data"))
 STATION_CSV  = DATA_ROOT / "station_splits.csv"
 LOG_DIR      = DATA_ROOT / "logs"
-LOG_FILE     = LOG_DIR / "download_s1_lulc_log.csv"
+# SOIL_TASK_INDEX / SOIL_N_TASKS (§68): SLURM-array split, task i takes rows i::n with its own checkpoint
+TASK_I, N_TASKS = int(os.getenv("SOIL_TASK_INDEX", "0")), int(os.getenv("SOIL_N_TASKS", "1"))
+LOG_FILE     = LOG_DIR / ("download_s1_lulc_log.csv" if N_TASKS == 1 else f"download_s1_lulc_log_t{TASK_I:02d}.csv")
 
 # Raw S1 RTC and LULC tiles go to scratch (~3 TB total).
-SCRATCH_DIR  = Path("/gpfs/scratch1/shared/pkhanal/satellite")
+SCRATCH_DIR  = Path(os.getenv("SOIL_SCRATCH_DIR", "/gpfs/scratch1/shared/pkhanal/satellite"))
 
 TEST_MODE    = False
 TEST_STATION = "ISMN_TWENTE_Hupsel"
@@ -479,10 +483,9 @@ def process_station(row: pd.Series, catalog_mpc, skip_s1rtc: bool = False) -> di
     _run("lulc", download_lulc, station_dir, catalog_mpc, epsg, bounds, bbox,
          start_year, end_year, meta)
 
-    # Write metadata.json
+    # Write metadata.json (merged under a lock: the S2 downloader may write the same file concurrently, §68)
     try:
-        with open(station_dir / "metadata.json", "w") as f:
-            json.dump(meta, f, indent=2)
+        write_metadata(station_dir, meta)
     except Exception as exc:
         logging.warning(f"  {station_id}: metadata.json write failed: {exc}")
 
@@ -536,7 +539,9 @@ def main():
     if TEST_MODE:
         pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
         log.info(f"TEST_MODE: running on {len(pilot)} station(s): {list(pilot.apply(_station_folder, axis=1))}")
-    log.info(f"Stations: {len(pilot)} (all from station_splits.csv)")
+    if N_TASKS > 1:
+        pilot = pilot.iloc[TASK_I::N_TASKS].reset_index(drop=True)
+    log.info(f"Stations: {len(pilot)} from {STATION_CSV}  (task {TASK_I}/{N_TASKS})")
 
     # S1RTC completion is checkpointed in the log CSV.
     # LULC completion is verified on disk (per-year files) — the log is not

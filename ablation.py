@@ -25,22 +25,86 @@ import torch
 # A modality MOVES AS A WHOLE: permuting s2_pyr without s2_rel_pos hands the model
 # tokens whose declared time offsets belong to a different acquisition, which tests
 # incoherence rather than absence.
+# --arch patchwise emits DIFFERENT keys and pops the pooled ones (dataset.py:1247-1254), so the
+# pooled names below are absent there. Both sets are listed and the swap asserts that at least
+# one key was actually present — see AblationDataset.__getitem__.
 MODALITY_KEYS = {
+    "s2":   ["s2_hist", "s2_hist_valid", "s2_doys", "s2_valid", "s2_rel_pos"],
+    "s1":   ["s1_hist", "s1_hist_valid", "s1_doys", "s1_valid", "s1_rel_pos"],
+    "dem":  ["dem_tok"],
+    "lulc": ["lulc_tok"],
+    # positive control: we are confident ERA5 forcing matters. If shuffling THIS changes
+    # nothing, the harness never reached the model -- stop and debug (§24.5).
+    "era5": ["era5", "era5_doys"],
+}
+MODALITY_KEYS["sat"] = (MODALITY_KEYS["s2"] + MODALITY_KEYS["s1"]
+                        + MODALITY_KEYS["dem"] + MODALITY_KEYS["lulc"])
+
+# ── The FROZEN U-NET ARM uses different key names ────────────────────────────────────────
+# The map above was rewritten for the patchwise arm and its comment claiming "both sets are
+# listed" is stale: dataset_unet.py emits s2_pyr/dem_pyr/lulc_pyr (:1086, :1098, :1099), never
+# s2_hist/dem_tok/lulc_tok. Running the patchwise map against the U-Net arm fails two ways, and
+# only one of them is loud:
+#     dem, lulc  -> no key matches       -> KeyError below.                   SAFE.
+#     s2, s1, sat-> s2_doys/s2_valid/s2_rel_pos exist on BOTH arms, so n_swapped > 0 and the
+#                   guard passes while s2_pyr -- the actual tokens -- never moves. The model
+#                   then gets a donor's timestamps stapled to its own imagery: INCOHERENCE,
+#                   not absence, which §24.2 says makes a shuffle result uninterpretable.
+# That silent case is why this map exists and why the U-Net arm is checked strictly (every
+# listed key must be present, not merely one).
+MODALITY_KEYS_UNET = {
     "s2":     ["s2_pyr", "s2_doys", "s2_valid", "s2_rel_pos"],
     "s1":     ["s1_pyr", "s1_doys", "s1_valid", "s1_rel_pos"],
     "dem":    ["dem_pyr"],
     "lulc":   ["lulc_pyr"],
+    "era5":   ["era5", "era5_doys"],
+    # Never tested before §24.13. Both are fed RAW (unnormalised) in this arm -- there is no
+    # _sif_mean/_twsa_mean anywhere in dataset_unet.py; the z-scoring at dataset.py:1030-1033
+    # was added later, for the patchwise arm.
+    "sif":    ["sif",  "sif_doys",  "sif_rel_pos",  "sif_valid"],
+    "twsa":   ["twsa", "twsa_doys", "twsa_rel_pos", "twsa_valid"],
+    # Only definable on this arm -- the patchwise trunk has no decoder skips. This is the
+    # `--ablate anchor` §24.11 caveat 1 asked for.
     "anchor": ["anchor_l3", "anchor_l6", "anchor_l9", "anchor_l12",
                "anchor_rel_pos", "anchor_orbit"],
-    # positive control: we are confident ERA5 forcing matters.  If shuffling THIS
-    # changes nothing, the harness never reached the model -- stop and debug (§24.5).
-    "era5":   ["era5", "era5_doys"],
+    "soil":   ["soil_patch"],
 }
-MODALITY_KEYS["sat"] = (MODALITY_KEYS["s2"] + MODALITY_KEYS["s1"]
-                        + MODALITY_KEYS["dem"] + MODALITY_KEYS["lulc"]
-                        + MODALITY_KEYS["anchor"])
+MODALITY_KEYS_UNET["sat"] = (MODALITY_KEYS_UNET["s2"] + MODALITY_KEYS_UNET["s1"]
+                             + MODALITY_KEYS_UNET["dem"] + MODALITY_KEYS_UNET["lulc"]
+                             + MODALITY_KEYS_UNET["anchor"])
 
-MODALITIES = sorted(MODALITY_KEYS)
+# ── The §48 / §59 (s48) model: the final baseline_selected_20261005 ────────────────────────
+# Keys from dataset.py SoilMoistureDataset.__getitem__ (the return dict). A tuple
+# (key, start, stop) swaps only those CHANNELS of a stacked tensor: the 20 m `fine` patch
+# holds S2 (0:12) | S1 (12:17) | DEM (17:19) (model.py FINE_S2/FINE_S1/FINE_DEM, raw-band
+# fine inputs), so "imagery" and "DEM" can be ablated separately. Checked STRICTLY: every
+# listed key must exist (a partial swap is incoherence, not absence — see below).
+_S2_160   = ["s2_pyr", "s2_doys", "s2_valid", "s2_rel_pos"]
+_S1_160   = ["s1_pyr", "s1_doys", "s1_valid", "s1_rel_pos", "s1_orbit"]
+_ANCHOR   = ["anchor_l12", "anchor_rel_pos", "anchor_orbit", "anchor_found"]
+_FINE_IMG = [("fine", 0, 17)]                       # 20 m S2 + S1 channels, DEM channel kept
+MODALITY_KEYS_S48 = {
+    "era5":   ["era5", "era5_doys", "era5_rel_pos"],
+    "s2":     _S2_160,                              # 160 m S2 history (anchor untouched)
+    "s1":     _S1_160,                              # 160 m S1 history (anchor untouched)
+    "sat160": _S2_160 + _S1_160 + _ANCHOR,          # every 160 m satellite token
+    "fine":   _FINE_IMG,                            # 20 m imagery
+    "sat":    _S2_160 + _S1_160 + _ANCHOR + _FINE_IMG,   # all satellite, 160 m + 20 m
+    "dem":    ["dem_pyr", "dem_valid", ("fine", 17, 19)],
+    "lulc":   ["lulc_pyr", "lulc_valid", "lulc"],   # 160 m tokens + the 10 m class map
+    "soil":   ["soil_patch", "soil_valid"],
+    "sif":    ["sif", "sif_doys", "sif_rel_pos", "sif_valid"],
+    "twsa":   ["twsa", "twsa_doys", "twsa_rel_pos", "twsa_valid"],
+}
+
+KEY_MAPS = {"patchwise": MODALITY_KEYS, "unet": MODALITY_KEYS_UNET, "s48": MODALITY_KEYS_S48}
+_STRICT_ARMS = {"unet", "s48"}
+
+# Every modality must match at least one key in every sample. Silence means a stale key list,
+# which is a SILENT NO-OP ablation -- see AblationDataset.__getitem__.
+_OPTIONAL_MODALITIES: set[str] = set()
+
+MODALITIES = sorted(set(MODALITY_KEYS) | set(MODALITY_KEYS_UNET) | set(MODALITY_KEYS_S48))
 
 
 def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
@@ -91,7 +155,8 @@ def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
                 continue
             for _ in range(max_tries):
                 j = int(pool[rng.integers(len(pool))])
-                if abs(int(doys[j]) - int(doys[i])) > min_doy_gap:
+                g = abs(int(doys[j]) - int(doys[i]))
+                if min(g, 365 - g) > min_doy_gap:     # circular: 30 Dec vs 2 Jan is 3 days, not 363
                     donor[i] = j
                     break
             else:
@@ -100,13 +165,14 @@ def build_donor_map(samples, mode: str, seed: int = 0, season_window: int = 15,
         raise ValueError(f"unknown mode {mode!r}")
 
     changed = donor != np.arange(n)
+    gap = np.abs(doys[donor].astype(int) - doys.astype(int))
+    gap = np.minimum(gap, 365 - gap)                                 # circular, as in the rule
     stats = {
         "mode": mode, "seed": seed, "n_samples": n,
         "n_fallback": int(n_fallback),
         "frac_donor_assigned": float(changed.mean()),
         "frac_donor_diff_station": float((stations[donor] != stations).mean()),
-        "median_abs_doy_gap": float(np.median(np.abs(doys[donor].astype(int)
-                                                    - doys.astype(int)))),
+        "median_abs_doy_gap": float(np.median(gap)),
     }
     return donor, stats
 
@@ -120,14 +186,21 @@ class AblationDataset(torch.utils.data.Dataset):
     while the run is labelled cross_station (runbook §24.3).
     """
 
-    def __init__(self, base, modality: str, mode: str, seed: int = 0, **kw):
-        if modality not in MODALITY_KEYS:
-            raise ValueError(f"modality must be one of {MODALITIES}, got {modality!r}")
+    def __init__(self, base, modality: str, mode: str, seed: int = 0,
+                 arm: str = "patchwise", **kw):
+        if arm not in KEY_MAPS:
+            raise ValueError(f"arm must be one of {sorted(KEY_MAPS)}, got {arm!r}")
+        keys_map = KEY_MAPS[arm]
+        if modality not in keys_map:
+            raise ValueError(f"modality {modality!r} is not defined for arm {arm!r}; "
+                             f"available: {sorted(keys_map)}")
         self.base = base
+        self.arm = arm
         self.modality = modality
-        self.keys = MODALITY_KEYS[modality]
+        self.keys = keys_map[modality]
         self.donor, self.stats = build_donor_map(base.samples, mode, seed, **kw)
         self.stats["modality"] = modality
+        self.stats["arm"] = arm
         self.stats["keys"] = list(self.keys)
 
     def __len__(self):
@@ -139,9 +212,40 @@ class AblationDataset(torch.utils.data.Dataset):
         if j == i:
             return item                       # fallback: nothing to swap
         d = self.base[j]
+        n_swapped = 0
         for k in self.keys:
-            if k in d:
+            if isinstance(k, tuple):              # channel slice of a stacked tensor
+                name, a, b = k
+                if name in d and name in item:
+                    t = item[name].clone()        # FRESH tensor: never edit a cached array
+                    t[a:b] = d[name][a:b]
+                    item[name] = t
+                    n_swapped += 1
+            elif k in d:
                 item[k] = d[k]
+                n_swapped += 1
+        if self.arm in _STRICT_ARMS and n_swapped != len(self.keys):
+            # STRICT on the U-Net arm. `n_swapped == 0` catches a wholly stale key list but not
+            # a PARTIALLY stale one, and the partial case is the dangerous one: with the
+            # patchwise map, `s2` matches s2_doys/s2_valid/s2_rel_pos on this arm and passes the
+            # loose guard while `s2_pyr` -- the tokens themselves -- never moves. The model then
+            # sees a donor's timestamps on its own imagery, which is incoherence rather than
+            # absence and is uninterpretable (§24.2). A modality MOVES AS A WHOLE or not at all.
+            missing = [k for k in self.keys if (k[0] if isinstance(k, tuple) else k) not in d]
+            raise KeyError(
+                f"ablation '{self.modality}' (arm={self.arm}) swapped {n_swapped} of "
+                f"{len(self.keys)} keys; missing {missing}. A partial swap is incoherence, "
+                f"not absence — refusing. Sample keys: {sorted(d)[:12]}..."
+            )
+        if n_swapped == 0 and self.modality not in _OPTIONAL_MODALITIES:
+            # This used to be a bare `if k in d` with no else, which made a stale key list a
+            # SILENT NO-OP: report() still printed a healthy donor fraction while nothing was
+            # ablated, and the run came back "this modality does not matter". §35.9's arms are
+            # the instrument for the whole patchwise hypothesis, so this must be fatal.
+            raise KeyError(
+                f"ablation '{self.modality}' matched none of {self.keys} in the sample. "
+                f"Sample keys: {sorted(d)[:12]}... MODALITY_KEYS is stale for this arch."
+            )
         return item
 
     def report(self) -> str:
@@ -152,3 +256,72 @@ class AblationDataset(torch.utils.data.Dataset):
                 f"fallback {s['n_fallback']}, "
                 f"donor from a different station {s['frac_donor_diff_station']:.1%}, "
                 f"median |Δdoy| {s['median_abs_doy_gap']:.0f} d")
+
+
+# ── §70 effective resolution: block-average the within-tile spatial inputs ─────────────────
+# Within a tile, map structure can only come from inputs that vary in space: the 20 m `fine`
+# patch, the 10 m `lulc` class map, the ~30 m `soil_patch` and the 14x14 x 160 m `anchor_l12`.
+# The s2/s1/dem/lulc pyramids are pooled vectors broadcast over the whole map, so they carry
+# no within-tile position and are left alone. Block size `b` is in 20 m MAP pixels and must
+# divide 112: every grid is averaged to (112/b) x (112/b) blocks and expanded back, so all
+# four inputs lose detail below the same length b * 20 m. A grid already coarser than that
+# (anchor for b < 8, soil for b < 2, lulc at b = 1) is untouched. b = 1 is the identity and
+# is the smoke check that this path reproduces the plain pass.
+_FINE_VALUE_VALID = ((0, 10, 10),    # S2 bands 0:10, masked by s2_valid (ch 10)
+                     (12, 14, 14),   # S1 VV|VH 12:14, masked by s1_valid (ch 14)
+                     (17, 18, 18))   # DEM 17,        masked by dem_valid (ch 18)
+_LULC_NCLASS = 11                    # TerraMind indices 0..9 + LULC_PAD (10)
+
+
+def _blocks(x: torch.Tensor, n: int) -> torch.Tensor:
+    """(C, H, W) float -> each of n x n blocks replaced by its mean, same shape."""
+    import torch.nn.functional as F
+    H, W = x.shape[-2:]
+    return F.interpolate(F.adaptive_avg_pool2d(x[None], n), size=(H, W), mode="nearest")[0]
+
+
+def coarsen_item(item: dict, b: int) -> dict:
+    """Return a copy of `item` whose spatial inputs hold no detail below b * 20 m."""
+    if 112 % b:
+        raise ValueError(f"block {b} must divide 112")
+    n = 112 // b
+    out = dict(item)
+
+    fine = item["fine"].float().clone()                  # FRESH tensor: never edit a cached array
+    for a, z, v in _FINE_VALUE_VALID:
+        val  = fine[v:v + 1]
+        mv   = _blocks(val, n)
+        mean = _blocks(fine[a:z] * val, n) / mv.clamp(min=1e-6)
+        fine[a:z] = torch.where(mv > 0, mean, fine[a:z])   # an all-invalid block keeps its values
+    out["fine"] = fine.to(item["fine"].dtype)
+
+    lulc = item["lulc"].long()                           # (224, 224) class ids: block MODE, not mean
+    if b > 1:                                            # b = 1: the model mask-pools 2x2 itself
+        onehot = torch.nn.functional.one_hot(lulc.clamp(0, _LULC_NCLASS - 1),
+                                             _LULC_NCLASS).permute(2, 0, 1).float()
+        out["lulc"] = _blocks(onehot, n).argmax(0).to(item["lulc"].dtype)
+
+    for key in ("soil_patch",):                          # (21, 74, 74)
+        if n < item[key].shape[-1]:
+            out[key] = _blocks(item[key].float(), n).to(item[key].dtype)
+
+    a12 = item["anchor_l12"]                             # (196, 768) = 14 x 14 tokens
+    if n < 14:
+        g = a12.float().reshape(14, 14, -1).permute(2, 0, 1)
+        out["anchor_l12"] = _blocks(g, n).permute(1, 2, 0).reshape(196, -1).to(a12.dtype)
+    return out
+
+
+class BlockAverageDataset(torch.utils.data.Dataset):
+    """Wraps SoilMoistureDataset; every item's spatial inputs block-averaged at b map pixels."""
+
+    def __init__(self, base, block: int):
+        if 112 % block:
+            raise ValueError(f"block {block} must divide 112")
+        self.base, self.block = base, block
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i):
+        return coarsen_item(self.base[i], self.block)

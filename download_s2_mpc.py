@@ -21,6 +21,7 @@ Usage:
 """
 
 import csv
+import fcntl
 import json
 import logging
 import os
@@ -50,7 +51,9 @@ from rasterio.enums import Resampling
 DATA_ROOT    = Path(os.getenv("SOIL_DATA_ROOT",   "/gpfs/work3/0/prjs1968/data"))
 STATION_CSV  = DATA_ROOT / "station_splits.csv"
 LOG_DIR      = DATA_ROOT / "logs"
-LOG_FILE     = LOG_DIR / "download_s2_mpc_log.csv"
+# SOIL_TASK_INDEX / SOIL_N_TASKS (§68): SLURM-array split, task i takes rows i::n with its own checkpoint
+TASK_I, N_TASKS = int(os.getenv("SOIL_TASK_INDEX", "0")), int(os.getenv("SOIL_N_TASKS", "1"))
+LOG_FILE     = LOG_DIR / ("download_s2_mpc_log.csv" if N_TASKS == 1 else f"download_s2_mpc_log_t{TASK_I:02d}.csv")
 
 SCRATCH_DIR  = Path(os.getenv("SOIL_SCRATCH_DIR", "/gpfs/scratch1/shared/pkhanal/satellite"))
 
@@ -58,6 +61,9 @@ PIXEL_SIZE   = 224
 RES_M        = 10
 MAX_CLOUD    = 75        # % scene-level cloud cover
 GLOBAL_START = "2016-01-01"
+# §68: harmonise at download by PROCESSING BASELINE (+1000 DN when baseline < 04.00), the store
+# convention after the §50 repair. Off by default; the NL grid run sets SOIL_S2_HARMONISE=1.
+HARMONISE_BY_BASELINE = os.getenv("SOIL_S2_HARMONISE", "0") == "1"
 
 N_WORKERS    = 12        # concurrent stations (MPC direct streaming — scales well)
 MAX_RETRIES  = 3
@@ -205,6 +211,7 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
 
     n_new = 0
     n_present = 0
+    n_failed = 0
     for item in items:
         date_str = item.datetime.strftime("%Y%m%d")
         fpath    = out_dir / f"{date_str}.tif"
@@ -215,9 +222,9 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
         iso_dt = item.datetime.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         def _load(it=item):
-            planetary_computer.sign_inplace(it)
+            signed = planetary_computer.sign(it)          # fresh signature every attempt (§50)
             da = stackstac.stack(
-                [it], assets=S2_BANDS,
+                [signed], assets=S2_BANDS,
                 epsg=epsg, resolution=RES_M, bounds=bounds,
                 rescale=False,
                 resampling=Resampling.bilinear,
@@ -228,19 +235,35 @@ def download_s2(station_dir: Path, catalog, epsg: int, bounds: tuple,
             da = with_retry(_load)
         except Exception as exc:
             logging.warning(f"    S2 {date_str}: {exc}")
+            n_failed += 1
+            try:
+                planetary_computer.sas.TOKEN_CACHE.clear()   # an expired SAS token is the §50 failure
+            except Exception:
+                pass
             continue
 
-        da = center_crop(da).astype("int16")
+        # §50: NaN must become nodata 0 BEFORE the int16 cast (NaN -> -32768 otherwise)
+        da = center_crop(da).fillna(0)
+        baseline = str(item.properties.get("s2:processing_baseline", ""))
+        harmonised = False
+        if HARMONISE_BY_BASELINE and baseline and float(baseline) < 4.0:
+            # store convention = baseline >= 04.00 DN (offset built in); older baselines get +1000
+            da = da.where(da == 0, da + 1000)
+            harmonised = True
+        da = da.clip(-32768, 32767).astype("int16")
         save_geotiff(da, fpath, epsg, iso_dt)
 
         meta["S2L2A"][date_str] = {
             "datetime_utc":  iso_dt,
             "cloud_cover":   item.properties.get("eo:cloud_cover", ""),
             "platform":      item.properties.get("platform", ""),
+            "processing_baseline": baseline,
+            "harmonised_plus1000": harmonised,
         }
         n_new += 1
         logging.debug(f"    S2L2A {fpath.name}")
 
+    meta["S2_failed_scenes"] = meta.get("S2_failed_scenes", 0) + n_failed
     return n_new, n_present
 
 
@@ -337,6 +360,10 @@ def process_station(row: pd.Series, catalog) -> dict:
         n_new, n_present = download_s2(station_dir, catalog, epsg, bounds, bbox, start, end, meta)
         log["n_scenes"] = n_new + n_present
         log["status"]   = "done" if (n_new + n_present) > 0 else "no_data"
+        if meta.get("S2_failed_scenes", 0):
+            # §50 fail-loud: "partial" is not in the done set, so a rerun retries the missing scenes
+            log["status"]    = "partial"
+            log["error_msg"] = f"{meta['S2_failed_scenes']} scene(s) failed"
         if n_present:
             logging.debug(f"  {station_id}: {n_present} pre-existing, {n_new} newly downloaded")
     except Exception as exc:
@@ -355,12 +382,27 @@ def process_station(row: pd.Series, catalog) -> dict:
 
     log["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-    _tmp = station_dir / "metadata.json.tmp"
-    with open(_tmp, "w") as f:
-        json.dump(meta, f, indent=2)
-    _tmp.rename(station_dir / "metadata.json")
+    write_metadata(station_dir, meta)
 
     return log
+
+
+def write_metadata(station_dir: Path, meta: dict):
+    """Merge `meta` into station_dir/metadata.json under a lock (§68: S2 and S1 run concurrently on the same
+    station dir; a plain overwrite let the S1 writer drop the S2L2A section). Per-scene dicts are merged, so a
+    resumed run keeps the entries of scenes it skipped."""
+    path = station_dir / "metadata.json"
+    with open(station_dir / ".metadata.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        old = json.loads(path.read_text()) if path.exists() else {}
+        for k, v in meta.items():
+            if isinstance(v, dict) and isinstance(old.get(k), dict):
+                old[k].update(v)
+            else:
+                old[k] = v
+        tmp = station_dir / "metadata.json.tmp"
+        tmp.write_text(json.dumps(old, indent=2))
+        tmp.rename(path)
 
 
 # ============================================================
@@ -378,7 +420,9 @@ def main():
     if TEST_MODE:
         pilot = pilot[pilot.apply(lambda r: _station_folder(r) == TEST_STATION, axis=1)].reset_index(drop=True)
         log.info(f"TEST_MODE: {list(pilot.apply(_station_folder, axis=1))}")
-    log.info(f"Stations: {len(pilot)}")
+    if N_TASKS > 1:
+        pilot = pilot.iloc[TASK_I::N_TASKS].reset_index(drop=True)
+    log.info(f"Stations: {len(pilot)}  (task {TASK_I}/{N_TASKS})")
 
     checkpoint = load_checkpoint()
     done_ids   = set(checkpoint.loc[
@@ -394,7 +438,9 @@ def main():
     completed = [0]
 
     def _process_one(row):
-        cat = pystac_client.Client.open(MPC_URL, modifier=planetary_computer.sign_inplace)
+        # §68: NO sign_inplace modifier -- signed items carry a fixed SAS expiry that sign() cannot refresh;
+        # items stay unsigned and _load() signs a copy fresh on every attempt
+        cat = pystac_client.Client.open(MPC_URL)
         return process_station(row, cat)
 
     with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:

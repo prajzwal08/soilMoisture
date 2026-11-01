@@ -1,38 +1,39 @@
 """
-SoilMoistureModel
-=================
-Full architecture:
+SoilMoistureModel — temporal trunk + fine CNN encoder + U-Net decoder, two heads
+================================================================================
+§48 (amending §46). Runbook: text/training_runbook.md §46, §48, §49.
 
-  Pre-computed TerraMind features (loaded from disk, see precompute_terramind.py):
-    S2:   L12 (MAX_S2, 196, 768) fp16 → _cpu_pyramid_pool (dataset worker) → (MAX_S2, 4, 768)
-    S1:   L12 (MAX_S1, 196, 768) fp16 → _cpu_pyramid_pool (dataset worker) → (MAX_S1, 4, 768)
-    DEM:  L12 (196, 768) fp16         → _cpu_pyramid_pool (dataset worker) → (4, 768)
-    LULC: L12 (196, 768) fp16         → _cpu_pyramid_pool (dataset worker) → (4, 768)
-    Skip: L3/L6/L9 (196, 768) fp16 for most-recent acquisition → U-Net decoder
+This file REPLACED the patchwise arm (§34/§35.18); that code lives at tags `pw_stage2a-ep9` and
+`pre-s1-decoder-aux`. The pooled U-Net baseline this trunk is ported from is frozen in
+model_unet.py (tag `baseline-unet-temporal`). The trunk keeps the canonical fixes the patchwise
+arm accumulated: 18 ERA5 columns (`era5/values18`), ERA5 staleness from real row dates, the
+precomputed DOY table, and the driver/history split of annotation scales (§35.24-26).
 
-  ERA5 MLP  :  (B, 365, 19) → (B, 365, 768)
+  TRUNK  one temporal transformer, runs once per sample
+    [ depth_CLS x3 | DEM pyr x4 | LULC pyr x4 | soil x4 | anchor L12 x196 |
+      S2 pyr x MAX_S2*4 | S1 pyr x MAX_S1*4 | ERA5 x365 | SIF x50 | TWSA x12 ]
+    -> bottleneck: the 196 anchor rows, (B, 768, 14, 14) at 160 m
+    -> context:    mean of the valid non-spatial, non-CLS rows, (B, 768)
+    -> depth_ctx:  the 3 CLS rows, (B, 3, 768)
 
-  Sequence (per station-year):
-    [DEM pyramid × 4]                        ← static prefix (pre-computed)
-    [S2 pyramid tokens × N_s2 × 4]           ← pre-pooled in dataset worker (CPU)
-    [S1 pyramid tokens × N_s1 × 4]           ← pre-pooled in dataset worker (CPU)
-    [ERA5 tokens × 365]                      ← + circular DoY PE
-    → Temporal Transformer (6L, 768D, 12H, bidirectional)
+  FINE ENCODER (§48.1) — light CNN on the most recent imagery on or before day D
+    fine (B, 19, 112, 112) @ 20 m   S2 12 | S1 5 | DEM 2      (channel map: FINE_* below)
+    lulc (B, 224, 224) long @ 10 m  class index, LULC_PAD = nodata
+    stems -> 32 ch @112 -> E1 32 @112 (20 m), E2 64 @56 (40 m), E3 128 @28 (80 m)
 
-  Target spatial tokens:
-    Most-recent S2 or S1 L12 (196×768) from stored features — no TerraMind pass.
+  DECODER — coarse context up, measured detail down (§46.4)
+    bottle 512 @14 -> up -> conv1(512+128) @28 -> up -> conv2(256+64) @56
+                   -> up -> conv3(128+32) @112 = z (B, 64, 112, 112)
+    each skip FiLM-modulated by `context`; the skip slices of conv{1,2,3}'s first conv are
+    zero-initialised, so step 0 is exactly the bottleneck-only decoder.
 
-  Bottleneck: transformer output at target DoY → reshape (B, 768, 14, 14)
+  HEADS on z
+    SM   3 disconnected per-depth heads, each FiLM'd by its own CLS row, bias = label_mean
+         -> (B, 3, 112, 112); supervised at the station pixel (56, 56)
+    LST  1x1 conv -> pixels 0..109 -> avg_pool 5 -> (B, 1, 22, 22) @ 100 m, in units of
+         sigma_ST, PATTERN ONLY: its level is unconstrained and is never Kelvin (§48.9 item 4)
 
-  Temporal context: mean-pool of all non-spatial transformer output tokens → (B, 768)
-    → FiLM-modulates each U-Net skip connection with weather/history context
-
-  U-Net Decoder  (FiLM-modulated skip connections from TerraMind L3, L6, L9)
-    14×14 → 28×28 → 56×56 → 112×112 → 224×224
-    → SM map (B, n_depths, 224, 224)
-
-  Loss: Huber masked to station pixel (centre: row=col=112 in 224×224 output)
-       + λ_tv * Total Variation on the full SM map (spatial smoothness)
+  GroupNorm everywhere a BatchNorm used to be (§48.2 item 8).
 """
 
 import math
@@ -72,80 +73,296 @@ class DropPathTransformerLayer(nn.Module):
 
 # ── Positional encoding ──────────────────────────────────────────────────────
 
-def circular_doy_pe(doys: torch.Tensor, dim: int = 768) -> torch.Tensor:
+# Harmonic ceiling for circular_doy_pe. Daily sampling puts the Nyquist limit at k = 182
+# (= 365.25 / 2); every harmonic above it is a reflected copy of one below, and k and
+# k + 365 are near-degenerate, so the old linear ramp k = 1 … 384 spent more than half its
+# channels on aliased duplicates of harmonics it already had. 26 is ~2-week resolution,
+# comfortably inside Nyquist, and is where the seasonal signal actually lives.
+DOY_MAX_HARMONIC = 26
+
+# Initialisation scale for the positional / modality annotations.
+#
+# TWO scales, not one, because the annotations serve two streams whose content differs in
+# magnitude by ~21x (§35.25, measured):
+#
+#     driver content   era5_mlp / sif_mlp / twsa_mlp output      std 0.22
+#     history content  raw frozen TerraMind L12 token            std 4.65
+#
+# A single shared table cannot suit both. At std 1.0 the annotation was ~450% of a driver
+# token (the §35.24 bug — the driver token was mostly calendar) and a sensible ~21% of a
+# history token. The pooled pyramid tokens and the anchor tokens here are frozen TerraMind
+# features, so they take the HISTORY scale.
+EMB_INIT_STD      = 0.02    # annotations on DRIVER tokens (era5, sif, twsa, soil)
+HIST_EMB_INIT_STD = 1.0     # annotations on FROZEN TerraMind tokens (pyramids, anchor)
+
+
+def circular_doy_pe(doys: torch.Tensor, dim: int = 768,
+                    scale: float = EMB_INIT_STD) -> torch.Tensor:
     """
     Circular positional encoding for day-of-year. Periodic at 365.25 days so
     DOY 365 and DOY 1 share similar representations (no year-boundary seam).
-    Uses harmonics sin/cos(k * 2π * DOY / 365.25) for k = 1 … dim//2.
+
+    Harmonics are geometrically spaced INTEGERS in [1, DOY_MAX_HARMONIC]: integer so the
+    code stays exactly periodic at 365.25 days, geometric so the low frequencies get most
+    of the channels, capped so nothing aliases.
+
     doys : (N,) long tensor of day-of-year values [1, 365]
-    returns (N, dim) float
+    returns (N, dim) float, per-channel std ≈ `scale`
     """
     device = doys.device
     base   = 2.0 * math.pi / 365.25
-    k      = torch.arange(1, dim // 2 + 1, device=device).float()     # (dim//2,)
+    k      = torch.round(torch.exp(torch.linspace(
+        0.0, math.log(DOY_MAX_HARMONIC), dim // 2, device=device))).float()   # (dim//2,)
     angles = doys.float().unsqueeze(1) * base * k                     # (N, dim//2)
     pe     = torch.zeros(len(doys), dim, device=device)
     pe[:, 0::2] = torch.sin(angles)
     pe[:, 1::2] = torch.cos(angles)
-    return pe                                                          # (N, dim)
+    # A sin/cos pair has RMS 1/sqrt(2) over uniformly distributed DOYs; rescale so the code
+    # lands at `scale`, matching every other positional term (see EMB_INIT_STD).
+    return pe * (scale * math.sqrt(2.0))                               # (N, dim)
 
 
-# ── Spatial pyramid pooling — NOT USED (moved to _cpu_pyramid_pool in dataset.py) ──
+def _gn(c: int) -> nn.GroupNorm:
+    """GroupNorm with at most 8 groups and at least 4 channels per group.
 
-def spatial_pyramid_pool(tokens: torch.Tensor,
-                         token_valid: torch.Tensor = None,
-                         attn: nn.Module = None) -> torch.Tensor:
+    Per-sample statistics, identical in train and eval: BatchNorm's batch statistics are noisy
+    at a few samples per GPU, are not synced across DDP ranks, and its eval-time running
+    averages would be accumulated on batches that contain modality-dropped samples (§48.2
+    item 8).
     """
-    tokens      : (B, N_tok, D) — TerraMind L12 output for one acquisition
-    token_valid : (B, N_tok) bool — True = clear/valid token; None = all valid
-    attn        : nn.Linear(D, 1) for attention-weighted pooling; None = masked mean
+    return nn.GroupNorm(max(1, min(8, c // 4)), c)
 
-    Attention mode (S2/S1): learned scores per token; masked tokens → -inf before softmax.
-    Mean mode (DEM): masked average, ignoring invalid tokens.
 
-    Grid size is derived from N_tok (must be a perfect square, e.g. 196 → 14×14).
+# ── Fine imagery layout (§48.3 + §48.9 item 1) ───────────────────────────────
+#
+# `fine` is (19, 112, 112) at 20 m, built by dataset.py in §46.3's worker order: normalised
+# with TerraMind's constants, then invalid pixels zeroed. The valid flags are channels, so
+# the network always sees "missing" explicitly rather than a plausible-looking zero.
 
-    returns: (B, 4, D)
-               scale 0: centre ~1×1  (~160 m)
-               scale 1: inner  ~3×3  (~480 m)
-               scale 2: inner  ~7×7  (~1.12 km)
-               scale 3: full  14×14  (~2.24 km)
+FINE_S2    = slice(0, 12)    # 10 bands (B01/B09 dropped) | s2_valid | s2_age
+FINE_S1    = slice(12, 17)   # VV | VH | s1_valid | s1_age | orbit (0 asc, 1 desc)
+FINE_DEM   = slice(17, 19)   # DEM | dem_valid
+FINE_CH    = 19
+FINE_VALID = {"s2": 10, "s1": 14, "dem": 18}     # absolute channel index of each flag
+
+# §57 "indices" fine inputs (19 -> 11 ch). The dataset still delivers the 19-ch tensor above;
+# FineEncoder converts it on the device, AFTER modality dropout, so every caller (dataset,
+# cache, FineAblation, eval) is unchanged. Layout of the converted tensor:
+FINE_IDX_S2    = slice(0, 4)     # NDVI | NDMI | s2_valid | s2_age
+FINE_IDX_S1    = slice(4, 9)     # VV (cached z) | CR = VH/VV in dB, (CR+6.4)/3 | s1_valid | s1_age | orbit
+FINE_IDX_DEM   = slice(9, 11)    # DEM | dem_valid
+FINE_IDX_CH    = 11
+FINE_IDX_VALID = {"s2": 2, "s1": 6, "dem": 10}
+
+# De-normalisation constants: TerraMind's, as in csvs/fine_stats.json (SHA'd into CONFIG;
+# verify_s57.py asserts these equal the file). Kept bands B02 B03 B04 B05 B06 B07 B08 B8A B11 B12.
+_S2_IDX  = {"B04": 2, "B08": 6, "B8A": 7, "B11": 8}
+_S2_MEAN = {"B04": 1853.91,  "B08": 3083.234, "B8A": 3132.22,  "B11": 2424.884}
+_S2_STD  = {"B04": 2134.138, "B08": 1871.918, "B8A": 1753.829, "B11": 1434.261}
+S2_BOA_OFFSET = 1000.0           # baseline-4.0 store: 1000 DN = 0 reflectance, every scene
+_S1_MEAN = (-10.93, -17.329)     # VV, VH dB
+_S1_STD  = (4.391, 4.459)
+CR_SHIFT, CR_SCALE = 6.4, 3.0    # fixed, not fitted: (CR + 6.4) / 3 (§54.4)
+_IDX_DEN_FLOOR = 200.0           # DN: |a + b| under 0.02 reflectance -> index 0. Was 10: fp16 z-scores
+                                 # carry ~few-DN rounding, which blew near-zero ratios up to 0.8 (§61,
+                                 # verify 27439912 check 5b)
+
+
+def fine_to_indices(fine: torch.Tensor) -> torch.Tensor:
+    """(B, 19, H, W) z-scored fine tensor -> (B, 11, H, W) index tensor (§57).
+
+    NDVI = (B08 - B04)/(B08 + B04), NDMI = (B8A - B11)/(B8A + B11) on the pooled DN with the
+    +1000 offset removed (ratio of 2x2 means). CR = VH_dB - VV_dB. Index and CR channels are 0
+    wherever their valid fraction is 0, so a dropped or ablated modality stays "missing".
     """
-    B, N_tok, D = tokens.shape
-    G = int(N_tok ** 0.5)                                              # grid side (14 for 196 tokens)
-    g = tokens.reshape(B, G, G, D)
+    f = fine.float()
 
-    if attn is not None:
-        scores = attn(tokens).reshape(B, G, G, 1)
-        if token_valid is not None:
-            cloud = ~token_valid.reshape(B, G, G).unsqueeze(-1)
-            scores = scores.masked_fill(cloud, -1e4)   # -inf → NaN gradient when all-clouded
+    def dn(b):
+        return f[:, _S2_IDX[b]] * _S2_STD[b] + _S2_MEAN[b] - S2_BOA_OFFSET
 
-        def _pool(rs, re, cs, ce):
-            wg = g[:, rs:re, cs:ce, :]
-            ws = scores[:, rs:re, cs:ce, :]
-            w  = F.softmax(ws.reshape(B, -1), dim=1)
-            return (wg * w.reshape(B, re-rs, ce-cs, 1)).sum(dim=(1, 2))
-    else:
-        v = (token_valid.reshape(B, G, G).to(tokens.dtype).unsqueeze(-1)
-             if token_valid is not None
-             else torch.ones(B, G, G, 1, device=tokens.device, dtype=tokens.dtype))
+    def nd(a, b):
+        num, den = a - b, a + b
+        ok = den.abs() > _IDX_DEN_FLOOR
+        return torch.where(ok, num / torch.where(ok, den, torch.ones_like(den)),
+                           torch.zeros_like(den)).clamp(-1.0, 1.0)
 
-        def _pool(rs, re, cs, ce):
-            rg = g[:, rs:re, cs:ce, :]
-            rv = v[:, rs:re, cs:ce, :]
-            return (rg * rv).sum(dim=(1, 2)) / rv.sum(dim=(1, 2)).clamp(min=1)
-
-    # Four nested scales centred on the grid; widths computed from G so the
-    # function works for any square token grid, not just 14×14.
-    half   = G // 2
-    n_sc   = 4
-    widths = [max(1, G * (i + 1) // (n_sc * 2)) for i in range(n_sc)]
-    pools  = [_pool(half - w, half + w, half - w, half + w) for w in widths]
-    return torch.stack(pools, dim=1)                                   # (B, 4, D)
+    s2v = (f[:, FINE_VALID["s2"]] > 0).to(f.dtype)
+    s1v = (f[:, FINE_VALID["s1"]] > 0).to(f.dtype)
+    ndvi  = nd(dn("B08"), dn("B04")) * s2v
+    ndmi  = nd(dn("B8A"), dn("B11")) * s2v
+    vv_db = f[:, 12] * _S1_STD[0] + _S1_MEAN[0]
+    vh_db = f[:, 13] * _S1_STD[1] + _S1_MEAN[1]
+    cr    = (vh_db - vv_db + CR_SHIFT) / CR_SCALE * s1v
+    return torch.stack([
+        ndvi, ndmi, f[:, 10], f[:, 11],                     # S2
+        f[:, 12] * s1v, cr, f[:, 14], f[:, 15], f[:, 16],   # S1
+        f[:, 17], f[:, 18],                                 # DEM
+    ], dim=1)
 
 
-# ── U-Net decoder ────────────────────────────────────────────────────────────
+def fine_layout(fine_inputs: str = "bands") -> dict:
+    if fine_inputs == "bands":
+        return {"s2": FINE_S2, "s1": FINE_S1, "dem": FINE_DEM, "ch": FINE_CH, "valid": FINE_VALID}
+    if fine_inputs == "indices":
+        return {"s2": FINE_IDX_S2, "s1": FINE_IDX_S1, "dem": FINE_IDX_DEM, "ch": FINE_IDX_CH,
+                "valid": FINE_IDX_VALID}
+    raise ValueError(f"fine_inputs must be 'bands' or 'indices', got {fine_inputs!r}")
+
+LULC_N_CLASSES = 10          # TerraMind LULC indices 0..9
+LULC_PAD       = 10          # nodata; maps to a fixed zero embedding
+LULC_EMB_DIM   = 8
+
+ENC_CH = (32, 64, 128)       # E1 @112 (20 m), E2 @56 (40 m), E3 @28 (80 m)
+
+
+def _masked_avg_pool(x: torch.Tensor, m: torch.Tensor, k: int) -> torch.Tensor:
+    """pool(x*m) / pool(m): an unbiased mean over valid pixels, 0 where none are valid."""
+    num = F.avg_pool2d(x * m, k)
+    den = F.avg_pool2d(m, k)
+    return num / den.clamp_min(1e-6) * (den > 0)
+
+
+class _ConvBlock(nn.Module):
+    """2 x (3x3 conv -> GroupNorm -> ReLU). `stride` applies to the first conv only.
+
+    The Sequential is named `.net` — the zero-init of the skip slices addresses
+    `conv{i}.net[0].weight` (§46.7 trap 4).
+    """
+    def __init__(self, in_ch: int, out_ch: int, stride: int = 1, dropout: float = 0.0):
+        super().__init__()
+        layers = [
+            nn.Conv2d(in_ch, out_ch, 3, stride=stride, padding=1, bias=False),
+            _gn(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            _gn(out_ch),
+            nn.ReLU(inplace=True),
+        ]
+        if dropout > 0:
+            layers.append(nn.Dropout2d(dropout))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def _stem(in_ch: int, out_ch: int) -> nn.Sequential:
+    """Per-modality stem, no normalisation (review #22, 2026-09-29). The inputs are already
+    normalised (TerraMind constants; LULC is a learned embedding), and a per-sample GroupNorm
+    here took its statistics over cloud/nodata pixels zeroed in the dataset, so the features
+    of a clear pixel shifted with the tile's cloud fraction. GroupNorm stays in enc1-3, after
+    the modalities are mixed."""
+    return nn.Sequential(nn.Conv2d(in_ch, out_ch, 3, padding=1), nn.ReLU(inplace=True))
+
+
+def _stem_dem(in_ch: int, out_ch: int) -> nn.Sequential:
+    """DEM stem WITHOUT GroupNorm (2026-09-29). The channel is already asinh relative relief
+    (dataset.py): per-sample GN would rescale every tile to the same spread and erase the
+    flat-vs-hilly amplitude the encoding exists to keep; with GroupNorm(1 group) a flat tile
+    whose variance falls under eps collapsed instead. Replicate padding: zero padding drew a
+    false cliff around the tile edge."""
+    return nn.Sequential(nn.Conv2d(in_ch, out_ch, 3, padding=1, padding_mode="replicate"),
+                         nn.ReLU(inplace=True))
+
+
+class FineEncoder(nn.Module):
+    """
+    Light CNN on the most recent imagery (§48.1): one stem per modality, then three levels.
+
+        S2  12 -> 16 | S1 5 -> 8 | DEM 2 -> 4 | LULC emb 8 @10 m -> 2x2 mean -> 4   = 32 @112
+        E1 32 @112   E2 64 @56   E3 128 @28                                  ~0.3 M params
+
+    LULC is embedded at its native 10 m and THEN averaged to 20 m. A 20 m cell of 3 crop and
+    1 forest pixel becomes 0.75*e_crop + 0.25*e_forest — algebraically the one-hot area
+    fraction times a learned matrix, so mixed pixels survive (§48.2 item 3). The mean is over
+    valid pixels only; LULC_PAD has a fixed zero vector.
+
+    fine_skips="pool" is §46's parameter-free alternative kept as the ablation: masked average
+    pooling of the 19 raw channels + the LULC embedding to each scale, then a 1x1 conv to the
+    same widths. It sees one pixel's values, never a neighbourhood.
+
+    Modality dropout (§48.2 item 9), training only: with probability `modality_dropout` per
+    sample, zero ALL of S2's or S1's channels — data, valid flag and age together — so the
+    network sees "missing", never "valid at the mean". It is applied here, on the device,
+    so train and eval batches from the dataset are identical.
+    """
+
+    def __init__(self, fine_skips: str = "cnn", modality_dropout: float = 0.2,
+                 fine_inputs: str = "bands"):
+        super().__init__()
+        if fine_skips not in ("cnn", "pool"):
+            raise ValueError(f"fine_skips must be 'cnn' or 'pool', got {fine_skips!r}")
+        self.fine_skips       = fine_skips
+        self.modality_dropout = modality_dropout
+        self.fine_inputs      = fine_inputs
+        L = self.layout       = fine_layout(fine_inputs)   # §57: "bands" 19 ch | "indices" 11 ch
+
+        self.lulc_emb = nn.Embedding(LULC_N_CLASSES + 1, LULC_EMB_DIM, padding_idx=LULC_PAD)
+
+        if fine_skips == "cnn":
+            self.stem_s2   = _stem(L["s2"].stop - L["s2"].start, 16)
+            self.stem_s1   = _stem(L["s1"].stop - L["s1"].start, 8)
+            self.stem_dem  = _stem_dem(L["dem"].stop - L["dem"].start, 4)
+            self.stem_lulc = _stem(LULC_EMB_DIM, 4)
+            self.enc1 = _ConvBlock(32, ENC_CH[0])
+            self.enc2 = _ConvBlock(ENC_CH[0], ENC_CH[1], stride=2)
+            self.enc3 = _ConvBlock(ENC_CH[1], ENC_CH[2], stride=2)
+        else:
+            n_in = L["ch"] + LULC_EMB_DIM
+            self.pool_proj = nn.ModuleList([nn.Conv2d(n_in, c, 1) for c in ENC_CH])
+
+    def _drop_modality(self, fine: torch.Tensor) -> torch.Tensor:
+        if not self.training or self.modality_dropout <= 0.0:
+            return fine
+        B = fine.shape[0]
+        drop  = torch.rand(B, device=fine.device) < self.modality_dropout      # (B,)
+        which = torch.rand(B, device=fine.device) < 0.5                        # True = S2
+        keep  = torch.ones(B, FINE_CH, 1, 1, device=fine.device, dtype=fine.dtype)
+        keep[:, FINE_S2] = (~(drop & which)).to(fine.dtype).view(B, 1, 1, 1)
+        keep[:, FINE_S1] = (~(drop & ~which)).to(fine.dtype).view(B, 1, 1, 1)
+        return fine * keep
+
+    def _lulc_20m(self, lulc: torch.Tensor) -> torch.Tensor:
+        """(B, 224, 224) long @ 10 m -> (B, 8, 112, 112) float @ 20 m, masked 2x2 mean."""
+        e = self.lulc_emb(lulc).permute(0, 3, 1, 2)                    # (B, 8, 224, 224)
+        m = (lulc != LULC_PAD).unsqueeze(1).to(e.dtype)                # (B, 1, 224, 224)
+        return _masked_avg_pool(e, m, 2)
+
+    def forward(self, fine: torch.Tensor, lulc: torch.Tensor):
+        """Returns [E1 (B,32,112,112), E2 (B,64,56,56), E3 (B,128,28,28)]."""
+        fine = self._drop_modality(fine.float())          # on the 19-ch tensor in both modes
+        if self.fine_inputs == "indices":
+            fine = fine_to_indices(fine)
+        lulc = self._lulc_20m(lulc.long())
+        L = self.layout
+
+        if self.fine_skips == "cnn":
+            x = torch.cat([
+                self.stem_s2(fine[:, L["s2"]]),
+                self.stem_s1(fine[:, L["s1"]]),
+                self.stem_dem(fine[:, L["dem"]]),
+                self.stem_lulc(lulc),
+            ], dim=1)                                                  # (B, 32, 112, 112)
+            e1 = self.enc1(x)
+            e2 = self.enc2(e1)
+            e3 = self.enc3(e2)
+            return [e1, e2, e3]
+
+        # pool: each modality is averaged over its OWN valid pixels, so a 40 m cell with one
+        # cloudy 20 m pixel is the mean of the other three, not diluted toward zero.
+        x = torch.cat([fine, lulc], dim=1)                             # (B, 27, 112, 112)
+        m = torch.ones_like(x[:, :1]).expand_as(x).clone()
+        for name in ("s2", "s1", "dem"):
+            v = L["valid"][name]
+            m[:, L[name]] = fine[:, v:v + 1]
+        m[:, L["ch"]:] = (lulc.abs().sum(1, keepdim=True) > 0).to(x.dtype)
+        outs = []
+        for k, proj in zip((1, 2, 4), self.pool_proj):
+            outs.append(proj(x if k == 1 else _masked_avg_pool(x, m, k)))
+        return outs
+
+
+# ── Decoder ──────────────────────────────────────────────────────────────────
 
 class FiLMLayer(nn.Module):
     """Feature-wise Linear Modulation: modulate a spatial feature map with a
@@ -168,118 +385,91 @@ class FiLMLayer(nn.Module):
         return scale * x + shift
 
 
-class _ConvBlock(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(0.15),
-        )
-
-    def forward(self, x):
-        return self.net(x)
+LST_POOL = 5                 # 112 @ 20 m -> 22 @ 100 m over pixels 0..109 (landsat_target.py)
+LST_N    = 22
 
 
 class UNetDecoder(nn.Module):
     """
-    4× upsampling: 14×14 → 28×28 → 56×56 → 112×112 → 224×224
+    14 -> 28 -> 56 -> 112. No up4 / conv4: nothing supervises 10 m (§46.4).
 
-    Skip connections from TerraMind L9, L6, L3 of the most-recent acquisition,
-    each FiLM-modulated by the Transformer temporal context vector so the
-    high-resolution decoder layers are aware of recent weather and history.
+    The skips are the FINE encoder's features, not TerraMind L9/L6/L3 — tokens carry nothing
+    below 160 m (§34.9). The first conv of each stage sees [upsampled path | skip]; the skip
+    columns of its weight start at zero, so at step 0 the decoder IS the bottleneck-only
+    decoder and the encoder is brought in by gradient, not by initialisation (§48.4).
     """
 
     def __init__(
         self,
-        in_ch:         int   = 768,
-        skip_ch:       int   = 768,
-        dec_ch:        tuple = (512, 256, 128, 64),
-        n_depths:      int   = 3,
-        d_context:     int   = 768,
-        use_cls_depth: bool  = False,
+        in_ch:     int   = 768,
+        dec_ch:    tuple = (512, 256, 128, 64),
+        n_depths:  int   = 3,
+        d_context: int   = 768,
+        head_bias_init: list[float] | None = None,
+        skip_zero_init: bool = True,
     ):
         super().__init__()
         c = dec_ch
-        self.n_depths      = n_depths
-        self.use_cls_depth = use_cls_depth
+        self.n_depths = n_depths
 
         self.bottle_proj = nn.Conv2d(in_ch, c[0], 1)
-        self.skip_proj   = nn.ModuleList([
-            nn.Conv2d(skip_ch, c[0], 1),   # L9
-            nn.Conv2d(skip_ch, c[1], 1),   # L6
-            nn.Conv2d(skip_ch, c[2], 1),   # L3
-        ])
+        self.film_skip   = nn.ModuleList([FiLMLayer(d_context, e) for e in ENC_CH[::-1]])
 
-        # FiLM layers: inject temporal context into each skip before concatenation
-        self.film_s9 = FiLMLayer(d_context, c[0])
-        self.film_s6 = FiLMLayer(d_context, c[1])
-        self.film_s3 = FiLMLayer(d_context, c[2])
-
-        self.up1   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
-        self.conv1 = _ConvBlock(c[0] + c[0], c[1])
-
-        self.up2   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
-        self.conv2 = _ConvBlock(c[1] + c[1], c[2])
-
-        self.up3   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
-        self.conv3 = _ConvBlock(c[2] + c[2], c[3])
-
-        self.up4   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
-        self.conv4 = _ConvBlock(c[3], c[3])
+        self.up    = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
+        self.conv1 = _ConvBlock(c[0] + ENC_CH[2], c[1], dropout=0.15)   # @28
+        self.conv2 = _ConvBlock(c[1] + ENC_CH[1], c[2], dropout=0.15)   # @56
+        self.conv3 = _ConvBlock(c[2] + ENC_CH[0], c[3], dropout=0.15)   # @112
+        # §61 --no-skip-zero-init keeps the default (Kaiming) init on the skip columns, so the fine
+        # path is switched on from step 0 instead of having to be pulled in by the gradient.
+        if skip_zero_init:
+            with torch.no_grad():
+                for conv, c_path in ((self.conv1, c[0]), (self.conv2, c[1]), (self.conv3, c[2])):
+                    conv.net[0].weight[:, c_path:].zero_()
 
         self.pre_head_drop = nn.Dropout(0.1)
 
-        if use_cls_depth:
-            self.depth_film = nn.ModuleList([FiLMLayer(d_context, c[3]) for _ in range(n_depths)])
-            self.heads      = nn.ModuleList([nn.Conv2d(c[3], 1, 1) for _ in range(n_depths)])
-            # Star residual (see forward): heads[0] predicts SM directly, heads[1:] predict
-            # an offset from it. Zero-init the offset heads so training starts from
-            # "all depths = surface prediction" instead of from noise.
-            for h in self.heads[1:]:
-                nn.init.zeros_(h.weight)
-                nn.init.zeros_(h.bias)
-        else:
-            self.head = nn.Conv2d(c[3], n_depths, 1)
+        # Three DISCONNECTED depth heads (§46.1 rows 5-9): no star residual, so each predicts
+        # absolutely and each bias starts at that depth's train-set mean. Zero-init would mean
+        # "predict zero moisture", far outside the data.
+        self.depth_film = nn.ModuleList([FiLMLayer(d_context, c[3]) for _ in range(n_depths)])
+        self.heads      = nn.ModuleList([nn.Conv2d(c[3], 1, 1) for _ in range(n_depths)])
+        # Zero WEIGHTS, bias = label_mean: each depth opens at exactly its own mean. With the
+        # default init the 64 post-ReLU channels add +/-0.4 m3/m3 on top of the bias (measured
+        # by verify_s48.py check 4: 0.05 / 0.56 / 0.56 against 0.17 / 0.19 / 0.19), which
+        # opens training in Huber's linear regime — the §35.24 defect the bias init exists to
+        # remove. The weights still get a gradient on step 1, since the map they read is not 0.
+        for h in self.heads:
+            nn.init.zeros_(h.weight)
+        if head_bias_init is not None:
+            if len(head_bias_init) != n_depths:
+                raise ValueError(f"head_bias_init needs {n_depths} values, "
+                                 f"got {len(head_bias_init)}")
+            with torch.no_grad():
+                for h, b in zip(self.heads, head_bias_init):
+                    h.bias.fill_(float(b))
 
-    def forward(self, bottleneck, skip_L9, skip_L6, skip_L3, context, depth_ctx=None):
-        # context:   (B, d_context) — global temporal summary for skip FiLM
-        # depth_ctx: (B, n_depths, d_context) — per-depth CLS context (optional)
-        x   = self.bottle_proj(bottleneck)
-        s9  = self.film_s9(self.skip_proj[0](skip_L9), context)
-        s6  = self.film_s6(self.skip_proj[1](skip_L6), context)
-        s3  = self.film_s3(self.skip_proj[2](skip_L3), context)
+        # Thermal head: OUTSIDE the per-depth branch — Kelvin is not a depth. Reads z directly.
+        self.head_lst = nn.Conv2d(c[3], 1, 1)
 
-        x = self.up1(x)
-        x = self.conv1(torch.cat([x, F.interpolate(s9, x.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
+    def forward(self, bottleneck, skips, context, depth_ctx):
+        # skips: [E1 @112, E2 @56, E3 @28]; context (B, d); depth_ctx (B, n_depths, d)
+        e1, e2, e3 = skips
+        x = self.bottle_proj(bottleneck)                                        # (B,512,14,14)
+        x = self.conv1(torch.cat([self.up(x), self.film_skip[0](e3, context)], 1))  # @28
+        x = self.conv2(torch.cat([self.up(x), self.film_skip[1](e2, context)], 1))  # @56
+        z = self.conv3(torch.cat([self.up(x), self.film_skip[2](e1, context)], 1))  # @112
+        x = self.pre_head_drop(z)
 
-        x = self.up2(x)
-        x = self.conv2(torch.cat([x, F.interpolate(s6, x.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
-
-        x = self.up3(x)
-        x = self.conv3(torch.cat([x, F.interpolate(s3, x.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
-
-        x = self.up4(x)
-        x = self.conv4(x)
-        x = self.pre_head_drop(x)
-
-        if self.use_cls_depth and depth_ctx is not None:
-            # Star residual: depth 0 predicts SM absolutely; every deeper depth predicts an
-            # offset from it. Star (all offsets from depth 0) rather than chain (each offset
-            # from the depth above) so a sparsely-observed middle depth cannot corrupt the
-            # ones below it — the >=95% coverage filter drops depths per station.
-            # See training_runbook.md §18.4.
-            base       = self.heads[0](self.depth_film[0](x, depth_ctx[:, 0, :]))
-            depth_maps = [base]
-            for d in range(1, self.n_depths):
-                x_d = self.depth_film[d](x, depth_ctx[:, d, :])
-                depth_maps.append(base + self.heads[d](x_d))
-            return torch.cat(depth_maps, dim=1)                        # (B, n_depths, 224, 224)
-        return self.head(x)                                            # (B, n_depths, 224, 224)
+        # Readouts in fp32, outside autocast: epoch-to-epoch checkpoint decisions are made on
+        # val differences of order 1e-5 m3/m3, below bf16's ~1e-3 absolute at SM = 0.5.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            xf, dcf = x.float(), depth_ctx.float()
+            sm = torch.cat([self.heads[d](self.depth_film[d](xf, dcf[:, d, :]))
+                            for d in range(self.n_depths)], dim=1)             # (B,3,112,112)
+            lst_map = self.head_lst(xf)                                         # (B,1,112,112)
+            n = LST_POOL * LST_N
+            lst = F.avg_pool2d(lst_map[:, :, :n, :n], LST_POOL)                 # (B,1,22,22)
+        return sm, lst, z
 
 
 # ── Soil encoder ─────────────────────────────────────────────────────────────
@@ -290,11 +480,10 @@ class SoilEncoder(nn.Module):
 
     Input : (B, 21, 74, 74) float32 — NaN-free (pre-filled by dataset)
     Output: (B,  4, 768)    float32 — 4 static soil tokens
-    ~211 K parameters
 
-    Architecture (from architecture.md §4d):
-      Block 1: DWConv(21, 3×3) → PWConv(21→32) → BN → GELU  # (B,32,74,74)
-      Block 2: DWConv(32, 3×3, s=2) → PWConv(32→64) → BN → GELU  # (B,64,37,37)
+    Architecture (from architecture.md §4d), GroupNorm in place of BatchNorm (§48):
+      Block 1: DWConv(21, 3×3) → PWConv(21→32) → GN → GELU  # (B,32,74,74)
+      Block 2: DWConv(32, 3×3, s=2) → PWConv(32→64) → GN → GELU  # (B,64,37,37)
       Pyramid: centre 1×1 / 3×3 / 7×7 / full 37×37 → mean → Linear(64→768)
     """
     IN_CH  = 21
@@ -307,13 +496,13 @@ class SoilEncoder(nn.Module):
         self.block1 = nn.Sequential(
             nn.Conv2d(self.IN_CH,  self.IN_CH,  3, padding=1, groups=self.IN_CH,  bias=False),
             nn.Conv2d(self.IN_CH,  self.MID_CH, 1, bias=False),
-            nn.BatchNorm2d(self.MID_CH),
+            _gn(self.MID_CH),
             nn.GELU(),
         )
         self.block2 = nn.Sequential(
             nn.Conv2d(self.MID_CH, self.MID_CH, 3, stride=2, padding=1, groups=self.MID_CH, bias=False),
             nn.Conv2d(self.MID_CH, c,           1, bias=False),
-            nn.BatchNorm2d(c),
+            _gn(c),
             nn.GELU(),
         )
         self.proj = nn.ModuleList([nn.Linear(c, d_model) for _ in range(4)])
@@ -324,7 +513,7 @@ class SoilEncoder(nn.Module):
         cy = cx = 18                                                 # centre of 37×37
         # Scales: input is 30 m/px, but block2 has stride 2 → cells here are 60 m, and each
         # cell has a 5-input-px receptive field. So a k×k window spans k×60 m and sees
-        # (5 + 2(k-1))×30 m of input. (Earlier comments assumed 30 m cells — 2× too small.)
+        # (5 + 2(k-1))×30 m of input.
         t0 = x[:, :, cy:cy+1,   cx:cx+1  ].mean(dim=(-2, -1))     # 1×1   win 60 m,  RF 150 m
         t1 = x[:, :, cy-1:cy+2, cx-1:cx+2].mean(dim=(-2, -1))     # 3×3   win 180 m, RF 270 m
         t2 = x[:, :, cy-3:cy+4, cx-3:cx+4].mean(dim=(-2, -1))     # 7×7   win 420 m, RF 510 m
@@ -336,481 +525,310 @@ class SoilEncoder(nn.Module):
 
 # ── Full model ───────────────────────────────────────────────────────────────
 
+N_ERA5 = 18                  # era5/values18: skt dropped, ssrd_sum/strd_sum added (§43.12)
+
+
 class SoilMoistureModel(nn.Module):
     """
     Args:
-        n_depths  : number of SM depth bins (default 4)
-        d_model   : transformer / token dimension (default 768)
-        n_heads   : attention heads (default 12)
-        n_layers  : transformer layers (default 6)
+        n_depths        : SM depth bins (3), SM_DEPTHS order
+        d_model         : token dimension (768)
+        n_heads         : attention heads (12)
+        n_layers        : trunk transformer layers (6)
+        head_bias_init  : per-depth initial SM head bias in m3/m3 — train.py passes
+                          driver_stats.json's `label_mean`
+        fine_skips      : "cnn" (§48, default) or "pool" (§46's masked pool + 1x1, the ablation)
+        modality_dropout: per-sample probability of zeroing S2 or S1 in the fine path (train)
+
+    forward(batch) -> dict
+        sm   (B, 3, 112, 112)  soil moisture map @ 20 m; station pixel (56, 56)
+        lst  (B, 1, 22, 22)    thermal pattern @ 100 m, units of sigma_ST, level meaningless
+        z    (B, 64, 112, 112) the shared map both heads read — train.py takes the gradient
+                               norms for lambda here, never at parameter leaves (§46.5 item 28)
     """
 
-    STATION_ROW = 112
-    STATION_COL = 112
+    STATION_ROW = 56
+    STATION_COL = 56
 
     def __init__(
         self,
-        n_depths:      int   = 3,
-        d_model:       int   = 768,
-        n_heads:       int   = 12,
-        n_layers:      int   = 6,
-        drop_path_rate: float = 0.1,
-        use_cls_depth:  bool  = False,
+        n_depths:         int   = 3,
+        d_model:          int   = 768,
+        n_heads:          int   = 12,
+        n_layers:         int   = 6,
+        drop_path_rate:   float = 0.1,
+        head_bias_init:   list[float] | None = None,
+        fine_skips:       str   = "cnn",
+        modality_dropout: float = 0.2,
+        fine_inputs:      str   = "bands",
+        skip_zero_init:   bool  = True,
     ):
         super().__init__()
-        self.d_model       = d_model
-        self.n_depths      = n_depths
-        self.use_cls_depth = use_cls_depth
+        self.d_model  = d_model
+        self.n_depths = n_depths
+        # Kept as an attribute: train.py's inert-CLS diagnostic and checkpoints read it. The
+        # disconnected per-depth heads require the CLS rows, so it is not optional here.
+        self.use_cls_depth = True
 
-        # ── Encoders ──────────────────────────────────────────────────
+        # ── Driver encoders ───────────────────────────────────────────
         self.soil_encoder = SoilEncoder(d_model=d_model)
-
         self.era5_mlp = nn.Sequential(
-            nn.Linear(19, 256),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(256, d_model),
-        )
-
-        # SIF and TWSA MLP encoders (scalar → token)
+            nn.Linear(N_ERA5, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
         self.sif_mlp  = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
         self.twsa_mlp = nn.Sequential(nn.Linear(1, 256), nn.GELU(), nn.Dropout(0.1), nn.Linear(256, d_model))
 
-        # ── Modality type embeddings ───────────────────────────────────
-        # Soil tokens
+        # ── Annotations ───────────────────────────────────────────────
+        # Driver side (small, driver content is small)
         self.soil_modality_emb = nn.Embedding(1, d_model)
-        # Static (DEM=0, LULC=1)
-        self.static_modality_emb = nn.Embedding(2, d_model)
-        # Target-day spatial (S2=0, S1_asc=1, S1_desc=2)
-        self.spatial_modality_emb = nn.Embedding(3, d_model)
-        # Satellite history (S2hist=0, S1hist=1) — distinguishes S2 from S1 in sequence
-        self.hist_modality_emb = nn.Embedding(2, d_model)
-        # ERA5 temporal tokens
         self.era5_modality_emb = nn.Embedding(1, d_model)
-        # Optional sparse modalities
         self.sif_modality_emb  = nn.Embedding(1, d_model)
         self.twsa_modality_emb = nn.Embedding(1, d_model)
+        self.rel_pos_emb       = nn.Embedding(365, d_model)   # DRIVERS: era5, sif, twsa
+        # History side (full scale, frozen TerraMind content is large)
+        self.static_modality_emb  = nn.Embedding(2, d_model)  # DEM=0, LULC=1
+        self.spatial_modality_emb = nn.Embedding(3, d_model)  # anchor: S2=0, S1 asc=1, desc=2
+        # Satellite history: 0 = S2, 1 = S1 ascending, 2 = S1 descending. THREE, not two:
+        # asc/desc backscatter differs by an amount comparable to the moisture signal, so a
+        # shared S1 tag makes an orbit switch indistinguishable from a wetting event.
+        self.hist_modality_emb = nn.Embedding(3, d_model)
+        self.scale_emb         = nn.Embedding(4, d_model)     # pyramid level
+        self.rel_pos_emb_hist  = nn.Embedding(365, d_model)   # HISTORY + anchor staleness
+        self.spatial_row_emb   = nn.Embedding(14, d_model)
+        self.spatial_col_emb   = nn.Embedding(14, d_model)
 
-        # Learned scale embedding: 4 pyramid levels
-        self.scale_emb = nn.Embedding(4, d_model)
+        for emb in (self.soil_modality_emb, self.era5_modality_emb,
+                    self.sif_modality_emb, self.twsa_modality_emb, self.rel_pos_emb):
+            nn.init.trunc_normal_(emb.weight, std=EMB_INIT_STD)
+        for emb in (self.static_modality_emb, self.spatial_modality_emb, self.hist_modality_emb,
+                    self.scale_emb, self.rel_pos_emb_hist,
+                    self.spatial_row_emb, self.spatial_col_emb):
+            nn.init.trunc_normal_(emb.weight, std=HIST_EMB_INIT_STD)
 
-        # Learned relative position embedding: position within 365-day window
-        self.rel_pos_emb = nn.Embedding(365, d_model)
+        # DOY code as a 367-row table (a pure function of one integer); persistent=False so it
+        # follows .to(device) without entering the state_dict.
+        self.register_buffer("doy_pe", circular_doy_pe(torch.arange(367), d_model),
+                             persistent=False)
 
-        # All pyramid pooling (S2, S1, DEM, LULC) uses static masked-mean in dataset workers.
+        # ── Depth CLS tokens ──────────────────────────────────────────
+        # trunc_normal, not zero: with no positional code on these slots, zero-init makes all
+        # three depth queries identical, and attention is permutation-equivariant over them.
+        self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
+        nn.init.trunc_normal_(self.depth_tokens, std=0.02)
 
-        # Target-day spatial tokens: 2D spatial PE
-        self.spatial_row_emb = nn.Embedding(14, d_model)
-        self.spatial_col_emb = nn.Embedding(14, d_model)
-
-        # ── Temporal transformer with stochastic depth ────────────────
+        # ── Temporal transformer ──────────────────────────────────────
         dpr = [drop_path_rate * i / max(n_layers - 1, 1) for i in range(n_layers)]
         self.transformer_layers = nn.ModuleList([
             DropPathTransformerLayer(
                 nn.TransformerEncoderLayer(
-                    d_model         = d_model,
-                    nhead           = n_heads,
-                    dim_feedforward = d_model * 4,
-                    dropout         = 0.1,
-                    batch_first     = True,
-                    norm_first      = True,
-                ),
-                drop_prob = dpr[i],
-            )
+                    d_model=d_model, nhead=n_heads, dim_feedforward=d_model * 4,
+                    dropout=0.1, batch_first=True, norm_first=True),
+                drop_prob=dpr[i])
             for i in range(n_layers)
         ])
         self.transformer_norm = nn.LayerNorm(d_model)
 
-        # ── Depth-specific CLS tokens (one per depth, attend across all tokens) ──
-        if use_cls_depth:
-            self.depth_tokens = nn.Parameter(torch.zeros(n_depths, d_model))
-            # Zero-init would make all depth queries numerically identical, and no positional
-            # encoding is added to these slots — attention is permutation-equivariant over
-            # them, so depth_ctx[:,0,:] == depth_ctx[:,1,:] == ... exactly at step 0. Random
-            # init gives each depth a distinct query from the first step.
-            nn.init.trunc_normal_(self.depth_tokens, std=0.02)
+        # ── Fine path + decoder ───────────────────────────────────────
+        self.fine_encoder = FineEncoder(fine_skips=fine_skips,
+                                        modality_dropout=modality_dropout,
+                                        fine_inputs=fine_inputs)
+        self.decoder = UNetDecoder(in_ch=d_model, n_depths=n_depths, d_context=d_model,
+                                   head_bias_init=head_bias_init,
+                                   skip_zero_init=skip_zero_init)
 
-        # ── U-Net decoder ─────────────────────────────────────────────
-        self.decoder = UNetDecoder(
-            in_ch          = d_model,
-            skip_ch        = d_model,
-            dec_ch         = (512, 256, 128, 64),
-            n_depths       = n_depths,
-            d_context      = d_model,
-            use_cls_depth  = use_cls_depth,
-        )
+    # ── Sequence ─────────────────────────────────────────────────────────────
 
-    # ── Internal helpers ─────────────────────────────────────────────────────
+    def _anchor_tokens(self, batch: dict, device) -> torch.Tensor:
+        """Target-day spatial tokens: the anchor's L12 (B, 196, 768) + 2-D PE + sensor + age.
 
-    # NOT USED — pyramid pooling for S2/S1 moved to _cpu_pyramid_pool() in dataset.py
-    def _pyramid_from_l12(self,
-                          l12:        torch.Tensor,
-                          valid:      torch.Tensor,
-                          token_mask: torch.Tensor | None,
-                          attn:       nn.Linear) -> torch.Tensor:
+        The anchor is chosen by dataset.py's select_anchor_zarr: the most recent fully-clear
+        acquisition on or before day D, falling back to the most recent regardless.
         """
-        Compute pyramid tokens from pre-stored L12 features.
+        tok   = batch["anchor_l12"].to(device).float()                        # (B, 196, 768)
+        rows  = torch.arange(14, device=device)
+        pe    = (self.spatial_row_emb(rows).unsqueeze(1) +
+                 self.spatial_col_emb(rows).unsqueeze(0)).reshape(196, self.d_model)
+        orbit = batch["anchor_orbit"].to(device).long().clamp(0, 2)            # (B,)
+        age   = batch["anchor_rel_pos"].to(device).long().clamp(0, 364)        # (B,)
+        return (tok + pe.unsqueeze(0)
+                + self.spatial_modality_emb(orbit).unsqueeze(1)
+                + self.rel_pos_emb_hist(age).unsqueeze(1))
 
-        l12        : (B, MAX_ACQ, 196, 768) fp16 — loaded from disk
-        valid      : (B, MAX_ACQ) bool
-        token_mask : (B, MAX_ACQ, 14, 14) bool | None — True=clear (S2 only)
-        attn       : modality-specific nn.Linear(768, 1) scorer
-
-        Returns: (B, MAX_ACQ, 4, 768)
+    def _build_sequence(self, batch: dict):
         """
-        B, MAX_ACQ = valid.shape
+        [ CLS x3 | DEM x4 | LULC x4 | soil x4 | anchor x196 | S2 x MAX_S2*4 | S1 x MAX_S1*4 |
+          ERA5 x365 | SIF | TWSA ]
 
-        flat_l12   = l12.reshape(B * MAX_ACQ, 196, self.d_model)
-        flat_valid = valid.reshape(B * MAX_ACQ)                        # (B*MAX_ACQ,) bool
-        flat_tm    = token_mask.reshape(B * MAX_ACQ, 196) if token_mask is not None else None
-
-        # Run on all rows including padded ones. Avoids .nonzero() which forces a
-        # GPU↔CPU sync and stalls the async pipeline, causing DDP rank imbalance.
-        # INVARIANT: dataset zero-inits l12 for padded slots (torch.zeros in
-        # load_s2/s1_rolling_zarr), so pooled output for padded rows is zero before
-        # the flat_valid multiply. Do not replace torch.zeros with torch.empty there.
-        pyr = spatial_pyramid_pool(flat_l12, flat_tm, attn=attn)       # (B*MAX_ACQ, 4, D)
-        pyr = pyr * flat_valid[:, None, None]                          # zero padded slots
-
-        return pyr.reshape(B, MAX_ACQ, 4, self.d_model)                # (B, MAX_ACQ, 4, 768)
-
-    # NOT USED — DEM/LULC pyramid pooling moved to _cpu_pyramid_pool() in dataset.py
-    def _static_pyramid(self, l12: torch.Tensor, attn: nn.Linear,
-                        token_valid: torch.Tensor | None = None) -> torch.Tensor:
-        """l12: (B, 196, 768) fp16 → (B, 4, 768) fp32 pyramid.
-        token_valid: (B, 14, 14) bool | None — True = valid patch."""
-        B  = l12.shape[0]
-        tv = token_valid.reshape(B, 196) if token_valid is not None else None
-        return spatial_pyramid_pool(l12, token_valid=tv, attn=attn)
-
-    def _get_target_spatial_tokens(self, batch: dict, B: int,
-                                   device) -> tuple[torch.Tensor, torch.Tensor]:
+        Returns (seq (B, T, d), pad (B, T) True = ignore, spatial_start int).
         """
-        Build target spatial tokens from the pre-selected anchor acquisition
-        (chosen in dataset.py by select_anchor_zarr: most recent fully-clear,
-        falling back to most recent regardless).
+        device = next(self.parameters()).device
+        d      = self.d_model
+        era5   = batch["era5"].to(device).float()
+        B      = era5.shape[0]
+        toks, pads = [], []
 
-        Returns:
-            spatial_tokens : (B, 196, 768)
-            use_s1         : (B,) bool
-        """
-        spatial_tokens = batch["anchor_l12"].to(device)                 # (B, 196, 768)
-        anchor_orbit   = batch["anchor_orbit"].to(device)              # (B,) long: 0=S2,1=S1_asc,2=S1_desc
+        def _nopad(n):
+            return torch.zeros(B, n, device=device, dtype=torch.bool)
 
-        # 2D spatial positional encoding
-        rows       = torch.arange(14, device=device)
-        cols       = torch.arange(14, device=device)
-        spatial_pe = (self.spatial_row_emb(rows).unsqueeze(1) +
-                      self.spatial_col_emb(cols).unsqueeze(0)).reshape(196, self.d_model)
-        spatial_tokens = spatial_tokens + spatial_pe.unsqueeze(0)
+        # depth CLS prefix
+        toks.append(self.depth_tokens.unsqueeze(0).expand(B, -1, -1))
+        pads.append(_nopad(self.n_depths))
 
-        # Modality embedding: distinct learned vector for S2, S1-asc, S1-desc
-        mod_emb        = self.spatial_modality_emb(anchor_orbit)       # (B, 768)
-        spatial_tokens = spatial_tokens + mod_emb.unsqueeze(1)
+        scale_e  = self.scale_emb.weight                                       # (4, d)
+        static_w = self.static_modality_emb.weight                             # (2, d)
 
-        # Staleness embedding: how old is the anchor relative to target day
-        anchor_rp      = batch["anchor_rel_pos"].to(device).clamp(0, 364)  # (B,)
-        staleness_emb  = self.rel_pos_emb(anchor_rp)                   # (B, 768)
-        spatial_tokens = spatial_tokens + staleness_emb.unsqueeze(1)
+        # statics: DEM and LULC pyramids (pooled frozen TerraMind L12), then soil
+        # §60 --static-dropout: a withheld group arrives zeroed with {dem,lulc,soil}_valid False and
+        # is key-padded here. Batches without the flags (older callers) pad nothing, as before.
+        def _static_pad(name):
+            v = batch.get(f"{name}_valid")
+            return _nopad(4) if v is None else (~v.to(device).bool()).unsqueeze(1).expand(B, 4)
 
-        use_s1 = anchor_orbit > 0
-        return spatial_tokens, use_s1
+        for i, (key, name) in enumerate((("dem_pyr", "dem"), ("lulc_pyr", "lulc"))):
+            toks.append(batch[key].to(device).float() + scale_e + static_w[i])
+            pads.append(_static_pad(name))
+        soil = self.soil_encoder(batch["soil_patch"].to(device).float())
+        toks.append(soil + self.soil_modality_emb.weight)
+        pads.append(_static_pad("soil"))
 
-    def _get_skip_connections(self, batch: dict, B: int,
-                              device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Reshape preloaded L3/L6/L9 skip features to (B, 768, 14, 14) spatial maps.
-        Features are precomputed by precompute_terramind.py and loaded by the dataset.
-        """
-        def to_spatial(key: str) -> torch.Tensor:
-            return (batch[key].to(device)                  # (B, 196, 768)
-                    .reshape(B, 14, 14, self.d_model)
-                    .permute(0, 3, 1, 2))                  # (B, 768, 14, 14)
+        # anchor spatial tokens
+        spatial_start = sum(t.shape[1] for t in toks)
+        toks.append(self._anchor_tokens(batch, device))
+        # No S2/S1 scene in the window: the anchor is a zero map. Key-pad it so no other token
+        # attends to zeros tagged as imagery; the rows still read the drivers as queries, so the
+        # bottleneck is built from context instead (review #7, 2026-09-29).
+        if "anchor_found" in batch:
+            pads.append((~batch["anchor_found"].to(device).bool()).unsqueeze(1).expand(B, 196))
+        else:
+            pads.append(_nopad(196))
 
-        return to_spatial("anchor_l3"), to_spatial("anchor_l6"), to_spatial("anchor_l9")
+        # satellite history: pooled pyramids + staleness + level + sensor/orbit
+        for key in ("s2", "s1"):
+            pyr   = batch[f"{key}_pyr"].to(device).float()                    # (B, T, 4, d)
+            T     = pyr.shape[1]
+            rel   = self.rel_pos_emb_hist(
+                batch[f"{key}_rel_pos"].to(device).long().reshape(-1).clamp(0, 364)
+            ).reshape(B, T, 1, d)
+            if key == "s2":
+                mod = self.hist_modality_emb.weight[0].view(1, 1, 1, d)
+            else:
+                orb = batch["s1_orbit"].to(device).long().clamp(0, 1)          # (B, T)
+                mod = self.hist_modality_emb(orb + 1).unsqueeze(2)             # (B, T, 1, d)
+            toks.append((pyr + rel + scale_e.view(1, 1, 4, d) + mod).reshape(B, T * 4, d))
+            valid = batch[f"{key}_valid"].to(device).bool()                    # (B, T)
+            pads.append((~valid).unsqueeze(-1).expand(-1, -1, 4).reshape(B, T * 4))
 
-    def _build_sequence(self, batch: dict, dem_pyr, lulc_pyr, soil_tok,
-                        s2_pyr, s2_doys, s2_valid,
-                        s1_pyr, s1_doys, s1_valid,
-                        spatial_tokens):
-        """
-        Assemble the full token sequence:
-            [DEM×4 | LULC×4 | Soil×4 | target_spatial×196 | satellite_history | era5×365]
+        # ERA5: staleness from the dataset's REAL row dates, never the slot index
+        era5_doys = batch["era5_doys"].to(device).long()
+        era5_rel  = batch["era5_rel_pos"].to(device).long().reshape(-1).clamp(0, 364)
+        toks.append(self.era5_mlp(era5)
+                    + self.doy_pe[era5_doys.reshape(-1).clamp(0, 366)].reshape(B, -1, d)
+                    + self.rel_pos_emb(era5_rel).reshape(B, -1, d)
+                    + self.era5_modality_emb.weight)
+        pads.append(era5_doys == 0)
 
-        Returns:
-            seq           : (B, T, 768)
-            key_mask      : (B, T)  True = ignore
-            spatial_start : int     index of first spatial token (= 12)
-        """
-        B      = batch["era5"].shape[0]
-        device = batch["era5"].device
-        tokens = []
-        is_pad = []
+        # SIF and TWSA, both sparse; empty slots handled by the valid mask, never by a branch
+        # that would drop an MLP out of the graph (DDP runs without find_unused_parameters).
+        for key, mlp, mod_emb in (("sif",  self.sif_mlp,  self.sif_modality_emb),
+                                  ("twsa", self.twsa_mlp, self.twsa_modality_emb)):
+            vals = batch[key].to(device).float()
+            doys = batch[f"{key}_doys"].to(device).long()
+            rel  = batch[f"{key}_rel_pos"].to(device).long()
+            toks.append(mlp(vals)
+                        + self.doy_pe[doys.reshape(-1).clamp(0, 366)].reshape(B, -1, d)
+                        + self.rel_pos_emb(rel.reshape(-1).clamp(0, 364)).reshape(B, -1, d)
+                        + mod_emb.weight)
+            pads.append(~batch[f"{key}_valid"].to(device).bool())
 
-        scale_e    = self.scale_emb(torch.arange(4, device=device))        # (4, 768)
-        static_mod = self.static_modality_emb.weight                       # (2, 768)
-
-        # ── Static prefix: DEM ─────────────────────────────────────────
-        dem_tok = dem_pyr + scale_e + static_mod[0]
-        tokens.append(dem_tok)                                             # (B, 4, 768)
-        is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
-
-        # ── Static prefix: LULC ────────────────────────────────────────
-        lulc_tok = lulc_pyr + scale_e + static_mod[1]
-        tokens.append(lulc_tok)                                            # (B, 4, 768)
-        is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
-
-        # ── Static prefix: Soil ────────────────────────────────────────
-        soil_mod_e = self.soil_modality_emb(
-            torch.zeros(1, dtype=torch.long, device=device)
-        )                                                                  # (1, 768)
-        soil_tokens = soil_tok + scale_e.unsqueeze(0) + soil_mod_e.unsqueeze(0)
-        tokens.append(soil_tokens)                                         # (B, 4, 768)
-        is_pad.append(torch.zeros(B, 4, device=device, dtype=torch.bool))
-
-        # ── Target-day spatial tokens ──────────────────────────────────
-        spatial_start = sum(t.shape[1] for t in tokens)                   # = 12
-        tokens.append(spatial_tokens)                                  # (B, 196, 768)
-        is_pad.append(torch.zeros(B, 196, device=device, dtype=torch.bool))
-
-        # ── Satellite history tokens (S2 then S1) ─────────────────────
-        for hist_idx, (pyr, doys, valid, rel_pos) in enumerate([
-            (s2_pyr, s2_doys, s2_valid, batch["s2_rel_pos"]),
-            (s1_pyr, s1_doys, s1_valid, batch["s1_rel_pos"]),
-        ]):
-            MAX_ACQ = pyr.shape[1]
-
-            rp_flat   = rel_pos.reshape(-1).clamp(0, 364)
-            rp_flat   = self.rel_pos_emb(rp_flat)
-            rp        = rp_flat.reshape(B, MAX_ACQ, 1, self.d_model)
-
-            # Modality type embedding distinguishes S2 history from S1 history
-            hist_mod  = self.hist_modality_emb(
-                torch.tensor(hist_idx, dtype=torch.long, device=device)
-            )                                                          # (768,)
-
-            # Satellite history uses only relative position (staleness) — no absolute DOY.
-            # ERA5 is the seasonal anchor; satellite tokens only need to know how old they are.
-            sat_tok   = pyr + rp + scale_e.unsqueeze(0).unsqueeze(0) + hist_mod
-            sat_tok   = sat_tok.reshape(B, MAX_ACQ * 4, self.d_model)
-
-            pad_acq   = ~valid
-            pad_tok   = pad_acq.unsqueeze(-1).expand(-1, -1, 4).reshape(B, MAX_ACQ * 4)
-
-            tokens.append(sat_tok)
-            is_pad.append(pad_tok)
-
-        # ── ERA5 tokens ────────────────────────────────────────────────
-        era5_raw = batch["era5"]
-        era5_tok = self.era5_mlp(era5_raw)
-
-        era5_doys = batch["era5_doys"]
-        flat_doys = era5_doys.reshape(-1)
-        era5_pe   = circular_doy_pe(flat_doys, self.d_model).reshape(B, 365, self.d_model)
-
-        era5_rel  = torch.arange(365, device=device)
-        era5_rp   = self.rel_pos_emb(era5_rel).unsqueeze(0)
-
-        era5_mod  = self.era5_modality_emb(
-            torch.zeros(1, dtype=torch.long, device=device)
-        )                                                              # (1, 768)
-
-        era5_tok  = era5_tok + era5_pe + era5_rp + era5_mod
-
-        # ERA5 is right-aligned: slot 364 = target day, earlier slots = past days.
-        # There is no future data in the array — mask only zero-padded slots
-        # (era5_doys == 0 means no data was available for that slot).
-        era5_pad    = (era5_doys == 0).to(device)                      # (B, 365)
-
-        tokens.append(era5_tok)
-        is_pad.append(era5_pad)
-
-        # ── SIF tokens (optional sparse) ──────────────────────────────
-        sif_vals  = batch["sif"].to(device)                           # (B, MAX_SIF, 1)
-        sif_doys  = batch["sif_doys"].to(device)                      # (B, MAX_SIF)
-        sif_valid = batch["sif_valid"].to(device)                     # (B, MAX_SIF)
-        if sif_vals.shape[1] > 0:
-            sif_rel_pos = batch["sif_rel_pos"].to(device)             # (B, MAX_SIF)
-            sif_tok  = self.sif_mlp(sif_vals.float())                 # (B, MAX_SIF, 768)
-            sif_pe   = circular_doy_pe(sif_doys.reshape(-1), self.d_model
-                                       ).reshape(B, -1, self.d_model)
-            sif_rp   = self.rel_pos_emb(sif_rel_pos.reshape(-1).clamp(0, 364)
-                                        ).reshape(B, -1, self.d_model)
-            sif_mod  = self.sif_modality_emb(
-                torch.zeros(1, dtype=torch.long, device=device)
-            )
-            sif_tok  = sif_tok + sif_pe + sif_rp + sif_mod
-            tokens.append(sif_tok)
-            is_pad.append(~sif_valid)
-
-        # ── TWSA tokens (optional sparse) ─────────────────────────────
-        twsa_vals  = batch["twsa"].to(device)                         # (B, MAX_TWSA, 1)
-        twsa_doys  = batch["twsa_doys"].to(device)
-        twsa_valid = batch["twsa_valid"].to(device)
-        if twsa_vals.shape[1] > 0:
-            twsa_rel_pos = batch["twsa_rel_pos"].to(device)           # (B, MAX_TWSA)
-            twsa_tok  = self.twsa_mlp(twsa_vals.float())              # (B, MAX_TWSA, 768)
-            twsa_pe   = circular_doy_pe(twsa_doys.reshape(-1), self.d_model
-                                        ).reshape(B, -1, self.d_model)
-            twsa_rp   = self.rel_pos_emb(twsa_rel_pos.reshape(-1).clamp(0, 364)
-                                         ).reshape(B, -1, self.d_model)
-            twsa_mod  = self.twsa_modality_emb(
-                torch.zeros(1, dtype=torch.long, device=device)
-            )
-            twsa_tok  = twsa_tok + twsa_pe + twsa_rp + twsa_mod
-            tokens.append(twsa_tok)
-            is_pad.append(~twsa_valid)
-
-        seq      = torch.cat(tokens, dim=1)
-        key_mask = torch.cat(is_pad,  dim=1)
-        return seq, key_mask, spatial_start
+        return torch.cat(toks, 1), torch.cat(pads, 1), spatial_start
 
     # ── Forward ──────────────────────────────────────────────────────────────
 
-    def forward(self, batch: dict) -> torch.Tensor:
-        """
-        Returns mu: (B, n_depths, 224, 224) predicted soil moisture map.
-        """
-        B      = batch["era5"].shape[0]
-        device = batch["era5"].device
+    def forward(self, batch: dict) -> dict:
+        device = next(self.parameters()).device
+        seq, pad, sp = self._build_sequence(batch)
+        B = seq.shape[0]
 
-        # ── 1-3. All pyramid tokens — pre-pooled in dataset workers (CPU) ───
-        # _cpu_pyramid_pool() runs static masked-mean in __getitem__ for all four
-        # modalities; no L12 tensors cross the DataLoader IPC barrier.
-        s2_pyr   = batch["s2_pyr"].to(device)    # (B, MAX_S2, 4, 768) fp32
-        s1_pyr   = batch["s1_pyr"].to(device)    # (B, MAX_S1, 4, 768) fp32
-        dem_pyr  = batch["dem_pyr"].to(device)   # (B, 4, 768) fp32
-        lulc_pyr = batch["lulc_pyr"].to(device)  # (B, 4, 768) fp32
-
-        # ── 3b. Soil tokens ────────────────────────────────────────────
-        soil_tok = self.soil_encoder(batch["soil_patch"].to(device))   # (B, 4, 768)
-
-        # ── 4. Target spatial tokens from stored L12 ──────────────────
-        spatial_tokens, _ = self._get_target_spatial_tokens(batch, B, device)
-
-        # ── 5. Skip connections from precomputed features ─────────────
-        skip_L3, skip_L6, skip_L9 = self._get_skip_connections(batch, B, device)
-
-        # ── 6. Build sequence and run transformer ──────────────────────
-        seq, key_mask, spatial_start = self._build_sequence(
-            batch,
-            dem_pyr,
-            lulc_pyr,
-            soil_tok,
-            s2_pyr, batch["s2_doys"].to(device), batch["s2_valid"].to(device),
-            s1_pyr, batch["s1_doys"].to(device), batch["s1_valid"].to(device),
-            spatial_tokens,
-        )
-
-        # ── 6b. Prepend depth CLS tokens if enabled ───────────────────
-        depth_offset = 0
-        if self.use_cls_depth:
-            depth_offset = self.n_depths
-            depth_tok = self.depth_tokens.unsqueeze(0).expand(B, -1, -1)  # (B, n_depths, 768)
-            seq      = torch.cat([depth_tok, seq], dim=1)
-            cls_pad  = torch.zeros(B, self.n_depths, device=seq.device, dtype=torch.bool)
-            key_mask = torch.cat([cls_pad, key_mask], dim=1)
-
-        # ── 6c. Run transformer (manual loop for stochastic depth) ────
         x = seq
         for layer in self.transformer_layers:
-            x = layer(x, src_key_padding_mask=key_mask)
-        ctx = self.transformer_norm(x)                                 # (B, T, 768)
+            x = layer(x, src_key_padding_mask=pad)
+        ctx = self.transformer_norm(x)                                         # (B, T, d)
 
-        # ── 7. Extract depth CLS context and spatial bottleneck ───────
-        depth_ctx   = None
-        if self.use_cls_depth:
-            depth_ctx = ctx[:, :self.n_depths, :]                     # (B, n_depths, 768)
-            # Diagnostic stash (no autograd, ~9 KB).  Training logs the pairwise cosine of
-            # THIS, not of self.depth_tokens: the token parameters can stay near-orthogonal
-            # while six bidirectional layers drive all three CLS slots to identical content.
-            # That collapse is the failure mode — use_cls_depth being inert — and the
-            # parameter cosine cannot see it.
-            self._last_depth_ctx = depth_ctx.detach().float().mean(0)  # (n_depths, 768)
+        depth_ctx = ctx[:, :self.n_depths, :]                                  # (B, 3, d)
+        # Collapse diagnostic, as a SUM plus count for epoch accumulation: the OUTPUT cosine
+        # is what matters — the CLS parameters can stay near-orthogonal while six layers drive
+        # all three rows to the same content, which is use_cls_depth being inert.
+        self._last_depth_ctx   = depth_ctx.detach().float().sum(0)            # (3, d)
+        self._last_depth_ctx_n = B
 
-        sp_start    = spatial_start + depth_offset
-        spatial_ctx = ctx[:, sp_start : sp_start + 196, :]            # (B, 196, 768)
-        bottleneck  = spatial_ctx.reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
-                                                                       # (B, 768, 14, 14)
+        bottleneck = ctx[:, sp:sp + 196, :].reshape(B, 14, 14, self.d_model).permute(0, 3, 1, 2)
+        if getattr(self, "flatten_bottleneck", False):
+            # --eval-fine-ablation only: keep each tile's mean, remove its 160 m pattern.
+            bottleneck = bottleneck.mean((2, 3), keepdim=True).expand_as(bottleneck).contiguous()
 
-        # ── 8. Temporal context for FiLM: mean-pool non-spatial tokens ─
-        # Excludes depth CLS tokens, spatial tokens, and padding tokens.
-        ctx_mask  = (~key_mask).clone()                                # True = valid
-        if self.use_cls_depth:
-            ctx_mask[:, :self.n_depths] = False                        # exclude depth CLS
-        ctx_mask[:, sp_start : sp_start + 196] = False                 # exclude spatial
-        ctx_float = ctx_mask.float().unsqueeze(-1)                     # (B, T, 1)
-        context   = (ctx * ctx_float).sum(1) / ctx_float.sum(1).clamp(min=1)  # (B, 768)
+        # FiLM context: mean of valid rows, excluding the CLS prefix and the spatial block
+        keep = (~pad).clone()
+        keep[:, :self.n_depths] = False
+        keep[:, sp:sp + 196]    = False
+        kf      = keep.unsqueeze(-1).to(ctx.dtype)
+        context = (ctx * kf).sum(1) / kf.sum(1).clamp_min(1.0)                # (B, d)
 
-        # ── 9. U-Net decoder → SM map ─────────────────────────────────
-        return self.decoder(bottleneck, skip_L9, skip_L6, skip_L3, context, depth_ctx)
+        skips = self.fine_encoder(batch["fine"].to(device), batch["lulc"].to(device))
+        sm, lst, z = self.decoder(bottleneck, skips, context, depth_ctx)
+        return {"sm": sm, "lst": lst, "z": z}
 
 
-# ── Loss ─────────────────────────────────────────────────────────────────────
+# ── Losses ───────────────────────────────────────────────────────────────────
 
 def masked_huber_loss(
-    sm_map:      torch.Tensor,   # (B, n_depths, 224, 224)
-    label:       torch.Tensor,   # (B, n_depths) — NaN where depth absent
-    station_row: int   = SoilMoistureModel.STATION_ROW,
-    station_col: int   = SoilMoistureModel.STATION_COL,
-    delta:       float = 0.05,
-    per_depth:   bool  = False,
+    sm_map:        torch.Tensor,   # (B, n_depths, 112, 112)
+    label:         torch.Tensor,   # (B, n_depths) — NaN where depth absent
+    station_row:   int   = SoilMoistureModel.STATION_ROW,
+    station_col:   int   = SoilMoistureModel.STATION_COL,
+    delta:         float = 0.05,
+    per_depth:     bool  = False,
+    depth_weights: torch.Tensor | None = None,
     return_breakdown: bool = False,
 ):
     """Huber loss at the station pixel, ignoring depths with no observation.
 
-    return_breakdown=True additionally returns (depth_sum, depth_cnt), both
-    (n_depths,) float32, detached, on-device:
-        depth_sum[d] = Σ Huber over samples in this batch that observed depth d
-        depth_cnt[d] = number of those samples
-    Raw SUMS, not means — the caller accumulates them over the epoch and
-    all_reduce(SUM)s across ranks, which is only correct on sums.
+    return_breakdown=True additionally returns (depth_sum, depth_cnt), both (n_depths,)
+    float32, detached, on-device — raw SUMS for the caller to accumulate over the epoch and
+    all_reduce(SUM) across ranks, which is only correct on sums. The scalar `loss` is
+    byte-identical with and without the flag.
 
-    The returned scalar `loss` is byte-identical with and without the flag, so
-    train/val loss stays comparable across runs.
-
-    NOTE: mean(depth_sum / depth_cnt) does NOT equal the scalar loss. The scalar
-    is a mean-of-batch-means-of-depth-means; the breakdown is sample-weighted
-    over the whole epoch. Sample-weighting is deliberate — deep coverage is
-    sparse (43 val stations at 30-100 cm vs 74 at 0-10), so batch-means would
-    over-weight batches that happen to hold two deep samples. Two different
-    quantities on purpose; see training_runbook.md §19.3.
+    per_depth=True weights each valid (sample, depth) pair by a FIXED w_d supplied by the
+    caller (inverse per-depth frequency over the training set), never by batch composition:
+    a batch-mean-per-depth form hands each deep sample 1/n_d(batch) of the gradient, which
+    is not a function of the dataset. w_d = 1 reduces exactly to the pooled branch.
+    See training_runbook.md §19.3 for why the breakdown and the scalar differ on purpose.
     """
     pred = sm_map[:, :, station_row, station_col]                      # (B, n_depths)
 
     if return_breakdown:
-        # Branch-free so no data-dependent control flow is introduced: the
-        # `if mask_d.any():` pattern below would cost one GPU sync per depth
-        # per batch. nan_to_num keeps NaN out of the autograd-free arithmetic;
-        # the `valid` mask zeroes those entries out anyway.
-        valid     = ~torch.isnan(label)                                # (B, D) bool
+        valid     = ~torch.isnan(label)
         lab       = torch.nan_to_num(label, nan=0.0)
         elem      = F.huber_loss(pred.detach(), lab, delta=delta, reduction="none")
-        # torch.where, NOT `elem * valid`: nan * False is nan, not 0.  `pred` is taken
-        # for ALL depths while the scalar loss only ever sees pred[mask], so a non-finite
-        # prediction at a depth with no label cannot affect training — but it would make
-        # depth_sum nan, survive all_reduce(SUM) to every rank, and silently turn the
-        # per-depth diagnostic into nan while train_loss still looked healthy.  That is
-        # precisely the signal this breakdown exists to provide.
-        depth_sum = torch.where(valid, elem, elem.new_zeros(())).sum(0).float()   # (D,)
-        depth_cnt = valid.sum(0).float()                               # (D,)
+        # torch.where, NOT `elem * valid`: nan * False is nan, and a non-finite prediction at
+        # an unlabelled depth would otherwise turn the per-depth diagnostic nan on every rank.
+        depth_sum = torch.where(valid, elem, elem.new_zeros(())).sum(0).float()
+        depth_cnt = valid.sum(0).float()
 
+    mask = ~torch.isnan(label)
     if per_depth:
-        # Equal gradient weight per depth: compute Huber separately for each depth,
-        # then mean across depths that have at least one valid observation.
-        # Prevents the high-variance surface layer from dominating deeper layers.
-        depth_losses = []
-        for d in range(pred.shape[1]):
-            mask_d = ~torch.isnan(label[:, d])
-            if mask_d.any():
-                depth_losses.append(
-                    F.huber_loss(pred[mask_d, d], label[mask_d, d], delta=delta, reduction="mean")
-                )
-        loss = torch.stack(depth_losses).mean() if depth_losses else pred.sum() * 0.0
+        w = (torch.ones_like(label) if depth_weights is None else
+             depth_weights.to(device=label.device, dtype=label.dtype).expand_as(label))
+        wm    = torch.where(mask, w, torch.zeros_like(w))
+        # Mask the INPUT, not just the output: huber's backward multiplies by (pred - label),
+        # so a non-finite pred at an unlabelled depth gave 0 * nan = nan in the gradient
+        # even though the loss value was finite. torch.where routes zero gradient there.
+        elem  = F.huber_loss(torch.where(mask, pred, torch.zeros_like(pred)),
+                             torch.nan_to_num(label, nan=0.0), delta=delta,
+                             reduction="none")
+        denom = wm.sum()
+        # torch.where, not elem*wm: a non-finite pred at an unlabelled depth would make
+        # nan*0 = nan and poison the whole loss (review #24).
+        loss  = (torch.where(mask, elem * wm, elem.new_zeros(())).sum() / denom) if denom > 0 else pred.sum() * 0.0
     else:
-        # Default: pool all valid (batch × depth) pairs into one mean — preserves
-        # backward compatibility with baseline runs.
-        mask = ~torch.isnan(label)
         loss = (F.huber_loss(pred[mask], label[mask], delta=delta, reduction="mean")
                 if mask.any() else pred.sum() * 0.0)
 
@@ -819,12 +837,180 @@ def masked_huber_loss(
     return loss
 
 
-def total_variation_loss(sm_map: torch.Tensor) -> torch.Tensor:
+@torch.no_grad()
+def lst_pattern_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor, sigma_st: float,
+                      min_cells: int = 10) -> torch.Tensor:
+    """Validation metrics of the thermal SPATIAL PATTERN, per scene, as all-reducible sums.
+
+    Same alpha=0 convention as lst_pattern_loss: both fields centred over the scene's own
+    valid cells, so only the within-tile pattern is scored, in Kelvin (pred x sigma_ST).
+    A scene needs >= min_cells valid cells (a correlation over 2 cells is meaningless).
+
+    Returns float32 (7,) sums:
+      [0] n_scenes  [1] sum r  [2] n scenes with r > 0  [3] sum sq err (K^2)
+      [4] n cells   [5] sum obs anomaly^2 (K^2)  [6] n scenes where r is defined
+    -> mean pattern r, frac r > 0, pattern RMSE (K), obs pattern sd (K),
+       pattern skill = 1 - err^2/obs^2 (0 = no better than a flat map).
     """
-    Isotropic Total Variation loss encouraging spatial smoothness in the SM map.
-    Penalises |∂SM/∂row| + |∂SM/∂col| averaged over all pixels, depths, and samples.
-    sm_map : (B, n_depths, H, W)
+    pred  = lst_pred[:, 0].float() * sigma_st                          # (B, 22, 22) K
+    valid = torch.isfinite(lst_obs)
+    keep  = valid.flatten(1).sum(1) >= min_cells                       # (B,)
+    vf    = (valid & keep.view(-1, 1, 1)).float()
+    cnt   = vf.flatten(1).sum(1).clamp_min(1.0)
+    obs   = torch.nan_to_num(lst_obs.float(), nan=0.0)
+    oc    = (obs  - ((obs  * vf).flatten(1).sum(1) / cnt).view(-1, 1, 1)) * vf
+    pc    = (pred - ((pred * vf).flatten(1).sum(1) / cnt).view(-1, 1, 1)) * vf
+    so, sp = (oc * oc).flatten(1).sum(1), (pc * pc).flatten(1).sum(1)
+    ok    = keep & (so > 0) & (sp > 0)                                 # flat pred: r undefined
+    r     = torch.where(ok, (oc * pc).flatten(1).sum(1) / (so * sp).sqrt().clamp_min(1e-12),
+                        torch.zeros_like(so))
+    err   = ((pc - oc) ** 2).flatten(1).sum(1)
+    k     = keep.float()
+    return torch.stack([k.sum(), r.sum(), (ok & (r > 0)).float().sum(), (err * k).sum(),
+                        (cnt * k).sum(), (so * k).sum(), ok.float().sum()])
+
+
+def lst_pattern_loss(
+    lst_pred:  torch.Tensor,   # (B, 1, 22, 22) model output, units of sigma_ST
+    lst_obs:   torch.Tensor,   # (B, 22, 22) Kelvin, NaN where no retrieval / no overpass
+    sigma_st:  float,
+    delta:     float = 1.0,
+    min_cells: int   = 2,
+    return_count: bool = False,
+):
+    """Pattern-only thermal loss (§46.5 item 27, §48.9 item 4, alpha = 0).
+
+    Both fields are centred over the SAME valid cells, so any tile-level error cancels
+    exactly and the model cannot score by knowing "hot day". The observed anomaly is divided
+    by sigma_ST (lst_stats.json, 2.7066 K) and the head predicts in those units, so delta=1.0
+    means +/- 1 sigma_ST: quadratic within normal within-tile spread, linear beyond (§49.5).
+
+    A sample on a non-overpass day has no valid cell and contributes nothing — the sample-level
+    mask falls out of the cell mask. Samples with fewer than `min_cells` valid cells are
+    dropped (a single cell has no pattern), matching compute_lst_stats.py.
+
+    Returns the mean over all valid cells in the batch (0-graph-connected if none), and with
+    return_count=True also the number of cells as a detached float.
     """
-    diff_h = (sm_map[:, :, 1:, :] - sm_map[:, :, :-1, :]).abs().mean()
-    diff_w = (sm_map[:, :, :, 1:] - sm_map[:, :, :, :-1]).abs().mean()
-    return diff_h + diff_w
+    pred  = lst_pred[:, 0].float()                                     # (B, 22, 22)
+    valid = torch.isfinite(lst_obs)
+    n     = valid.flatten(1).sum(1)                                    # (B,)
+    valid = valid & (n >= min_cells).view(-1, 1, 1)
+    vf    = valid.to(pred.dtype)
+    cnt   = vf.flatten(1).sum(1).clamp_min(1.0).view(-1, 1, 1)
+
+    obs   = torch.nan_to_num(lst_obs.float(), nan=0.0) / sigma_st
+    obs_c = obs  - (obs  * vf).flatten(1).sum(1).view(-1, 1, 1) / cnt
+    prd_c = pred - (pred * vf).flatten(1).sum(1).view(-1, 1, 1) / cnt
+
+    elem  = F.huber_loss(prd_c, obs_c, delta=delta, reduction="none")
+    total = vf.sum()
+    loss  = (torch.where(valid, elem, elem.new_zeros(())).sum() / total
+             if total > 0 else pred.sum() * 0.0)
+    if return_count:
+        return loss, total.detach()
+    return loss
+
+
+def _lst_level_pred(lst_pred: torch.Tensor, lst_obs: torch.Tensor, sigma_st: float):
+    """Predicted tile level in K: mean of pred x sigma_ST over the scene's OWN valid cells.
+
+    §52: head_lst is read as (LST - t2m) per 100 m cell in units of sigma_ST. Its centred part
+    is the pattern (lst_pattern_loss, unchanged: a constant cancels there), its mean over the
+    same cells the observed level was taken over is the level. One map, two terms.
+    """
+    pred = lst_pred[:, 0].float() * sigma_st                           # (B, 22, 22) K
+    vf   = torch.isfinite(lst_obs).to(pred.dtype)
+    cnt  = vf.flatten(1).sum(1).clamp_min(1.0)
+    return (pred * vf).flatten(1).sum(1) / cnt                         # (B,)
+
+
+def lst_level_loss(
+    lst_pred: torch.Tensor,   # (B, 1, 22, 22) model output, units of sigma_ST
+    lst_obs:  torch.Tensor,   # (B, 22, 22) Kelvin, NaN where no retrieval / no overpass
+    dT_obs:   torch.Tensor,   # (B,) K, tile LST - t2m_mean; NaN where no level target
+    sigma_st: float,
+    dT_sd:    float,
+    delta:    float = 1.0,
+    return_count: bool = False,
+):
+    """Thermal LEVEL loss (§52): Huber on (pred level - dT_obs) / dT_sd, mean over samples.
+
+    dT_sd (training-set SD of dT) puts the level on the same ~unit scale as the pattern term,
+    so a fixed weight between them means something. Samples without a level target (no
+    overpass, < 10 valid cells, no ERA5 row) contribute nothing.
+    """
+    ok   = torch.isfinite(dT_obs)
+    lvl  = _lst_level_pred(lst_pred, lst_obs, sigma_st)
+    res  = (lvl - torch.nan_to_num(dT_obs.float(), nan=0.0)) / dT_sd
+    res  = torch.where(ok, res, res.new_zeros(()))                     # mask the INPUT (NaN grad)
+    elem = F.huber_loss(res, torch.zeros_like(res), delta=delta, reduction="none")
+    n    = ok.float().sum()
+    loss = (torch.where(ok, elem, elem.new_zeros(())).sum() / n if n > 0
+            else lst_pred.sum() * 0.0)
+    if return_count:
+        return loss, n.detach()
+    return loss
+
+
+def lst_level_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor, dT_obs: torch.Tensor,
+                    sigma_st: float) -> torch.Tensor:
+    """Validation sums for the thermal LEVEL, all-reducible.
+
+    Returns float32 (6,): [0] n  [1] Σpred  [2] Σobs  [3] Σpred²  [4] Σobs²  [5] Σpred·obs  (K)
+    -> pooled r, RMSE (K), bias (K), skill = 1 - MSE / var(obs).
+    """
+    ok  = torch.isfinite(dT_obs)
+    p   = torch.where(ok, _lst_level_pred(lst_pred, lst_obs, sigma_st), 0.0)
+    o   = torch.where(ok, dT_obs.float(), 0.0)
+    return torch.stack([ok.float().sum(), p.sum(), o.sum(), (p * p).sum(), (o * o).sum(),
+                        (p * o).sum()]).float()
+
+
+def lst_dT_pixel_loss(
+    lst_pred: torch.Tensor,   # (B, 1, 22, 22) model output, K: predicted LST - t2m per cell
+    lst_obs:  torch.Tensor,   # (B, 22, 22) Kelvin, NaN where no retrieval / no overpass
+    t2m:      torch.Tensor,   # (B,) K, raw ERA5-Land t2m_mean on the scene day, else NaN
+    delta:    float,          # Huber knee, K
+    return_count: bool = False,
+):
+    """§52 thermal target, the straightforward form: every valid 100 m cell against its own
+    (LST_obs - t2m_mean), Huber in Kelvin, mean over all valid cells in the batch. No centring,
+    no tile mean — nothing but the per-cell difference.
+    """
+    pred  = lst_pred[:, 0].float()                                     # (B, 22, 22) K
+    valid = torch.isfinite(lst_obs) & torch.isfinite(t2m).view(-1, 1, 1)
+    tgt   = torch.nan_to_num(lst_obs.float(), nan=0.0) - torch.nan_to_num(
+        t2m.float(), nan=0.0).view(-1, 1, 1)
+    err   = torch.where(valid, pred - tgt, pred.new_zeros(()))         # mask the INPUT (NaN grad)
+    elem  = F.huber_loss(err, torch.zeros_like(err), delta=delta, reduction="none")
+    total = valid.float().sum()
+    loss  = (torch.where(valid, elem, elem.new_zeros(())).sum() / total if total > 0
+             else lst_pred.sum() * 0.0)
+    if return_count:
+        return loss, total.detach()
+    return loss
+
+
+def lst_dT_pixel_stats(lst_pred: torch.Tensor, lst_obs: torch.Tensor,
+                       t2m: torch.Tensor) -> torch.Tensor:
+    """Per-cell (LST - t2m) validation sums, float32 (6,): [0] n cells  [1] Σpred  [2] Σobs
+    [3] Σpred²  [4] Σobs²  [5] Σpred·obs  (K) -> lst_level_summary gives r / RMSE / bias / skill."""
+    valid = torch.isfinite(lst_obs) & torch.isfinite(t2m).view(-1, 1, 1)
+    p = torch.where(valid, lst_pred[:, 0].float(), 0.0)
+    o = torch.where(valid, torch.nan_to_num(lst_obs.float(), nan=0.0)
+                    - torch.nan_to_num(t2m.float(), nan=0.0).view(-1, 1, 1), 0.0)
+    return torch.stack([valid.float().sum(), p.sum(), o.sum(), (p * p).sum(), (o * o).sum(),
+                        (p * o).sum()]).float()
+
+
+def lst_level_summary(s) -> dict:
+    """lst_level_stats sums -> {n, r, rmse_K, bias_K, skill}."""
+    n, sp, so, spp, soo, spo = [float(v) for v in s]
+    if n < 2:
+        return {"n": n}
+    mp, mo = sp / n, so / n
+    vp, vo, cov = spp / n - mp * mp, soo / n - mo * mo, spo / n - mp * mo
+    mse = (spp - 2 * spo + soo) / n
+    return {"n": n, "r": cov / max(vp * vo, 1e-12) ** 0.5, "rmse_K": max(mse, 0.0) ** 0.5,
+            "bias_K": mp - mo, "skill": 1.0 - mse / vo if vo > 0 else float("nan")}

@@ -1,0 +1,23 @@
+{
+  "dT_pixel_mean": 12.60827264573452,
+  "dT_pixel_sd": 7.214564902713675,
+  "dT_tile_mean": 11.521629044475882,
+  "dT_tile_sd": 7.043419141698728,
+  "units": "kelvin",
+  "definition": "per 100 m cell: lst22 LST_obs - raw ERA5-Land t2m_mean (era5/values18 col 0), same calendar day; valid = finite LST cell and an ERA5 row",
+  "knee_rule": "dT_pixel Huber knee c = dT_pixel_sd; head_lst bias init = dT_pixel_mean",
+  "split": "train",
+  "categories": [
+    "sm_only",
+    "sm_and_flux"
+  ],
+  "years": [
+    2016,
+    2022
+  ],
+  "n_stations": 573,
+  "n_scenes": 45592,
+  "n_cells": 15402953,
+  "n_tiles": 43039,
+  "tile_min_valid_cells": 10
+}

@@ -8,20 +8,26 @@ which rebuilds the dataset and re-runs GPU inference for every station.)
 One figure per station: 3 stacked panels, one per depth.
     observed = black dots, predicted = coloured line (depth colour, §13.3)
 
-Two selection modes:
+Three selection modes:
     --select extremes  best-n and worst-n by ubRMSE at 0-10 cm (default)
     --select median    n random stations either side of the split median --
                        typical cases rather than tails, all three depths present
+    --select named     exactly the stations given by --stations, in that order,
+                       with no ranking and no min-n filter
 
 Outputs:
     eval_output/timeseries/{split}/{BEST|WORST}_{NN}_{station}.png
     eval_output/timeseries/contact_{split}.pdf     -- multi-page contact sheet
     eval_output/timeseries/median_sample/{split}/{BELOW|ABOVE}_{NN}_{station}.png
     eval_output/timeseries/median_sample/selected_median_sample.csv
+    eval_output/timeseries/named/{split}/NAMED_{NN}_{station}.png
+    eval_output/timeseries/named/selected_named.csv
 
 Usage:
     python plot_eval_timeseries.py [--n 10] [--splits oos oot oost] [--min-n 100]
     python plot_eval_timeseries.py --select median --n-each 2 [--seed 0]
+    python plot_eval_timeseries.py --select named --splits val \\
+        --stations ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25
 """
 import argparse
 from pathlib import Path
@@ -40,13 +46,25 @@ try:
 except ImportError:
     plt.rcParams.update({"font.size": 9, "axes.labelsize": 9, "axes.titlesize": 10})
 
-from eval_metrics import SM_DEPTHS, metrics_from_arrays, _make_key
+from eval_metrics import SM_DEPTHS, clip_pred, metrics_from_arrays, _make_key
 
 DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
 DEPTH_LABELS = {"0-10": "0-10 cm", "10-30": "10-30 cm", "30-100": "30-100 cm"}
 SPLITS_CSV   = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
 RANK_DEPTH   = "0-10"
 GAP_DAYS     = 15      # break the prediction line across gaps longer than this
+# replaced by plot_style_bw.apply under --style bw (None = depth colour / the defaults below)
+PRED_COLOR   = None
+OBS_COLOR    = "black"
+OOT_SHADE    = "#9b59b6"
+BW           = False
+FS           = 1.0         # annotation font-size multiplier (paper style raises it)
+DPI          = 300
+PAPER        = False       # paper style: no in-figure titles/descriptions (the caption carries them)
+CS           = 1.0         # extra multiplier for count / median annotations (paper style)
+BOX_ALPHA    = 0.55        # box fill opacity (bw + paper: 1.0, solid)
+LINE_DF      = None        # every-day predictions for the line (--line-dir); None = observed days only
+XROT         = None        # category tick rotation override (paper style: 90)
 
 
 def select_stations(df: pd.DataFrame, n: int, min_n: int, rank_metric: str,
@@ -133,72 +151,197 @@ def select_around_median(df: pd.DataFrame, n_each: int, min_n: int,
     return out
 
 
-def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
-                 n_total: int) -> plt.Figure:
-    """3 stacked depth panels for one station."""
-    station = info["station_key"]
-    fig, axes = plt.subplots(len(SM_DEPTHS), 1, figsize=(7.4, 5.6),
-                             sharex=True, constrained_layout=True)
+def select_named(df: pd.DataFrame, stations: list[str], min_n: int,
+                 rank_metric: str, rank_depth: str):
+    """Exactly the stations asked for, in the order given.
 
-    for ax, depth in zip(axes, SM_DEPTHS):
-        g = df[(df["station_key"] == station) & (df["depth"] == depth)]
-        g = g.sort_values("date")
-        if g.empty:
+    No ranking and no min_n filter: the caller named these, so a short record is
+    still the record they wanted to see.  A station absent from the split is
+    reported by name rather than silently dropped -- "I asked for six and got
+    four" must be visible in the log, not inferred from the file count.
+    """
+    g = df[df["depth"] == rank_depth]
+    present = set(df["station_key"].unique())
+    out = []
+    for i, station in enumerate(stations, start=1):
+        if station not in present:
+            print(f"    NOT IN SPLIT: {station}")
+            continue
+        s = g[g["station_key"] == station]
+        m = (metrics_from_arrays(s["pred"].to_numpy(np.float64),
+                                 s["obs"].to_numpy(np.float64))
+             if not s.empty else {"n": 0, rank_metric: float("nan")})
+        if m["n"] < min_n:
+            print(f"    n={m['n']} < {min_n} at {rank_depth} (plotting anyway): "
+                  f"{station}")
+        out.append({"station_key": station, "rank": "NAMED", "rank_idx": i,
+                    rank_metric: float(m[rank_metric]), "n": int(m["n"])})
+    return out
+
+
+def _clean_station_name(station: str) -> str:
+    """'ISMN_TxSON_CR200-18' -> 'TxSON CR200-18' (source prefix dropped, network kept)."""
+    for prefix in ("ISMN_", "ICOS_", "AmeriFlux_", "FLUXNET_"):
+        if station.startswith(prefix):
+            station = station[len(prefix):]
+            break
+    return station.replace("_", " ")
+
+
+def _paper_ylim(vals: np.ndarray) -> tuple[float, float]:
+    """Data-driven y range: floor at 0 (or just below the minimum), 12 % headroom."""
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return 0.0, 0.5
+    lo, hi = float(np.percentile(vals, 0.5)), float(np.percentile(vals, 99.5))   # one bad reading cannot stretch the axis
+    pad = 0.05 * max(hi - lo, 0.02)
+    ylo = min(0.0, lo) - pad * 0.6            # always just below 0: zeros stay visible, floors consistent
+    return ylo, hi * 1.12 + 0.005
+
+
+def plot_station(df: pd.DataFrame, info: dict, meta: dict, split: str,
+                 n_total: int):
+    """Stacked depth panels for one station; None if the station has no data.
+
+    Colour style: always 3 panels (empty ones say so).  PAPER: only the depths
+    with data, legend + metrics above the axes, data-driven y limits.
+    """
+    station = info["station_key"]
+    st = df[df["station_key"] == station]
+    present = [d for d in SM_DEPTHS if (st["depth"] == d).any()]
+    if not present:
+        print(f"    no data at any depth -- skipping {station}")
+        return None
+    depths = present if PAPER else list(SM_DEPTHS)
+    nrow = len(depths)
+    # paper: ~1.9 in per panel + room for the legend row and title
+    figsize = (7.4, 1.9 * nrow + 1.0) if PAPER else (7.4, 5.6)
+    fig, axes = plt.subplots(nrow, 1, figsize=figsize, sharex=True,
+                             constrained_layout=True, squeeze=False)
+    axes = axes[:, 0]
+    tick_fs = plt.rcParams["xtick.labelsize"]
+    if isinstance(tick_fs, str):
+        tick_fs = plt.rcParams["font.size"]
+    ann_fs = max(6 * FS, float(tick_fs)) if PAPER else 6 * FS
+    text_grey = "black" if PAPER else "grey"
+    shaded = False
+
+    for ax, depth in zip(axes, depths):
+        g = st[st["depth"] == depth].sort_values("date")
+        if g.empty:          # colour style only -- PAPER never draws empty panels
             ax.text(0.5, 0.5, f"no data at {DEPTH_LABELS[depth]}",
                     transform=ax.transAxes, ha="center", va="center",
-                    fontsize=8, color="grey")
+                    fontsize=8 * FS, color=text_grey)
             ax.set_ylabel(DEPTH_LABELS[depth], color=DEPTH_COLORS[depth])
             ax.set_yticks([])
             continue
 
+        # Prediction line: from the every-day predictions (--line-dir, eval_predict.py
+        # --keep-unobserved) when available, so the model output continues through gaps in
+        # the observed record (user 2026-10-05). Dots + metrics stay on observed days only.
+        gl = g
+        if LINE_DF is not None:
+            ll = LINE_DF[(LINE_DF["station_key"] == station) & (LINE_DF["depth"] == depth)]
+            if len(ll):
+                gl = ll.sort_values("date")
+        g = g[g["obs"].notna()]
+
         # Break the line across data gaps -- otherwise matplotlib draws a
         # straight segment across months of missing record, which reads as a
         # confident flat prediction that was never made.
-        dates = g["date"].to_numpy()
-        pred  = g["pred"].to_numpy(np.float64).copy()
+        dates = gl["date"].to_numpy()
+        pred  = gl["pred"].to_numpy(np.float64).copy()
         gap   = np.diff(dates).astype("timedelta64[D]").astype(int) > GAP_DAYS
         pred[np.append(gap, False)] = np.nan
 
-        ax.plot(dates, pred, "-", lw=0.9, color=DEPTH_COLORS[depth],
-                label="predicted", zorder=2)
-        ax.plot(g["date"], g["obs"], ".", ms=1.9, color="black",
-                label="observed", zorder=3)
+        # BW: observed grey dots UNDER a black prediction line, so the line stays readable
+        # PAPER: solid, fully opaque navy line drawn ABOVE the observed dots
+        line_on_top = BW or PAPER
+        ax.plot(dates, pred, "-", lw=1.1 if PAPER else 0.9, color=PRED_COLOR or DEPTH_COLORS[depth],
+                alpha=1.0, solid_capstyle="butt",
+                label="predicted", zorder=3 if line_on_top else 2)
+        ax.plot(g["date"], g["obs"], ".", ms=1.9, color=OBS_COLOR,
+                label="observed", zorder=2 if line_on_top else 3)
 
         m = metrics_from_arrays(g["pred"].to_numpy(np.float64),
                                 g["obs"].to_numpy(np.float64))
-        ax.text(0.005, 0.96,
-                f"ubRMSE {m['ubRMSE']:.3f}   RMSE {m['RMSE']:.3f}   "
-                f"$r^2$ {m['R2_pearson']:.2f}   NSE {m['NSE']:+.2f}   "
-                f"bias {m['bias']:+.3f}   n {m['n']}",
-                transform=ax.transAxes, va="top", ha="left", fontsize=6,
-                bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.2))
+        sep = "  " if PAPER else "   "     # paper: larger font, keep it inside the width
+        mtxt = sep.join([f"ubRMSE {m['ubRMSE']:.3f}", f"RMSE {m['RMSE']:.3f}",
+                         f"$r^2$ {m['R2_pearson']:.2f}", f"NSE {m['NSE']:+.2f}",
+                         f"bias {m['bias']:+.3f}", f"n {m['n']}"])
+        if PAPER:
+            # above the panel, clear of the data (wet stations reach the top)
+            ax.text(1.0, 1.01, mtxt, transform=ax.transAxes, va="bottom",
+                    ha="right", fontsize=ann_fs, color="black")
+        else:
+            ax.text(0.005, 0.96, mtxt, transform=ax.transAxes, va="top",
+                    ha="left", fontsize=6 * FS,
+                    bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.2))
 
         # OOS stations continue into 2023 as OOST -- mark the boundary
         if split == "oos" and g["date"].max() >= pd.Timestamp("2023-01-01"):
             ax.axvspan(pd.Timestamp("2023-01-01"), g["date"].max(),
-                       color="#9b59b6", alpha=0.08, lw=0, zorder=0)
-            ax.axvline(pd.Timestamp("2023-01-01"), color="#9b59b6",
+                       color=OOT_SHADE, alpha=0.12 if PAPER else 0.08,
+                       lw=0, zorder=0)
+            ax.axvline(pd.Timestamp("2023-01-01"), color=OOT_SHADE,
                        lw=0.8, ls="--", zorder=1)
+            shaded = True
 
-        ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nSM (m$^3$/m$^3$)",
-                      color=DEPTH_COLORS[depth])
-        ax.set_ylim(0, max(0.55, float(g[["pred", "obs"]].to_numpy().max()) * 1.1))
+        if PAPER:
+            ax.set_ylabel(DEPTH_LABELS[depth], color="black")
+            ax.set_ylim(*_paper_ylim(np.concatenate([gl["pred"].to_numpy(np.float64),
+                                                     g["obs"].to_numpy(np.float64)])))
+        else:
+            ax.set_ylabel(f"{DEPTH_LABELS[depth]}\nSM (m$^3$/m$^3$)",
+                          color=DEPTH_COLORS[depth])
+            ax.set_ylim(0, max(0.55, float(g[["pred", "obs"]].to_numpy().max()) * 1.1))
         ax.margins(x=0.01)
 
-    axes[0].legend(fontsize=6, frameon=False, loc="upper right", ncol=2)
-    axes[-1].set_xlabel("date")
-    axes[-1].xaxis.set_major_locator(mdates.AutoDateLocator())
-    axes[-1].xaxis.set_major_formatter(mdates.ConciseDateFormatter(
-        mdates.AutoDateLocator()))
+    if PAPER:
+        from matplotlib.colors import to_rgba
+        from matplotlib.patches import Patch
+        from matplotlib.transforms import offset_copy
+        handles, labels = axes[0].get_legend_handles_labels()
+        if shaded:
+            handles.append(Patch(facecolor=to_rgba(OOT_SHADE, 0.12),
+                                 edgecolor=OOT_SHADE, ls="--", lw=0.8))
+            labels.append("2023–2025 (OOST)")
+        # in the figure margin above the top panel, never over the data:
+        # anchored at the top-left of the axes, lifted (in points) past the
+        # metrics line that sits just above the axes
+        lift = offset_copy(axes[0].transAxes, fig=fig, y=1.8 * ann_fs, units="points")
+        axes[0].legend(handles, labels, fontsize=ann_fs, frameon=False,
+                       loc="lower left", bbox_to_anchor=(0.0, 1.0),
+                       bbox_transform=lift,
+                       ncol=3, markerscale=4, handlelength=1.6,
+                       borderaxespad=0.0, columnspacing=1.2)
+        fig.supylabel("Soil moisture (m$^3$/m$^3$)", fontsize=plt.rcParams["axes.labelsize"],
+                      fontweight="bold")
+    else:
+        axes[0].legend(fontsize=6 * FS, frameon=False, loc="upper right", ncol=2)
+        axes[-1].set_xlabel("date")
+    loc = mdates.AutoDateLocator()       # ONE instance for locator and formatter
+    axes[-1].xaxis.set_major_locator(loc)
+    axes[-1].xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
 
-    bits = [f"{station}", f"[{split.upper()} {info['rank']} "
-                          f"{info['rank_idx']}/{n_total}]"]
-    if meta:
-        loc = f"{meta.get('latitude', float('nan')):.2f}, " \
-              f"{meta.get('longitude', float('nan')):.2f}"
-        bits.append(f"{meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')} "
-                    f"| {loc}")
-    fig.suptitle("   ".join(bits), fontsize=8)
+    if PAPER:
+        title = _clean_station_name(station)
+        if meta:
+            lat = meta.get("latitude", float("nan"))
+            lon = meta.get("longitude", float("nan"))
+            title += (f" — {meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')}"
+                      f" | {lat:.2f}°, {lon:.2f}°")
+        fig.suptitle(title, fontsize=plt.rcParams["figure.titlesize"],
+                     fontweight="bold")
+    else:
+        bits = [f"{station}", f"[{split.upper()} {info['rank']} "
+                              f"{info['rank_idx']}/{n_total}]"]
+        if meta:
+            loc_s = f"{meta.get('latitude', float('nan')):.2f}, " \
+                    f"{meta.get('longitude', float('nan')):.2f}"
+            bits.append(f"{meta.get('IGBP', '?')} | {meta.get('koppen_geiger', '?')} "
+                        f"| {loc_s}")
+        fig.suptitle("   ".join(bits), fontsize=8 * FS)
     return fig
 
 
@@ -213,16 +356,31 @@ def main():
                    choices=["ubRMSE", "RMSE", "MAE", "NSE", "R2_pearson"])
     p.add_argument("--per-page",    type=int, default=6)
     p.add_argument("--select",      default="extremes",
-                   choices=["extremes", "median"],
+                   choices=["extremes", "median", "named"],
                    help="extremes: best-n and worst-n; "
-                        "median: n random stations either side of the median")
+                        "median: n random stations either side of the median; "
+                        "named: exactly the --stations given, in that order")
+    p.add_argument("--stations",    nargs="+", default=None,
+                   help="--select named: station_key values to plot, e.g. "
+                        "ISMN_TxSON_CR200-18 ISMN_TxSON_CR200-25")
     p.add_argument("--n-each",      type=int, default=2,
                    help="--select median: stations per side per split")
     p.add_argument("--rank-depth",  default=RANK_DEPTH, choices=SM_DEPTHS,
                    help="depth whose metric decides best/worst or below/above")
     p.add_argument("--seed",        type=int, default=0,
                    help="--select median: seed for the random draw")
+    p.add_argument("--style", choices=["color", "bw", "paper"], default="color",
+                   help="bw = black-and-white; paper = blue/green/red, Times (plot_style_bw.py)")
+    p.add_argument("--line-dir", default=None,
+                   help="dir with every-day predictions (eval_predict.py --keep-unobserved); the "
+                        "prediction LINE is drawn from it so it continues through gaps in the "
+                        "observed record. Dots, metrics and ranking still use --in-dir.")
     args = p.parse_args()
+    if args.style != "color":
+        import plot_style_bw
+        plot_style_bw.apply(globals(), args.style)
+    if args.select == "named" and not args.stations:
+        p.error("--select named requires --stations")
 
     in_dir, out_dir = Path(args.in_dir), Path(args.out_dir)
 
@@ -237,15 +395,26 @@ def main():
             print(f"[{split}] no parquet -- skipping")
             continue
 
-        df = pd.read_parquet(path)
+        df = clip_pred(pd.read_parquet(path))
         df_rank = df        # rank on this split alone, before OOST is merged in
+        global LINE_DF
+        LINE_DF = None
+        if args.line_dir:
+            lines = [Path(args.line_dir) / f"predictions_{s}.parquet"
+                     for s in ([split, "oost"] if split == "oos" else [split])]
+            lines = [p_ for p_ in lines if p_.exists()]
+            if lines:
+                LINE_DF = clip_pred(pd.concat([pd.read_parquet(p_) for p_ in lines],
+                                              ignore_index=True))
+                print(f"    line from every-day predictions: {', '.join(p_.name for p_ in lines)} "
+                      f"({len(LINE_DF):,} rows)")
 
         # An OOS station continues into 2023 as OOST; show both in one figure
         # so the temporal extrapolation is visible on the same axes.
         if split == "oos":
             oost_path = in_dir / "predictions_oost.parquet"
             if oost_path.exists():
-                df = pd.concat([df, pd.read_parquet(oost_path)], ignore_index=True)
+                df = pd.concat([df, clip_pred(pd.read_parquet(oost_path))], ignore_index=True)
 
         print(f"\n[{split}] {len(df):,} rows | "
               f"{df['station_key'].nunique()} stations")
@@ -255,6 +424,11 @@ def main():
                                             args.seed)
             n_total, split_dir = args.n_each, out_dir / "median_sample" / split
             pdf_path = out_dir / "median_sample" / f"contact_median_{split}.pdf"
+        elif args.select == "named":
+            selected = select_named(df_rank, args.stations, args.min_n,
+                                    args.rank_metric, args.rank_depth)
+            n_total, split_dir = len(args.stations), out_dir / "named" / split
+            pdf_path = out_dir / "named" / f"contact_named_{split}.pdf"
         else:
             selected = select_stations(df, args.n, args.min_n, args.rank_metric,
                                        args.rank_depth)
@@ -270,9 +444,11 @@ def main():
         for info in selected:
             fig = plot_station(df, info, meta_map.get(info["station_key"], {}),
                                split, n_total)
-            name = (f"{info['rank']}_{info['rank_idx']:02d}_"
+            if fig is None:          # no depth has data
+                continue
+            name =(f"{info['rank']}_{info['rank_idx']:02d}_"
                     f"{info['station_key']}.png")
-            fig.savefig(split_dir / name, dpi=300, bbox_inches="tight")
+            fig.savefig(split_dir / name, dpi=DPI, bbox_inches="tight")
             figs.append(fig)
             print(f"    {info['rank']:>5s} {info['rank_idx']:>2d}  "
                   f"{info['station_key']:<45s} "
@@ -293,6 +469,11 @@ def main():
         csv_path = out_dir / "median_sample" / "selected_median_sample.csv"
         pd.DataFrame(picked).to_csv(csv_path, index=False)
         print(f"\n→ {csv_path}  ({len(picked)} stations)")
+    if picked and args.select == "named":
+        csv_path = out_dir / "named" / "selected_named.csv"
+        pd.DataFrame(picked).to_csv(csv_path, index=False)
+        print(f"\n→ {csv_path}  ({len(picked)} of "
+              f"{len(args.stations) * len(args.splits)} requested station-splits)")
 
 
 if __name__ == "__main__":

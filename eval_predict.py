@@ -32,33 +32,54 @@ from model import SoilMoistureModel
 from train import CudaPrefetcher
 from ckpt_utils import load_checkpoint
 from ablation import AblationDataset, MODALITIES     # §24 modality shuffling
+from splits_config import MIN_POST_CUT_DAYS, OOT_YEARS, SM_CATEGORIES, TRAIN_YEARS
 
 CKPT_ROOT  = Path("/gpfs/work3/0/prjs1968/checkpoints/soilmoisture/phase1_sm_only")
 SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
-ERA5_STATS = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats.json")
+# §47: the 18-column set, matching dataset.py:80 ERA5_ARRAY = "era5/values18".
+ERA5_STATS = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/era5_stats18.json")
 OUT_DIR    = Path("/gpfs/work3/0/prjs1968/soilMoisture/eval_output")
 
 # §22.2.  "val" is not a held-out split -- it exists only to reproduce the
 # training-time numbers (§22.6 hard gate) and is never run by default.
+# §47: the OOT horizon is 2023-2025, not 2023 alone -- the inputs reach 2025 (397
+# stations carry S2 tokens ending 2025) and a one-year holdout discarded two thirds of it.
+# Every year list here comes from splits_config; none is written out again.
 EVAL_SPLITS = {
-    "oos":  dict(split_filter=["oos"],          years=list(range(2016, 2023))),
-    "oot":  dict(split_filter=["train", "val"], years=[2023]),
-    "oost": dict(split_filter=["oos"],          years=[2023]),
-    "val":  dict(split_filter=["val"],          years=list(range(2016, 2023))),
+    "oos":  dict(split_filter=["oos"],          years=list(TRAIN_YEARS)),
+    "oot":  dict(split_filter=["train", "val"], years=list(OOT_YEARS)),
+    "oost": dict(split_filter=["oos"],          years=list(OOT_YEARS)),
+    "val":  dict(split_filter=["val"],          years=list(TRAIN_YEARS)),
     # §26.  A dense network spans all three splits, so the station set comes from
     # --pixel-csv rather than from the `split` column.  The per-station split is
     # still carried into the output as `tile_split` / `station_split`.
     "network": dict(split_filter=["train", "val", "oos"],
-                    years=list(range(2016, 2023))),
+                    years=list(TRAIN_YEARS)),
+    # §68: the Netherlands grid tiles (make_nl_splits.py, split == "nl_grid", no labels).
+    # Only reachable with --splits nl_grid; use with --splits-csv and --predict-all-days.
+    "nl_grid": dict(split_filter=["nl_grid"], years=list(TRAIN_YEARS) + list(OOT_YEARS)),
 }
 
-# Expected station counts from the zarr probe (§22.2).  A large miss means the
-# zarr or the year gating changed and the numbers must not be trusted.
+# Station counts measured by the §22.2 zarr probe.  This is a DATED REFERENCE, not an
+# invariant: station_splits.csv has been rewritten since (the §35.27 driver-stats fix and
+# the §35.29 tile-pair holdout both moved stations), so a mismatch here is expected drift
+# as often as it is a fault.  Treat it as "compare against the probe", not "something
+# broke" -- and re-measure it rather than editing the numbers to match a run.
 EXPECTED_STATIONS = {"oos": 180, "oot": 399, "oost": 98, "val": 74}
 
 
 def worker_init_fn(worker_id):
     np.random.seed(os.getpid() + worker_id)
+
+
+def _git_sha() -> str | None:
+    """HEAD of the repo the predictions were made with -- so a result names its code."""
+    import subprocess
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        return None
 
 
 def _make_key(r) -> str:
@@ -70,15 +91,25 @@ def _make_key(r) -> str:
 
 @torch.no_grad()
 def run_split(model, loader, device) -> dict:
-    """Collect station-pixel predictions, targets and sample identity."""
+    """Collect station-pixel predictions, targets and sample identity.
+
+    The §48 model emits a (B, 3, 112, 112) SM map at 20 m; the station sits at
+    (STATION_ROW, STATION_COL) = (56, 56).
+    """
     srow, scol = SoilMoistureModel.STATION_ROW, SoilMoistureModel.STATION_COL
     preds, targets, keys, years, doys = [], [], [], [], []
+    fwd_events = []      # CUDA events around model(batch): pure GPU forward time, no data loading
 
     t0, n_batches = time.time(), len(loader)
     for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        ev0.record()
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu = model(batch)
-        preds.append(mu[:, :, srow, scol].float().cpu().numpy())
+            mu = model(batch)["sm"]
+        ev1.record()
+        fwd_events.append((ev0, ev1))
+        _p = mu[:, :, srow, scol]
+        preds.append(_p.float().cpu().numpy())
         targets.append(batch["label"].float().cpu().numpy())
         keys.extend(batch["station_key"])
         years.append(np.asarray(batch["year"].cpu() if torch.is_tensor(batch["year"])
@@ -98,17 +129,123 @@ def run_split(model, loader, device) -> dict:
         keys    = np.asarray(keys),                  # (N,)
         years   = np.concatenate(years,   axis=0),   # (N,)
         doys    = np.concatenate(doys,    axis=0),   # (N,)
+        fwd_s   = _forward_seconds(fwd_events),
     )
+
+
+@torch.no_grad()
+def run_split_shap(model, loader, device, chunk: int = 4) -> dict:
+    """§73 exact group-Shapley: every batch is run under all 2^K coalitions of shap_groups.PLAYERS.
+
+    The batch is loaded once; `chunk` coalitions are stacked along the batch axis per forward.
+    Returns run_split's fields (preds = f(all)) plus f_none (N, D), phi (K, N, D) and per-sample
+    satellite observation state. Asserts efficiency per batch.
+    """
+    from shap_groups import PLAYERS, apply_absent, shapley_weight_matrix
+    srow, scol = SoilMoistureModel.STATION_ROW, SoilMoistureModel.STATION_COL
+    K = len(PLAYERS)
+    n_coal, full = 2 ** K, 2 ** K - 1
+    W = shapley_weight_matrix(K).to(device)                                   # (K, 2^K) fp64
+    preds, f_nones, phis, targets, keys, years, doys = [], [], [], [], [], [], []
+    obs_state = {k: [] for k in ("days_since_s2", "days_since_s1", "n_s2_30d", "n_s1_30d",
+                                 "anchor_age", "anchor_found")}
+    fwd_events, max_eff_err = [], 0.0
+
+    t0, n_batches = time.time(), len(loader)
+    for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        B = batch["era5"].shape[0]
+        f = torch.empty(n_coal, B, len(SM_DEPTHS), device=device, dtype=torch.float64)
+        for c0 in range(0, n_coal, chunk):
+            masks = list(range(c0, min(c0 + chunk, n_coal)))
+            parts = [apply_absent(batch, m) for m in masks]
+            stacked = {k: (torch.cat([p[k] for p in parts], 0)
+                           if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == B else v)
+                       for k, v in batch.items()}
+            ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+            ev0.record()
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                mu = model(stacked)["sm"][:, :, srow, scol]                     # (len(masks)*B, D)
+            ev1.record()
+            fwd_events.append((ev0, ev1))
+            f[masks[0]:masks[-1] + 1] = mu.double().reshape(len(masks), B, -1)
+        phi = torch.einsum("km,mbd->kbd", W, f)                               # (K, B, D)
+        if i == 0:
+            # Plumbing check (review 2026-10-12): the all-on coalition, computed inside a stacked
+            # forward, must reproduce the plain forward (bf16 noise only; batch composition differs).
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                plain = model(batch)["sm"][:, :, srow, scol].double()
+            d_plain = (f[full] - plain).abs().max().item()
+            print(f"    §73 all-on vs plain forward: max |diff| {d_plain:.2e}", flush=True)
+            if d_plain > 5e-3:
+                raise RuntimeError(f"§73 all-on coalition != plain forward ({d_plain:.2e})")
+        # Efficiency holds algebraically once W is right (~1e-15 in fp64): this checks W, not the model.
+        eff = (phi.sum(0) - (f[full] - f[0])).abs().max().item()
+        max_eff_err = max(max_eff_err, eff)
+        if eff > 1e-5:
+            raise RuntimeError(f"§73 efficiency violated in batch {i}: {eff:.2e}")
+
+        preds.append(f[full].float().cpu().numpy())
+        f_nones.append(f[0].float().cpu().numpy())
+        phis.append(phi.float().cpu().numpy())
+        targets.append(batch["label"].float().cpu().numpy())
+        keys.extend(batch["station_key"])
+        years.append(np.asarray(batch["year"].cpu() if torch.is_tensor(batch["year"])
+                                else batch["year"], dtype=np.int32))
+        doys.append(np.asarray(batch["doy"].cpu() if torch.is_tensor(batch["doy"])
+                               else batch["doy"], dtype=np.int32))
+        # Satellite observation state (rel_pos 364 = day D), for reading phi_sat by staleness.
+        for s in ("s2", "s1"):
+            v, rp = batch[f"{s}_valid"].bool(), batch[f"{s}_rel_pos"].long()
+            last = torch.where(v, rp, torch.full_like(rp, -1)).max(1).values
+            obs_state[f"days_since_{s}"].append(
+                torch.where(last >= 0, 364 - last, torch.full_like(last, -1)).cpu().numpy())
+            obs_state[f"n_{s}_30d"].append((v & (rp >= 335)).sum(1).cpu().numpy())   # D-29 .. D
+        obs_state["anchor_found"].append(batch["anchor_found"].bool().cpu().numpy())
+        obs_state["anchor_age"].append(
+            torch.where(batch["anchor_found"].bool(), 364 - batch["anchor_rel_pos"].long(),
+                        torch.full_like(batch["anchor_rel_pos"].long(), -1)).cpu().numpy())
+
+        if i % 50 == 0:
+            rate = (i + 1) / (time.time() - t0)
+            eta  = (n_batches - i - 1) / max(rate, 1e-9) / 60
+            print(f"    shap batch {i+1}/{n_batches}  {rate:.2f} b/s  ETA {eta:.1f} min  "
+                  f"max efficiency err {max_eff_err:.1e}", flush=True)
+
+    return dict(
+        preds   = np.concatenate(preds,   axis=0),            # (N, D) = f(all)
+        f_none  = np.concatenate(f_nones, axis=0),            # (N, D) = base value
+        phi     = np.concatenate(phis,    axis=1),            # (K, N, D)
+        players = PLAYERS,
+        targets = np.concatenate(targets, axis=0),
+        keys    = np.asarray(keys),
+        years   = np.concatenate(years,   axis=0),
+        doys    = np.concatenate(doys,    axis=0),
+        obs_state = {k: np.concatenate(v) for k, v in obs_state.items()},
+        fwd_s   = _forward_seconds(fwd_events),
+        max_eff_err = max_eff_err,
+    )
+
+
+def _forward_seconds(events) -> float:
+    """Sum of CUDA-event times around every model(batch) call, in seconds."""
+    torch.cuda.synchronize()
+    return sum(a.elapsed_time(b) for a, b in events) / 1e3
 
 
 # ---------------------------------------------------------------------------
 # §26 multi-pixel readout
 #
-# The model emits a full (B, n_depths, 224, 224) map but only pixel (112, 112)
+# The model emits a full (B, n_depths, 112, 112) map at 20 m but only pixel (56, 56)
 # is ever supervised or read.  In a dense network the 2.24 km tiles overlap, so
 # one tile's map also covers *other* stations at pixels that received no
 # supervision.  This reads all of them out of the same forward pass.
+#
+# The CSV (build_network_readouts.py) is in the 224 x 10 m tile grid. Its row/col are kept
+# as written in the output; the gather uses row // MAP_STRIDE, col // MAP_STRIDE.
 # ---------------------------------------------------------------------------
+MAP_STRIDE = 2      # 224 @ 10 m -> 112 @ 20 m (§48: up4 dropped)
+
+
 class PixelMap:
     """Per-tile table of (row, col) readouts, padded to a fixed width K."""
 
@@ -134,8 +271,8 @@ class PixelMap:
         for tile, g in df.groupby("tile"):
             i = self.index[tile]
             for k, r in enumerate(g.itertuples()):
-                self.rows[i, k]  = int(r.row)
-                self.cols[i, k]  = int(r.col)
+                self.rows[i, k]  = int(r.row) // MAP_STRIDE
+                self.cols[i, k]  = int(r.col) // MAP_STRIDE
                 self.valid[i, k] = True
                 self.meta[i][k]  = {
                     "station":    str(r.station),
@@ -155,11 +292,16 @@ def run_split_pixels(model, loader, device, pmap: PixelMap) -> dict:
     rows_t = torch.from_numpy(pmap.rows).to(device)      # (n_tiles, K)
     cols_t = torch.from_numpy(pmap.cols).to(device)
     preds, tiles, years, doys = [], [], [], []
+    fwd_events = []
 
     t0, n_batches = time.time(), len(loader)
     for i, batch in enumerate(CudaPrefetcher(loader, device)):
+        ev0, ev1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        ev0.record()
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            mu = model(batch)                            # (B, D, 224, 224)
+            mu = model(batch)["sm"]                      # (B, D, 112, 112)
+        ev1.record()
+        fwd_events.append((ev0, ev1))
         B, D, H, W = mu.shape
 
         ti  = torch.as_tensor([pmap.index[k] for k in batch["station_key"]],
@@ -186,6 +328,7 @@ def run_split_pixels(model, loader, device, pmap: PixelMap) -> dict:
         tiles = np.concatenate(tiles, axis=0),   # (N,)
         years = np.concatenate(years, axis=0),
         doys  = np.concatenate(doys,  axis=0),
+        fwd_s = _forward_seconds(fwd_events),
     )
 
 
@@ -234,16 +377,35 @@ def to_long_frame_pixels(res: dict, pmap: PixelMap) -> pd.DataFrame:
                "year", "doy", "date", "depth", "pred"]]
 
 
-def to_long_frame(res: dict, split_name: str, train_split_map: dict) -> pd.DataFrame:
+def shap_extra_columns(res: dict) -> dict:
+    """§73: per-(sample, depth) Shapley columns for to_long_frame(extra=...)."""
+    extra = {"f_none": res["f_none"]}
+    for k, p in enumerate(res["players"]):
+        extra[f"phi_{p}"] = res["phi"][k]                     # (N, D)
+    extra.update(res["obs_state"])                            # (N,) per-sample, broadcast to depths
+    return extra
+
+
+def to_long_frame(res: dict, split_name: str, train_split_map: dict,
+                  keep_unobserved: bool = False, keep_all: bool = False,
+                  extra: dict | None = None) -> pd.DataFrame:
     """Wide (N, n_depths) arrays -> long format, one row per (sample, depth).
 
     Rows where the observation is NaN (depth absent at that station) are dropped.
+    keep_unobserved (time-series plots only, user 2026-10-05): keep EVERY day of a depth the
+    station observes at least once, obs NaN where unobserved -- so the model output can be
+    drawn through observation gaps. Never point a metric at such a file.
+    keep_all (§68 --predict-all-days): keep EVERY row at EVERY depth, labelled or not.
     """
     n_samples, n_depths = res["preds"].shape
     frames = []
     for d, depth in enumerate(SM_DEPTHS[:n_depths]):
         obs = res["targets"][:, d]
         keep = ~np.isnan(obs)
+        if keep_unobserved and keep.any():
+            keep = np.isin(res["keys"], np.unique(res["keys"][keep]))
+        if keep_all:
+            keep = np.ones(n_samples, dtype=bool)
         if not keep.any():
             continue
         frames.append(pd.DataFrame({
@@ -253,6 +415,8 @@ def to_long_frame(res: dict, split_name: str, train_split_map: dict) -> pd.DataF
             "depth":       depth,
             "pred":        res["preds"][keep, d].astype(np.float32),
             "obs":         obs[keep].astype(np.float32),
+            **{name: (arr[keep, d] if arr.ndim == 2 else arr[keep])
+               for name, arr in (extra or {}).items()},
         }))
 
     if not frames:
@@ -268,7 +432,7 @@ def to_long_frame(res: dict, split_name: str, train_split_map: dict) -> pd.DataF
     df["station_key"] = df["station_key"].astype("string")
 
     return df[["station_key", "year", "doy", "date", "depth",
-               "pred", "obs", "eval_split", "train_split"]]
+               "pred", "obs", "eval_split", "train_split"] + list(extra or {})]
 
 
 def main():
@@ -296,9 +460,15 @@ def main():
     # §24 modality shuffling.  Run --ablate era5 FIRST as the positive control: if
     # shuffling ERA5 does not move the metrics, the permutation never reached the
     # model and every satellite condition would be a false negative.
-    p.add_argument("--ablate",      default="none",
-                   choices=["none"] + MODALITIES,
-                   help="replace this modality with another sample's (§24)")
+    p.add_argument("--ablate",      nargs="+", default=["none"],
+                   help="one or more passes, each MODALITY or MODALITY:MODE (MODE = "
+                        "cross_station | within_station, default --ablate-mode); 'none' = "
+                        "the plain baseline pass. All passes share ONE dataset build per "
+                        "split (§67), e.g. --ablate none era5 sat era5:within_station")
+    p.add_argument("--keep-unobserved", action="store_true",
+                   help="keep predictions on days without an observation (obs NaN), for every "
+                        "depth the station measures -- for time-series plots only; write to a "
+                        "SEPARATE --out-dir, metrics must not read it")
     p.add_argument("--ablate-mode", default="cross_station",
                    choices=["cross_station", "within_station"],
                    help="cross_station: different site, same season (kills site "
@@ -320,14 +490,51 @@ def main():
                         "column, e.g. ablation_oos (50 stratified OOS stations). The "
                         "ablation is a PAIRED comparison against the same stations in "
                         "the baseline parquet, so a subset costs power, not validity.")
+    # §68 Netherlands grid. All three default to the old behaviour.
+    p.add_argument("--splits-csv", default=os.environ.get("SOIL_STATION_CSV", str(SPLITS_CSV)),
+                   help="station_splits.csv to read (default: env SOIL_STATION_CSV, else "
+                        "csvs/station_splits.csv)")
+    p.add_argument("--years", default=None,
+                   help="override every split's years, e.g. 2016-2025 or 2018,2019")
+    p.add_argument("--predict-all-days", action="store_true",
+                   help="every calendar day of --years inside each station's ERA5/S2 record, "
+                        "labels optional (dataset predict_all_days); every row kept, obs NaN "
+                        "where none; one parquet per station under <out-dir>/tiles/. Inference "
+                        "only -- metrics must not read it")
+    # §73 exact group-Shapley (shap_groups.py). Valid only on a checkpoint trained with every
+    # player's dropout on (§64: era5 0.5, coarse 0.3, static 0.5) -- checked below from cfg.
+    p.add_argument("--shap", action="store_true",
+                   help="§73: run every batch under all 2^K coalitions of shap_groups.PLAYERS and "
+                        "write shap_<split>.parquet (pred, obs, f_none, phi_<player> per depth, "
+                        "satellite observation state). Costs 2^K forwards per sample")
+    p.add_argument("--shap-chunk", type=int, default=4,
+                   help="§73: coalitions stacked per forward (batch x chunk rows); lower if OOM")
     args = p.parse_args()
+    if args.predict_all_days and (args.pixel_csv or args.keep_unobserved
+                                  or any(a != "none" for a in args.ablate)):
+        raise SystemExit("--predict-all-days excludes --pixel-csv, --keep-unobserved, --ablate")
+    if args.shap and (args.pixel_csv or args.predict_all_days
+                      or any(a != "none" for a in args.ablate)):
+        raise SystemExit("--shap excludes --pixel-csv, --predict-all-days, --ablate")
+    if args.shap and args.shap_chunk not in (4, 8, 16, 32):
+        # S and S+{sat} are masks m and m|2: with a power-of-2 chunk >= 4 they share one forward, so
+        # identical inputs give identical outputs and phi_sat is exactly 0 for an empty window.
+        raise SystemExit("--shap-chunk must be 4, 8, 16 or 32")
+    years_override = None
+    if args.years:
+        if "-" in args.years:
+            lo, hi = (int(x) for x in args.years.split("-"))
+            years_override = list(range(lo, hi + 1))
+        else:
+            years_override = [int(x) for x in args.years.split(",")]
+    splits_csv = Path(args.splits_csv)
     if args.station_flag and (args.csv_start_idx is not None
                               or args.csv_end_idx is not None):
         raise SystemExit("--station-flag and --csv-start/end-idx are mutually exclusive")
 
     pmap = None
     if args.pixel_csv:
-        if args.ablate != "none":
+        if any(a != "none" for a in args.ablate):
             raise SystemExit("--pixel-csv and --ablate are not supported together")
         pix = pd.read_csv(args.pixel_csv)
         if args.pixel_tiles:
@@ -342,23 +549,51 @@ def main():
               f"{len(pix) - (int(pix['is_centre'].sum()) if 'is_centre' in pix else 0)}"
               f" off-centre")
 
-    # auto-tag so an ablation can never overwrite the baseline artefacts
-    if args.ablate != "none":
-        abl_tag = f"{args.ablate}_{args.ablate_mode}_s{args.seed}"
-        args.tag = f"{args.tag}_{abl_tag}" if args.tag else abl_tag
+    # Ablation passes. Each ablated pass is auto-tagged (modality_mode_sSEED) so it can never
+    # overwrite the baseline artefacts; 'none' keeps the plain tag.
+    ablations = []
+    for a in args.ablate:
+        if a == "none":
+            ablations.append(None)
+            continue
+        mod, _, mode = a.partition(":")
+        mode = mode or args.ablate_mode
+        if mod not in MODALITIES:
+            raise SystemExit(f"--ablate {a!r}: unknown modality {mod!r}; have {MODALITIES}")
+        if mode not in ("cross_station", "within_station"):
+            raise SystemExit(f"--ablate {a!r}: unknown mode {mode!r}")
+        ablations.append((mod, mode))
+    print("Passes:", ["baseline" if x is None else f"{x[0]}:{x[1]}" for x in ablations])
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Loaded onto the CPU first and moved after the CUDA check below.
+    ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
+    model, cfg, epoch = load_checkpoint(ckpt_path, torch.device("cpu"))
+    if args.shap:
+        # §73: a coalition is only meaningful if training withheld each player (runbook §73.7).
+        _need = {"era5_dropout": "era5", "coarse_dropout": "sat", "static_dropout": "dem/lulc/soil"}
+        _missing = [f"{k}={cfg.get(k, 0.0)} ({p})" for k, p in _need.items()
+                    if not float(cfg.get(k, 0.0) or 0.0) > 0]
+        if _missing:
+            raise SystemExit(f"--shap on {args.run_name}: training never withheld "
+                             f"{', '.join(_missing)}; those coalitions are out of distribution")
+        if cfg.get("coarse_dropout_mode", "all") != "all":
+            raise SystemExit("--shap: sat player assumes coarse_dropout_mode 'all' (S2+S1+anchor together)")
+        print(f"§73 SHAP validity: era5 {cfg['era5_dropout']}, coarse {cfg['coarse_dropout']}, "
+              f"static {cfg['static_dropout']} -> all players seen absent in training")
+
+
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     if device.type != "cuda":
         raise SystemExit("CUDA required -- CudaPrefetcher and autocast assume a GPU")
+    model = model.to(device)
 
-    ckpt_path = CKPT_ROOT / args.run_name / args.ckpt
-    model, cfg, epoch = load_checkpoint(ckpt_path, device)
 
-    splits_df = pd.read_csv(SPLITS_CSV)
+    splits_df = pd.read_csv(splits_csv)
     train_split_map = dict(zip(splits_df.apply(_make_key, axis=1), splits_df["split"]))
 
     # Splits may be produced by separate jobs (OOT needs ~156 GB of L12 in RAM,
@@ -377,17 +612,28 @@ def main():
         "run_name":        args.run_name,
         "checkpoint":      str(ckpt_path),
         "epoch":           int(epoch),
+        "git_sha":         _git_sha(),
         "best_val_loss":   float(cfg.get("best_val_loss", float("nan")))
                            if isinstance(cfg.get("best_val_loss"), (int, float)) else None,
-        "category_filter": cfg.get("category_filter", ["sm_only"]),
+        "category_filter": cfg.get("category_filter", list(SM_CATEGORIES)),
         "depths":          SM_DEPTHS,
         "generated":       datetime.now().isoformat(timespec="seconds"),
         "max_stations":    args.max_stations,
         "splits":          dict(prior_splits),   # keep the other job's entries
     }
+    if args.predict_all_days or years_override or splits_csv != SPLITS_CSV:
+        manifest.update({"splits_csv": str(splits_csv),
+                         "predict_all_days": bool(args.predict_all_days),
+                         "era5_stats": str(ERA5_STATS),
+                         "driver_stats": str(ERA5_STATS.with_name("driver_stats.json")),
+                         "env": {k: os.environ.get(k) for k in
+                                 ("ZARR_ROOT", "RAW_ZARR_ROOT", "S48_CACHE_ROOT",
+                                  "SOIL_STATION_CSV")}})
 
     for split_name in args.splits:
-        scfg = EVAL_SPLITS[split_name]
+        scfg = dict(EVAL_SPLITS[split_name])
+        if years_override:
+            scfg["years"] = years_override
         print(f"\n{'='*66}")
         print(f"Split: {split_name.upper()}  filter={scfg['split_filter']}  "
               f"years={scfg['years'][0]}-{scfg['years'][-1]}")
@@ -402,12 +648,25 @@ def main():
         # Chunking: slice the split-filtered rows and hand the dataset a
         # temporary CSV holding only this chunk's stations, so it preloads
         # only their L12 tokens.
-        active_csv = str(SPLITS_CSV)
+        active_csv = str(splits_csv)
+        sdf = splits_df
+        # §51.2: a station enters OOT/OOST only with >= MIN_POST_CUT_DAYS post-cut label days;
+        # otherwise its *_stn metric is a seasonal fragment weighted like three full years.
+        # A metric rule: --predict-all-days writes no metric input, so it does not apply (§68).
+        if split_name in ("oot", "oost") and not args.predict_all_days:
+            in_split = sdf["split"].isin(scfg["split_filter"])
+            short = in_split & (sdf["oot_effective_days"].fillna(0) < MIN_POST_CUT_DAYS)
+            sdf = sdf[~short]
+            post_csv = out_dir / f"_postcut_{split_name}.csv"
+            sdf.to_csv(post_csv, index=False)
+            active_csv = str(post_csv)
+            print(f"  §51.2 post-cut filter: {int(short.sum())} of {int(in_split.sum())} rows "
+                  f"below {MIN_POST_CUT_DAYS} d excluded")
         if pmap is not None:
             # The station set IS the tile set: hand the dataset only those rows so
             # it preloads only their L12 tokens.
-            keys = splits_df.apply(_make_key, axis=1)
-            sub  = splits_df[keys.isin(pmap.keys())]
+            keys = sdf.apply(_make_key, axis=1)
+            sub  = sdf[keys.isin(pmap.keys())]
             miss = set(pmap.keys()) - set(keys[keys.isin(pmap.keys())])
             if miss:
                 print(f"  WARNING {len(miss)} tiles not in station_splits.csv: "
@@ -418,7 +677,7 @@ def main():
             print(f"  Pixel-csv tiles: {len(sub)} stations "
                   f"({dict(sub['split'].value_counts())})")
         if args.station_flag:
-            sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
+            sub = sdf[sdf["split"].isin(scfg["split_filter"])]
             keep = sub[args.station_flag].astype(str).str.lower().isin(
                 ["true", "1", "yes"])
             sub = sub[keep]
@@ -427,7 +686,7 @@ def main():
             active_csv = str(flag_csv)
             print(f"  Station flag {args.station_flag}: {len(sub)} stations")
         if args.csv_start_idx is not None or args.csv_end_idx is not None:
-            sub = splits_df[splits_df["split"].isin(scfg["split_filter"])]
+            sub = sdf[sdf["split"].isin(scfg["split_filter"])]
             lo  = args.csv_start_idx or 0
             hi  = args.csv_end_idx if args.csv_end_idx is not None else len(sub)
             sub = sub.iloc[lo:hi]
@@ -436,95 +695,145 @@ def main():
             active_csv = str(chunk_csv)
             print(f"  Chunk rows [{lo}:{hi}] of {split_name} → {len(sub)} stations")
 
+        t_init = time.time()
         ds = SoilMoistureDataset(
             splits_csv      = active_csv,
             era5_stats_path = str(ERA5_STATS),
             years           = scfg["years"],
-            category_filter = cfg.get("category_filter", ["sm_only"]),
+            category_filter = cfg.get("category_filter", list(SM_CATEGORIES)),
             split_filter    = scfg["split_filter"],
             training        = False,
-            use_mmap        = True,
             max_stations    = args.max_stations,
+            **({"predict_all_days": True} if args.predict_all_days else {}),
         )
+        init_s = time.time() - t_init
         n_stations = len({s["station_key"] for s in ds.samples})
         expected   = EXPECTED_STATIONS.get(split_name)
         chunked    = args.csv_start_idx is not None or args.csv_end_idx is not None
         print(f"  {len(ds):,} samples | {n_stations} stations "
-              f"(expected ~{expected})")
+              f"(§22.2 probe: {expected})")
         if (args.max_stations is None and not chunked
                 and expected and abs(n_stations - expected) > 5):
-            print(f"  WARNING -- station count differs from the §22.2 probe by "
-                  f"{n_stations - expected:+d}. Investigate before trusting metrics.")
+            print(f"  NOTE -- {n_stations - expected:+d} vs the §22.2 probe. That probe "
+                  f"is a dated reference, not an invariant: station_splits.csv has been "
+                  f"rewritten since. Confirm the delta is a known split change before "
+                  f"reading the metrics; do not assume either way.")
 
         if len(ds) == 0:
             print("  No samples -- skipping")
             continue
 
-        if args.ablate != "none":
-            ds = AblationDataset(ds, args.ablate, args.ablate_mode, args.seed)
-            print(ds.report())
+        base_ds = ds
+        for abl in ablations:              # None = the plain (baseline) pass; dataset built once
+            if abl is None:
+                ds, tag = base_ds, args.tag
+            else:
+                mod, mode = abl
+                ds = AblationDataset(base_ds, mod, mode, args.seed, arm="s48")
+                print(f"\n  ── ablation pass: {mod} / {mode} ──")
+                print(ds.report())
+                at = f"{mod}_{mode}_s{args.seed}"
+                tag = f"{args.tag}_{at}" if args.tag else at
 
-        loader = DataLoader(
-            ds,
-            batch_size         = args.batch_size,
-            shuffle            = False,
-            num_workers        = args.num_workers,
-            pin_memory         = True,
-            worker_init_fn     = worker_init_fn,
-            persistent_workers = False,
-            prefetch_factor    = 2 if args.num_workers > 0 else None,
-        )
-
-        t0 = time.time()
-        if pmap is not None:
-            res = run_split_pixels(model, loader, device, pmap)
-            df  = to_long_frame_pixels(res, pmap)
-            key_col = "station"
-        else:
-            res = run_split(model, loader, device)
-            df  = to_long_frame(res, split_name, train_split_map)
-            key_col = "station_key"
-        mins = (time.time() - t0) / 60
-
-        if df.empty:
-            print("  All observations NaN -- nothing written")
-            continue
-
-        n_nan_pred = int(df["pred"].isna().sum())
-        if n_nan_pred:
-            print(f"  WARNING -- {n_nan_pred} NaN predictions")
-
-        suffix   = f"_{args.tag}" if args.tag else ""
-        out_path = out_dir / f"predictions_{split_name}{suffix}.parquet"
-        df.to_parquet(out_path, index=False, compression="snappy")
-
-        print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
-              f"{mins:.1f} min")
-        if pmap is not None:
-            print(f"  readouts: {df.groupby(['tile','station']).ngroups} "
-                  f"(tile, station) pairs | "
-                  f"centre {int(df.is_centre.sum()):,} rows / "
-                  f"off-centre {int((~df.is_centre).sum()):,} rows")
-        print(f"  rows per depth: "
-              f"{df.groupby('depth', observed=True).size().to_dict()}")
-        print(f"  Saved: {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
-
-        manifest["splits"][f"{split_name}{suffix}"] = {
-            "split_filter": scfg["split_filter"],
-            "years":        [int(scfg["years"][0]), int(scfg["years"][-1])],
-            "n_stations":   int(df[key_col].nunique()),
-            "n_rows":       int(len(df)),
-            "n_samples":    int(len(ds)),
-            "rows_by_depth": {str(k): int(v) for k, v in
-                              df.groupby("depth", observed=True).size().items()},
-            "nan_pred":     n_nan_pred,
-            "minutes":      round(mins, 1),
-            **({"pixel_csv":   args.pixel_csv,
-                "n_readouts":  int(df.groupby(["tile", "station"]).ngroups),
-                "n_offcentre": int(df.groupby(["tile", "station"])
-                                   .is_centre.first().eq(False).sum())}
-               if pmap is not None else {}),
-        }
+            loader = DataLoader(
+                ds,
+                batch_size         = args.batch_size,
+                shuffle            = False,
+                num_workers        = args.num_workers,
+                pin_memory         = True,
+                worker_init_fn     = worker_init_fn,
+                persistent_workers = False,
+                prefetch_factor    = 2 if args.num_workers > 0 else None,
+            )
+    
+            t0 = time.time()
+            if pmap is not None:
+                res = run_split_pixels(model, loader, device, pmap)
+                df  = to_long_frame_pixels(res, pmap)
+                key_col = "station"
+            elif args.shap:
+                res = run_split_shap(model, loader, device, chunk=args.shap_chunk)
+                df  = to_long_frame(res, split_name, train_split_map,
+                                    keep_unobserved=args.keep_unobserved,
+                                    extra=shap_extra_columns(res))
+                key_col = "station_key"
+                print(f"  §73 SHAP: players {list(res['players'])}, {2 ** len(res['players'])} "
+                      f"coalitions, max efficiency error {res['max_eff_err']:.2e}")
+            else:
+                res = run_split(model, loader, device)
+                df  = to_long_frame(res, split_name, train_split_map,
+                                    keep_unobserved=args.keep_unobserved,
+                                    keep_all=args.predict_all_days)
+                key_col = "station_key"
+            mins = (time.time() - t0) / 60
+    
+            if df.empty:
+                print("  All observations NaN -- nothing written")
+                continue
+    
+            n_nan_pred = int(df["pred"].isna().sum())
+            if n_nan_pred:
+                print(f"  WARNING -- {n_nan_pred} NaN predictions")
+    
+            suffix   = f"_{tag}" if tag else ""
+            out_path = out_dir / f"{'shap' if args.shap else 'predictions'}_{split_name}{suffix}.parquet"
+            if args.predict_all_days:
+                # §68: one parquet per station/tile (date, depth, pred, obs), sorted; the
+                # assembler globs tiles/. Unclipped -- the clip to [0,1] is assemble_nl_sm.py's.
+                tile_dir = out_dir / "tiles"
+                tile_dir.mkdir(parents=True, exist_ok=True)
+                for key, g in df.groupby("station_key", observed=True):
+                    g = g.sort_values(["date", "depth"])
+                    g.to_parquet(tile_dir / f"{key}.parquet", index=False, compression="snappy")
+                out_path = tile_dir
+                print(f"  per-tile parquets: {df['station_key'].nunique()} -> {tile_dir}")
+            else:
+                df.to_parquet(out_path, index=False, compression="snappy")
+    
+            print(f"  {len(df):,} rows | {df[key_col].nunique()} stations | "
+                  f"{mins:.1f} min")
+            print(f"  TIMING {split_name}{('_' + tag) if tag else ''}: dataset init {init_s:.0f} s | "
+                  f"loop {mins*60:.0f} s ({len(ds)/max(mins*60,1e-9):.0f} samples/s incl. loading) | "
+                  f"GPU forward {res['fwd_s']:.1f} s = {1e3*res['fwd_s']/max(len(ds),1):.3f} ms/sample "
+                  f"(batch {args.batch_size}, {torch.cuda.get_device_name(0)})")
+            if pmap is not None:
+                print(f"  readouts: {df.groupby(['tile','station']).ngroups} "
+                      f"(tile, station) pairs | "
+                      f"centre {int(df.is_centre.sum()):,} rows / "
+                      f"off-centre {int((~df.is_centre).sum()):,} rows")
+            print(f"  rows per depth: "
+                  f"{df.groupby('depth', observed=True).size().to_dict()}")
+            print(f"  Saved: {out_path}  ({out_path.stat().st_size/1e6:.1f} MB)")
+    
+            manifest["splits"][f"{split_name}{suffix}"] = {
+                "split_filter": scfg["split_filter"],
+                "years":        [int(scfg["years"][0]), int(scfg["years"][-1])],
+                "n_stations":   int(df[key_col].nunique()),
+                "n_rows":       int(len(df)),
+                "n_samples":    int(len(ds)),
+                "rows_by_depth": {str(k): int(v) for k, v in
+                                  df.groupby("depth", observed=True).size().items()},
+                "nan_pred":     n_nan_pred,
+                "minutes":      round(mins, 1),
+                # inference timing (user 2026-10-05): dataset build, full loop (incl. data loading),
+                # and pure GPU forward time from CUDA events; bf16 autocast, batch size as below
+                "timing": {
+                    "gpu":                 torch.cuda.get_device_name(0),
+                    "batch_size":          args.batch_size,
+                    "num_workers":         args.num_workers,
+                    "dataset_init_s":      round(init_s, 1),
+                    "loop_s":              round(mins * 60, 1),
+                    "gpu_forward_s":       round(res["fwd_s"], 2),
+                    "n_samples":           int(len(ds)),
+                    "samples_per_s_loop":  round(len(ds) / max(mins * 60, 1e-9), 1),
+                    "ms_per_sample_gpu":   round(1e3 * res["fwd_s"] / max(len(ds), 1), 3),
+                },
+                **({"pixel_csv":   args.pixel_csv,
+                    "n_readouts":  int(df.groupby(["tile", "station"]).ngroups),
+                    "n_offcentre": int(df.groupby(["tile", "station"])
+                                       .is_centre.first().eq(False).sum())}
+                   if pmap is not None else {}),
+            }
 
     manifest_path = out_dir / "manifest.json"
     with open(manifest_path, "w") as f:

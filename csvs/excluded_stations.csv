@@ -34,3 +34,6 @@ ISMN_SCAN_Spooky,11.7,SoilGrids soil_patch_ok=False (soil_nan_pct=0.98); arid Ut
 ISMN_SCAN_WaimeaPlain,7.0,SoilGrids soil_patch_ok=False (soil_nan_pct=1.00); Hawaiian volcanic soil not covered by SoilGrids
 ISMN_SNOTEL_AtigunPass,12.0,SoilGrids soil_patch_ok=False (soil_nan_pct=0.99); Arctic Alaska (68°N Dfc) permafrost with minimal SoilGrids coverage
 ISMN_USCRN_Bodega-6-WSW,4.0,SoilGrids soil_patch_ok=False (soil_nan_pct=0.58); also has bad DEM tile; insufficient SoilGrids coverage
+ISMN_SCAN_Combate,4,"ERA5-Land cell is ocean-masked; the 25 km buffer fallback averages a pixel set that shifts day to day (17 px, only 3 valid year-round) and the nearest valid land is 13-24 km away. See csvs/era5_buffer_stations.csv"
+ISMN_SNOTEL_PortGraham,6,"ERA5-Land cell is ocean-masked; the 25 km buffer fallback averages a pixel set that shifts day to day (17 px, only 3 valid year-round) and the nearest valid land is 13-24 km away. See csvs/era5_buffer_stations.csv"
+ISMN_USCRN_Cape-Charles-5-ENE,5,"ERA5-Land cell is ocean-masked; the 25 km buffer fallback averages a pixel set that shifts day to day (17 px, only 3 valid year-round) and the nearest valid land is 13-24 km away. See csvs/era5_buffer_stations.csv"

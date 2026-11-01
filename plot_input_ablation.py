@@ -1,0 +1,181 @@
+#!/usr/bin/env python
+"""§67 input-ablation figure: how much worse the frozen baseline gets when one input is shuffled.
+
+Reads the summary CSV written by compare_ablation.py (one row per pass x soil layer, paired
+per-station medians with 95 % bootstrap CI) and draws, in the paper style (plot_style_bw):
+  (a) heatmap pass x layer of the relative ubRMSE change (%)   — the dynamics
+  (b) heatmap pass x layer of the relative RMSE change (%)     — dynamics + level (statics show here)
+  (c) heatmap pass x layer of the relative |bias| change (%)   — level only
+Cells whose 95 % CI excludes 0 are marked with an asterisk. Diverging colours centred on 0
+(orange = worse, blue = better), so "no effect" reads as white.
+Also writes the table as .md next to the figure.
+"""
+import argparse
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+
+import plot_style_bw
+
+DEPTHS = ["0-10", "10-30", "30-100"]
+# pass order + paper labels (Q1-Q9 in runbook §67)
+PASSES = [
+    ("era5_cross_station",   "ERA5 (other station)"),
+    ("era5_within_station",  "ERA5 (same station, other time)"),
+    ("sat_cross_station",    "All satellite"),
+    ("s2_cross_station",     "S2 160 m"),
+    ("s1_cross_station",     "S1 160 m"),
+    ("s1_within_station",    "S1 160 m (same station, other time)"),
+    ("fine_cross_station",   "20 m imagery"),
+    ("dem_cross_station",    "DEM"),
+    ("lulc_cross_station",   "Land cover"),
+    ("soil_cross_station",   "Soil"),
+    ("sif_cross_station",    "SIF"),
+    ("twsa_cross_station",   "TWSA"),
+]
+
+
+# Publication (horizontal) variant: inputs along x, layers along y, ubRMSE + |bias| only.
+# The 20 m imagery is left out (it stays in the full figure). §74 (user, 2026-10-13): the
+# single-sensor S2 / S1 passes are shown next to "All satellite".
+PASSES_H = [
+    ("era5_cross_station",  "ERA5\n(other\nstation)"),
+    ("era5_within_station", "ERA5\n(same station,\nother time)"),
+    ("sat_cross_station",   "All\nsatellite"),
+    ("s2_cross_station",    "S2\n160 m"),
+    ("s1_cross_station",    "S1\n160 m"),
+    ("s1_within_station",   "S1 160 m\n(same station,\nother time)"),
+    ("dem_cross_station",   "DEM"),
+    ("lulc_cross_station",  "Land\ncover"),
+    ("soil_cross_station",  "Soil"),
+    ("sif_cross_station",   "SIF"),
+    ("twsa_cross_station",  "TWSA"),
+]
+
+
+def _matrix(s, keys, col, lo, hi):
+    """-> (value, significant) arrays, rows = pass keys, cols = DEPTHS."""
+    m = np.full((len(keys), len(DEPTHS)), np.nan)
+    sig = np.zeros_like(m, dtype=bool)
+    for i, k in enumerate(keys):
+        for jx, d in enumerate(DEPTHS):
+            r = s[(s["key"] == k) & (s["depth"] == d)]
+            if len(r):
+                m[i, jx] = r[col].iloc[0]
+                sig[i, jx] = (r[lo].iloc[0] > 0) or (r[hi].iloc[0] < 0)
+    return m, sig
+
+
+def plot_horizontal(s, cmap, out):
+    """(a) ubRMSE and (b) |bias| change, stacked; inputs along x, layers along y; one colour scale."""
+    order = [(k, lab) for k, lab in PASSES_H if k in set(s["key"])]
+    keys = [k for k, _ in order]
+    panels = [("d_ubRMSE_pct", "d_ubRMSE_lo", "d_ubRMSE_hi", "(a) ubRMSE change (%)"),
+              ("d_absbias_pct", "d_absbias_lo", "d_absbias_hi", "(b) |bias| change (%)")]
+    mats = [tuple(x.T for x in _matrix(s, keys, *p[:3])) for p in panels]     # -> layers x inputs
+    vmax = max(max(np.nanmax(np.abs(m)) for m, _ in mats), 1.0)
+    norm = TwoSlopeNorm(0, -vmax, vmax)
+    fig, axes = plt.subplots(2, 1, figsize=(1.35 * len(order) + 2.6, 6.8), constrained_layout=True,
+                             sharex=True)
+    for ax, (m, sig), (_, _, _, title) in zip(axes, mats, panels):
+        im = ax.imshow(m, cmap=cmap, norm=norm, aspect="auto")
+        for i in range(m.shape[0]):
+            for jx in range(m.shape[1]):
+                if np.isfinite(m[i, jx]):
+                    v = m[i, jx]
+                    ax.text(jx, i, f"{v:+.1f}{'*' if sig[i, jx] else ''}", ha="center", va="center",
+                            color="white" if abs(v) > 0.6 * vmax else "black")
+        ax.set_yticks(range(len(DEPTHS)), [f"{d} cm" for d in DEPTHS])
+        ax.set_title(title, loc="left")
+    axes[1].set_xticks(range(len(order)), [lab for _, lab in order])
+    fig.colorbar(im, ax=axes, shrink=0.9, label="% change vs. baseline")
+    for ext in ("png", "pdf"):
+        fig.savefig(out / f"input_ablation_heatmap_horizontal.{ext}", dpi=600)
+    print(f"wrote {out}/input_ablation_heatmap_horizontal.{{png,pdf}}")
+
+
+def _pass_key(stem: str) -> str:
+    """predictions_oos_era5_cross_station_s0 -> era5_cross_station"""
+    s = stem.split("predictions_oos_", 1)[-1]
+    return s.rsplit("_s", 1)[0]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--summary", required=True, help="compare_ablation.py --csv output")
+    ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--layout", choices=["vertical", "horizontal"], default="vertical",
+                    help="horizontal = publication variant ONLY (ubRMSE + |bias|, fewer passes); "
+                         "never rewrites the vertical figure or the table")
+    a = ap.parse_args()
+
+    plt.rcParams.update(plot_style_bw.RC_PAPER)
+    s = pd.read_csv(a.summary)
+    s["key"] = s["ablation"].map(_pass_key)
+    # |bias| change as % of the baseline median |bias| (same convention as d_ubRMSE_pct)
+    for c in ("d_absbias", "d_absbias_lo", "d_absbias_hi"):
+        s[c + "_pct"] = 100 * s[c] / s["absbias_base"]
+    order = [(k, lab) for k, lab in PASSES if k in set(s["key"])]
+    extra = sorted(set(s["key"]) - {k for k, _ in order})
+    order += [(k, k) for k in extra]
+
+    # orange (worse) - white - blue (better), from palette H
+    cmap = LinearSegmentedColormap.from_list("worse_better", [plot_style_bw.BLUE, "white", plot_style_bw.RED])
+    out = Path(a.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if a.layout == "horizontal":
+        plot_horizontal(s, cmap, out)
+        return
+    panels = [("d_ubRMSE_pct", "d_ubRMSE_lo", "d_ubRMSE_hi", "(a) ubRMSE change (%)"),
+              ("d_RMSE_pct", "d_RMSE_lo", "d_RMSE_hi", "(b) RMSE change (%)"),
+              ("d_absbias_pct", "d_absbias_lo", "d_absbias_hi", "(c) |bias| change (%)")]
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 0.55 * len(order) + 1.6), constrained_layout=True,
+                             sharey=True)
+    mats = []
+    for col, lo, hi, _ in panels:
+        m = np.full((len(order), len(DEPTHS)), np.nan)
+        sig = np.zeros_like(m, dtype=bool)
+        for i, (k, _) in enumerate(order):
+            for jx, d in enumerate(DEPTHS):
+                r = s[(s["key"] == k) & (s["depth"] == d)]
+                if len(r):
+                    m[i, jx] = r[col].iloc[0]
+                    sig[i, jx] = (r[lo].iloc[0] > 0) or (r[hi].iloc[0] < 0)
+        mats.append((m, sig))
+    # ONE colour scale across panels, so equal colour = equal % change
+    vmax = max(max(np.nanmax(np.abs(m)) for m, _ in mats), 1.0)
+    norm = TwoSlopeNorm(0, -vmax, vmax)
+    for ax, (m, sig), (_, _, _, title) in zip(axes, mats, panels):
+        im = ax.imshow(m, cmap=cmap, norm=norm, aspect="auto")
+        for i in range(m.shape[0]):
+            for jx in range(m.shape[1]):
+                if np.isfinite(m[i, jx]):
+                    v = m[i, jx]
+                    ax.text(jx, i, f"{v:+.1f}{'*' if sig[i, jx] else ''}", ha="center", va="center",
+                            color="white" if abs(v) > 0.6 * vmax else "black")
+        ax.set_xticks(range(len(DEPTHS)), [f"{d} cm" for d in DEPTHS])
+        ax.xaxis.tick_top()
+        ax.set_title(title, loc="left", pad=28)
+    fig.colorbar(im, ax=axes, shrink=0.9, label="% change vs. baseline")
+    axes[0].set_yticks(range(len(order)), [lab for _, lab in order])
+
+    for ext in ("png", "pdf"):
+        fig.savefig(out / f"input_ablation_heatmap.{ext}", dpi=600)
+    keep = ["key", "depth", "n", "ubRMSE_base", "d_ubRMSE", "d_ubRMSE_lo", "d_ubRMSE_hi", "d_ubRMSE_pct",
+            "d_RMSE_pct", "d_absbias", "d_r", "frac_worse"]
+    tab = s[[c for c in keep if c in s]].round(4)
+    try:
+        md = tab.to_markdown(index=False)
+    except ImportError:
+        md = tab.to_string(index=False)
+    (out / "input_ablation_table.md").write_text(md + "\n")
+    print(f"wrote {out}/input_ablation_heatmap.{{png,pdf}} and input_ablation_table.md")
+
+
+if __name__ == "__main__":
+    main()

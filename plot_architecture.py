@@ -119,7 +119,7 @@ def figure_current():
         ("anchor L12", "(196, 768)"),
         ("S2 hist",   "(60, 4, 768)"),
         ("S1 hist",   "(40, 4, 768)"),
-        ("ERA5",      "(365, 19)"),
+        ("ERA5",      "(365, 18)"),
         ("SIF",       "(50, 1)"),
         ("TWSA",      "(12, 1)"),
     ]
@@ -212,7 +212,7 @@ def figure_proposed():
     for (lab, shp, fc, ec), x in zip(b1, xs):
         box(ax, x, 94.5, w, 7.2, lab, shp, fc=fc, ec=ec, fs=6.9)
         arrow(ax, x, 90.9, x, 88.4)
-    box(ax, 86, 94.5, 26, 7.2, "ERA5 · SIF · TWSA", "(365,19)   9 km",
+    box(ax, 86, 94.5, 26, 7.2, "ERA5 · SIF · TWSA", "(365,18)   9 km",
         fc=C_INPUT, ec=C_INPUT_E, fs=6.9)
     arrow(ax, 86, 90.9, 86, 88.4)
 

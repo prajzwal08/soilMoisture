@@ -63,6 +63,12 @@ LATENCY_DAYS = 30   # estimated days of latency before files are available
 
 LOG_COLS = ["date", "n_stations_found", "status", "error_msg", "timestamp"]
 
+# --keep-dir (runbook §68.12): download-only mode that KEEPS each global L2B file at
+# {KEEP_DIR}/{YYYY}/{basename}, no station extraction (extraction later reads these files locally).
+KEEP_DIR: Path | None = None
+# --from-local (§68.12): extract from the kept files {FROM_LOCAL}/{YYYY}/{YYYYMMDD}_*.nc, no network.
+FROM_LOCAL: Path | None = None
+
 # ============================================================
 # LOGGING
 # ============================================================
@@ -180,6 +186,10 @@ def extract_stations_from_file(nc_path: Path, stations_df: pd.DataFrame, day: da
 
         # Valid pixels only (filter NaN and fill values)
         valid = np.isfinite(sif_arr) & np.isfinite(lat_arr) & np.isfinite(lon_arr)
+        # cut to the box around ALL stations first (same result; cheap when the stations are clustered, e.g. NL tiles)
+        m = 2 * EXTRACT_RADIUS_M / 111_000.0 / max(0.1, np.cos(np.deg2rad(stations_df["latitude"].abs().max())))
+        valid &= ((lat_arr >= stations_df["latitude"].min() - m) & (lat_arr <= stations_df["latitude"].max() + m) &
+                  (lon_arr >= stations_df["longitude"].min() - m) & (lon_arr <= stations_df["longitude"].max() + m))
         if not valid.any():
             return results
 
@@ -271,9 +281,20 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
         "timestamp":        datetime.now(timezone.utc).isoformat(),
     }
 
+    if FROM_LOCAL is not None:
+        files = sorted((FROM_LOCAL / f"{day.year}").glob(f"{day:%Y%m%d}_*.nc"))
+        if not files:
+            return result
+        obs = extract_stations_from_file(files[0], stations_df, day)
+        result.update(n_stations_found=len(obs), status="done", observations=obs)
+        return result
+
     url = get_l2b_url(catalog, day)
     if url is None:
         return result
+
+    if KEEP_DIR is not None:
+        return keep_day(day, url, result)
 
     tmp_path = None
     try:
@@ -300,6 +321,43 @@ def process_day(day: date, catalog, stations_df: pd.DataFrame) -> dict:
             tmp_path.unlink(missing_ok=True)
 
     return result
+
+def keep_day(day: date, url: str, result: dict) -> dict:
+    """--keep-dir mode: download the day's global file to KEEP_DIR/YYYY/ (atomic rename), keep it.
+
+    A file already present with size > 0 is not fetched again, so a resubmit only retries failures.
+    The size is checked against Content-Length when the server sends it.
+    """
+    log = logging.getLogger(__name__)
+    out_dir = KEEP_DIR / f"{day.year}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # the server's basename is a bare UUID, so prefix the date: YYYYMMDD_<uuid>.nc
+    dest = out_dir / f"{day:%Y%m%d}_{Path(url.split('?')[0]).name}.nc"
+    result["file"] = str(dest)
+    if dest.exists() and dest.stat().st_size > 0:
+        result["status"] = "exists"
+        result["bytes"] = dest.stat().st_size
+        return result
+    part = dest.with_name(dest.name + ".part")
+    try:
+        _download(url, part)
+        try:
+            expected = int(requests.head(url, timeout=60, allow_redirects=True).headers.get("Content-Length", 0))
+        except Exception:
+            expected = 0
+        got = part.stat().st_size
+        if got == 0 or (expected and got != expected):
+            raise IOError(f"size mismatch: got {got}, expected {expected}")
+        part.rename(dest)
+        result["status"] = "done"
+        result["bytes"] = got
+    except Exception as exc:
+        result["status"] = "error"
+        result["error_msg"] = str(exc)
+        log.error(f"  Day {day}: {exc}")
+        part.unlink(missing_ok=True)
+    return result
+
 
 # ============================================================
 # SAVE PER-STATION ANNUAL FILE
@@ -350,12 +408,25 @@ def main():
                         help="Override DATA_ROOT (default: /gpfs/work3/0/prjs1968/data).")
     parser.add_argument("--stations-file", type=Path, default=None,
                         help="File with one station_id per line to restrict processing.")
+    parser.add_argument("--keep-dir", type=Path, default=None,
+                        help="Download-only: keep every global L2B file under KEEP_DIR/YYYY/ (§68.12).")
+    parser.add_argument("--years", type=int, nargs="+", default=None,
+                        help="--keep-dir only: restrict to these calendar years (one SLURM array task each).")
+    parser.add_argument("--end-date", default=None, help="--keep-dir only: last day, YYYY-MM-DD.")
+    parser.add_argument("--max-days", type=int, default=None, help="--keep-dir only: first N days (smoke).")
+    parser.add_argument("--workers", type=int, default=N_WORKERS)
+    parser.add_argument("--from-local", type=Path, default=None,
+                        help="Extract from kept global files (KEEP_DIR layout) instead of downloading (§68.12).")
     args = parser.parse_args()
 
+    if args.keep_dir is not None:
+        return keep_main(args)
+
     if args.data_root is not None:
-        global DATA_ROOT, LOG_DIR
-        DATA_ROOT = args.data_root
-        LOG_DIR   = DATA_ROOT / "logs"
+        global DATA_ROOT, LOG_DIR, STATION_CSV
+        DATA_ROOT   = args.data_root
+        STATION_CSV = DATA_ROOT / "station_splits.csv"   # was bound at import to the training CSV (§68.3 trap)
+        LOG_DIR     = DATA_ROOT / "logs"
         LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     setup_logging()
@@ -372,6 +443,12 @@ def main():
 
     # Build the overall date range (SIF start → max station end date)
     max_end = date.today() - timedelta(days=LATENCY_DAYS)
+    if args.end_date:
+        max_end = date.fromisoformat(args.end_date)
+    if args.from_local is not None:
+        global FROM_LOCAL
+        FROM_LOCAL = args.from_local
+        log.info(f"from-local: {FROM_LOCAL}  stations from {STATION_CSV}")
     start_d = SIF_START_DATE
     end_d   = max_end
 
@@ -416,7 +493,7 @@ def main():
     done = [0]
 
     def _process_one_day(day):
-        catalog = pystac_client.Client.open(STAC_URL)
+        catalog = pystac_client.Client.open(STAC_URL) if FROM_LOCAL is None else None
         active = year_to_active.get(day.year, pd.DataFrame())
         if active.empty:
             log.debug(f"  Day {day}: all stations already have sif_{day.year}.nc, skipping")
@@ -424,7 +501,7 @@ def main():
                     "n_stations_found": 0, "error_msg": "", "timestamp": ""}
         return process_day(day, catalog, active)
 
-    with ThreadPoolExecutor(max_workers=N_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         fut_to_day = {pool.submit(_process_one_day, d): d for d in all_days}
 
         for fut in as_completed(fut_to_day):
@@ -462,6 +539,51 @@ def main():
                 log.info(f"  Year {yr} flushed.")
 
     log.info("Done.")
+
+
+def keep_main(args):
+    """§68.12 download-only mode: keep the global daily files; one ledger CSV per run."""
+    global KEEP_DIR
+    KEEP_DIR = args.keep_dir
+    (KEEP_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    tag = "_".join(map(str, args.years)) if args.years else "all"
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S",
+                        handlers=[logging.StreamHandler(),
+                                  logging.FileHandler(KEEP_DIR / "logs" / f"keep_{tag}.log")])
+    log = logging.getLogger(__name__)
+
+    end_d = date.fromisoformat(args.end_date) if args.end_date else date.today() - timedelta(days=LATENCY_DAYS)
+    days = [d for d in date_range(SIF_START_DATE, end_d) if not args.years or d.year in args.years]
+    if args.max_days:
+        days = days[: args.max_days]
+    log.info(f"keep mode: {len(days)} days {days[0]}..{days[-1]} -> {KEEP_DIR}  workers={args.workers}")
+
+    def _one(day):
+        catalog = pystac_client.Client.open(STAC_URL)
+        return process_day(day, catalog, None)
+
+    rows, t0 = [], time.time()
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futs = {pool.submit(_one, d): d for d in days}
+        for i, fut in enumerate(as_completed(futs), 1):
+            try:
+                r = fut.result()
+            except Exception as exc:
+                r = {"date": futs[fut].isoformat(), "status": "error", "error_msg": str(exc)}
+            rows.append(r)
+            if i % 25 == 0 or i == len(days):
+                gb = sum(x.get("bytes", 0) for x in rows if x.get("status") == "done") / 1e9
+                log.info(f"  [{i}/{len(days)}] {gb:.1f} GB new in {(time.time() - t0) / 60:.1f} min")
+
+    led = pd.DataFrame(rows).sort_values("date")
+    led_path = KEEP_DIR / "logs" / f"ledger_{tag}.csv"
+    led.to_csv(led_path, index=False)
+    counts = led["status"].value_counts().to_dict()
+    log.info(f"status counts: {counts}   ledger -> {led_path}")
+    if counts.get("error", 0):
+        log.error(f"{counts['error']} day(s) FAILED - resubmit the same command to retry them")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

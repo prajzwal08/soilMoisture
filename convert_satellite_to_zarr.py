@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -40,9 +41,36 @@ import zarr
 import numcodecs
 
 # ── paths ─────────────────────────────────────────────────────────────────────
-SRC_ROOT = Path("/gpfs/scratch1/shared/pkhanal/satellite")
-DST_ROOT = Path("/gpfs/work3/0/prjs1968/satellite_zarr")
-LOG_FILE = Path("/gpfs/work3/0/prjs1968/data/logs/zarr_failures.log")
+# §68: SOIL_SCRATCH_DIR / RAW_ZARR_ROOT / SOIL_DATA_ROOT point this at the Netherlands-grid
+# roots (nl/satellite -> nl/satellite_zarr). Unset = the training paths, unchanged.
+SRC_ROOT = Path(os.getenv("SOIL_SCRATCH_DIR", "/gpfs/scratch1/shared/pkhanal/satellite"))
+DST_ROOT = Path(os.getenv("RAW_ZARR_ROOT", "/gpfs/work3/0/prjs1968/satellite_zarr"))
+LOG_FILE = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data")) / "logs" / "zarr_failures.log"
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
+
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
 
 # ── constants ─────────────────────────────────────────────────────────────────
 S2_BANDS = ["B01","B02","B03","B04","B05","B06","B07","B08","B8A","B09","B11","B12"]
@@ -177,12 +205,20 @@ def main():
                         help="Parallel worker processes (default 4; match cpus-per-task - 1)")
     parser.add_argument("--execute",  action="store_true",
                         help="Write Zarr files. Without this flag runs in dry-run mode.")
+    parser.add_argument("--stations", type=str, default=None,
+                        help="Comma-separated station dir names (§68 array tasks); applied "
+                             "before --start/--end. Default: every dir under --src.")
     args = parser.parse_args()
+
+    _assert_not_training(args.dst, LOG_FILE)
 
     if args.execute:
         args.dst.mkdir(parents=True, exist_ok=True)
 
     all_stations = sorted(d for d in args.src.iterdir() if d.is_dir())
+    if args.stations:
+        wanted = {s.strip() for s in args.stations.split(",") if s.strip()}
+        all_stations = [d for d in all_stations if d.name in wanted]
     subset = all_stations[args.start : args.end]
     n = len(subset)
 

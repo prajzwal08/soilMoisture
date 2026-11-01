@@ -41,6 +41,9 @@ dependencies:
   - numcodecs
   - pyarrow                  # parquet — eval_output/predictions_*.parquet
   - py-opencv                # cloud_masking_inference.py
+  - pytest                   # test_patchwise_*.py (§35.24); absent from the built env, so
+                             # slurm/run_tests.sh pip-installs it on the compute node —
+                             # pinning it here is what makes that fallback unnecessary
   - pip
   - pip:
     # GPU stack. torch is the CUDA 12.4 wheel, NOT the default PyPI build —

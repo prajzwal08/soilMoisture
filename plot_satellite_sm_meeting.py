@@ -45,19 +45,22 @@ OUT_DIR    = Path("meeting_output/satellite")
 
 
 def load_checkpoint(ckpt_path: Path, device):
-    ckpt  = torch.load(ckpt_path, map_location=device, weights_only=False)
-    cfg   = ckpt["config"]
-    model = SoilMoistureModel(
-        n_depths      = cfg.get("n_depths", 3),
-        d_model       = cfg.get("d_model",  768),
-        n_heads       = cfg.get("n_heads",  12),
-        n_layers      = cfg.get("n_layers", 6),
-        drop_path_rate= cfg.get("drop_path_rate", 0.0),
-        use_cls_depth = cfg.get("use_cls_depth", False),
-    ).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    return model, cfg, ckpt["epoch"]
+    """Thin wrapper over ckpt_utils.load_checkpoint.
+
+    This used to be a near-copy that skipped remap_checkpoint_keys and loaded strict, so legacy
+    checkpoints failed here while succeeding everywhere else, and (after §35.18) it had no arch
+    handling at all. There is one loader now.
+    """
+    from ckpt_utils import load_checkpoint as _load
+    model, cfg, epoch = _load(ckpt_path, device)
+    if cfg.get("arch") == "patchwise":
+        raise SystemExit(
+            f"{__file__} renders a 224x224 soil-moisture map, but this checkpoint is "
+            "--arch patchwise, which predicts one value per 160 m token (a 14x14 grid). "
+            "Plotting it as a map would silently produce a wrong figure. Use a token-grid "
+            "plot instead (§28.9)."
+        )
+    return model, cfg, epoch
 
 
 def _pca_pseudo_image(tokens: np.ndarray) -> np.ndarray:

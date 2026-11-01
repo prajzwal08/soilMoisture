@@ -1,0 +1,20 @@
+{
+  "sigma_ST": 2.7066270984218677,
+  "sigma_level": 14.894430679340182,
+  "units": "kelvin",
+  "grid": "22x22 @ 100 m, tile west/north edge anchored",
+  "centring": "per-scene mean over valid cells removed; alpha=0 means the level term is reported, not trained",
+  "split": "train",
+  "categories": [
+    "sm_only",
+    "sm_and_flux"
+  ],
+  "years": [
+    2016,
+    2022
+  ],
+  "n_stations": 573,
+  "n_scenes_used": 52414,
+  "n_cells": 17983485,
+  "min_valid_cells": 2
+}

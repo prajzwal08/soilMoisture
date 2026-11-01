@@ -1,0 +1,11 @@
+{
+  "run_name": "pw_stage2a_L3",
+  "val_gate_applied": false,
+  "val_gate_passed": null,
+  "reference_run": "cls_depth_star_reg",
+  "reference": {
+    "0-10": 0.0539,
+    "10-30": 0.05,
+    "30-100": 0.0552
+  }
+}

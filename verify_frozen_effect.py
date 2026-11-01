@@ -46,6 +46,9 @@ KELVIN    = 273.15
 
 def read_freeze_mask(station: str, var: str):
     """-> DataFrame [station_key, date_int, frozen] or None if no ERA5 for it."""
+    # §43.12: the driver stack is 18 wide and has no skt; this frozen-ground
+    # detector needs skin temperature, so it reads the original 19-column
+    # "era5/values", which splice_era5_radiation.py leaves in place.
     idx = ERA5_VARS.index(var)
     for cat in CATEGORIES:
         path = ZARR_ROOT / cat / station

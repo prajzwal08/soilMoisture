@@ -31,31 +31,74 @@ def remap_checkpoint_keys(state_dict: dict) -> dict:
 
 
 def load_checkpoint(ckpt_path: Path, device):
-    """Load SoilMoistureModel from checkpoint, remapping legacy key names."""
+    """Load the §48 SoilMoistureModel from a checkpoint, strictly.
+
+    Only checkpoints stamped arch == "s48" are accepted. Every earlier architecture shares
+    key prefixes with this one (the U-Net had `decoder.*` and `transformer_layers.*` too), so
+    a key-prefix test cannot tell them apart; the stamp can. Older checkpoints load from
+    their own code: tag `baseline-unet-temporal` (ckpt_utils_unet.py) for the pooled U-Net,
+    tags `pw_stage2a-ep9` / `pre-s48-build` for the patchwise arm.
+    """
     print(f"Loading checkpoint: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     cfg  = ckpt["config"]
+
+    arch = cfg.get("arch")
+    if arch != "s48":
+        raise RuntimeError(
+            f"{ckpt_path} is arch={arch!r}, not 's48'. This module builds only the §48 model. "
+            f"Pooled U-Net: ckpt_utils_unet.load_checkpoint (tag baseline-unet-temporal). "
+            f"Patchwise: check out tag pre-s48-build.")
+
+    # Normalisation provenance (§35.28), extended to the §48 contracts. Each hash is checked
+    # against the file the CHECKPOINT names, not a hardcoded filename: the old check hashed
+    # csvs/era5_stats.json while training read era5_stats18.json, so a correct checkpoint
+    # always reported MISMATCH and the warning trained everyone to ignore it.
+    #
+    # Warn rather than raise: an old or moved file should stay loadable for inspection.
+    import hashlib as _hl
+    _root = Path(__file__).resolve().parent / "csvs"
+    _files = {
+        "era5_stats":   cfg.get("era5_stats"),
+        "driver_stats": cfg.get("driver_stats"),
+        "fine_stats":   cfg.get("fine_stats"),
+        "lst_stats":    cfg.get("lst_stats"),
+    }
+    for _name, _path in _files.items():
+        _want = cfg.get(f"{_name}_sha")
+        if not _want or _want == "unknown" or not _path:
+            print(f"  [provenance] {ckpt_path.name} records no {_name}_sha/path — which "
+                  f"constants it was trained with cannot be verified.")
+            continue
+        _p = Path(_path)
+        if not _p.exists():
+            _p = _root / _p.name
+        try:
+            _have = _hl.sha256(_p.read_bytes()).hexdigest()[:16]
+        except Exception as _e:
+            print(f"  [provenance] WARNING: cannot hash {_p} ({_e})")
+            continue
+        if _have != _want:
+            print(f"  [provenance] *** MISMATCH *** {_name}: checkpoint trained with "
+                  f"{_want}, {_p} on disk is {_have}. The model is being fed DIFFERENT "
+                  f"constants than it was trained with; every number from this evaluation "
+                  f"is suspect. Restore the matching file first.")
+
     model = SoilMoistureModel(
-        n_depths       = cfg.get("n_depths", 3),
-        d_model        = cfg.get("d_model",  768),
-        n_heads        = cfg.get("n_heads",  12),
-        n_layers       = cfg.get("n_layers", 6),
-        drop_path_rate = cfg.get("drop_path_rate", 0.0),
-        use_cls_depth  = cfg.get("use_cls_depth", False),
+        n_depths         = cfg.get("n_depths", 3),
+        d_model          = cfg.get("d_model",  768),
+        n_heads          = cfg.get("n_heads",  12),
+        n_layers         = cfg.get("n_layers", 6),
+        drop_path_rate   = cfg.get("drop_path_rate", 0.0),
+        fine_skips       = cfg.get("fine_skips", "cnn"),
+        modality_dropout = cfg.get("modality_dropout", 0.2),
+        fine_inputs      = cfg.get("fine_inputs", "bands"),
     ).to(device)
 
-    sd      = remap_checkpoint_keys(ckpt["model"])
-    missing, unexpected = model.load_state_dict(sd, strict=False)
-
-    # transformer_norm is new (old model had no post-transformer LayerNorm);
-    # it initialises as identity so eval results are valid.
-    new_keys = {"transformer_norm.weight", "transformer_norm.bias"}
-    real_missing = [k for k in missing if k not in new_keys]
-    if real_missing:
-        print(f"  WARNING — unexpected missing keys: {real_missing[:6]} ...")
-    if unexpected:
-        print(f"  WARNING — unexpected keys in ckpt: {unexpected[:4]} ...")
-
+    # strict=True, deliberately: a mismatched checkpoint must never become a randomly
+    # initialised model that runs and prints plausible numbers (§35.22).
+    model.load_state_dict(ckpt["model"], strict=True)
     model.eval()
-    print(f"  Epoch {ckpt['epoch']}  best_val_loss={ckpt.get('best_val_loss','N/A')}")
+    print(f"  arch={arch}  epoch {ckpt['epoch']}  "
+          f"best_val_loss={ckpt.get('best_val_loss','N/A')}  sha={cfg.get('git_sha','?')[:8]}")
     return model, cfg, ckpt["epoch"]

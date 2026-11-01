@@ -1,0 +1,129 @@
+% Results slides, shared by text/research_questions_slides.tex and text/slides/prajwal_khanal_uTwente_ITC.tex.
+% Style: figure -> one-line caption (\figcap) -> one-line message in a rounded box (\msg).
+% Model: baseline_selected_20261005 (the selected §59 run); figures from figures/eval/baseline_selected_20261005_paper/,
+% numbers from eval_output/baseline_selected_20261005/per_station_oos.csv.
+% Order (user, 2026-10-07): ubRMSE by depth -> pred vs obs (density) -> ubRMSE by land cover ->
+% sites that match -> sites that do not -> TxSON (tile left, series right) -> input ablation (wide heatmap).
+% Match / mismatch = lowest / highest mean OOS ubRMSE among stations observed at all three depths.
+
+\begin{frame}{Results\quad{\color{tumblue}Per-station ubRMSE by depth}}
+\centering
+\includegraphics[width=\linewidth,height=0.66\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/box_ubrmse_by_depth.pdf}
+\figcap{One point per station; medians above, station counts below}
+\msg{Median per-station ubRMSE 0.043--0.051\,m$^3$/m$^3$ at every depth and split}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Predicted vs observed, by split and depth}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs_density.pdf}
+\figcap{Daily samples coloured by point density (sparsest 10\,\% not drawn); metrics = median over stations; rows OOS, OOT, OOST}
+\msg{New years at known sites fit far better than new sites}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Per-station ubRMSE by land cover}}
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/slides/box_ubrmse_by_igbp_macro.pdf}
+\figcap{Rows: depths; groups: land-cover class; colours: OOS, OOT, OOST}
+\msg{Similar error across land cover; forest slightly highest, shrub-savanna lowest}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Sites where the time series match}}
+\centering
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries_twente/named/oos/NAMED_05_ISMN_TWENTE_ITCSM-13.png}\\[-1pt]
+{\scriptsize\bfseries TWENTE ITCSM-13, Netherlands}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/BEST_05_ISMN_SCAN_DoeRidge.png}\\[-1pt]
+{\scriptsize\bfseries SCAN Doe Ridge, California}
+\end{minipage}
+\figcap{OOS stations; blue predicted, black observed; Twente has two depths, Doe Ridge three}
+\msg{Dynamics right at every depth (r 0.57--0.88, ubRMSE 0.024--0.056); level off by up to 0.04}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Sites where the time series have some issues}}
+\centering
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/WORST_02_ISMN_SNOTEL_BurtsMillerRanch.png}\\[-1pt]
+{\scriptsize\bfseries SNOTEL Burts Miller Ranch, Utah}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.495\linewidth}\centering
+\includegraphics[width=\linewidth,height=0.64\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/timeseries/oos/WORST_04_ISMN_SNOTEL_Hopewell.png}\\[-1pt]
+{\scriptsize\bfseries SNOTEL Hopewell, New Mexico}
+\end{minipage}
+\figcap{OOS stations observed at all three depths, highest ubRMSE; shaded = 2023--2025 (OOST)}
+\msg{Deep layer (30--100\,cm) wrong in summer: too dry at Burts Miller, too wet at Hopewell}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}TxSON: six stations inside one 2.2\,km tile}}
+\centering
+\includegraphics[width=0.95\linewidth,keepaspectratio,trim=0 12 0 26,clip]{eval/baseline_selected_20261005_paper/tiles/txson_cr200-18_side.pdf}
+\figcap{(a) Sentinel-2 true colour with the six stations; (b--g) 0--10\,cm, predicted vs observed}
+\msg{Timing right at every station (r 0.69--0.85); offsets remain (bias $-$0.12 to +0.11)}
+\end{frame}
+
+\begin{frame}{Results\quad{\color{tumblue}Input ablation: which inputs does the model use?}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/ablation/input_ablation_heatmap_horizontal.pdf}
+\figcap{One input shuffled at a time; 221 OOS stations; * = significant}
+\msg{ERA5 matters most at the surface (+30--39\,\% vs +14--15\,\% deep); satellite equally at all depths (+37--38\,\%); DEM, land cover and soil grow with depth}
+\end{frame}
+
+\begin{frame}{Conclusions\quad{\color{tumblue}Answers to the research questions}}
+\small
+\textbf{RQ1}\; {\color{tumblue}Do frozen GFM embeddings add skill beyond a multimodal driver baseline?}\\
+Ans. \textbf{GFM embeddings carry a site-specific signal, comparable to climate.} Swapping satellite tokens between
+stations raises ubRMSE by 37--38\,\% at every depth (ERA5 from another station: +15--30\,\%); reordering S1 in time
+at the same station costs $\approx$0\,\%. Added skill still needs a drivers-only run.
+
+\vspace{6pt}
+\textbf{RQ2}\; {\color{tumblue}How does the model generalise to unseen sites?}\\
+Ans. \textbf{New sites are slightly worse than seen stations.} Median per-station ubRMSE 0.048--0.050 at new sites
+vs 0.043--0.047 at seen stations.
+
+\vspace{6pt}
+\textbf{RQ3}\; {\color{tumblue}How does skill vary within the same tile?}\\
+Ans. \textbf{Timing is captured, level may not be.} At TxSON, r is 0.69--0.85 and ubRMSE 0.032--0.063 at all six
+stations, while bias runs from $-$0.12 to +0.11 inside one 2.2\,km tile.
+
+\vspace{6pt}
+\textbf{RQ4}\; {\color{tumblue}Which modalities matter, at which depth?}\\
+Ans. \textbf{Depth changes what the model relies on.} ERA5 dominates the surface; satellite matters equally at all
+depths; soil, DEM and land cover gain weight at depth.
+\end{frame}
+
+% ---------------- other analysis, not presented in the talk (backup)
+\begin{frame}
+\centering\vfill
+{\Large\bfseries\color{tumblue}What I could not present}\\[10pt]
+{\large 1.\ Effective resolution of the map\quad 2.\ Where the station bias comes from\quad 3.\ Voids in the density plot\quad 4.\ Distribution of soil moisture}
+\vfill
+\end{frame}
+
+\begin{frame}{Other analysis\quad{\color{tumblue}1. Effective resolution of the map (TxSON)}}
+\centering
+\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{effres/effres_txson.pdf}
+\figcap{30 OOS TxSON tiles. (a) Spectrum of map anomalies; (b) variance kept after block averaging; (c) map variogram vs observed station pairs (numbers = pairs)}
+\msg{Map has structure down to 250\,m}
+\end{frame}
+
+\begin{frame}{Other analysis\quad{\color{tumblue}2. Where the station bias comes from}}
+\centering
+\includegraphics[width=\linewidth,height=0.70\textheight,keepaspectratio,trim=0 125 0 0,clip]{eval/baseline_selected_20261005_paper/bias_groups.pdf}
+\figcap{Median OOS bias by land cover, soil texture and climate; (g) bias variance explained vs random labels}
+\msg{Bias is not explained by land cover, climate, soil texture or terrain ($\le$5\,\%, none above random)}
+\end{frame}
+
+\begin{frame}{Other analysis\quad{\color{tumblue}3. Voids in the density plot}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/scatter_pred_obs_stations.pdf}
+\figcap{Same grid as the density plot; colour = number of distinct stations with samples in each cell}
+\msg{Voids are not empty: many stations pass through briefly, a few long-record stations make the dense blobs}
+\end{frame}
+
+\begin{frame}{Other analysis\quad{\color{tumblue}4. Distribution of soil moisture}}
+\centering
+\includegraphics[width=\linewidth,height=0.68\textheight,keepaspectratio]{eval/baseline_selected_20261005_paper/hist_pred_obs.pdf}
+\figcap{All daily samples; filled = in situ, line = predicted; box: P5-P95 range of each}
+\msg{Distribution matches; the model narrows the dry end}
+\end{frame}

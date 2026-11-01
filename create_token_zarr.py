@@ -13,6 +13,7 @@ Output: /gpfs/scratch1/shared/pkhanal/zarr/{category}/{station}/
   sif/values  (N,),   date_ints (N,) int32, doys (N,) int32
   twsa/lwe (N,), lwe_uncertainty (N,), date_ints (N,) int32, doys (N,) int32
   labels/sm (n_depths,n_days), qc (n_depths,n_days), depths (n_depths,), dates (n_days,)
+                        qc: 0=observed, 1=gap-filled, 2=missing, 255=no QC source in the NetCDF
   .zmetadata  ← consolidated metadata for fast zarr.open_consolidated()
   .complete   ← sentinel written last; station skipped if already present
 
@@ -28,6 +29,8 @@ Usage:
 """
 
 import argparse
+import os
+import sys
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -38,11 +41,47 @@ import xarray as xr
 import zarr
 import numcodecs
 
-DATA_ROOT  = Path("/gpfs/work3/0/prjs1968/data")
-ZARR_ROOT  = Path("/gpfs/scratch1/shared/pkhanal/zarr")   # SSD scratch — matches dataset.py ZARR_ROOT_FAST
+# §68: SOIL_DATA_ROOT / ZARR_ROOT / SOIL_STATION_CSV env overrides; unset = unchanged.
+# NOTE: convert_station opens the store mode="w" (wipes it) and reads per-date .pt token
+# bundles ({data_root}/{cat}/{dir}/S2L2A/*_L12_*.pt). The §68 grid has none (its tokens come
+# from retokenize_satellite_zarr.py), so every NL tile returns MISS here.
+DATA_ROOT  = Path(os.getenv("SOIL_DATA_ROOT", "/gpfs/work3/0/prjs1968/data"))
+ZARR_ROOT  = Path(os.getenv("ZARR_ROOT", "/gpfs/scratch1/shared/pkhanal/zarr"))   # SSD scratch — matches dataset.py ZARR_ROOT_FAST
 LEVEL1_DIR = Path("/projects/prjs1968/level1_organised")   # authoritative SM labels
-SPLITS_CSV = Path("/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv")
+SPLITS_CSV = Path(os.getenv("SOIL_STATION_CSV",
+                            "/gpfs/work3/0/prjs1968/soilMoisture/csvs/station_splits.csv"))
+# §68 isolation: while SOIL_STATION_CSV is set (a non-training station list), no output may
+# equal or sit under a training root. Unset = no check, behaviour unchanged.
+_TRAINING_ROOTS = tuple(Path(p) for p in (
+    "/gpfs/work3/0/prjs1968/zarr_tokens",              # the only permanent token store
+    "/projects/prjs1968/satellite_zarr",               # permanent raw imagery
+    "/gpfs/work3/0/prjs1968/data",                     # training per-station nc + logs
+    "/gpfs/scratch1/shared/pkhanal/s48cache",          # default §48 cache
+    "/gpfs/work3/0/prjs1968/soilMoisture/csvs",        # repo csvs/
+    "/gpfs/work3/0/prjs1968/soilMoisture/text/cloudy_tile_manifest.csv",
+    "/gpfs/scratch1/shared/pkhanal/zarr",              # staged training token store
+    "/gpfs/scratch1/shared/pkhanal/satellite_zarr",    # staged training raw store
+))
 
+
+def _assert_not_training(*paths) -> None:
+    if not os.getenv("SOIL_STATION_CSV"):
+        return
+    for p in paths:
+        rp = Path(p).resolve()
+        for r in _TRAINING_ROOTS:
+            rr = r.resolve()
+            if rp == rr or rr in rp.parents:
+                raise RuntimeError(f"SOIL_STATION_CSV is set but output {p} is under the training "
+                                   f"root {r}; export the §68 roots (§68.3 isolation).")
+
+
+# NOTE (§43.12): this list stays at 19 ON PURPOSE.  It mirrors the columns that
+# exist in the source `meteo_*.nc`, and this writer produces `era5/values`.  The
+# 18-column driver set (`skt_*` dropped, `ssrd_sum`/`strd_sum` appended) is a
+# DERIVED array, `era5/values18`, written separately by splice_era5_radiation.py
+# from these 19 plus rad_*.nc.  Changing this list to 18 would make the writer
+# look for variables that the meteo files do not contain.
 ERA5_VARS = [
     "t2m_mean", "t2m_min", "t2m_max", "d2m_mean", "d2m_min", "d2m_max",
     "skt_mean", "skt_min", "skt_max", "u10_mean", "u10_min", "u10_max",
@@ -52,6 +91,17 @@ ERA5_VARS = [
 
 COMPRESSOR = numcodecs.Blosc(cname="zstd", clevel=3, shuffle=numcodecs.Blosc.SHUFFLE)
 LAYERS     = ["l12", "l9", "l6", "l3"]
+
+# labels/qc encoding, matching preprocessing_ISMN_soilMoisture.py:
+#   0 = directly observed, 1 = gap-filled from the month-day climatology, 2 = still missing.
+# 255 is NEW (§35.24 audit item 4): "the source NetCDF carried no QC variable at all".
+# write_labels used to default the whole array to ZEROS in that case, i.e. it asserted every
+# day was a direct observation. The preprocessing pipeline gap-fills with a climatological
+# mean, so those zeros told dataset.py to train on climatology as if it were ground truth —
+# which is a station-mean predictor with a ground-truth badge, and no downstream check could
+# tell the difference. The sentinel makes the absence explicit and dataset.py drops the
+# station rather than trusting it.
+QC_NO_SOURCE = 255
 
 # Temporal chunk sizes tuned for GPFS (10-100 MB uncompressed per chunk):
 #   T_TOKENS = 32  →  32 × 196 × 768 × 2 B fp16 = 9.6 MB  (rolling-window of 60 = 2 reads)
@@ -255,7 +305,10 @@ def write_labels(root: zarr.Group, dir_name: str, category: str,
         sm_da = sm_da.transpose("depth", time_coord)
     sm     = sm_da.values.astype(np.float32)[:, mask]
     depths = np.array([str(d) for d in ds["depth"].values], dtype="U20")
-    qc     = np.zeros_like(sm, dtype=np.uint8)
+    # Fail closed: the sentinel, NOT zeros. See the QC_NO_SOURCE note at the top of the file —
+    # defaulting to 0 ("observed") is the difference between training on measurements and
+    # training on a month-day climatology while believing it is measurements.
+    qc     = np.full(sm.shape, QC_NO_SOURCE, dtype=np.uint8)
     for qc_var in ("soil_moisture_qc", "quality_flag"):
         if qc_var in ds:
             qc_da = ds[qc_var]
@@ -337,6 +390,8 @@ def main():
     parser.add_argument("--data-root", type=Path, default=DATA_ROOT,
                         help="Root of token/feature data (default: %(default)s)")
     args = parser.parse_args()
+
+    _assert_not_training(ZARR_ROOT)
 
     data_root = args.data_root
     station_filter = set(args.stations.split(",")) if args.stations else None

@@ -42,18 +42,21 @@ DEPTH_COLORS = {"0-10": "#e74c3c", "10-30": "#2980b9", "30-100": "#27ae60"}
 
 
 def load_checkpoint(ckpt_path: Path, device):
-    print(f"Loading checkpoint: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    cfg  = ckpt["config"]
-    model = SoilMoistureModel(
-        n_depths = cfg.get("n_depths", 3),
-        d_model  = cfg.get("d_model",  768),
-        n_heads  = cfg.get("n_heads",  12),
-        n_layers = cfg.get("n_layers", 6),
-    ).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    print(f"  Epoch {ckpt['epoch']}  |  best_val_loss={ckpt['best_val_loss']:.4f}")
+    """Thin wrapper over ckpt_utils.load_checkpoint, kept for this module's (model, cfg) signature.
+
+    This used to be a divergent COPY that constructed SoilMoistureModel with only four kwargs —
+    no drop_path_rate, no use_cls_depth, and (after §35.18) no arch — so it silently built the
+    wrong model for anything but the oldest checkpoints. There is one loader now.
+    """
+    from ckpt_utils import load_checkpoint as _load
+    model, cfg, _epoch = _load(ckpt_path, device)
+    if cfg.get("arch") == "patchwise":
+        raise SystemExit(
+            f"{__file__} renders a 224x224 soil-moisture map, but this checkpoint is "
+            "--arch patchwise, which predicts one value per 160 m token (a 14x14 grid). "
+            "Plotting it as a map would silently produce a wrong figure. Use a token-grid "
+            "plot instead (§28.9)."
+        )
     return model, cfg
 
 

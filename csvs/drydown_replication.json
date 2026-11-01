@@ -1,0 +1,27 @@
+{
+  "splithalf_h1": {
+    "r": -0.3883064752344557,
+    "p": 0.05348723686832921,
+    "n": 23
+  },
+  "splithalf_h2": {
+    "r": -0.3775808482555275,
+    "p": 0.06821552049342491,
+    "n": 22
+  },
+  "tau_self_reproducibility": {
+    "r": 0.6632456246162344,
+    "p": 5.7323442821629695e-18,
+    "n": 97
+  },
+  "splithalf_pass": true,
+  "permutation": {
+    "observed_best_abs_r": 0.4256823091049385,
+    "null_p95": 0.5272076406033446,
+    "null_median": 0.3237464806942276,
+    "p_corrected": 0.1956,
+    "n_perm": 10000
+  },
+  "permutation_pass": false,
+  "verdict": "DOES NOT SURVIVE"
+}

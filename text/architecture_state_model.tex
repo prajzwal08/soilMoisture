@@ -1,0 +1,1341 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.0cm,top=2.0cm,bottom=2.2cm]{geometry}
+\usepackage{fontspec}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage[colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!45!black]{hyperref}
+
+\setmainfont{DejaVu Sans}[Scale=0.88]
+\setsansfont{DejaVu Sans}[Scale=0.88]
+\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+
+\definecolor{rulegray}{gray}{0.72}
+\newenvironment{quoting}%
+  {\begin{list}{}{\setlength{\leftmargin}{1.4em}\setlength{\rightmargin}{1.4em}%
+   \setlength{\topsep}{5pt}}\item[]\itshape}%
+  {\end{list}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\renewcommand{\arraystretch}{1.18}
+
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\footnotesize\sffamily Parameterised water balance --- design for critique}
+\fancyhead[R]{\footnotesize\sffamily 2026-08-24}
+\fancyfoot[C]{\footnotesize\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\title{\bfseries\sffamily A parameterised water balance\\driven by a frozen foundation model}
+\author{\sffamily Soil moisture project --- Session 30}
+\date{\sffamily 2026-08-24}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+{\small\tableofcontents}
+\clearpage
+
+\textbf{Design document for critique. Nothing built. No GPU spent.}
+
+Session 30, 2026-08-24. Supersedes nothing yet — this is an alternative to
+§31/§32's per-location processor, not a replacement for it. §32's terrain
+pipeline is a dependency of both and is unaffected.
+
+\medskip\hrule\medskip
+
+\subsection*{The idea in one sentence}
+\addcontentsline{toc}{subsection}{The idea in one sentence}
+
+\begin{quoting}
+The network does not predict soil moisture. It predicts \textbf{the properties of the ground}. A differentiable water balance predicts soil moisture from those properties and the weather.
+\end{quoting}
+
+\medskip\hrule\medskip
+
+\section*{0. FEASIBILITY}
+\addcontentsline{toc}{section}{0. FEASIBILITY}
+
+This section is first because it is the part that can kill the design, and
+because two of its findings changed the architecture rather than merely
+assessing it.
+
+\subsection*{0.1 What the data actually gives}
+\addcontentsline{toc}{subsection}{0.1 What the data actually gives}
+
+Measured 2026-08-24 from \texttt{csvs/station\_splits.csv}:
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+\textbf{quantity} & \textbf{value} \\
+\midrule
+stations & 993 — train 683, val 91, oos 219 \\
+station-years & 7,164 (mean 7.21, median 6.90, range 3–12) \\
+station-days & 2,614,787 \\
+location groups & 906 \\
+Köppen classes / networks & 25 / 33 \\
+colocated pairs & 75, across 84 stations \\
+current baseline & \texttt{cls\_depth\_star\_reg}, 16 epochs, 10h13m, 4×H100 \\
+current ubRMSE 0–10 & 0.0539 \\
+current overfit & 21× — train 0.000099 vs val 0.002177 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The label count is abundant; the \emph{effective} sample size is not, and it differs
+per parameter:
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   the shared dynamics  R(t), E(t), m, Q0       ~2.6 M station-days   abundant
+   the map  description -> (lambda, alpha, beta)   ~993 locations     THE CONSTRAINT
+   the within-tile contrast  f, pair loss           75 pairs          thin
+\end{Verbatim}
+
+One station per tile means anything about \emph{between-location} differences is a
+993-sample problem, not a 2.6-million-sample one. This is the same wall §27b
+hit, and it is the honest centre of the feasibility question.
+
+\subsection*{0.2 Finding — trajectory output is a 365× win}
+\addcontentsline{toc}{subsection}{0.2 Finding — trajectory output is a 365× win}
+
+Today one sample is one station on one date, so a forward pass yields **one
+label*\emph{. This design emits a }trajectory*: the water balance runs over the
+365-day window the transformer already reads, so every day of that window comes
+out at no extra cost.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   labels per forward pass          1        ->   up to 365 x 3 = 1,095
+   forward passes for full coverage 2.6 M    ->   7,164  (one per station-year)
+\end{Verbatim}
+
+Honest caveat: 7,164 samples at batch 128 is roughly **56 optimiser steps per
+epoch**. Few steps, far richer gradients per step. The optimisation dynamics are
+unknown and this is a genuine open question — mitigate with random window start
+dates as augmentation, which multiplies the sample count without new data.
+
+\subsection*{0.3 Finding — compute is a non-issue}
+\addcontentsline{toc}{subsection}{0.3 Finding — compute is a non-issue}
+
+The classical TOPMODEL result that makes this cheap: the catchment deficit
+evolves on the \textbf{TWI histogram (\textasciitilde{}20 bins), not on the grid}. The saturated
+fraction is an integral over the TWI distribution, so no per-cell loop is needed
+for the far-field term at all.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   TRAINING    365 steps x (20 TWI bins + 2 supervised cells)  ~ 8 k scalar ops/sample
+   INFERENCE   365 steps x 4,900 cells                         ~ 1.8 M scalar ops
+   AUTOGRAD    365 x B x cells x 2 stores x 4 bytes            < 1 MB at B=128
+   OVERHEAD    ~5-10 % against a 50 M-param transformer over 1,035 tokens
+\end{Verbatim}
+
+The deleted U-Net decoder — four upsampling stages at 512/256/128/64 plus three
+FiLM'd skips, \textasciitilde{}3.2 M activations per sample per depth — more than pays for the
+loop. The only real engineering risk is that the loop is **365 sequential kernel
+launches**; it is launch-bound, not memory-bound. Measure it in the smoke run
+and chunk or \texttt{scan} it if it bites.
+
+\subsection*{0.4 Finding — the 21× overfit is structurally capped}
+\addcontentsline{toc}{subsection}{0.4 Finding — the 21× overfit is structurally capped}
+
+This is the strongest feasibility argument, and it is structural rather than a
+penalty.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   TODAY   station identity  ->  decoder  ->  arbitrary value at any date
+           measured overfit 21x;  §19.5 proved regularisation cannot touch it;
+           the diagnosis was station memorisation
+
+   HERE    station identity  ->  lambda, alpha, beta, p, delta  ->  water balance
+                                 five bounded scalars
+\end{Verbatim}
+
+To memorise a 2,600-day series you would have to route it through five numbers
+whose ranges are fixed by sigmoid and softplus. That is not discouraged — it is
+impossible. The model's capacity to fit a station is bounded by the expressive
+power of a two-store bucket, which is exactly the point.
+
+\subsection*{0.5 Finding — a leak that must be closed, or this is worse than today}
+\addcontentsline{toc}{subsection}{0.5 Finding — a leak that must be closed, or this is worse than today}
+
+If \texttt{R(t)} and \texttt{E(t)} are read off \texttt{ctx[:, era5:]}, those day-tokens have already
+attended to the station's own 196 spatial tokens. That supplies 365 × 2
+station-specific, date-specific numbers — **reopening the memorisation channel
+and defeating §0.4 entirely**.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   REQUIRED CHANGE
+
+     R(t), E(t) = MLP( [ raw ERA5 row(t) , g_static ] )        ~5 k params
+
+     g_static = pooled soil / terrain / LULC summary ONLY.
+                No per-date content. No station-identifying content. Ever.
+\end{Verbatim}
+
+This costs a small MLP rather than a second transformer, and it is not optional.
+It was found by the feasibility pass, not by the design.
+
+\subsection*{0.6 Finding — spin-up}
+\addcontentsline{toc}{subsection}{0.6 Finding — spin-up}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   SURFACE STORE   lambda ~ 0.9 forgets its initial condition in ~30 days
+                   (0.9^30 = 0.04). A 365-day window is ample.          OK
+
+   CATCHMENT S      recession scale m may be months, so 365 days of
+                   spin-up may not be enough.                           RISK
+                   Fix: S is ONE scalar. Run it on a 3-year ERA5 window
+                   at negligible cost, or warm-start from a climatology
+                   predicted from g. Cheap either way.
+\end{Verbatim}
+
+\subsection*{0.7 The decisive pre-GPU experiment}
+\addcontentsline{toc}{subsection}{0.7 The decisive pre-GPU experiment}
+
+The entire architecture rests on one untested assumption: **that a location's
+water-balance parameters are predictable from what the landscape looks like.**
+That is directly measurable on CPU, before any GPU is spent.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+  STEP 1   Calibrate a three-parameter bucket to each station's OWN daily
+           series, forced by that station's own ERA5. 993 independent fits,
+           Pool(64), sbatch, minutes.
+
+           Yields:
+             (a) fitted lambda-hat, alpha-hat, beta-hat per station
+             (b) THE CEILING — how well can the best possible bucket fit at
+                 all? If the best fit is worse than the current 0.0539 ubRMSE,
+                 the physics is too crude and the approach caps below the
+                 baseline. Hard stop, measured in an afternoon.
+             (c) per-station equifinality, by profile likelihood
+
+  STEP 2   Regress the fitted parameters on tokens + terrain + soil, reusing
+           station_mean_probe.py's ladder: fit_block(), GroupKFold on
+           location_group_id, RidgeCV as the deliberately weak learner,
+           HistGradientBoostingRegressor as the nonlinearity control.
+
+  STEP 3   Read the skill.
+             > 30 %   the architecture has a foundation. Build it.
+             ~ 10 %   marginal. This is where mean SM landed (§27b: 9.8 %).
+             ~  0 %   the map does not exist. Do not build it.
+\end{Verbatim}
+
+This is the same shape as §29 Phase A and §32.8's sufficiency gate: a cheap
+measurement that can kill the arm before the allocation is spent. It is worth
+more than every other page of this document.
+
+Note the target is \textbf{not} the one §27b tested. §27b regressed *mean soil
+moisture*, which is largely climate and sensor calibration, and got 9.8 \%
+globally and 0–4.2 \% within-network. Here the target is a \emph{drainage rate} — a
+landscape property, which is precisely what §27a's positive controls proved the
+tokens do encode — and its predictors include TWI, HAND, slope and texture as
+direct measurements rather than embeddings. Different question, and it may have
+a different answer. It may also not.
+
+\subsection*{0.8 Data availability}
+\addcontentsline{toc}{subsection}{0.8 Data availability}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   ON DISK          labels; ERA5 365-day windows; soil (21,74,74) = 3 depths
+                    x 7 properties; S1/S2 rasters at 10 m; TerraMind tokens
+   IN PROGRESS      TWI / HAND — 353/353 regions fetched, build_twi_hand.py
+                    running, MERIT gate (§32.6) not yet run
+   NEVER MEASURED   per-station Sentinel-1 acquisition counts. Needed to size
+                    the assimilation rung (V5) and nothing else.
+   TO DOWNLOAD      nothing
+\end{Verbatim}
+
+\subsection*{0.9 What would make it infeasible}
+\addcontentsline{toc}{subsection}{0.9 What would make it infeasible}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   1.  §0.7 Step 1's bucket ceiling worse than 0.0539 ubRMSE     -> dead
+   2.  §0.7 Step 3's skill ~ 0                                   -> dead
+   3.  §32.8's sufficiency gate flat both wet and dry            -> V4 dies;
+                                                                   V1-V3 may not
+                                                                   beat baseline
+   4.  56 steps/epoch too few to optimise                        -> fixable by
+                                                                   window-start
+                                                                   augmentation
+\end{Verbatim}
+
+Failures 1 and 2 are cheap and come first. Failure 3 prunes one input rather
+than the architecture, because the per-cell parameters do not depend on terrain
+alone.
+
+\medskip\hrule\medskip
+
+\section*{1. THE DIAGNOSIS}
+\addcontentsline{toc}{section}{1. THE DIAGNOSIS}
+
+The model reproduces \textbf{temporal} variation almost perfectly and \textbf{spatial}
+variation barely at all.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   within-station temporal SD          0.051   vs observed 0.051
+   between-station SD                  15-19 % of observed
+   r(pred level, obs level), CR200-18  -0.175          anti-correlated
+   §23 norm-std                        0.093-0.524, HIGHEST at the flattest site
+\end{Verbatim}
+
+The cause is verified at \texttt{model.py:736-743}. \texttt{context} is the masked mean of
+every valid non-CLS, non-spatial, non-pad token, applied by FiLM as a \textbf{uniform}
+per-channel scale and shift. All time-series signal — ERA5's 365 days, the S2
+and S1 histories, SIF, TWSA — reaches the decoder through **one spatially
+constant vector**.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   Two stations 500 m apart can be given different MEANS.
+   They cannot be given different BEHAVIOUR.
+\end{Verbatim}
+
+That is exactly the observed signature: temporal skill perfect, between-station
+skill absent. The map is not flat — it is wrong.
+
+Three further measurements constrain any fix:
+
+\begin{itemize}[leftmargin=1.2em,itemsep=1pt,topsep=3pt]
+\item \textbf{§27a} — the tokens carry genuine within-tile spatial structure at 160 m,
+and it tracks the landscape. Both positive controls passed: the LULC PCA→RGB
+reproduces the land-cover map, the DEM PCA→RGB traces the drainage. Sink-
+excluded PCA ratios are high-rank at every depth.
+\item \textbf{§27b} — the same tokens do \emph{not} predict wetness. Own-token within-network
+skill 0–4.2 \%; global 9.8 \% against a tabular stack's 23.4 \%. The UMAP
+organises by Köppen class, not by soil moisture.
+\item \textbf{§29.15} — the Landsat LST tile pattern is +0.967 spatially coherent across
+all twelve months. It is a static landscape field, and *a static field cannot
+track a dynamic variable*. That is why the pooled correlation was +0.167 and
+the within-station correlation −0.077: the same fact seen twice.
+\end{itemize}
+
+The design principle follows directly. **Ask each source only for what it has
+been measured to be good at.**
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   ERA5 weather      the dynamics, shared    temporal SD 0.051 = observed 0.051
+   imagery/terrain   the PARAMETERS          tracks landscape (§27a) but not
+                     not the wetness         wetness (§27b)
+   soil/climate      the absolute level      23.4 % skill vs the network's ~18 %
+   tables
+   Sentinel-1        corrections to state    the only time-varying 10 m carrier
+\end{Verbatim}
+
+\medskip\hrule\medskip
+
+\section*{2. THE FLOWCHART}
+\addcontentsline{toc}{section}{2. THE FLOWCHART}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
++==============================================================================+
+| OFFLINE  precomputed, on disk, never inside the training loop                |
++==============================================================================+
+
+ TerraMind ViT-B (frozen)      §32 regional flow fields      soil rasters
+ S2 S1 DEM LULC -> tokens      TWI_k  HAND_k  TWI_mean       OpenLandMap
+ (N,196,768) fp16              at FULL catchment scale       -> theta_r, AWC,
+        |                              |                        n_e, L
+        +--------------------+---------+------------------------+
+                             v
++==============================================================================+
+| BLOCK A   DESCRIBE                              existing code, unchanged     |
++==============================================================================+
+
+ seq = [ DEM x4 | LULC x4 | soil x4 | spatial x196 | S2hist | S1hist | ERA5 x365 ]
+                                  ^
+                                  |  terrain_stem, ADDED, zero-init
+                                  |  conv stride-5 over (TWI, HAND, slope, curv)
+                        +---------+----------+
+                        |  6 x self-attention |
+                        +---------+----------+
+                                  |
+                            ctx (B,1035,768)
+                                  |
+     +----------------------------+----------------------------+
+     v                            v                            v
+ ctx[:,12:208]              masked mean                  raw ERA5 row(t)
+ 196 cells                  g (B,768)                    + g_static
+                                                         (NOT from ctx -- §0.5)
+
++==============================================================================+
+| BLOCK B   PARAMETERISE                       four small heads, ~24 k params  |
++==============================================================================+
+
++-----------------+ +----------------+ +---------------+ +-------------------+
+| B1  CELL        | | B2  FORCING    | | B3  READOUT   | | B4  CATCHMENT     |
+|                 | |                | |               | |                   |
+| gather x5       | | MLP([era5(t),  | | pedotransfer  | | MLP(g -> 2)       |
+|  -> 70x70       | |      g_static])| | on soil       | |                   |
+| + fine channels | |                | |               | |  m   mm           |
+| MLP(768+C -> 5) | |  R(t)  mm/d    | |  theta_r      | |  Q0  mm/d         |
+|                 | |  E(t)  mm/d    | |  AWC          | |  f   FIXED        |
+|  lambda_k       | |                | |  n_e, L       | |                   |
+|  alpha_k        | | SHARED over    | |  NOT LEARNED  | | ONE catchment     |
+|  beta_k         | | all cells      | |               | | per tile          |
+|  p_k            | |                | | + delta_d     | |                   |
+|  K_k            | | (B,365,2)      | |   small, learn| | (B,2)             |
+| (B,4900,5)      | |                | | (B,4900,3,2)  | |                   |
++--------+--------+ +-------+--------+ +-------+-------+ +---------+---------+
+         +------------------+------------+--------+---------------+
+                                         v
++==============================================================================+
+| BLOCK C   SIMULATE                    365 days x 4,900 cells @ 32 m          |
++==============================================================================+
+
+ for t = 1 .. 365:
+
+ +---- FAR FIELD ---- the catchment as ONE state ----------------------------+
+ |                                                                           |
+ |   S(t)      catchment storage deficit, mm                                 |
+ |   D_k(t)  = S(t) + (1/f)*( TWI_mean - TWI_k )        local deficit, mm    |
+ |             |moves|        |---- fixed, from §32 ----|                    |
+ |   z_k(t)  = D_k(t) / (1000*n_e)                      water table depth, m |
+ |   u*_k(t) = exp( -z_k(t) / L_k )                     equilib. saturation  |
+ |                                                                           |
+ |   D_k <= 0  ==>  SATURATED: u1 = 1, incoming R becomes runoff             |
+ +-----------------------------------+---------------------------------------+
+                                     |  Phi_k = omega * max(0, u*_k - u_k)
+                                     |          capillary rise, ONE-SIDED
+                                     v
+ +---- NEAR FIELD ---- per cell k -------------------------------------------+
+ |                                                                           |
+ |  u1(t+1) = clip[ lambda_k*u1  + alpha_k*R(t)  - beta_k*E(t)*u1            |
+ |                                - p_k*u1       + Phi1_k                    |
+ |                  ( + kappa_k*[DIV_W u1](k)   V6 only )   , 0, 1 ]         |
+ |                                                                           |
+ |  u2(t+1) = clip[ lambda2_k*u2 + p_k*u1 - r_k(t) + Phi2_k , 0, 1 ]         |
+ +-----------------------------------+---------------------------------------+
+                                     |
+                       +-------------v--------------+
+                       | on Sentinel-1 dates:       |
+                       |  sigma_hat = h(u1, rough,  |
+                       |                 veg)       |
+                       |  u1 <- u1 + K_k*(sigma_obs |
+                       |                - sigma_hat)|
+                       +-------------+--------------+
+                                     |
+                dS/dt = Q0*exp(-S/m) - mean_k( r_k )
+                        |baseflow out|   |recharge in|
+                                     v
+                       u1(k,t), u2(k,t)   all cells
+
++==============================================================================+
+| BLOCK D   OBSERVE                                                            |
++==============================================================================+
+
+   y_d(k,t) = theta_r(k,d) + AWC(k,d) * u^{l(d)}_k(t) + delta_d(k)
+
+      l(0-10 cm)  = surface store u1
+      l(10-30 cm) = deep store u2
+      l(30-50 cm) = deep store u2
+
+                      y-hat (B, 3, 70, 70)   daily, 32 m
+                              |
+        +---------------------+---------------------+
+        v                     v                     v
+   +----------+     +-----------------+    +----------------+
+   | L_abs    |     | L_pair          |    | L_lst   (aux)  |
+   | Huber at |     | Huber on        |    | Linear(S_k->1) |
+   | station  |     | y_i - y_j       |    | vs Landsat     |
+   | cell k*  |     | SAME DATE       |    | anomaly        |
+   +----------+     +-----------------+    +----------------+
+\end{Verbatim}
+
+\medskip\hrule\medskip
+
+\section*{3. BLOCK A — DESCRIBE}
+\addcontentsline{toc}{section}{3. BLOCK A — DESCRIBE}
+
+\subsection*{What it does}
+\addcontentsline{toc}{subsection}{What it does}
+
+Produces one 768-number description per location, and one per day. This is
+\texttt{model.py} exactly as it is today: the same sequence, the same six
+self-attention layers, the same weights. The only addition is \texttt{terrain\_stem},
+a stride-5 convolution over the terrain rasters, added into the 196 spatial
+tokens with \textbf{zero-initialised} weights.
+
+\subsection*{Equations}
+\addcontentsline{toc}{subsection}{Equations}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   ctx  = Transformer( seq )                    seq in R^(B x 1035 x 768)
+
+   S_k  = ctx[:, 12+k, :]                       description of cell k
+   g    = masked_mean( ctx )                    description of the tile
+\end{Verbatim}
+
+Note what is \emph{not} here: the forcing is \textbf{not} read off \texttt{ctx}. See §0.5 — that
+would reopen the memorisation channel §0.4 closes.
+
+\subsection*{Parameters}
+\addcontentsline{toc}{subsection}{Parameters}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{XXXX}
+\toprule
+\textbf{symbol} & \textbf{shape} & \textbf{source} & \textbf{meaning} \\
+\midrule
+\texttt{terrain\_stem} & \textasciitilde{}60 k & learned, zero-init & maps (TWI, HAND, slope, curvature) at 32 m into the 160 m token grid \\
+\texttt{S\_k} & 768 & output & what cell k looks like, in context of the whole tile \\
+\texttt{g} & 768 & output & what the tile looks like \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection*{Logic and foundation}
+\addcontentsline{toc}{subsection}{Logic and foundation}
+
+\textbf{Why terrain enters here, additively, zero-init.} Three consequences, each
+load-bearing. Adding zero changes nothing on day 0, so the forward pass is
+bit-identical to \texttt{best.pt} and §31.8's regression gate passes trivially. Token
+\emph{k}'s terrain lands on token \emph{k}, whereas appending pooled terrain tokens the
+\texttt{dem\_pyr} way would make it tile-level and able only to shift a mean. And \texttt{g}
+receives terrain anyway through attention, because it is computed from the
+encoder \emph{output}.
+
+\textbf{Why this block is asked for a description and not a prediction.} §27a
+established that the tokens carry real within-tile spatial heterogeneity at
+160 m and that it tracks terrain and land cover — the two positive controls
+both passed. §27b established that the same tokens do not track wetness. So
+this block is asked for \emph{what kind of place this is}, which is measured to
+work, and is not asked for \emph{how wet it is}, which is measured not to.
+
+\medskip\hrule\medskip
+
+\section*{4. BLOCK B — PARAMETERISE}
+\addcontentsline{toc}{section}{4. BLOCK B — PARAMETERISE}
+
+\subsection*{4.1 B1 — cell parameters}
+\addcontentsline{toc}{subsection}{4.1 B1 — cell parameters}
+
+\subsubsection*{What it does}
+\addcontentsline{toc}{subsubsection}{What it does}
+
+Converts each location's description into the properties that govern how it
+holds water.
+
+\subsubsection*{Equation}
+\addcontentsline{toc}{subsubsection}{Equation}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   [ lambda_k , alpha_k , beta_k , p_k , K_k ]  =  g_cell( [ S_{k//5} , fine_k ] )
+
+   S_{k//5}   the 768-vector of the 160 m token containing cell k   (gather)
+   fine_k     measured 32 m channels at cell k: TWI, HAND, slope, curvature,
+              S1 sigma0 latest and median, soil texture, LULC
+\end{Verbatim}
+
+\subsubsection*{Parameters}
+\addcontentsline{toc}{subsubsection}{Parameters}
+
+\begin{center}
+\footnotesize
+\begin{tabularx}{\linewidth}{XXXXXX}
+\toprule
+\textbf{symbol} & \textbf{name} & \textbf{units} & \textbf{range} & \textbf{forced by} & \textbf{physical meaning} \\
+\midrule
+\texttt{lambda} & retention & — & (0,1) & sigmoid & fraction of water still present tomorrow under gravity drainage alone \\
+\texttt{alpha} & inverse capacity & 1/mm & (0, 1/30) & softplus, capped & how much one millimetre of rain raises relative saturation. Small = deep or porous soil \\
+\texttt{beta} & ET over capacity & 1/mm & (0, 1/20) & softplus, capped & how strongly atmospheric demand draws this cell down. Large = shallow soil, dense vegetation, exposed \\
+\texttt{p} & percolation & 1/day & (0,1) & sigmoid & fraction of the surface store passed to the deeper store each day \\
+\texttt{K} & radar gain & — & (0,1) & sigmoid & how much to trust a Sentinel-1 innovation here \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection*{Logic and foundation}
+\addcontentsline{toc}{subsubsection}{Logic and foundation}
+
+\textbf{Why three dynamic parameters and not the six an obvious design would use.}
+Substituting \texttt{u = s/c} into the balance shows that capacity \texttt{c} and ET rate
+\texttt{gamma} appear only as the combinations \texttt{R/c} and \texttt{gamma/c}:
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   s(t+1) = clip( lambda*s + R - E*gamma*s/c , 0, c )
+
+   divide by c:
+
+   u(t+1) = clip( lambda*u + R/c - E*(gamma/c)*u , 0, 1 )
+                             |---|      |-------|
+                            alpha         beta
+\end{Verbatim}
+
+\texttt{c} never appears alone. There is a one-dimensional family of \texttt{(c, gamma)}
+giving identical predictions, so naming both is naming a parameter the data can
+never see. Parameterising \texttt{alpha = 1/c} and \texttt{beta = gamma/c} removes an \textbf{exact}
+degeneracy rather than hoping training resolves it. This reduction came out of
+the equifinality critique and it makes the model smaller, not larger.
+
+\textbf{Why every parameter is bounded by its activation.} The network cannot create
+water (\texttt{lambda < 1}), cannot have negative capacity, and cannot evaporate what is
+not there. It chooses inside a box that physics defines. Compare the U-Net, which
+was free to paint anything and — per §23 — painted a field anti-correlated with
+the landscape.
+
+\textbf{Why a shared map rather than per-station parameters.} \texttt{g\_cell} is one MLP
+applied at all 993 stations. That is the difference between this and classical
+hydrological calibration, and it is the whole answer to equifinality of
+predictions — see §10.2.
+
+\subsection*{4.2 B2 — forcing}
+\addcontentsline{toc}{subsection}{4.2 B2 — forcing}
+
+\subsubsection*{What it does}
+\addcontentsline{toc}{subsubsection}{What it does}
+
+Converts each day's weather into two scalars: how much water enters the soil,
+and how hard the atmosphere pulls.
+
+\subsubsection*{Equation}
+\addcontentsline{toc}{subsubsection}{Equation}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   [ R(t) , E(t) ]  =  softplus( MLP( [ era5_row(t) , g_static ] ) )
+
+   g_static = pooled soil / terrain / LULC summary.  Static. Tile-level.
+              NO per-date content. NO station-identifying content.
+\end{Verbatim}
+
+\subsubsection*{Parameters}
+\addcontentsline{toc}{subsubsection}{Parameters}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{XXXX}
+\toprule
+\textbf{symbol} & \textbf{name} & \textbf{units} & \textbf{physical meaning} \\
+\midrule
+\texttt{R(t)} & effective infiltration & mm/day & rainfall that actually enters the soil, after interception, runoff, and freezing \\
+\texttt{E(t)} & atmospheric demand & mm/day & what would evaporate if water were unlimited — a potential evapotranspiration \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection*{Logic and foundation}
+\addcontentsline{toc}{subsubsection}{Logic and foundation}
+
+\textbf{Why not raw ERA5 precipitation.} ERA5 says 12 mm fell. How much enters
+depends on whether it was one storm or twelve hours of drizzle, whether there is
+a canopy intercepting it, whether the ground is already saturated, and whether
+it is frozen. Conditioning on \texttt{g\_static} lets the head emit \emph{effective} forcing
+rather than raw rainfall, which is what the water balance needs.
+
+\textbf{Why it is shared across all cells.} ERA5-Land is 9 km; the tile is 2.24 km.
+There is no within-tile weather information in the data, and inventing some
+would be §23's failure repeated in a new place. This is the assumption the whole
+design rests on: **the weather is shared, and the differences are in the
+ground.**
+
+\textbf{Why it must NOT be read off \texttt{ctx}.} This is §0.5, and it is the single most
+important constraint in the document. Day-tokens inside \texttt{ctx} have attended to
+the station's own spatial tokens, so reading forcing off them supplies
+365 × 2 station-specific, date-specific numbers — a memorisation channel richer
+than the one that produced the current 21× overfit. The whole benefit of §0.4
+depends on this head being blind to per-date station content.
+
+\subsection*{4.3 B3 — readout constants}
+\addcontentsline{toc}{subsection}{4.3 B3 — readout constants}
+
+\subsubsection*{What it does}
+\addcontentsline{toc}{subsubsection}{What it does}
+
+Converts relative saturation, which is dimensionless and lives in [0,1], into
+volumetric soil moisture in m³/m³.
+
+\subsubsection*{Equation}
+\addcontentsline{toc}{subsubsection}{Equation}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   y_d(k,t)  =  theta_r(k,d)  +  AWC(k,d) * u_k(t)  +  delta_d(k)
+                |---------- pedotransfer ---------|    |-- learned --|
+\end{Verbatim}
+
+\subsubsection*{Parameters}
+\addcontentsline{toc}{subsubsection}{Parameters}
+
+\begin{center}
+\footnotesize
+\begin{tabularx}{\linewidth}{XXXXX}
+\toprule
+\textbf{symbol} & \textbf{name} & \textbf{units} & \textbf{source} & \textbf{physical meaning} \\
+\midrule
+\texttt{theta\_r} & residual water content & m³/m³ & pedotransfer on texture & what a probe reads when the plant-available store is empty — tightly bound water \\
+\texttt{AWC} & available water capacity & m³/m³ & pedotransfer on texture and bulk density & the swing between wilting point and field capacity \\
+\texttt{delta\_d} & correction & m³/m³ & learned, small, regularised toward zero & sensor calibration, install depth, and the point-versus-pixel support mismatch \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection*{Logic and foundation}
+\addcontentsline{toc}{subsubsection}{Logic and foundation}
+
+\textbf{Why \texttt{theta\_r} and \texttt{AWC} are read from tables, not learned.} Two independent
+reasons. First, they are standard pedotransfer outputs computed from texture and
+bulk density, and the rasters are already on disk as \texttt{soil (21,74,74)} — three
+depths by seven properties. Second, and decisively for identifiability:
+\texttt{y = A + B*u} means any rescaling of \texttt{u} can be absorbed by \texttt{B}. The only thing
+pinning \texttt{u}'s scale is the clip at 1, which never engages at a site that never
+saturates, so at a semi-arid station \texttt{B} and \texttt{alpha} are genuinely degenerate.
+Fixing \texttt{B} from texture pins the scale unconditionally.
+
+\textbf{Why the level goes to tables rather than to the network.} §27b's ladder
+measured a tabular stack of soil, terrain, land cover, climate, lat/lon and SMAP
+at 0.0752 → 0.0576, a skill of 23.4 \% on station-mean soil moisture. The trained
+network's own RMS per-station bias is 0.0618 against the same 0.0752 null — about
+18 \%. **The network is currently worse at predicting station level than
+covariates already sitting on disk.** Delegating that job is a win by
+measurement, not by argument.
+
+\textbf{Why \texttt{delta\_d} exists and is kept small.} Part of every station's mean is
+instrument, not landscape — calibration, installation depth, and the mismatch
+between a point probe and a 32 m cell (§27b.6). No image contains that, and no
+pedotransfer function does either. It is irreducible, so it gets an explicit,
+regularised term rather than being allowed to contaminate every spatial
+parameter in the model.
+
+\subsection*{4.4 B4 — catchment}
+\addcontentsline{toc}{subsection}{4.4 B4 — catchment}
+
+\subsubsection*{What it does}
+\addcontentsline{toc}{subsubsection}{What it does}
+
+Carries the state of the whole upstream catchment as a single number, and
+distributes it across the tile using the topographic index.
+
+\subsubsection*{Equations}
+\addcontentsline{toc}{subsubsection}{Equations}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   S(t+1)  =  S(t)  +  Q0*exp( -S(t)/m )  -  mean_k( r_k(t) )      deficit, mm
+                       |-- baseflow out --|   |-- recharge in --|
+
+   D_k(t)  =  S(t)  +  (1/f)*( TWI_mean - TWI_k )                  local, mm
+              |moves|         |------ fixed, from §32 ------|
+
+   z_k(t)  =  D_k(t) / ( 1000 * n_e )                              depth, m
+
+   u*_k(t) =  exp( -z_k(t) / L_k )                                 equilibrium
+
+   D_k <= 0  ==>  saturated; u1 = 1 and incoming R becomes runoff
+\end{Verbatim}
+
+\subsubsection*{Parameters}
+\addcontentsline{toc}{subsubsection}{Parameters}
+
+\begin{center}
+\footnotesize
+\begin{tabularx}{\linewidth}{XXXXX}
+\toprule
+\textbf{symbol} & \textbf{name} & \textbf{units} & \textbf{source} & \textbf{physical meaning} \\
+\midrule
+\texttt{S} & catchment storage deficit & mm & \textbf{state}, evolved & how far the whole catchment is from saturation \\
+\texttt{m} & recession scale & mm & learned from \texttt{g} & how fast baseflow declines as the catchment dries — the catchment's memory \\
+\texttt{Q0} & baseflow at zero deficit & mm/day & learned from \texttt{g} & discharge when saturated \\
+\texttt{f} & transmissivity decay & 1/mm & \textbf{fixed} at a literature value & how fast soil transmissivity falls with depth; sets the spatial spread of water-table depth \\
+\texttt{n\_e} & drainable porosity & — & pedotransfer & converts a storage deficit into a depth \\
+\texttt{L} & capillary fringe height & m & pedotransfer on texture & how far water rises above the water table. Sand 0.1–0.3, silt 1–2, clay 3–10 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection*{Logic and foundation}
+\addcontentsline{toc}{subsubsection}{Logic and foundation}
+
+\textbf{The problem this solves.} A real catchment is tens of km²; the patch is
+5 km². You cannot route the catchment — that would need container parameters
+over 50 km, i.e. the transformer over 50 km. You cannot ignore it — the water
+arrives regardless. §31.4 measured the consequence directly: **the lowest cell
+lies on the tile boundary in 25 of 30 sampled tiles (83 \%)**, so flow leaves the
+window and arrives from outside it.
+
+\textbf{TOPMODEL's answer (Beven \& Kirkby 1979): never route it.} Carry one
+catchment-average deficit and distribute it by the topographic index. All the
+non-local information enters through \texttt{TWI\_k}, which §32 computes on the full
+regional flow field and which is therefore correct at catchment scale by
+construction. This is why §32's 353-region build is a dependency: the TWI it
+produces is exactly the quantity this block needs, and a tile-local TWI would
+not do.
+
+\textbf{Why this makes terrain dynamic — the crux of the design.}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   TWI AS A STATIC INPUT CHANNEL           TWI AS A DEFICIT DISTRIBUTION
+   ----------------------------            -----------------------------
+   feeds a network alongside slope,        D_k(t) = S(t) + (1/f)(TWI_mean - TWI_k)
+   soil, land cover
+                                           same fixed TWI, but the water table
+   can only shift cell k's MEAN            it implies MOVES with the catchment
+
+   the terrain effect is identical         the terrain effect is strong when wet
+   in a drought and a flood                and vanishes when dry
+\end{Verbatim}
+
+\texttt{TWI\_k} is fixed; \texttt{S(t)} moves. So the water table under every cell rises and
+falls together, but each cell sits at its own offset, set by how much of the
+catchment drains through it. Same input, computed the same way by §32,
+completely different functional role — and it is the role TOPMODEL derives it
+for. §31.5 already states that *"TWI is a water-table-depth index, not a soil
+moisture index"*; this uses it as one.
+
+\textbf{Why Grayson's state-dependence falls out rather than being imposed.}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   WET CATCHMENT, S small                 DRY CATCHMENT, S large
+
+   many cells have D_k <= 0 and           no cell saturates; z_k is deep
+   saturate; exp(-z/L) is large           everywhere; exp(-z/L) collapses
+
+   -> the pattern organises by TWI        -> every cell is an independent 1-D
+      "nonlocal control"                     column governed by texture and
+                                             vegetation: "local control"
+\end{Verbatim}
+
+Grayson et al. (1997) and the Tarrawarra work (Western, Grayson \& Blöschl)
+established that terrain control of surface moisture is \textbf{state-dependent}.
+§31.5 argued this is what dictates the architecture. Here it is a \emph{consequence}
+of one state crossing a threshold, spending no free parameters on it. An earlier
+draft of this design used a learned sigmoid gate on tile wetness; saturation
+does the same job with two fewer parameters and a derivation behind it.
+
+\textbf{Why \texttt{f} is fixed rather than learned.} \texttt{m} is identified by the temporal data
+— 993 daily series constrain a recession rate well. \texttt{f} is identified only by
+the spatial data, which here is the 75 colocated pairs. Classical TOPMODEL's
+documented equifinality comes from calibrating both against **one outlet
+hydrograph**, a purely temporal signal, so \texttt{f} was never constrained. Here they
+are constrained by different dimensions of the data — but the spatial dimension
+is thinly sampled, so \texttt{f} is held at a literature value unless §32.8's
+sufficiency gate demonstrates the pairs can identify it.
+
+\medskip\hrule\medskip
+
+\section*{5. BLOCK C — SIMULATE}
+\addcontentsline{toc}{section}{5. BLOCK C — SIMULATE}
+
+\subsection*{Equations}
+\addcontentsline{toc}{subsection}{Equations}
+
+\textbf{Surface store, 0–10 cm.}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   u1(t+1) = clip[  lambda_k * u1(t)              gravity drainage
+                  + alpha_k * R(t)                infiltration
+                  - beta_k * E(t) * u1(t)         evapotranspiration
+                  - p_k * u1(t)                   percolation to depth
+                  + Phi1_k(t)                     capillary rise
+                  ( + kappa_k * [DIV_W u1](k) )   hillslope routing, V6 only
+                 ,  0 , 1 ]
+\end{Verbatim}
+
+\textbf{Deep store, 10–50 cm.}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   u2(t+1) = clip[ lambda2_k * u2(t) + p_k * u1(t) - r_k(t) + Phi2_k(t) , 0 , 1 ]
+
+   r_k(t) = recharge leaving the deep store to the water table
+\end{Verbatim}
+
+\textbf{Capillary exchange.}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   Phi_k(t) = omega * max( 0 , u*_k(t) - u_k(t) )
+\end{Verbatim}
+
+\subsection*{Logic and foundation}
+\addcontentsline{toc}{subsection}{Logic and foundation}
+
+\textbf{Why the ET term is multiplied by \texttt{u}.} A dry soil resists evaporation. This
+is the standard water-stress limitation, and without it a soil would evaporate
+at potential rate down to zero, which no soil does.
+
+\textbf{Why capillary rise is one-sided.} The water table can only \emph{supply} water
+upward. Downward loss is already carried by \texttt{lambda} (gravity drainage) and \texttt{p}
+(percolation), so a two-sided relaxation would double-count the loss and
+over-dry any cell with a deep water table.
+
+\textbf{Why two stores.} The deep store is a low-pass-filtered version of the surface
+store, so the 10–30 and 30–50 cm bins come out naturally flatter and more
+dominated by their level than 0–10 cm. That is what the observations do — §21.8
+found 10–30 is the \emph{best} depth (ubRMSE 0.0500 vs 0.0539), and §24.12 found
+identity dominating at depth. Both are consistent with a damped cascade.
+
+\textbf{Why the clip matters beyond numerics.} \texttt{u} in [0,1] is what pins the scale of
+the state. Together with \texttt{AWC} fixed from texture (§4.3), it is what stops the
+readout and the dynamics trading off against each other.
+
+\textbf{Why \texttt{DIV\_W} (V6) is optional and off by default.} TOPMODEL's \texttt{D\_k} already
+handles lateral redistribution at every scale under a quasi-steady water table.
+\texttt{DIV\_W} adds only the days-timescale transient in the unsaturated zone that
+TOPMODEL assumes away. It also reintroduces the boundary problem this design was
+built to avoid: a 70×70 patch has a wall at its edge, water arrives from
+outside it, and perimeter cells shed into nothing so their \texttt{kappa} is
+unidentifiable. Running V1–V4 first settles by measurement whether that
+transient is worth the cost, and whether \texttt{DIV\_W} and \texttt{D\_k} are double-counting
+the same within-patch accumulation.
+
+\subsection*{Sentinel-1 assimilation}
+\addcontentsline{toc}{subsection}{Sentinel-1 assimilation}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   sigma_hat(k,t) = h( u1_k(t) , roughness_k , vegetation_k )     forward operator
+   u1_k  <-  clip( u1_k + K_k * ( sigma_obs(k,t) - sigma_hat(k,t) ) , 0 , 1 )
+                                  |------- innovation -------|
+\end{Verbatim}
+
+\textbf{Why the innovation and not the raw value.} Absolute backscatter is dominated
+by surface roughness and vegetation structure, not by water. The *gap between
+what the state predicted and what the radar saw* is mostly water. §30.3a reaches
+for the same thing by feeding \texttt{(latest, long-term median)} and hoping the network
+differences them; making it an explicit innovation does that structurally.
+
+\textbf{Why staleness needs no embedding.} Between acquisitions the state coasts
+forward on ERA5 alone. If there has been no pass for three weeks, the state has
+not been corrected for three weeks and its error has grown on its own. The
+staleness embedding at \texttt{model.py:505-514} becomes unnecessary on this path.
+
+\medskip\hrule\medskip
+
+\section*{6. BLOCK D — OBSERVE}
+\addcontentsline{toc}{section}{6. BLOCK D — OBSERVE}
+
+\subsection*{Equation}
+\addcontentsline{toc}{subsection}{Equation}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   y_d(k,t) = theta_r(k,d) + AWC(k,d) * u^{l(d)}_k(t) + delta_d(k)
+
+   L  =  L_abs  +  w_p * L_pair  +  w_l * L_lst
+\end{Verbatim}
+
+\subsection*{The three losses}
+\addcontentsline{toc}{subsection}{The three losses}
+
+\textbf{\texttt{L\_abs}} — Huber at the station's own cell, per depth. This is today's loss
+unchanged, with a per-sample cell index replacing the hardcoded \texttt{(112,112)} at
+\texttt{model.py:779}.
+
+\textbf{\texttt{L\_pair}} — Huber on \texttt{y\_i - y\_j} against the observed \texttt{y\_i - y\_j}, for pairs
+of stations on the same date: 75 colocated pairs across 84 stations, plus every
+same-ERA5-cell pair.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   Today nothing in the objective ever compares two locations.
+
+   Under an absolute per-pixel loss, the risk-minimising answer at an
+   unsupervised location is the tile mean -- which is exactly what the model
+   produces (between-station SD 15-19 % of observed).
+
+   Differencing two stations on one date removes weather, season, climate,
+   the ERA5 cell and the calibration epoch EXACTLY. It is §27b's Scale C
+   construction applied to supervision instead of to analysis.
+\end{Verbatim}
+
+This is the only term that puts gradient directly on the quantity measured to
+be broken. It is also the piece §31 lacks: §31 adds the \emph{capacity} for
+locations to differ but leaves the objective indifferent to whether they do.
+
+\textbf{\texttt{L\_lst}} — optional auxiliary. \texttt{Linear(S\_k -> 1)} predicting the Landsat
+surface-temperature anomaly per token, tile mean removed for that date. Gives
+Block A dense gradient — roughly 500 independent values per tile against 1,
+since TIRS is 100 m (§31.6). Four caveats, all from §29 and §31.6: the pattern
+is \textbf{static} (+0.967 month-to-month), so it disciplines the static branch only;
+the 18.2 \% no-retrieval region contains the wettest station, so missingness is
+correlated with the target; and if the target is a fixed map per station the
+model may \textbf{memorise 993 maps} rather than learn structure — test LST-head
+skill on validation against training stations in the first smoke run. Decayed
+and ablatable; nothing downstream reads it.
+
+\medskip\hrule\medskip
+
+\section*{7. COMPLETE PARAMETER INVENTORY}
+\addcontentsline{toc}{section}{7. COMPLETE PARAMETER INVENTORY}
+
+\begin{center}
+\footnotesize
+\begin{tabularx}{\linewidth}{XXXXX}
+\toprule
+\textbf{symbol} & \textbf{per} & \textbf{units} & \textbf{source} & \textbf{identified by} \\
+\midrule
+\texttt{lambda} & cell & — & learned & recession shape, all 2.6 M station-days \\
+\texttt{alpha} = 1/c & cell & 1/mm & learned & storm response amplitude \\
+\texttt{beta} = gamma/c & cell & 1/mm & learned & dry-down rate under demand \\
+\texttt{p} & cell & 1/day & learned & lag between depth bins \\
+\texttt{K} & cell & — & learned & error drop on S1 acquisition dates \\
+\texttt{R(t)}, \texttt{E(t)} & day & mm/day & learned & the whole dataset \\
+\texttt{theta\_r} & cell, depth & m³/m³ & pedotransfer & not fitted \\
+\texttt{AWC} & cell, depth & m³/m³ & pedotransfer & not fitted \\
+\texttt{n\_e}, \texttt{L} & cell & —, m & pedotransfer & not fitted \\
+\texttt{delta\_d} & station & m³/m³ & learned, regularised & station mean residual \\
+\texttt{m} & catchment & mm & learned & \textbf{temporal} — 993 daily series \\
+\texttt{Q0} & catchment & mm/day & learned & \textbf{temporal} — 993 daily series \\
+\texttt{f} & catchment & 1/mm & \textbf{fixed} & \textbf{spatial} — only 75 pairs \\
+\texttt{TWI}, \texttt{HAND} & cell & —, m & §32 & not fitted \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection*{New network parameters}
+\addcontentsline{toc}{subsection}{New network parameters}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   terrain_stem     ~60 k    zero-init
+   B1 cell head     ~ 8 k
+   B2 forcing head  ~ 5 k    (includes g_static projection)
+   B3 delta head    ~ 2 k
+   B4 catchment     ~ 2 k
+   S1 operator h    ~10 k
+                   -------
+                   ~87 k     against a DELETED four-stage U-Net decoder
+\end{Verbatim}
+
+\subsection*{What is kept, changed, deleted}
+\addcontentsline{toc}{subsection}{What is kept, changed, deleted}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+  KEPT UNCHANGED
+    frozen TerraMind ViT; tokens on disk
+    dataset.py sequence assembly (+ terrain added into the spatial tokens)
+    the 6-layer fusion transformer and all its weights
+    §32's terrain pipeline, exactly as being built
+
+  CHANGED
+    ctx[:, 12:208]    U-Net bottleneck        ->  five numbers per cell
+    masked mean       FiLM on the decoder     ->  catchment params, delta
+    ERA5 forcing      averaged into `context` ->  a separate small MLP that is
+                                                  BLIND to per-date station
+                                                  content (§0.5)
+    the sample        one station-date        ->  one station x 365-day window,
+                                                  emitting a trajectory
+
+  DELETED
+    UNetDecoder -- four upsampling stages at 512/256/128/64 + three FiLM'd skips
+    the staleness embedding on this path
+    (an earlier draft's learned wet/dry gate -- saturation replaces it)
+\end{Verbatim}
+
+\medskip\hrule\medskip
+
+\section*{8. BUILD LADDER}
+\addcontentsline{toc}{section}{8. BUILD LADDER}
+
+Each rung is a flag with exactly one check. **A rung that fails its check is
+deleted, not tuned.**
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{XXXX}
+\toprule
+\textbf{} & \textbf{adds} & \textbf{params} & \textbf{earns its place if} \\
+\midrule
+\textbf{V0} & §0.7's CPU experiment & 0 & bucket ceiling beats 0.0539 \textbf{and} parameters are predictable from the landscape. \textbf{Gate: everything below is conditional on this.} \\
+\textbf{V1} & per-cell bucket \texttt{lambda, alpha, beta}, one store & \textasciitilde{}8 k & across-cell SD of \texttt{y-hat} rises off zero; \texttt{lambda} correlates positively with TWI \\
+\textbf{V2} & \texttt{theta\_r}, \texttt{AWC} from pedotransfer + \texttt{delta} & \textasciitilde{}2 k & r(pred level, obs level) goes from −0.175 to positive \\
+\textbf{V3} & second store, \texttt{p} & \textasciitilde{}1 k & 10–30 and 30–50 improve without hurting 0–10 \\
+\textbf{V4} & TOPMODEL \texttt{S}, \texttt{D\_k}, capillary coupling & \textasciitilde{}3 k & r(pred, TWI) \textbf{strong when wet, near zero when dry} \\
+\textbf{V5} & Sentinel-1 assimilation & \textasciitilde{}10 k & error drops on days near an acquisition and not otherwise \\
+\textbf{V6} & near-field \texttt{DIV\_W} routing & \textasciitilde{}1 k & anything left after V4 — probably nothing \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   V1 + V2 is a complete, coherent architecture on its own, and it is a
+   SMALLER change to model.py than deleting the U-Net already requires.
+
+   V4 is the intellectually interesting rung -- it is what makes terrain
+   dynamic and connects to §31.5's theory -- but it should be EARNED by
+   V1 working, not assumed.
+\end{Verbatim}
+
+\medskip\hrule\medskip
+
+\section*{9. GATES}
+\addcontentsline{toc}{section}{9. GATES}
+
+\subsection*{Before any GPU}
+\addcontentsline{toc}{subsection}{Before any GPU}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+  0.  §0.7's CPU experiment. Bucket ceiling AND parameter predictability.
+      This gate can kill the whole design in an afternoon and must run first.
+
+  1.  All new heads zero-init  =>  forward bit-identical to best.pt.
+      Reuse the §26 provenance gate UNCHANGED: >= 99.5 % of rows
+      bit-identical AND max |delta| <= 1 bf16 ULP (0.000977).
+      DO NOT re-tighten it.
+
+  2.  Mass balance: sum(in) - sum(out) - delta(storage) = 0 to float precision.
+
+  3.  Synthetic catchment with analytic TWI: the S recession must match the
+      analytic exponential; a plane, a cone and a V-valley must give the TWI
+      values §32.5 Tier 1 already specifies (including §32.9.2's correction
+      that a cone gives a = r/2 exactly, not one cell).
+
+  4.  §32.8's sufficiency gate: regress observed delta-SM on delta-TWI and
+      delta-HAND across the 75 pairs under station fixed effects, SPLIT
+      WET/DRY. This decides both whether V4 is worth building and whether f
+      is identifiable.
+\end{Verbatim}
+
+\subsection*{After training}
+\addcontentsline{toc}{subsection}{After training}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+  5.  S(t) must be seasonal -- low in spring, high in late summer.
+      Flat => the catchment state is inert and V4 is dead weight.
+
+  6.  r(prediction, TWI) split by S terciles: STRONG when wet, NEAR ZERO when
+      dry. A flat profile is a static offset dressed as terrain and MUST be
+      reported as a failure, not as increased variance. This is the same
+      statistic as gate 4, so the gate and the architecture test ONE claim.
+
+  7.  Across-cell SD of y-hat, logged every epoch. Near-zero => collapsed to
+      the tile mean -- the failure that looks like success until you plot a map.
+
+  8.  IDENTIFIABILITY. Train 3 seeds; correlate the parameter MAPS, not the
+      predictions.
+          r > 0.9  => identified. Interpret it, plot it against TWI, publish it.
+          r < 0.5  => NOT identified. Predictions may stand; every interpretive
+                      claim about that parameter is dropped.
+      Plus a flat-direction check: perturb each parameter +/-20 % and measure
+      the loss response. A flat direction names the combination to reparameterise
+      away, as `c` and `gamma` were in §4.1.
+
+  9.  m, Q0 in physically sane ranges. m = 500 mm means it is fitting noise,
+      whatever the RMSE says.
+
+ 10.  Skill targets, unchanged from §30.9:
+
+          own-centre ubRMSE (0-10)                0.0301  ->  <=
+          off-centre ubRMSE                       0.0345  ->  materially closer
+          between-station spread, % of observed   15-19 % ->  > 35 %
+          r(pred level, obs level), CR200-18      -0.175  ->  > 0
+
+ 11.  PHYSICALITY, not just variance. norm-std must DROP at SCAN Crossroads --
+      the flat control currently receiving the most painted variation (0.52).
+      A run that increases spread while r(anomaly, terrain) stays near zero has
+      made the map more variable, not more correct, and must not be reported as
+      success. §23 is explicit on this.
+
+ 12.  Report 14x14 and 70x70 SEPARATELY. If 70x70 helps only via the static
+      branch, that is a resolution-limited offset, not resolved dynamics.
+\end{Verbatim}
+
+\medskip\hrule\medskip
+
+\section*{10. KNOWN WEAKNESSES, STATED BEFORE BUILDING}
+\addcontentsline{toc}{section}{10. KNOWN WEAKNESSES, STATED BEFORE BUILDING}
+
+\subsection*{10.1 §27b's ceiling may be real}
+\addcontentsline{toc}{subsection}{10.1 §27b's ceiling may be real}
+
+If the imagery genuinely carries no information about how a place holds water,
+B1 outputs near-constants and every cell in the tile predicts one curve. **No
+architecture manufactures information.** What this design does is fail
+\emph{legibly} — a flat \texttt{lambda} map says so directly, where a decoder's wrong map
+looked plausible for two years.
+
+§0.7 is designed to find this out before the allocation is spent.
+
+\subsection*{10.2 Equifinality of parameters is NOT cured}
+\addcontentsline{toc}{subsection}{10.2 Equifinality of parameters is NOT cured}
+
+This distinction matters and should not be blurred:
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   EQUIFINALITY OF PREDICTIONS      largely cured by regionalisation. Classical
+                                    calibration fits a free parameter vector to
+                                    ONE catchment's hydrograph, which is
+                                    underdetermined. Here theta_k = MLP(landscape)
+                                    is ONE map that must work at 993 stations, so
+                                    a compensating error must be a CONSISTENT
+                                    function of slope, TWI, texture and land cover
+                                    or it breaks somewhere else.
+
+   EQUIFINALITY OF PARAMETERS       NOT cured. The MLP can settle anywhere on a
+                                    compensating manifold, and which point it
+                                    picks is arbitrary.
+
+   WHAT IS THEREFORE AT RISK        gates 6 and 8 -- the interpretive story --
+                                    NOT the soil moisture predictions.
+\end{Verbatim}
+
+The failure mode is: **the model works, and the story about why is
+unfalsifiable.** Gate 8 decides whether the story may be told. That is a real
+scientific cost and it should not be papered over.
+
+\subsection*{10.3 The near-field boundary problem is real, and V6 reintroduces it}
+\addcontentsline{toc}{subsection}{10.3 The near-field boundary problem is real, and V6 reintroduces it}
+
+A 2.24 km patch does not contain a catchment. §31.4 measured the lowest cell on
+the tile boundary in 25 of 30 tiles. V1–V5 avoid this entirely by never routing
+water across the patch — TOPMODEL carries the catchment as one number instead.
+V6 puts it back, and with it: a wall at the patch edge, missing external inflow,
+and perimeter cells whose \texttt{kappa} is unidentifiable because they shed into
+nothing. That is why V6 is last and off by default.
+
+\subsection*{10.4 TOPMODEL's quasi-steady assumption}
+\addcontentsline{toc}{subsection}{10.4 TOPMODEL's quasi-steady assumption}
+
+TOPMODEL assumes the water table equilibrates instantly with the catchment
+deficit. In flashy catchments that is wrong. V6 is the patch, and V6 has §10.3's
+problem. There is no clean answer to this within the design; it is a known
+limit of the approach, and gate 5 will show it as a poorly-behaved \texttt{S(t)}.
+
+\subsection*{10.5 Getting the physics wrong is a failure mode a black box does not have}
+\addcontentsline{toc}{subsection}{10.5 Getting the physics wrong is a failure mode a black box does not have}
+
+A misspecified capillary term is a bug that training cannot route around. §31's
+per-location transformer cannot be wrong about physics because it claims none.
+That is the trade being made here, deliberately: **this model states its
+mechanism, so the mechanism can be wrong in a detectable way.**
+
+\subsection*{10.6 The optimisation regime is untested}
+\addcontentsline{toc}{subsection}{10.6 The optimisation regime is untested}
+
+\textasciitilde{}56 steps per epoch at batch 128 with 1,095 labels per sample is a different
+regime from the current one. Rich gradients, few steps. Nothing in this
+codebase's history speaks to it. Mitigation is random window-start
+augmentation, which is free, but the risk is real and belongs in the smoke run.
+
+\subsection*{10.7 It will not produce structure below 32 m}
+\addcontentsline{toc}{subsection}{10.7 It will not produce structure below 32 m}
+
+And must not be presented as doing so. §23's verdict — *"do not present this
+model as producing 10 m soil-moisture maps"* — applies to 32 m here just as
+firmly. Blockiness at 5×5 cells within a token is a \textbf{diagnostic}, not a
+defect: it is the map saying the fine channels are contributing nothing.
+Bilinear smoothing hides exactly that failure behind a plausible ramp, which is
+how the current map looked reasonable while being anti-correlated with the
+landscape. Do not smooth it. Report it.
+
+\subsection*{10.8 \texttt{f} rests on 75 pairs}
+\addcontentsline{toc}{subsection}{10.8 \texttt{f} rests on 75 pairs}
+
+Held fixed at a literature value unless gate 4 says otherwise.
+
+\medskip\hrule\medskip
+
+\section*{APPENDIX A — the loop, with numbers}
+\addcontentsline{toc}{section}{APPENDIX A — the loop, with numbers}
+
+Two cells. Same weather. Illustrative parameters, TOPMODEL coupling omitted for
+clarity; the lateral term shown here is V6's \texttt{DIV\_W}, used because it makes the
+mechanism visible in three lines of arithmetic.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+                       capacity   retention   ET     shedding
+   ---------------------------------------------------------------
+   HOLLOW               100 mm      0.95      0.8      0.02      holds
+   RIDGE                 60 mm      0.80      1.0      0.15      sheds
+
+   The hollow has three ridge-like cells flowing into it. Gate at 0.6.
+\end{Verbatim}
+
+\textbf{Day 1 — 20 mm rain, 3 mm demand.} Start: hollow 40 mm, ridge 20 mm.
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   RIDGE      s = 20,  fullness 0.333        HOLLOW     s = 40,  fullness 0.400
+     rain          + 20.00                     rain          + 20.00
+     evaporation   -  1.00                     evaporation   -  0.96
+     drains down   -  4.00                     drains down   -  2.00
+     sheds sideways-  1.80                     receives      +  4.92
+                   --------                                  --------
+     s(day 2)      =  33.20  fullness 0.553    s(day 2)      =  61.96  f 0.620
+\end{Verbatim}
+
+\textbf{Day 2 — no rain, 5 mm demand.}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+   RIDGE      s = 33.20                       HOLLOW     s = 61.96
+     evaporation   -  2.77                      evaporation   -  2.48
+     drains down   -  6.64                      drains down   -  3.10
+     sheds sideways-  2.99                      receives      +  8.22
+                   --------                                   --------
+     s(day 3)      =  20.80  fullness 0.347     s(day 3)      =  64.60  f 0.646
+                            FELL 37 %                                 ROSE
+\end{Verbatim}
+
+The hollow keeps rising the day after rain while the ridge collapses, because
+water is still arriving from upslope. That lag is real hydrology and it is
+exactly what one shared weather vector structurally cannot produce.
+
+\textbf{Through Block D:}
+
+\begin{Verbatim}[fontsize=\scriptsize,frame=leftline,framerule=0.6pt,rulecolor=\color{rulegray},xleftmargin=6pt,framesep=6pt,]
+                LEVEL    RANGE    fullness      soil moisture
+   ----------------------------------------------------------
+   HOLLOW       0.15  +  0.20  x   0.646    =      0.279
+   RIDGE        0.12  +  0.16  x   0.347    =      0.176
+                                                ---------
+                                     spread  =      0.103
+\end{Verbatim}
+
+Against an observed within-tile spread of \textasciitilde{}0.108 at CR200-18, where the current
+model produces \textasciitilde{}0.021.
+
+\medskip\hrule\medskip
+
+\section*{APPENDIX B — comparison with §31}
+\addcontentsline{toc}{section}{APPENDIX B — comparison with §31}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{XXXX}
+\toprule
+\textbf{} & \textbf{today} & \textbf{§31 per-location processor} & \textbf{this} \\
+\midrule
+frozen ViT & yes & yes & yes \\
+fusion transformer & 1× & 1× & 1× \\
+per-location model & \textbf{none} & transformer, run 196× at inference & 3–5 scalars + a recurrence \\
+forcing & inside the fusion sequence, averaged into one vector & \texttt{W}, cross-attended per location & a small MLP, blind to station identity \\
+decoder & U-Net, 4 stages & deleted & deleted \\
+new parameters & — & \textasciitilde{}2 M & \textasciitilde{}87 k \\
+labels per forward pass & 1 & 1 & up to 1,095 \\
+terrain's role & — & static input channel & distribution function of a moving deficit \\
+what stops memorisation & nothing (21× overfit) & nothing structural & 5 bounded scalars \\
+interpretable & no & no & yes — and therefore falsifiable \\
+can be wrong about physics & no & no & \textbf{yes} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+§31 and this design agree on the diagnosis and on deleting the U-Net. They
+disagree on what the per-location object should be: a 768-dimensional
+transformer output, or a handful of bounded physical scalars. Under one label
+per tile across 993 stations, the second is a well-posed estimation problem and
+the first is not — that is the whole argument.
+
+\medskip\hrule\medskip
+
+\section*{REFERENCES}
+\addcontentsline{toc}{section}{REFERENCES}
+
+\begin{itemize}[leftmargin=1.2em,itemsep=1pt,topsep=3pt]
+\item Beven, K. J. \& Kirkby, M. J. (1979). A physically based, variable contributing
+area model of basin hydrology. \emph{Hydrological Sciences Bulletin} 24(1), 43–69.
+\item Beven, K. J. (2006). A manifesto for the equifinality thesis. *Journal of
+Hydrology* 320, 18–36.
+\item Grayson, R. B., Western, A. W., Chiew, F. H. S. \& Blöschl, G. (1997). Preferred
+states in spatial soil moisture patterns: local and nonlocal controls.
+\end{itemize}
+  \emph{Water Resources Research} 33(12), 2897–2908.
+\begin{itemize}[leftmargin=1.2em,itemsep=1pt,topsep=3pt]
+\item Nobre, A. D. et al. (2011). Height Above the Nearest Drainage — a
+hydrologically relevant new terrain model. \emph{Journal of Hydrology} 404, 13–29.
+\item Vachaud, G., Passerat de Silans, A., Balabanis, P. \& Vauclin, M. (1985).
+Temporal stability of spatially measured soil water probability density
+function. \emph{Soil Science Society of America Journal} 49(4), 822–828.
+\item Western, A. W., Grayson, R. B. \& Blöschl, G. (2002). Scaling of soil moisture:
+a hydrologic perspective. \emph{Annual Review of Earth and Planetary Sciences} 30,
+149–180.
+\end{itemize}
+
+Internal: §23, §24.12, §26.11, §27a, §27b, §29.13, §29.15, §30.3a, §31.4,
+§31.5, §31.6, §31.8, §32.3, §32.6, §32.8, §32.9 of \texttt{text/training\_runbook.md}.
+
+\end{document}

@@ -1,0 +1,196 @@
+{
+  "patch_m": 160.0,
+  "min_days": 30,
+  "per_depth": {
+    "0-10": {
+      "n_pairs": 15,
+      "n_days_total": 18916,
+      "rmsd_median": 0.053012581345565614,
+      "anom_rmsd_median": 0.042894801412267286
+    },
+    "10-30": {
+      "n_pairs": 1,
+      "n_days_total": 1188,
+      "rmsd_median": 0.02403862764341324,
+      "anom_rmsd_median": 0.01859328180523888
+    }
+  },
+  "pairs": [
+    {
+      "a": "Lamont-CF2",
+      "b": "US-ARM",
+      "depth": "0-10",
+      "sep_m": 151.3,
+      "n_days": 647,
+      "rmsd": 0.1284151174842107,
+      "anom_rmsd": 0.05206884145260055,
+      "bias": -0.11738517005255639,
+      "networks": "ARM|AmeriFlux"
+    },
+    {
+      "a": "TonziRanch",
+      "b": "US-Ton",
+      "depth": "0-10",
+      "sep_m": 77.8,
+      "n_days": 1065,
+      "rmsd": 0.007526910757501979,
+      "anom_rmsd": 0.007456546204053493,
+      "bias": -0.001026793191550468,
+      "networks": "FLUXNET-AMERIFLUX|AmeriFlux"
+    },
+    {
+      "a": "VairaRanch",
+      "b": "US-Var",
+      "depth": "0-10",
+      "sep_m": 6.1,
+      "n_days": 823,
+      "rmsd": 0.03468503121200253,
+      "anom_rmsd": 0.013940643948564448,
+      "bias": 0.03176019263916613,
+      "networks": "FLUXNET-AMERIFLUX|AmeriFlux"
+    },
+    {
+      "a": "SAA111",
+      "b": "SAA112",
+      "depth": "0-10",
+      "sep_m": 8.8,
+      "n_days": 1180,
+      "rmsd": 0.049277147210896446,
+      "anom_rmsd": 0.027450893029839076,
+      "bias": -0.04092292400487399,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD011",
+      "b": "SOD012",
+      "depth": "0-10",
+      "sep_m": 8.9,
+      "n_days": 2014,
+      "rmsd": 0.028292769661537064,
+      "anom_rmsd": 0.027799864678666446,
+      "bias": 0.0052581687847220865,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD071",
+      "b": "SOD072",
+      "depth": "0-10",
+      "sep_m": 9.0,
+      "n_days": 1357,
+      "rmsd": 0.0757518646419188,
+      "anom_rmsd": 0.06428176806594649,
+      "bias": -0.04007741622214994,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD071",
+      "b": "SOD073",
+      "depth": "0-10",
+      "sep_m": 9.0,
+      "n_days": 1353,
+      "rmsd": 0.09213873069479395,
+      "anom_rmsd": 0.05819290256809862,
+      "bias": -0.07143620779931942,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD072",
+      "b": "SOD073",
+      "depth": "0-10",
+      "sep_m": 17.9,
+      "n_days": 1353,
+      "rmsd": 0.053012581345565614,
+      "anom_rmsd": 0.042894801412267286,
+      "bias": -0.03115075910346915,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD081",
+      "b": "SOD083",
+      "depth": "0-10",
+      "sep_m": 9.0,
+      "n_days": 1460,
+      "rmsd": 0.02190685002087868,
+      "anom_rmsd": 0.021709245045110417,
+      "bias": -0.002935772029402317,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD101",
+      "b": "SOD102",
+      "depth": "0-10",
+      "sep_m": 3.3,
+      "n_days": 1562,
+      "rmsd": 0.07036524878448794,
+      "anom_rmsd": 0.06960812703158957,
+      "bias": 0.010294507645194573,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD101",
+      "b": "SOD103",
+      "depth": "0-10",
+      "sep_m": 2.3,
+      "n_days": 1562,
+      "rmsd": 0.06191868404263732,
+      "anom_rmsd": 0.058749773703531266,
+      "bias": 0.0195547314825803,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "SOD102",
+      "b": "SOD103",
+      "depth": "0-10",
+      "sep_m": 5.6,
+      "n_days": 1574,
+      "rmsd": 0.06576939968320965,
+      "anom_rmsd": 0.0651008764354915,
+      "bias": 0.009353599415232922,
+      "networks": "FMI|FMI"
+    },
+    {
+      "a": "Lucky-Hills-1503",
+      "b": "Lucky-Hills-1506",
+      "depth": "0-10",
+      "sep_m": 119.0,
+      "n_days": 1188,
+      "rmsd": 0.02075361950840523,
+      "anom_rmsd": 0.020712165669987747,
+      "bias": -0.001311074352826333,
+      "networks": "SOILSCAPE|SOILSCAPE"
+    },
+    {
+      "a": "Lucky-Hills-1503",
+      "b": "Lucky-Hills-1506",
+      "depth": "10-30",
+      "sep_m": 119.0,
+      "n_days": 1188,
+      "rmsd": 0.02403862764341324,
+      "anom_rmsd": 0.01859328180523888,
+      "bias": 0.015236321429060368,
+      "networks": "SOILSCAPE|SOILSCAPE"
+    },
+    {
+      "a": "CarpenetopermanentGrassCoverNoTrackposition",
+      "b": "CarpenetopermanentGrassCoverTrackposition",
+      "depth": "0-10",
+      "sep_m": 1.4,
+      "n_days": 1350,
+      "rmsd": 0.021345600429811134,
+      "anom_rmsd": 0.021179113182761188,
+      "bias": -0.0026607935848059205,
+      "networks": "STEMS|STEMS"
+    },
+    {
+      "a": "NorthstarAspenGrove",
+      "b": "NorthstarTransitionZone",
+      "depth": "0-10",
+      "sep_m": 57.2,
+      "n_days": 428,
+      "rmsd": 0.11807339463934018,
+      "anom_rmsd": 0.05964619701333106,
+      "bias": -0.10190023406991891,
+      "networks": "iRON|iRON"
+    }
+  ]
+}
